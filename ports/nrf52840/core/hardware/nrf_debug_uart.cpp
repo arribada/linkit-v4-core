@@ -1,6 +1,6 @@
 /**
  * @file nrf_debug_uart.cpp
- * @brief TX-only debug UART implementation (UARTE1, 460800 baud).
+ * @brief TX-only debug UART implementation (UARTE1, 921600 baud).
  */
 
 #include "nrf_debug_uart.hpp"
@@ -22,7 +22,7 @@ void NrfDebugUart::init(uint32_t tx_pin)
 	config.pselcts = NRF_UARTE_PSEL_DISCONNECTED;
 	config.pselrts = NRF_UARTE_PSEL_DISCONNECTED;
 	config.p_context = nullptr;
-	config.baudrate = NRF_UARTE_BAUDRATE_460800;
+	config.baudrate = NRF_UARTE_BAUDRATE_921600;
 	config.interrupt_priority = NRFX_UARTE_DEFAULT_CONFIG_IRQ_PRIORITY;
 	config.hwfc = NRF_UARTE_HWFC_DISABLED;
 	config.parity = NRF_UARTE_PARITY_EXCLUDED;

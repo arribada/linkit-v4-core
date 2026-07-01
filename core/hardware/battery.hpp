@@ -64,5 +64,10 @@ public:
 		internal_update();
 		actuate_events();
 	}
+	/// @brief Force a fresh sample (bypass any cache) and return whether the
+	/// underlying device actually responded. Default: no separate device —
+	/// behaves like update() and always reports success. Overridden by gauges
+	/// (e.g. STC3117) so callers like the SENSR DTE command get a real pass/fail.
+	virtual bool update_forced() { update(); return true; }
 	virtual int shutdown() { return 0; }  // Optional shutdown for fuel gauges
 };

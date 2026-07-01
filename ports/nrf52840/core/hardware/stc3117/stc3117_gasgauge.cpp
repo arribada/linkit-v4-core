@@ -256,12 +256,15 @@ static uint8_t estimate_soc_from_voltage(uint16_t mv) {
 
 /// @brief Periodic update: read STC3117 via gas gauge task, apply SOC hysteresis, persist to .noinit RAM.
 void GaugeBatteryMonitor::internal_update() {
-    // Cache: skip I2C read if last measurement is still fresh
-    static uint64_t last_read_time = 0;
+    // Cache: skip I2C read if last measurement is still fresh, UNLESS a forced
+    // read was requested (update_forced() — used by the SENSR live diagnostic
+    // to reflect the CURRENT gauge state, e.g. with/without the SMD powered).
     uint64_t now = system_timer->get_counter();
-    if (last_read_time > 0 && (now - last_read_time) < STC3117_CACHE_TTL_MS) {
+    if (!m_force_read && m_last_read_time > 0 && (now - m_last_read_time) < STC3117_CACHE_TTL_MS) {
         return;  // Use cached values
     }
+    m_force_read = false;
+    m_last_read_ok = false;  // set true below only once real gauge data is obtained
 
     // Acquire VSENSORS for I2C bus stability (other sensors on same bus)
     SensorsPowerGuard power_guard;
@@ -321,7 +324,7 @@ void GaugeBatteryMonitor::internal_update() {
 #endif
 
     // Update cache timestamp
-    last_read_time = system_timer->get_counter();
+    m_last_read_time = system_timer->get_counter();
 
     // 4. Apply filtering to prevent value bouncing
     uint16_t crc = crc16_compute(reinterpret_cast<const uint8_t *>(const_cast<const uint16_t *>(m_filtered_values)), sizeof(m_filtered_values), nullptr);
@@ -350,10 +353,22 @@ void GaugeBatteryMonitor::internal_update() {
     // Apply new values
     m_last_voltage_mv = mv;
     m_last_level = level;
+    m_last_read_ok = true;  // gauge answered and gave data this cycle
 
     // Set flags (both based on SOC level)
     m_is_critical_voltage = m_filtered_values[1] < m_critical_level;
     m_is_low_level = m_filtered_values[1] < m_low_level;
+}
+
+/// @brief Force a fresh read: bypass the cache AND re-probe the device so a
+/// non-responding gauge (e.g. STC muted because the SMD is off and clamps the
+/// I2C bus) reports a real failure instead of a stale/cached value. Returns
+/// whether the gauge actually answered this call.
+bool GaugeBatteryMonitor::update_forced() {
+    m_force_read = true;   // bypass the freshness cache for this call
+    m_is_init = false;     // force a full re-probe (STC31xx_CheckI2cDeviceId)
+    update();              // -> internal_update() -> sets m_last_read_ok
+    return m_last_read_ok;
 }
 
 static void GasGauge_DefaultInit(GasGauge_DataTypeDef * GG_struct)

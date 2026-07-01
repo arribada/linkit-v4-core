@@ -791,7 +791,7 @@ static LFSFileSystem& init_storage(NrfSwitch& nrf_reed_switch, Is25Flash& is25_f
 				DEBUG_INFO("EXTERNAL_WAKEUP: Magnet detected | skipping modulo powerdown");
 			} else {
 				DEBUG_INFO("EXTERNAL_WAKEUP: Not our turn to run (modulo check) | powering down");
-				status_led->flash(RGBLedColor::YELLOW, 100);
+				status_led->flash(RGBLedColor::RED, 100);
 				PMU::delay_ms(300);
 				status_led->off();
 				PMU::powerdown();

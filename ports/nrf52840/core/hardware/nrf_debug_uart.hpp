@@ -2,7 +2,7 @@
 
 /**
  * @file nrf_debug_uart.hpp
- * @brief TX-only debug UART on UARTE1 (460800 baud, no flow control).
+ * @brief TX-only debug UART on UARTE1 (921600 baud, no flow control).
  *
  * Used on RSPB boards where DEBUG_UART_TX_PIN is defined.
  * All methods are static — only one debug UART instance exists.

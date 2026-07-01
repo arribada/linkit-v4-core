@@ -1248,14 +1248,31 @@ std::string DTEHandler::SENSR_REQ(int error_code, std::vector<BaseType>& arg_lis
 
 	DEBUG_INFO("DTEHandler::SENSR_REQ: sensors_mask=0x%02X timeout=%us", sensors_mask, timeout_s);
 
-	// Read battery (bit 0 = 0x01)
+	// RSPB: the I2C pull-up rail (VSENSORS) is gated by POWER_CONTROL, which
+	// deep-idle reduce_power_rails() cuts while the device sits idle waiting for a
+	// BLE/DTE command in ConfigurationState — so the bus is DEAD when a SENSR
+	// arrives (works fine in OperationalState where the scheduler keeps the rail
+	// up). Restore the board rail (POWER_CONTROL high + settle) before any read so
+	// the live diagnostic works off-mission. Cheap and safe on other boards (no-op
+	// unless VSYS_SEL/POWER_CONTROL defined).
+	PMU::restore_power_rails();
+
+	// Read battery (bit 0 = 0x01). Force a FRESH read (bypass cache + re-probe)
+	// and report the REAL result, so SENSR is a clean live diagnostic — e.g. run
+	// it with the SMD powered (PWRON SATELLITE) vs off to confirm whether an
+	// unpowered SMD on the shared I2C bus is what mutes the gauge.
 	if (sensors_mask & 0x01) {
 		if (battery_monitor) {
-			battery_monitor->update();
+			bool batt_ok = battery_monitor->update_forced();
 			batt_mv = battery_monitor->get_voltage();
 			batt_soc = battery_monitor->get_level();
-			sensor_status |= (1 << 0);  // Battery OK
-			DEBUG_TRACE("SENSR: Battery %umV | %u%%", batt_mv, batt_soc);
+			if (batt_ok) {
+				sensor_status |= (1 << 0);  // Battery read OK (gauge answered)
+				DEBUG_TRACE("SENSR: Battery %umV | %u%% (read OK)", batt_mv, batt_soc);
+			} else {
+				// Bit stays clear = read error. Value returned is stale/default.
+				DEBUG_WARN("SENSR: Battery read FAILED (STC no ACK) — %umV is stale/default", batt_mv);
+			}
 		} else {
 			DEBUG_WARN("SENSR: Battery monitor not available");
 		}

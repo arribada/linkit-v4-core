@@ -81,6 +81,12 @@ bool PMU::was_firmware_updated() {
 void PMU::set_firmware_updated_flag() {
 }
 
+void PMU::reduce_power_rails() {
+}
+
+void PMU::restore_power_rails() {
+}
+
 int PMU::get_die_temperature_c() {
 	return 25;  // Mock sentinel — matches the real PMU error fallback.
 }

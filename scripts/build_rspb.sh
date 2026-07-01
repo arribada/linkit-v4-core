@@ -155,6 +155,15 @@ SMDSAT_AUTOFALLBACK=${SMDSAT_AUTOFALLBACK:-ON}
 # SMD_FLASH_HOLD=ON for a one-off flashing build, then rebuild OFF for normal use.
 SMD_FLASH_HOLD=${SMD_FLASH_HOLD:-OFF}
 
+# RSPB I2C pull-ups are on VSENSORS: 1 = never cut VSENSORS (floor, default/safe);
+# 0 = allow it to be cut (test whether the pull-ups really depend on it).
+RSPB_VSENSORS_FLOOR=${RSPB_VSENSORS_FLOOR:-1}
+
+# TPL5111 external-wakeup period in seconds — MUST match the board's TPL5111 timing
+# resistor. Sets the compiled DEFAULT (config_store.hpp); still runtime-editable via
+# DTE param WAKEUP_PERIOD (PWP04).
+WAKEUP_PERIOD=${WAKEUP_PERIOD:-3600}
+
 
 echo "Building RSPB with configuration:"
 echo "  ARGOS_SMD=${ARGOS_SMD}"
@@ -167,6 +176,8 @@ echo "  GNSS_HAS_BACKUP_BATTERY=${GNSS_HAS_BACKUP_BATTERY}"
 echo "  SMDSAT_USE_SAFE_TIMINGS=${SMDSAT_USE_SAFE_TIMINGS}"
 echo "  SMDSAT_AUTOFALLBACK=${SMDSAT_AUTOFALLBACK}"
 echo "  SMD_FLASH_HOLD=${SMD_FLASH_HOLD}"
+echo "  RSPB_VSENSORS_FLOOR=${RSPB_VSENSORS_FLOOR}"
+echo "  WAKEUP_PERIOD=${WAKEUP_PERIOD}s"
 echo ""
 if [ "${SMD_FLASH_HOLD}" = "ON" ]; then
     echo "  *** WARNING: SMD_FLASH_HOLD build — nRF parks at boot, SMD held powered."
@@ -175,7 +186,7 @@ if [ "${SMD_FLASH_HOLD}" = "ON" ]; then
 fi
 
 cmake -DCMAKE_TOOLCHAIN_FILE=../../toolchain_arm_gcc_nrf52.cmake \
-      -DDEBUG_LEVEL=4 \
+      -DDEBUG_LEVEL=3 \
       -DBOARD=RSPB \
       -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
       -DARGOS_SMD=${ARGOS_SMD} \
@@ -188,6 +199,8 @@ cmake -DCMAKE_TOOLCHAIN_FILE=../../toolchain_arm_gcc_nrf52.cmake \
       -DSMDSAT_USE_SAFE_TIMINGS=${SMDSAT_USE_SAFE_TIMINGS} \
       -DSMDSAT_AUTOFALLBACK=${SMDSAT_AUTOFALLBACK} \
       -DSMD_FLASH_HOLD=${SMD_FLASH_HOLD} \
+      -DRSPB_VSENSORS_FLOOR=${RSPB_VSENSORS_FLOOR} \
+      -DWAKEUP_PERIOD_DEFAULT=${WAKEUP_PERIOD} \
       -DMETRIC_LATENCY_LOG_ENABLE=$([ "$METRICS" = "ON" ] && echo 1 || echo 0) \
       -DVALIDATION_LOG_ENABLE=$([ "$VALIDATION" = "ON" ] && echo 1 || echo 0) \
       ../..

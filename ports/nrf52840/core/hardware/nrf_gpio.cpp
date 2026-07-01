@@ -13,6 +13,16 @@
 
 uint8_t GPIOPins::m_sensors_pwr_refcount = 0;
 
+// Build-time flag (build_rspb.sh: RSPB_VSENSORS_FLOOR, default 1).
+//   1 = keep the RSPB VSENSORS refcount floor: never cut VSENSORS, since the I2C
+//       pull-ups (R21/R24) live on it and cutting it kills the whole bus.
+//   0 = allow VSENSORS to be cut — to test whether the pull-ups really depend on
+//       VSENSORS (bus dies on cut) or whether the earlier failures were purely the
+//       log flood (bus survives).
+#ifndef RSPB_VSENSORS_FLOOR
+#define RSPB_VSENSORS_FLOOR 1
+#endif
+
 /// @brief Configure all BSP GPIO pins and set safe initial state for all power rails.
 void GPIOPins::initialise()
 {
@@ -186,11 +196,11 @@ void GPIOPins::power_cycle_sensors()
 	// refcount — init() (and the boot probe) run from acquire_sensors_pwr() before
 	// the count is incremented, yet the rail is already driven high there.
 	if (nrf_gpio_pin_out_read(BSP::GPIO_Inits[SENSORS_PWR_PIN].pin_number) == 0) {
-		DEBUG_WARN("GPIOPins::power_cycle_sensors: VSENSORS off | nothing to cycle");
+		DEBUG_TRACE("GPIOPins::power_cycle_sensors: VSENSORS off | nothing to cycle");
 		return;
 	}
 
-	DEBUG_WARN("GPIOPins::power_cycle_sensors: cycling VSENSORS to release a wedged I2C slave");
+	DEBUG_TRACE("GPIOPins::power_cycle_sensors: cycling VSENSORS to release a wedged I2C slave");
 	disconnect_sensor_pins();                 // release nRF's I2C/INT pin config + INT lines
 
 #ifdef ONBOARD_I2C_BUS
@@ -242,6 +252,11 @@ void GPIOPins::acquire_sensors_pwr()
 	else
 	{
 		DEBUG_TRACE("GPIOPins::acquire_sensors_pwr: refcount %u->%u (already on)", m_sensors_pwr_refcount, m_sensors_pwr_refcount + 1);
+		// NOTE: no per-acquire bus re-init here. A wedged bus is left DISABLED
+		// (fast-fail) so it never storms recover_bus + 100 ms timeouts on every
+		// read — that would block the cooperative scheduler (reed switch, main
+		// loop). The bus re-inits cleanly at the next boot; a stuck VBAT STC3117
+		// needs a battery power-cycle to release SCL regardless of firmware.
 	}
 	m_sensors_pwr_refcount++;
 #endif
@@ -255,6 +270,20 @@ void GPIOPins::release_sensors_pwr()
 		DEBUG_WARN("GPIOPins::release_sensors_pwr: refcount already 0 | ignoring release");
 		return;
 	}
+#if defined(BOARD_RSPB) && RSPB_VSENSORS_FLOOR
+	// RSPB: the I2C pull-ups (R21/R24) live on VSENSORS, so VSENSORS MUST stay
+	// powered the entire time the nRF runs — cutting it kills the whole I2C bus
+	// (SCL/SDA float low → every sensor NACKs). The boot pin sets refcount=1 as a
+	// floor, but an acquire/release imbalance (GPS/SMD/DTE PWRON-OFF paths) can
+	// still drive it to 0 and cut the rail. Clamp the floor HARD at 1: never let a
+	// release take VSENSORS down on RSPB. (Backfeed is a non-issue now that the
+	// pull-ups are on VSENSORS, not DCDC_3V3.)
+	if (m_sensors_pwr_refcount <= 1)
+	{
+		DEBUG_TRACE("GPIOPins::release_sensors_pwr: RSPB floor — keeping VSENSORS ON (refcount stays 1)");
+		return;
+	}
+#endif
 	m_sensors_pwr_refcount--;
 	if (m_sensors_pwr_refcount == 0)
 	{

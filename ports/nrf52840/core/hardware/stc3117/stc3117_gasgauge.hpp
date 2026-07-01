@@ -23,6 +23,10 @@ private:
 	bool pwr_pin_state = false;                   ///< Tracked VSENSORS state for power management
 	bool previous_sensors_pwr_state = false;       ///< Previous VSENSORS state for edge detection
 
+	uint64_t m_last_read_time = 0;   ///< Timestamp of last successful read (cache TTL)
+	bool m_force_read = false;       ///< Set by update_forced() to bypass the cache once
+	bool m_last_read_ok = false;     ///< True iff the last read actually got data from the gauge
+
 	/// @brief Check STC3117 responds on I2C.
 	/// @return 0 on success, -1 on error.
 	int check_i2c_device();
@@ -40,6 +44,15 @@ public:
 
 	/// @return true if STC3117 was successfully initialised.
 	bool is_init() const { return m_is_init; }
+
+	/// @brief Force a fresh read (bypass cache + re-probe the device) and report
+	/// whether the gauge actually answered. Used by the SENSR DTE command as a
+	/// clean live diagnostic (e.g. to compare with/without the SMD powered).
+	bool update_forced() override;
+
+	/// @return true iff the most recent read actually got data from the gauge
+	/// (false = device did not respond / ADDR_NACK).
+	bool last_read_ok() const { return m_last_read_ok; }
 
 	/// @brief Shut down the STC3117 to minimise current draw.
 	/// @return 0 on success.

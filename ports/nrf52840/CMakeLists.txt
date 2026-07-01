@@ -677,6 +677,14 @@ target_compile_definitions(${TARGET_NAME} PRIVATE
     # TEST: power SMD at boot and park the nRF so the STM32WL can be flashed
     # without the board resetting. Enable with -DSMD_FLASH_HOLD=ON. See main.cpp.
     $<$<BOOL:${SMD_FLASH_HOLD}>:SMD_FLASH_HOLD=1>
+    # RSPB: keep VSENSORS always on (I2C pull-ups live on it). 1=floor (default),
+    # 0=allow cut (test). Only forwarded when set (build_rspb.sh); other boards
+    # fall back to the #ifndef default in nrf_gpio.cpp.
+    $<$<NOT:$<STREQUAL:${RSPB_VSENSORS_FLOOR},>>:RSPB_VSENSORS_FLOOR=${RSPB_VSENSORS_FLOOR}>
+    # TPL5111 external-wakeup period default (s) — must match the board timing
+    # resistor. Set via build_rspb.sh WAKEUP_PERIOD; else falls back to 6300U in
+    # config_store.hpp. Only forwarded when set (RSPB); other boards use the fallback.
+    $<$<NOT:$<STREQUAL:${WAKEUP_PERIOD_DEFAULT},>>:WAKEUP_PERIOD_DEFAULT=${WAKEUP_PERIOD_DEFAULT}>
     $<$<BOOL:${LORA_RAK3172_ENABLED}>:LORA_RAK3172=1>
     $<$<BOOL:${LORA_RAK3172_ENABLED}>:LORA_DCS_ENABLE=${LORA_DCS_ENABLE_VAL}>
     $<$<BOOL:${LORA_RAK3172_ENABLED}>:LORA_POWER_OFF_UNDERWATER=${LORA_POWER_OFF_UNDERWATER_VAL}>

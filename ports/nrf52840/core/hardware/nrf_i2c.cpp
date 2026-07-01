@@ -29,14 +29,31 @@ static bool is_error_event(nrfx_twim_evt_type_t type) {
 	       type == NRFX_TWIM_EVT_BUS_ERROR;
 }
 
+// DIAGNOSTIC (2026-07): capture the last TWIM error event type per bus to tell an
+// ADDRESS_NACK (device absent/unresponsive) apart from a BUS_ERROR/OVERRUN (bus or
+// recovery-bit-bang corruption). Remove once the STC3117 no-ACK is root-caused.
+static volatile uint8_t s_last_twim_err[2] = {0xFF, 0xFF};
+static const char *twim_evt_str(uint8_t t) {
+	switch (t) {
+	case NRFX_TWIM_EVT_ADDRESS_NACK: return "ADDR_NACK";
+	case NRFX_TWIM_EVT_DATA_NACK:    return "DATA_NACK";
+	case NRFX_TWIM_EVT_OVERRUN:      return "OVERRUN";
+	case NRFX_TWIM_EVT_BUS_ERROR:    return "BUS_ERROR";
+	case NRFX_TWIM_EVT_DONE:         return "DONE";
+	default:                         return "none";
+	}
+}
+
 #if NRFX_TWIM0_ENABLED
 static void twim0_event_handler(nrfx_twim_evt_t const *p_event, void *) {
+	if (is_error_event(p_event->type)) s_last_twim_err[0] = (uint8_t)p_event->type;
 	NrfI2C::event_handler(0, is_error_event(p_event->type));
 }
 #endif
 
 #if NRFX_TWIM1_ENABLED
 static void twim1_event_handler(nrfx_twim_evt_t const *p_event, void *) {
+	if (is_error_event(p_event->type)) s_last_twim_err[1] = (uint8_t)p_event->type;
 	NrfI2C::event_handler(1, is_error_event(p_event->type));
 }
 #endif
@@ -88,7 +105,7 @@ bool NrfI2C::is_bus_stuck(uint8_t bus) {
 	bool sda_low = (nrf_gpio_pin_read(sda) == 0);
 
 	if (scl_low || sda_low) {
-		DEBUG_WARN("I2C bus %u stuck: SCL=%s SDA=%s",
+		DEBUG_TRACE("I2C bus %u stuck: SCL=%s SDA=%s",
 			bus, scl_low ? "LOW" : "HIGH", sda_low ? "LOW" : "HIGH");
 		return true;
 	}
@@ -147,7 +164,7 @@ bool NrfI2C::reinit_bus(uint8_t bus) {
 bool NrfI2C::full_bus_reset(uint8_t bus) {
 	if (bus >= BSP::I2C_TOTAL_NUMBER) return false;
 
-	DEBUG_WARN("I2C bus %u full reset", bus);
+	DEBUG_TRACE("I2C bus %u full reset", bus);
 
 	uint32_t scl, sda;
 	get_bus_pins(bus, scl, sda);
@@ -192,14 +209,14 @@ bool NrfI2C::full_bus_reset(uint8_t bus) {
 
 	if (!reinit_bus(bus)) return false;
 
-	DEBUG_INFO("I2C bus %u recovered (full reset)", bus);
+	DEBUG_TRACE("I2C bus %u recovered (full reset)", bus);
 	return true;
 }
 
 bool NrfI2C::recover_bus(uint8_t bus) {
 	if (bus >= BSP::I2C_TOTAL_NUMBER) return false;
 
-	DEBUG_WARN("I2C bus %u recovery", bus);
+	DEBUG_TRACE("I2C bus %u recovery", bus);
 	m_stats[bus].bus_recoveries++;
 
 	nrfx_twim_disable(&BSP::I2C_Inits[bus].twim);
@@ -207,7 +224,7 @@ bool NrfI2C::recover_bus(uint8_t bus) {
 
 	for (unsigned int attempt = 0; attempt < I2C_RECOVERY_MAX_ATTEMPTS; attempt++) {
 		if (clock_stretch_recovery(bus) && reinit_bus(bus)) {
-			DEBUG_INFO("I2C bus %u recovered (attempt %u)", bus, attempt + 1);
+			DEBUG_TRACE("I2C bus %u recovered (attempt %u)", bus, attempt + 1);
 			return true;
 		}
 		PMU::delay_ms(5);
@@ -215,17 +232,22 @@ bool NrfI2C::recover_bus(uint8_t bus) {
 
 	if (full_bus_reset(bus)) return true;
 
-#ifdef SENSORS_PWR_PIN
+	// NOTE (RSPB 2026-07): the VSENSORS power-cycle escalation is DISABLED on RSPB.
+	// The I2C pull-ups now live on VSENSORS, so power_cycle_sensors() (which drives
+	// SCL/SDA low AND cuts VSENSORS) kills the pull-ups and makes a wedged bus WORSE,
+	// and it can't reset the STC3117 on VBAT anyway. The caller degrades (disables
+	// the bus) instead — a stuck VBAT gauge needs a battery power-cycle.
+#if defined(SENSORS_PWR_PIN) && !defined(BOARD_RSPB)
 	// Last resort for the sensor bus: power-cycle VSENSORS (force-resets every
 	// VSENSORS sensor, lines driven low during the off-window so the always-on
 	// pull-ups can't back-power them), then bit-bang + reinit. Devices on VBAT
 	// (the STC3117 gauge) are not reset by this; if one holds SCL low only a full
 	// board power cycle clears it — we then return false and the caller degrades.
 	if (bus == ONBOARD_I2C_BUS) {
-		DEBUG_WARN("I2C bus %u: escalating to VSENSORS power-cycle", bus);
+		DEBUG_TRACE("I2C bus %u: escalating to VSENSORS power-cycle", bus);
 		GPIOPins::power_cycle_sensors();
 		if (clock_stretch_recovery(bus) && reinit_bus(bus)) {
-			DEBUG_INFO("I2C bus %u recovered after VSENSORS power-cycle", bus);
+			DEBUG_TRACE("I2C bus %u recovered after VSENSORS power-cycle", bus);
 			return true;
 		}
 	}
@@ -251,9 +273,11 @@ void NrfI2C::init(void) {
 		PMU::delay_us(100);
 
 		if (is_bus_stuck(i)) {
-			DEBUG_WARN("I2C bus %u stuck at init | attempting recovery", i);
+			DEBUG_TRACE("I2C bus %u stuck at init | attempting recovery", i);
 			bool freed = clock_stretch_recovery(i);
-#ifdef SENSORS_PWR_PIN
+			// RSPB: VSENSORS power-cycle escalation DISABLED (pull-ups on VSENSORS —
+			// cutting it kills them; can't reset a VBAT STC anyway). See recover_bus().
+#if defined(SENSORS_PWR_PIN) && !defined(BOARD_RSPB)
 			// Clock-stretch alone can't free a slave holding SCL low, nor a wedged
 			// VSENSORS sensor. Escalate to a VSENSORS power-cycle: it force-resets
 			// every sensor on VSENSORS (driving SCL/SDA low during the off-window so
@@ -262,7 +286,7 @@ void NrfI2C::init(void) {
 			// other sensors quiesced the bit-bang has its best chance to clock an
 			// SDA-stuck gauge free.
 			if (!freed && i == ONBOARD_I2C_BUS) {
-				DEBUG_WARN("I2C bus %u clock-stretch failed | power-cycling VSENSORS", i);
+				DEBUG_TRACE("I2C bus %u clock-stretch failed | power-cycling VSENSORS", i);
 				GPIOPins::power_cycle_sensors();
 				freed = clock_stretch_recovery(i);
 			}
@@ -276,7 +300,7 @@ void NrfI2C::init(void) {
 				m_is_enabled[i] = false;
 				continue;
 			}
-			DEBUG_INFO("I2C bus %u freed by recovery", i);
+			DEBUG_TRACE("I2C bus %u freed by recovery", i);
 		}
 
 		m_transfer_done[i] = false;
@@ -351,7 +375,7 @@ bool NrfI2C::wait_for_transfer(uint8_t bus, uint32_t timeout_ms) {
 	while (!m_transfer_done[bus]) {
 		uint64_t elapsed = system_timer->get_counter() - start_time;
 		if (elapsed >= timeout_ms || ++iters >= max_iters) {
-			DEBUG_WARN("I2C bus %u transfer timeout (%u ms, iters=%u)",
+			DEBUG_TRACE("I2C bus %u transfer timeout (%u ms, iters=%u)",
 			           bus, timeout_ms, (unsigned)iters);
 			m_stats[bus].timeouts++;
 
@@ -406,7 +430,7 @@ bool NrfI2C::transfer_with_retry(uint8_t bus, uint8_t address,
 		}
 
 		if (err != NRFX_SUCCESS) {
-			DEBUG_WARN("I2C %s(0x%02X) start err=0x%08X retry %u/%u",
+			DEBUG_TRACE("I2C %s(0x%02X) start err=0x%08X retry %u/%u",
 			           op_name, address, err, retry + 1, I2C_MAX_RETRIES);
 		}
 
@@ -418,7 +442,20 @@ bool NrfI2C::transfer_with_retry(uint8_t bus, uint8_t address,
 		}
 	}
 
-	DEBUG_ERROR("I2C %s(0x%02X) failed after %u retries", op_name, address, I2C_MAX_RETRIES);
+	DEBUG_ERROR("I2C %s(0x%02X) failed after %u retries [last err=%s]",
+	            op_name, address, I2C_MAX_RETRIES, twim_evt_str(s_last_twim_err[bus]));
+#if defined(BOARD_RSPB)
+	// A device wedged the bus (STC3117 on VBAT holding SCL low = only a battery
+	// power-cycle clears it; or a BUS_ERROR/timeout cascade leaving the TWIM BUSY).
+	// DISABLE the bus so every subsequent read fast-fails instead of storming 3×
+	// recover_bus + 100 ms timeouts — that storm blocks the cooperative scheduler
+	// (reed switch stops responding, main loop stalls). A rate-limited self-heal in
+	// acquire_sensors_pwr re-probes it later; a stuck VBAT gauge needs a power-cycle.
+	if (is_bus_stuck(bus)) {
+		DEBUG_ERROR("I2C bus %u wedged — disabling (fast-fail) to unblock the scheduler", bus);
+		m_is_enabled[bus] = false;
+	}
+#endif
 	return false;
 }
 

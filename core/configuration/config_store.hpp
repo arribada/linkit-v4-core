@@ -21,6 +21,13 @@
 #include "service_scheduler.hpp"
 #include "hauled_mode_service.hpp"
 
+// Default TPL5111 external-wakeup period (seconds) — MUST match the board's
+// TPL5111 timing resistor. Overridable at build time (build_rspb.sh: WAKEUP_PERIOD).
+// Still runtime-editable via DTE param WAKEUP_PERIOD (key PWP04, is_writable=true).
+#ifndef WAKEUP_PERIOD_DEFAULT
+#define WAKEUP_PERIOD_DEFAULT 6300U
+#endif
+
 static constexpr unsigned int MAX_CONFIG_ITEMS = (unsigned int)ParamID::__PARAM_SIZE;
 
 struct GNSSConfig {
@@ -215,7 +222,7 @@ protected:
 		/* [88] SHUTDOWN_TIMER */ 0U,
 		/* [89] BOOT_COUNTER */ 0U,
 		/* [90] BOOT_COUNTER_MODULO */ 2U,
-		/* [91] WAKEUP_PERIOD */ 6300U,
+		/* [91] WAKEUP_PERIOD */ (unsigned int)(WAKEUP_PERIOD_DEFAULT),  // cast: -D passes a bare int; keep the BaseType variant on unsigned (index) or deserialize mismatches + reset-crashes
 		/* [92] ARGOS_TCXO_WARMUP_TIME */ 5U,
 		/* DEVICE_DECID */ 0U,
 		/* GNSS_TRIGGER_ON_SURFACED */ (bool)true,
