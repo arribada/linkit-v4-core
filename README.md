@@ -171,6 +171,11 @@ Note: `ENABLE_THERMISTOR_SENSOR` and `ENABLE_SEA_TEMP_SENSOR` are mutually exclu
 | `CMAKE_BUILD_TYPE` | Debug | `Debug` or `Release` |
 | `BATTERY_MONITOR_TYPE` | ANALOG (STC3117 for RSPB) | `ANALOG`, `FAKE`, `STC3117` |
 | `GPS_FAKE_POSITION` | 0 | Simulate GPS fix at Saint-Paul, Reunion |
+| `WAKEUP_PERIOD` | 3600 (RSPB) | TPL5111 wakeup interval (s) — must match the board resistor; runtime-writable via `PWP04` |
+| `RSPB_VSENSORS_FLOOR` | 1 (RSPB) | Keep VSENSORS always on — I²C pull-ups live on it (0 = allow cut, test only) |
+| `SMD_FLASH_HOLD` | OFF (RSPB) | Test only: park nRF + hold SMD powered to flash the STM32WL over SWD |
+
+See [Wiki: Building](https://github.com/arribada/linkit-v4-core/wiki/03-%E2%80%90-Building) for the complete build-flag reference.
 
 ## Key Parameters (DTE)
 
@@ -184,7 +189,7 @@ Parameters are read/written via the DTE protocol (USB, BLE, or UART) using `PARM
 | Low Battery | `LBP` | `LBP01` (enable), `LBP02` (threshold), `LBP12` (critical) |
 | Zone | `ZOP` | `ZOP01` (type), `ZOP04` (out-of-zone mode) |
 | LoRa | `LRP` | `LRP01-06` (credentials), `LRP07-15` (radio config) |
-| Power/Wakeup | `PWP` | `PWP01` (shutdown timer), `PWP03` (boot modulo) |
+| Power/Wakeup | `PWP` | `PWP01` (shutdown timer), `PWP03` (boot modulo), `PWP04` (wakeup period) |
 | Identity | `IDP`/`IDT` | `IDP12` (Argos ID), `IDP13` (SMD seckey) |
 
 See [Parameters](https://github.com/arribada/linkit-v4-core/wiki/09-%E2%80%90-Parameters) for the complete parameter reference.
