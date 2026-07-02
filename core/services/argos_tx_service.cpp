@@ -79,7 +79,7 @@ void ArgosTxService::service_init() {
 		           argos_config.mode == BaseArgosMode::DUTY_CYCLE ? "DUTY_CYCLE" : "PASS_PREDICTION");
 	}
 
-	DEBUG_TRACE("ArgosTxService::service_init DEBUG ARGOS ID %d", argos_config.argos_id);
+	DEBUG_INFO("ArgosTxService::service_init: Argos ID=%u", (unsigned int)argos_config.argos_id);
 	m_sched.reset(argos_config.argos_id); // TODO verify if already set at this moment
 	m_depth_pile_manager.clear();
 	m_is_first_tx = true;
@@ -446,9 +446,23 @@ unsigned int ArgosTxService::service_next_schedule_in_ms() {
 				}
 				return Service::SCHEDULE_DISABLED;
 			} else if (!service_is_time_known()) {
-				DEBUG_TRACE("ArgosTxService::service_next_schedule_in_ms: can't schedule as GNSS_EN and RTC not set");
+				DEBUG_INFO("ArgosTxService: RTC time not known yet — TX disabled until first time fix");
 				return Service::SCHEDULE_DISABLED;
 			}
+#ifndef BOARD_RSPB
+			// First-message gate (non-RSPB): hold ALL TX — INCLUDING the time-sync
+			// burst — until the GNSS has updated the clock this session (a valid
+			// GPS fix). This matches v3, where "clock known" implied "GNSS set the
+			// clock" because the RTC was only ever set by GPS. On this firmware
+			// the RTC can also be set by DTE / pseudo-RTC, so we gate explicitly
+			// on a real GPS fix instead of on service_is_time_known(). RSPB is
+			// exempt — a boot-modulo session ending with no fix must still send
+			// an empty position + sensor packet.
+			if (!m_gps_fix_corrected_clock) {
+				DEBUG_INFO("ArgosTxService: GNSS has not updated the clock yet this session — TX held until first GPS fix");
+				return Service::SCHEDULE_DISABLED;
+			}
+#endif
 			if (m_is_first_tx && argos_config.time_sync_burst_en) {
 				// Modulation provisionnelle, comme LEGACY/DUTY_CYCLE plus bas :
 				// adaptive -> LDA2 (process_time_sync_burst rebascule en LDK selon
@@ -462,7 +476,7 @@ unsigned int ArgosTxService::service_next_schedule_in_ms() {
 				return 0;
 			}
 			if (m_depth_pile_manager.eligible() == 0) {
-				DEBUG_TRACE("ArgosTxService::service_next_schedule_in_ms: depth pile has no eligible entries");
+				DEBUG_INFO("ArgosTxService: depth pile has no eligible entries (NTRY exhausted or empty) — TX disabled until next GPS entry");
 				return Service::SCHEDULE_DISABLED;
 			}
 			if (argos_config.mode == BaseArgosMode::DUTY_CYCLE) {
@@ -515,9 +529,11 @@ unsigned int ArgosTxService::service_next_schedule_in_ms() {
 				BasePassPredict& pass_predict = configuration_store->read_pass_predict();
 				unsigned int schedule = m_sched.schedule_prepass(argos_config, pass_predict, m_scheduled_mode, now);
 				if (schedule == ArgosTxScheduler::INVALID_SCHEDULE) {
-					// No pass found — fall back to duty cycle to keep TX alive
-					DEBUG_WARN("ArgosTxService: PASS_PREDICTION returned no pass, falling back to DUTY_CYCLE");
-					return m_sched.schedule_duty_cycle(argos_config, now);
+					// v3 behavior: no pass found (or no known location) -> no TX.
+					// The service is re-armed by the next GPS entry (notify_peer_event
+					// reschedules when not scheduled). No duty-cycle fallback.
+					DEBUG_WARN("ArgosTxService: PASS_PREDICTION returned no pass — TX disabled until next GPS entry");
+					return Service::SCHEDULE_DISABLED;
 				}
 				return schedule;
 			}
@@ -770,15 +786,38 @@ void ArgosTxService::notify_peer_event(ServiceEvent& e) {
 			m_consecutive_device_errors = 0;
 		}
 
+		// First-message gate: a real GPS position fix is what corrects the RTC,
+		// so it unlocks Argos TX for this session on non-RSPB builds (see
+		// m_gps_fix_corrected_clock). NO_FIX (valid=false), FASTLOC and
+		// CLOUDLOCATE do NOT correct the clock and must not unlock.
+		if (entry.info.valid &&
+		    entry.info.event_type != GPSEventType::FASTLOC &&
+		    entry.info.event_type != GPSEventType::CLOUDLOCATE &&
+		    !m_gps_fix_corrected_clock) {
+			m_gps_fix_corrected_clock = true;
+			DEBUG_INFO("ArgosTxService: first valid GPS fix this session — TX unlocked");
+		}
+
 		// Update last known location (real fix only — fastloc is too inaccurate for scheduling)
 		if (entry.info.valid && entry.info.event_type != GPSEventType::FASTLOC) {
 			DEBUG_TRACE("ArgosTxService::notify_peer_event: updated GPS location");
 			m_sched.set_last_location(entry.info.lon, entry.info.lat);
 
-			// Real GPS fix supersedes any CloudLocate/Fastloc/NO_FIX entries in the depth pile
-			unsigned int purged = m_depth_pile_manager.purge_non_fix_entries();
-			if (purged) {
-				DEBUG_INFO("ArgosTxService::notify_peer_event: purged %u non-fix entries from depth pile", purged);
+			// A real GPS fix supersedes degraded CloudLocate/Fastloc entries in
+			// the depth pile (all modes — they must not replay stale/blob data
+			// once a real position exists). The NO_FIX 0xFF heartbeats are only
+			// purged in SURFACING_BURST: in LEGACY/DUTY_CYCLE/PASS_PREDICTION
+			// (v3 behavior) they are delta_time_loc grid fillers that must keep
+			// occupying their slot for multi-position dating.
+			{
+				ArgosConfig purge_cfg;
+				configuration_store->get_argos_configuration(purge_cfg);
+				bool include_no_fix = (purge_cfg.mode == BaseArgosMode::SURFACING_BURST);
+				unsigned int purged = m_depth_pile_manager.purge_non_fix_entries(include_no_fix);
+				if (purged) {
+					DEBUG_INFO("ArgosTxService::notify_peer_event: purged %u degraded entr%s from depth pile (no_fix_included=%u)",
+					           purged, purged == 1 ? "y" : "ies", (unsigned int)include_no_fix);
+				}
 			}
 
 			// SURFACING_BURST: GNSS fix received — switch to GNSS phase.
@@ -1119,15 +1158,6 @@ void ArgosTxService::process_sensor_burst() {
 	unsigned int size_bits;
 	GPSLogEntry *gps = m_depth_pile_manager.retrieve_gps_single((unsigned int)argos_config.depth_pile);
 	if (gps != nullptr) {
-		// LAST_KNOWN age cap (ARP37): the sensor packet embeds the cached GPS
-		// position, so honor the same freshness bound as process_gnss_burst — skip
-		// the whole TX if the last known position is older than the cap.
-		if (last_known_position_too_old(*gps, argos_config)) {
-			DEBUG_INFO("ArgosTxService::process_sensor_burst: LAST_KNOWN — last position older than %u s, skipping TX",
-			           argos_config.last_known_max_age_s);
-			service_complete();
-			return;
-		}
 		// If GPS entry is a CloudLocate, send CloudLocate packet (extract blob from overlay)
 		if (gps->info.event_type == GPSEventType::CLOUDLOCATE) {
 			const uint8_t* overlay = reinterpret_cast<const uint8_t*>(&gps->info.lon);
@@ -1335,23 +1365,6 @@ void ArgosTxService::process_gnss_burst() {
 		v = m_depth_pile_manager.retrieve_gps((unsigned int)argos_config.depth_pile);
 	}
 	if (v.size()) {
-		// LAST_KNOWN age cap (ARP37): re-send the last known position only while it
-		// is fresher than ARGOS_LAST_KNOWN_MAX_AGE_S; drop staler entries. If none
-		// remain -> no TX (degrades to NO_TX for that cycle). The helper scopes this
-		// to LEGACY/DUTY_CYCLE/PASS_PREDICTION (SURFACING_BURST keeps its cascade);
-		// NO_TX never gets here with stale data (bounded burst_counter) and EMPTY_POS
-		// keeps the legacy behavior. Mirrored in process_sensor_burst.
-		if (argos_config.tx_no_fix_policy == BaseTxNoFixPolicy::LAST_KNOWN) {
-			v.erase(std::remove_if(v.begin(), v.end(), [&](GPSLogEntry* e) {
-				return last_known_position_too_old(*e, argos_config);
-			}), v.end());
-			if (v.empty()) {
-				DEBUG_INFO("ArgosTxService::process_gnss_burst: LAST_KNOWN — last position older than %u s, skipping TX",
-				           argos_config.last_known_max_age_s);
-				service_complete();
-				return;
-			}
-		}
 		KineisPacket packet;
 
 		// Check if the latest entry is a CloudLocate
@@ -2204,17 +2217,6 @@ unsigned int ArgosTxService::compute_gps_log_age_seconds(const GPSLogEntry &entr
 	// rather than reporting age=0 which would falsely qualify as "fresh".
 	if (now < entry_time) return UINT_MAX;
 	return (unsigned int)(now - entry_time);
-}
-
-bool ArgosTxService::last_known_position_too_old(const GPSLogEntry &e, const ArgosConfig &cfg) {
-	if (cfg.tx_no_fix_policy != BaseTxNoFixPolicy::LAST_KNOWN) return false;
-	if (cfg.last_known_max_age_s == 0) return false;
-	// Scope to the modes the no-fix policy governs; SURFACING_BURST keeps its own
-	// progressive cascade and must not have its (usually fresh) fixes age-dropped.
-	if (cfg.mode != BaseArgosMode::LEGACY &&
-	    cfg.mode != BaseArgosMode::DUTY_CYCLE &&
-	    cfg.mode != BaseArgosMode::PASS_PREDICTION) return false;
-	return compute_gps_log_age_seconds(e, service_current_time()) > cfg.last_known_max_age_s;
 }
 
 unsigned int ArgosTxService::apply_spacing_guard(unsigned int proposed_delay_ms,

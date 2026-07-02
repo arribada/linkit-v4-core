@@ -28,17 +28,15 @@ void DepthPileManager::notify_peer_event(ServiceEvent& e) {
 		GPSLogEntry& entry = std::get<GPSLogEntry>(e.event_data);
 		if (!entry.info.valid) {
 			// NO_FIX entries carry no position — they become 0xFF markers in
-			// the transmitted packet, wasting airtime. Skip them ONLY when
-			// both conditions hold:
-			//  - fastloc fallback is enabled (GNP45 != OFF)
-			//  - ARGOS_MODE is SURFACING_BURST (the only mode where
-			//    process_status_burst() actually runs and can emit the
-			//    DEGRADED_PVT or CLOUDLOCATE replacement packet).
-			// In LEGACY/DUTY_CYCLE, or when fastloc is OFF, we keep the legacy
-			// Argos behavior so the timestamp still serves as an "alive"
-			// heartbeat — avoids going silent when GPS is weak.
+			// the transmitted packet. v3 behavior (restored 2026-07): in
+			// LEGACY/DUTY_CYCLE/PASS_PREDICTION they ARE cached — the 0xFF
+			// packet doubles as an "alive" heartbeat and the entry occupies its
+			// slot on the uniform delta_time_loc grid, keeping multi-position
+			// packet dating correct. Only exception: SURFACING_BURST with
+			// fastloc enabled (GNP45 != OFF), where process_doppler_burst()
+			// emits the DEGRADED_PVT / CLOUDLOCATE replacement packet instead.
 			unsigned int fastloc_mode = configuration_store->read_param<unsigned int>(ParamID::GNSS_FASTLOC_MODE);
-			// Use the EFFECTIVE Argos mode + no-fix policy from the per-regime cascade
+			// Use the EFFECTIVE Argos mode from the per-regime cascade
 			// (resolves LB / OUT_OF_ZONE / HAULED overrides), matching what
 			// update_depth_pile and ArgosTxService act on — NOT the raw ARGOS_MODE slot
 			// (the NORMAL-regime value), which would mis-gate when per-regime modes differ.
@@ -50,19 +48,7 @@ void DepthPileManager::notify_peer_event(ServiceEvent& e) {
 				           fastloc_mode);
 				return;  // Do NOT cache, do NOT mark ready — fastloc will handle fallback
 			}
-			// No-fix TX policy (ARP36): in LEGACY/DUTY_CYCLE/PASS_PREDICTION only
-			// EMPTY_POS keeps the 0xFF "alive" heartbeat. NO_TX and LAST_KNOWN do
-			// NOT cache the NO_FIX entry — NO_TX simply stays silent, LAST_KNOWN
-			// re-uses the last real fix instead (see ArgosTxService scheduling).
-			if (cfg.tx_no_fix_policy != BaseTxNoFixPolicy::EMPTY_POS &&
-			    (cfg.mode == BaseArgosMode::LEGACY ||
-			     cfg.mode == BaseArgosMode::DUTY_CYCLE ||
-			     cfg.mode == BaseArgosMode::PASS_PREDICTION)) {
-				DEBUG_INFO("DepthPileManager::notify_peer_event: skip NO_FIX (no-fix policy=%u, mode=%u)",
-				           (unsigned int)cfg.tx_no_fix_policy, (unsigned int)cfg.mode);
-				return;  // NO_TX / LAST_KNOWN: do not cache the 0xFF heartbeat
-			}
-			DEBUG_WARN("DepthPileManager::notify_peer_event: GNSS cache set (no fix, position invalid)");
+			DEBUG_WARN("DepthPileManager::notify_peer_event: GNSS NO_FIX cached — will TX as 0xFF heartbeat (grid filler)");
 		} else {
 			DEBUG_TRACE("DepthPileManager::notify_peer_event: GNSS cache set");
 		}
@@ -130,8 +116,9 @@ void DepthPileManager::notify_peer_event(ServiceEvent& e) {
 		// If we didn't yet gather all the expected inputs then we start
 		// a timeout to force dummy values into the depth pile
 		if ((m_sensor_tx_current & m_sensor_tx_enable) != m_sensor_tx_enable) {
+			DEBUG_TRACE("DepthPileManager: GNSS inactive, sensors pending (curr=%08x enable=%08x) — arming dummy-fill timeout", m_sensor_tx_current, m_sensor_tx_enable);
 			m_timeout_task = system_scheduler->post_task_prio([this]() {
-				DEBUG_TRACE("DepthPileManager: sensor timeout: curr=%08x enable=%08x", m_sensor_tx_current, m_sensor_tx_enable);
+				DEBUG_WARN("DepthPileManager: sensor timeout — filling missing sensor with 0xFF dummy values: curr=%08x enable=%08x", m_sensor_tx_current, m_sensor_tx_enable);
 				if (((1 << (int)ServiceIdentifier::ALS_SENSOR) & m_sensor_tx_enable) &&
 					((1 << (int)ServiceIdentifier::ALS_SENSOR) & m_sensor_tx_current) == 0) {
 					m_als_cache.port[0] = 0xFFFFFFFF;
@@ -201,32 +188,38 @@ void DepthPileManager::update_depth_pile() {
 
 		unsigned int burst_counter;
 		if (argos_config.mode == BaseArgosMode::DUTY_CYCLE ||
-			argos_config.mode == BaseArgosMode::LEGACY) {
-			if (argos_config.tx_no_fix_policy == BaseTxNoFixPolicy::NO_TX) {
-				// NO_TX: bound retransmission to NTRY_PER_MESSAGE (0 -> 1) so each
-				// fix is sent N times then goes inert — no infinite replay of old
-				// positions. (EMPTY_POS / LAST_KNOWN keep the UINT_MAX behavior.)
-				burst_counter = (argos_config.ntry_per_message == 0) ? 1 : argos_config.ntry_per_message;
-			} else {
-				// Legacy/Duty: unlimited retransmissions (depth pile manages history)
-				burst_counter = UINT_MAX;
-			}
+			argos_config.mode == BaseArgosMode::LEGACY ||
+			argos_config.mode == BaseArgosMode::PASS_PREDICTION) {
+			// LEGACY / DUTY_CYCLE / PASS_PREDICTION: NTRY_PER_MESSAGE (ARP19) is
+			// the number of times each depth pile entry is transmitted — N full
+			// sweeps of the pile (A, B, C, A, B, C, ...) then the entry goes
+			// inert. 0 = unlimited: keep cycling the pile until newer fixes
+			// evict the entries (FIFO). A no-fix cycle caches a NO_FIX entry
+			// (see notify_peer_event) transmitted as a 0xFF heartbeat that
+			// also fills its delta_time_loc grid slot (v3 behavior).
+			burst_counter = (argos_config.ntry_per_message == 0) ? UINT_MAX : argos_config.ntry_per_message;
 		} else if (argos_config.ntry_per_message == 0) {
-			// Surfacing burst / Pass prediction: 0 means send once per fix
+			// Surfacing burst: 0 means send once per fix
 			burst_counter = 1;
 		} else {
 			burst_counter = argos_config.ntry_per_message;
 		}
+		DEBUG_TRACE("DepthPileManager: mode=%u ntry_per_message=%u -> burst_counter=%u, pile max_size=%u",
+		            (unsigned int)argos_config.mode, argos_config.ntry_per_message, burst_counter, max_size);
 
 		// Synchronously update the depth piles
 		if (m_sensor_tx_current & (1 << (int)ServiceIdentifier::GNSS_SENSOR)) {
-			// NO_FIX dedup: if the cache is NO_FIX and the last pile entry is
-			// also NO_FIX, replace rather than append. Multiple consecutive
-			// NO_FIX markers carry the same information ("still no fix") — we
-			// keep one fresh timestamp as heartbeat and drop the older ones
-			// instead of wasting airtime (each NO_FIX costs 50+ bits of 0xFF
-			// padding in a GPS Multi packet).
-			if (m_gps_cache.info.event_type == GPSEventType::NO_FIX) {
+			bool is_planned_mode = (argos_config.mode == BaseArgosMode::LEGACY ||
+			                        argos_config.mode == BaseArgosMode::DUTY_CYCLE ||
+			                        argos_config.mode == BaseArgosMode::PASS_PREDICTION);
+			if (m_gps_cache.info.event_type == GPSEventType::NO_FIX && !is_planned_mode) {
+				// NO_FIX dedup (SURFACING_BURST & co only): if the cache is
+				// NO_FIX and the last pile entry is also NO_FIX, replace rather
+				// than append — keep one fresh heartbeat timestamp instead of
+				// wasting airtime. NOT applied to LEGACY/DUTY_CYCLE/
+				// PASS_PREDICTION (v3 behavior): there every NO_FIX entry
+				// occupies its own slot on the uniform delta_time_loc grid so
+				// multi-position packet dating stays exact.
 				bool replaced = m_gps_depth_pile.store_or_replace_last(m_gps_cache, burst_counter,
 					[](const GPSLogEntry& prev) {
 						return prev.info.event_type == GPSEventType::NO_FIX;
@@ -236,6 +229,8 @@ void DepthPileManager::update_depth_pile() {
 				}
 			} else {
 				m_gps_depth_pile.store(m_gps_cache, burst_counter);
+				DEBUG_INFO("DepthPileManager: GPS %s stored, burst_counter=%u (0xFFFFFFFF=unlimited)",
+				           m_gps_cache.info.valid ? "FIX" : "NO_FIX heartbeat", burst_counter);
 			}
 		}
 		if (m_sensor_tx_current & (1 << (int)ServiceIdentifier::ALS_SENSOR)) {

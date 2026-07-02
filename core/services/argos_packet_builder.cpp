@@ -308,29 +308,6 @@ KineisPacket ArgosPacketBuilder::build_cloudlocate_packet(const uint8_t* blob, u
 	return packet;
 }
 
-// Map the 4-bit DELTA_TIME_LOC code to seconds, for the LONG-packet v2 skip field.
-// Inverse of config_store::calc_delta_time_loc (seconds -> enum).
-static unsigned int delta_time_loc_to_seconds(BaseDeltaTimeLoc d) {
-	switch (d) {
-		case BaseDeltaTimeLoc::DELTA_T_1MIN:  return 60;
-		case BaseDeltaTimeLoc::DELTA_T_2MIN:  return 120;
-		case BaseDeltaTimeLoc::DELTA_T_5MIN:  return 300;
-		case BaseDeltaTimeLoc::DELTA_T_10MIN: return 600;
-		case BaseDeltaTimeLoc::DELTA_T_15MIN: return 900;
-		case BaseDeltaTimeLoc::DELTA_T_20MIN: return 1200;
-		case BaseDeltaTimeLoc::DELTA_T_30MIN: return 1800;
-		case BaseDeltaTimeLoc::DELTA_T_45MIN: return 2700;
-		case BaseDeltaTimeLoc::DELTA_T_1HR:   return 3600;
-		case BaseDeltaTimeLoc::DELTA_T_2HR:   return 7200;
-		case BaseDeltaTimeLoc::DELTA_T_3HR:   return 10800;
-		case BaseDeltaTimeLoc::DELTA_T_4HR:   return 14400;
-		case BaseDeltaTimeLoc::DELTA_T_6HR:   return 21600;
-		case BaseDeltaTimeLoc::DELTA_T_12HR:  return 43200;
-		case BaseDeltaTimeLoc::DELTA_T_24HR:  return 86400;
-		default: return 0;
-	}
-}
-
 KineisPacket ArgosPacketBuilder::build_long_packet(std::vector<GPSLogEntry*> &gps_entries,
 		bool is_out_of_zone,
 		bool is_low_battery,
@@ -409,48 +386,10 @@ KineisPacket ArgosPacketBuilder::build_long_packet(std::vector<GPSLogEntry*> &gp
 		}
 	}
 
-	// === LONG v2 skip field (2026-06) ==================================
-	// Entries are MOST-RECENT-FIRST (gps_entries[0] = newest). Legacy LONG decoders
-	// date subsequent positions as date(GPS[i]) = base - i*delta_time_loc (uniform
-	// spacing, with no-fix slots implicitly filled by 0xFF entries). The no-fix TX
-	// policy (NO_TX / LAST_KNOWN) drops those 0xFF grid-fillers, so the real
-	// positions packed here may NOT be uniformly spaced. We therefore encode a
-	// per-position "skip" = number of delta_time_loc steps GPS[i] sits BEFORE
-	// GPS[i-1], in the free bits after pos2:
-	//   bit 168     : format version (0 = legacy uniform, 1 = skips present)
-	//   bits 169-173: skip[1] (1..31)   bits 174-178: skip[2] (1..31)
-	// Decoder: date(GPS[i]) = date(GPS[i-1]) - skip[i]*delta_time_loc. When all skips == 1
-	// (uniform — e.g. EMPTY_POS with 0xFF grid-fill) the version bit stays 0 and the
-	// frame is byte-identical to the legacy format, so existing decoders are
-	// unaffected. base_pos is at 168 here (after header+date+pos0+flags+delta+pos1+pos2).
-	{
-		unsigned int delta_s = delta_time_loc_to_seconds(delta_time_loc);
-		unsigned int skip[MAX_GPS_ENTRIES_IN_PACKET];
-		for (unsigned int i = 0; i < MAX_GPS_ENTRIES_IN_PACKET; i++) skip[i] = 1;
-		bool nonuniform = false;
-		for (unsigned int i = 1; i < MAX_GPS_ENTRIES_IN_PACKET && i < gps_entries.size(); i++) {
-			if (delta_s > 0 && gps_entries[i]->info.valid && gps_entries[i-1]->info.valid) {
-				// most-recent-first: gps_entries[i] is OLDER than gps_entries[i-1].
-				std::time_t tnew = gps_entries[i-1]->info.schedTime;  // newer
-				std::time_t told = gps_entries[i]->info.schedTime;    // older
-				if (tnew > told) {
-					unsigned int s = (unsigned int)(((tnew - told) + (std::time_t)delta_s / 2) / (std::time_t)delta_s);
-					if (s < 1) s = 1;
-					if (s > 31) s = 31;
-					skip[i] = s;
-				}
-			}
-			if (skip[i] != 1) nonuniform = true;
-		}
-		if (nonuniform) {
-			PACK_BITS(1u, packet, base_pos, 1);        // bit 168: version = 1 (skips present)
-			PACK_BITS(skip[1], packet, base_pos, 5);   // bits 169-173
-			PACK_BITS(skip[2], packet, base_pos, 5);   // bits 174-178
-			DEBUG_TRACE("ArgosPacketBuilder::build_long_packet: v2 skips skip1=%u skip2=%u delta_s=%u",
-			            skip[1], skip[2], delta_s);
-		}
-		// else: leave bits 168.. as 0 -> byte-identical to the legacy uniform frame
-	}
+	// Legacy LONG format: decoders date subsequent positions as
+	// date(GPS[i]) = base - i*delta_time_loc (uniform spacing assumed).
+	// Bits 168+ stay 0. (The 2026-06 "v2 skip field" extension was removed
+	// 2026-07 — decoders expect the plain legacy frame.)
 
 	// LDA2 firmware-embedded CRC8 at byte 23 (modem does not add CRC for LDA2).
 	apply_lda2_crc8(packet);
@@ -468,11 +407,14 @@ KineisPacket ArgosPacketBuilder::build_gnss_packet(std::vector<GPSLogEntry*> &v,
 		size_bits = 0;
 		return {};
 	} else if (v.size() > 1) {
-		std::reverse(v.begin(), v.end()); // Reverse to most-recent-first: gps_entries[0]=newest (date header + skip[] anchor)
+		std::reverse(v.begin(), v.end()); // Reverse to most-recent-first: gps_entries[0]=newest (date header anchor)
 		size_bits = LONG_PACKET_BITS;
+		DEBUG_INFO("ArgosPacketBuilder::build_gnss_packet: LONG packet, %u position(s), %u bits",
+		           (unsigned int)v.size(), size_bits);
 		return build_long_packet(v, is_out_of_zone, is_low_battery, delta_time_loc);
 	} else {
 		size_bits = SHORT_PACKET_BITS;
+		DEBUG_INFO("ArgosPacketBuilder::build_gnss_packet: SHORT packet, 1 position, %u bits", size_bits);
 		return build_short_packet(v[0], is_out_of_zone, is_low_battery);
 	}
 }
@@ -515,11 +457,11 @@ KineisPacket ArgosPacketBuilder::build_doppler_packet(unsigned int batt_voltage,
 
 	unsigned int batt = convert_battery_voltage(batt_voltage);
 	PACK_BITS(batt, packet, base_pos, 7);
-	DEBUG_TRACE("ArgosPacketBuilder::build_short_packet: voltage=%u (%u)", (unsigned int)batt, (unsigned int)batt_voltage);
+	DEBUG_TRACE("ArgosPacketBuilder::build_doppler_packet: voltage=%u (%u)", (unsigned int)batt, (unsigned int)batt_voltage);
 
 	// LOWBATERY_FLAG
 	PACK_BITS(is_low_battery, packet, base_pos, 1);
-	DEBUG_TRACE("ArgosPacketBuilder::build_short_packet: is_lb=%u", (unsigned int)is_low_battery);
+	DEBUG_TRACE("ArgosPacketBuilder::build_doppler_packet: is_lb=%u", (unsigned int)is_low_battery);
 
 	// CRC8 is handled by the satellite module (SMD/KIM2)
 

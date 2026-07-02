@@ -45,6 +45,15 @@ private:
 	ArgosTxScheduler m_sched;
 	bool m_is_first_tx = true;
 	bool m_is_tx_pending = false;
+	// First-message gate (non-RSPB, per boot): set true once a valid GPS fix
+	// (GPSEventType::FIX) has corrected the clock this power session. Until then,
+	// LEGACY/DUTY_CYCLE/PASS_PREDICTION hold ALL TX (time-sync burst, NO_FIX
+	// heartbeat and position) so nothing is transmitted on a DTE/pseudo-RTC clock
+	// before the GPS has actually fixed in the field. RSPB is exempt at compile
+	// time (#ifndef BOARD_RSPB): a boot-modulo session that ends with no fix must
+	// still send an empty (0xFF) position + sensor packet. Reset per boot via the
+	// member initializer (the service is constructed fresh at each power-on).
+	bool m_gps_fix_corrected_clock = false;
 	bool m_tcxo_skip_on_next_tx = false;
 	unsigned int m_session_tx_count = 0;
 	std::function<void()> m_scheduled_task;
@@ -135,15 +144,8 @@ private:
 	// if it is fresh enough per ParamID::GNSS_REUSE_FIX_MAX_AGE_S. Returns false
 	// when the pile is empty, the latest entry is not a real fix, the entry is
 	// older than the configured threshold, or reuse is disabled (threshold = 0).
-	// Currently NOT called — wiring lands with the HAULED consumer (Plan 1 step 3).
+	// Consumed by process_gnss_burst_from_cached (HAULED REUSE_LAST path).
 	bool read_cached_last_fix(GPSLogEntry &out);
-
-	// LAST_KNOWN age cap (ARP37): true if entry @p e must be dropped because the
-	// no-fix policy is LAST_KNOWN, the cap is enabled, the effective mode is one of
-	// LEGACY/DUTY_CYCLE/PASS_PREDICTION (SURFACING_BURST keeps its own cascade), and
-	// the entry is older than ARGOS_LAST_KNOWN_MAX_AGE_S. Shared by process_gnss_burst
-	// and process_sensor_burst so both honor the freshness bound.
-	bool last_known_position_too_old(const GPSLogEntry &e, const ArgosConfig &cfg);
 
 	// Adaptive modulation: switch RCONF if needed before TX
 	bool ensure_modulation(KineisModulation target);

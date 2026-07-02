@@ -334,15 +334,14 @@ const BaseMap param_map[] = {
 	// give a true 24h-since-deployment window across TPL5111 hard shutdowns.
 	// User can override via DTE PARMW for re-deployment scenarios.
 	{ "LED_HRS24_RTC_CUTOFF", "LDP03", BaseEncoding::DATESTRING, 0, 0, {}, true, true },
-	// [223] Argos no-fix TX policy — reclaimed 2026-06 from former
-	// GNSS_BCKP_CHARGE_INT (GNP47, deprecated deep-idle refactor).
-	// 0=NO_TX, 1=LAST_KNOWN, 2=EMPTY_POS. Applies to LEGACY/DUTY_CYCLE/
-	// PASS_PREDICTION when a cycle has no fresh GPS fix. Default NO_TX.
-	{ "ARGOS_TX_NO_FIX_POLICY", "ARP36", BaseEncoding::UINT, 0U, 2U, { 0U, 1U, 2U }, true, true },
-	// [224] Max age (s) of the last known good fix used by LAST_KNOWN; a fix older
-	// than this falls back to NO_TX. Reclaimed from former GNSS_BCKP_CHARGE_DUR
-	// (GNP48). Distinct from GNSS_REUSE_FIX_MAX_AGE_S/GNP50 (hauled REUSE_LAST).
-	{ "ARGOS_LAST_KNOWN_MAX_AGE_S", "ARP37", BaseEncoding::UINT, 0U, 0xFFFFFFFFU, {}, true, true },
+	// [223] RESERVED — former ARGOS_TX_NO_FIX_POLICY (ARP36, removed 2026-07: the
+	// v3 no-fix behavior is hardwired in LEGACY/DUTY_CYCLE/PASS_PREDICTION — a
+	// no-fix cycle TXs a 0xFF heartbeat/grid-filler; repetitions per
+	// NTRY_PER_MESSAGE). Before that, GNSS_BCKP_CHARGE_INT (GNP47).
+	{ "_RESERVED_223", "", BaseEncoding::UINT, 0, 0, {}, false, false },
+	// [224] RESERVED — former ARGOS_LAST_KNOWN_MAX_AGE_S (ARP37, removed 2026-07
+	// with the LAST_KNOWN policy). Before that, GNSS_BCKP_CHARGE_DUR (GNP48).
+	{ "_RESERVED_224", "", BaseEncoding::UINT, 0, 0, {}, false, false },
 	// [225] RESERVED — former GNSS_BCKP_CHARGE_UW_ONLY (GNP49), deep-idle refactor.
 	// Reserved for flash-layout compat; key="" + settable=false -> PARAM_KEY_NOT_FOUND.
 	{ "_RESERVED_225", "", BaseEncoding::BOOLEAN, 0, 0, {}, false, false },
