@@ -37,6 +37,19 @@ public:
 	static inline bool m_config_flush_active = false;
 	static void notify_bad_filesystem_error();
 
+	/// @brief True while a reed-switch confirmation gesture is awaiting the
+	/// operator's 2nd gesture (or its re-engage timeout). Read by the LED state
+	/// machine to give the confirmation blink (fast BLUE=config / RED=power-off /
+	/// GREEN=exit-config) priority: while this is true the LED FSM ignores
+	/// transient/background LED events (boot white, magnet-engaged white, GNSS,
+	/// Argos, dive/surface) so the confirmation prompt is not stomped mid-gesture.
+	/// Safe because every confirmation RESOLUTION path clears m_confirmation_pending
+	/// BEFORE dispatching the resolved-state LED — so a real resolution is never
+	/// gated. See ledsm.cpp / led_confirmation_gesture_pending().
+	static bool is_confirmation_gesture_pending() {
+		return m_confirmation_pending != ConfirmationPending::NONE;
+	}
+
 protected:
 	enum class ConfirmationPending { NONE, ENTER_CONFIG, EXIT_CONFIG, POWEROFF };
 	static inline ConfirmationPending m_confirmation_pending = ConfirmationPending::NONE;

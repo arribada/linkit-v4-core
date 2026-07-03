@@ -8,6 +8,15 @@
 #include "tinyfsm.hpp"
 #include "timer.hpp"
 
+/// @brief True while a reed-switch confirmation gesture is pending (fast
+/// blue/red/green blink awaiting the operator's 2nd gesture). Defined in
+/// gentracker.cpp; forwards to GenTracker::is_confirmation_gesture_pending().
+/// While true, the LED FSM gates out transient/background LED events so the
+/// confirmation prompt is not interrupted by the boot white, the magnet-engaged
+/// white, or a GNSS/Argos/dive/surface flash. Declared here (not via a
+/// GenTracker include) to keep the LED FSM decoupled from the main FSM.
+bool led_confirmation_gesture_pending();
+
 /// @name LED state events (dispatched by GenTracker FSM)
 /// @{
 struct SetLEDOff : tinyfsm::Event { };
@@ -101,27 +110,45 @@ protected:
 	static inline bool m_is_gnss_on = false;
 	static inline bool m_is_magnet_engaged = false;
 public:
-	void react(SetLEDOff const &) { transit<LEDOff>(); }
-	void react(SetLEDMagnetEngaged const &) { if (!m_is_magnet_engaged) { m_is_magnet_engaged = true; enter(); } }
-	void react(SetLEDMagnetDisengaged const &) { if (m_is_magnet_engaged) { m_is_magnet_engaged = false; enter(); } }
-	void react(SetLEDBoot const &) { transit<LEDBoot>(); }
-	void react(SetLEDPowerDown const &) { transit<LEDPowerDown>(); }
+	// --- Confirmation-gesture LED priority (2026-07) --------------------------
+	// When the operator triggers a reed confirmation gesture, the LED fast-blinks
+	// (BLUE=enter-config, RED=power-off, GREEN=exit-config) and waits for the 2nd
+	// gesture (release + re-engage). That prompt must NOT be stomped by transient
+	// background LED events firing in the same window — the boot white
+	// (SetLEDBoot / boot→preop SetLEDOff), the magnet-engaged white, or a
+	// GNSS/Argos/dive/surface flash — otherwise the operator loses the visual cue
+	// mid-gesture (esp. when config is triggered right at startup, where the boot
+	// LED sequence overlaps the confirm blink). So all transient/background events
+	// route through transit_unless_confirming(), which no-ops while a confirmation
+	// is pending. The three Confirm events (to show/escalate the prompt) and the
+	// safety-critical Error / BatteryCritical / DFU / OTA events bypass the gate
+	// and transit directly. This never blocks a real confirmation RESOLUTION: every
+	// resolution path in GenTracker clears m_confirmation_pending BEFORE dispatching
+	// the resolved-state LED, so the gate is already open by then.
+	void react(SetLEDOff const &) { transit_unless_confirming<LEDOff>(); }
+	// Magnet engage/disengage: ALWAYS track m_is_magnet_engaged (downstream states
+	// colour on it), but suppress the LED repaint (enter()) while confirming so the
+	// blink is untouched — the tracked state is applied when the gesture resolves.
+	void react(SetLEDMagnetEngaged const &) { if (!m_is_magnet_engaged) { m_is_magnet_engaged = true; if (!led_confirmation_gesture_pending()) enter(); } }
+	void react(SetLEDMagnetDisengaged const &) { if (m_is_magnet_engaged) { m_is_magnet_engaged = false; if (!led_confirmation_gesture_pending()) enter(); } }
+	void react(SetLEDBoot const &) { transit_unless_confirming<LEDBoot>(); }
+	void react(SetLEDPowerDown const &) { transit_unless_confirming<LEDPowerDown>(); }
 	void react(SetLEDError const &) { transit<LEDError>(); }
-	void react(SetLEDPreOperationalPending const &) { transit<LEDPreOperationalPending>(); }
-	void react(SetLEDPreOperationalError const &) { transit<LEDPreOperationalError>(); }
-	void react(SetLEDPreOperationalBatteryNominal const &) { transit<LEDPreOperationalBatteryNominal>(); }
-	void react(SetLEDPreOperationalBatteryLow const &) { transit<LEDPreOperationalBatteryLow>(); }
-	void react(SetLEDConfigPending const &) { transit<LEDConfigPending>(); }
-	void react(SetLEDConfigNotConnected const &) { transit<LEDConfigNotConnected>(); }
-	void react(SetLEDConfigConnected const &) { transit<LEDConfigConnected>(); }
-	void react(SetLEDGNSSOn const &) { transit<LEDGNSSOn>(); }
-	void react(SetLEDGNSSOffWithFix const &) { transit<LEDGNSSOffWithFix>(); }
-	void react(SetLEDGNSSOffWithoutFix const &) { transit<LEDGNSSOffWithoutFix>(); }
-	void react(SetLEDGNSSCloudLocateReady const &) { transit<LEDGNSSCloudLocateReady>(); }
-	void react(SetLEDGNSSDeepIdle const &) { transit<LEDGNSSDeepIdle>(); }
-	void react(SetLEDGNSSPowerOff const &) { transit<LEDGNSSPowerOff>(); }
-	void react(SetLEDArgosTX const &) { transit<LEDArgosTX>(); }
-	void react(SetLEDArgosTXComplete const &) { transit<LEDArgosTXComplete>(); }
+	void react(SetLEDPreOperationalPending const &) { transit_unless_confirming<LEDPreOperationalPending>(); }
+	void react(SetLEDPreOperationalError const &) { transit_unless_confirming<LEDPreOperationalError>(); }
+	void react(SetLEDPreOperationalBatteryNominal const &) { transit_unless_confirming<LEDPreOperationalBatteryNominal>(); }
+	void react(SetLEDPreOperationalBatteryLow const &) { transit_unless_confirming<LEDPreOperationalBatteryLow>(); }
+	void react(SetLEDConfigPending const &) { transit_unless_confirming<LEDConfigPending>(); }
+	void react(SetLEDConfigNotConnected const &) { transit_unless_confirming<LEDConfigNotConnected>(); }
+	void react(SetLEDConfigConnected const &) { transit_unless_confirming<LEDConfigConnected>(); }
+	void react(SetLEDGNSSOn const &) { transit_unless_confirming<LEDGNSSOn>(); }
+	void react(SetLEDGNSSOffWithFix const &) { transit_unless_confirming<LEDGNSSOffWithFix>(); }
+	void react(SetLEDGNSSOffWithoutFix const &) { transit_unless_confirming<LEDGNSSOffWithoutFix>(); }
+	void react(SetLEDGNSSCloudLocateReady const &) { transit_unless_confirming<LEDGNSSCloudLocateReady>(); }
+	void react(SetLEDGNSSDeepIdle const &) { transit_unless_confirming<LEDGNSSDeepIdle>(); }
+	void react(SetLEDGNSSPowerOff const &) { transit_unless_confirming<LEDGNSSPowerOff>(); }
+	void react(SetLEDArgosTX const &) { transit_unless_confirming<LEDArgosTX>(); }
+	void react(SetLEDArgosTXComplete const &) { transit_unless_confirming<LEDArgosTXComplete>(); }
 	void react(SetLEDBatteryCritical const &) { transit<LEDBatteryCritical>(); }
 	void react(SetLEDDFUUpdate const &) { transit<LEDDFUUpdate>(); }
 	void react(SetLEDOTASuccess const &) { transit<LEDOTASuccess>(); }
@@ -130,11 +157,22 @@ public:
 	void react(SetLEDConfirmConfig const &) { transit<LEDConfirmConfig>(); }
 	void react(SetLEDConfirmExitConfig const &) { transit<LEDConfirmExitConfig>(); }
 	void react(SetLEDConfirmPowerOff const &) { transit<LEDConfirmPowerOff>(); }
-	void react(SetLEDSurfaceDetected const &) { transit<LEDSurfaceDetected>(); }
-	void react(SetLEDDiveDetected const &) { transit<LEDDiveDetected>(); }
+	void react(SetLEDSurfaceDetected const &) { transit_unless_confirming<LEDSurfaceDetected>(); }
+	void react(SetLEDDiveDetected const &) { transit_unless_confirming<LEDDiveDetected>(); }
 
 	virtual void entry(void) {}
 	virtual void exit(void) {}
+
+protected:
+	/// Transit to @p S unless a reed confirmation gesture is pending, in which
+	/// case swallow the event so the active confirm blink is preserved. Used by
+	/// all transient/background LED events; critical and Confirm events call
+	/// transit<> directly. See the confirmation-gesture priority note above.
+	template<typename S>
+	void transit_unless_confirming() {
+		if (led_confirmation_gesture_pending()) return;
+		transit<S>();
+	}
 };
 
 

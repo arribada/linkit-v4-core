@@ -89,6 +89,11 @@ FSM_INITIAL_STATE(BuzzState, BuzzOff);
 using led_handle = LEDState;
 using buzz_handle = BuzzState;
 
+/// @brief Free-function bridge read by the LED state machine (ledsm.hpp) to give
+/// the confirmation-gesture blink priority over transient background LED events.
+/// Kept as a free function so ledsm stays decoupled from the GenTracker header.
+bool led_confirmation_gesture_pending() { return GenTracker::is_confirmation_gesture_pending(); }
+
 
 /// @brief Default event handler — ignore unhandled events.
 void GenTracker::react(tinyfsm::Event const &) { }

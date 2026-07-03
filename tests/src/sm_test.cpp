@@ -1,4 +1,5 @@
 #include "gentracker.hpp"
+#include "ledsm.hpp"
 #include "debug.hpp"
 
 #include "fake_switch.hpp"
@@ -367,6 +368,72 @@ TEST(Sm, MagnetPresentAtBootCanEnterConfigViaArmedGesture)
 	fake_reed_switch->invoke_gesture(ReedSwitchGesture::ENGAGE);
 	system_scheduler->run();
 	CHECK_TRUE(fsm_handle::is_in_state<ConfigurationState>());
+}
+
+TEST(Sm, ConfirmBlinkNotInterruptedByTransientLed)
+{
+	// 2026-07 regression: while a reed confirmation gesture is pending the LED
+	// fast-blinks (BLUE=enter-config, period 50 ms) awaiting the operator's 2nd
+	// gesture. That prompt must survive transient/background LED events firing in
+	// the same window — the boot white (config triggered right at startup was
+	// interrupted by "le blanc du startup"), a GNSS session/​end flash, an Argos
+	// TX, etc. Before the fix any of these stomped the confirm blink and the
+	// operator lost the visual cue mid-gesture.
+	mock().disable();
+	fsm_handle::start();
+	fake_timer->set_counter(1000);
+	system_scheduler->run();
+	CHECK_TRUE(fsm_handle::is_in_state<PreOperationalState>());
+	fake_timer->set_counter(6000);
+	system_scheduler->run();
+	CHECK_TRUE(fsm_handle::is_in_state<OperationalState>());
+
+	// A GNSS session is running in the background (steady CYAN flash).
+	ServiceEvent e;
+	e.event_source = ServiceIdentifier::GNSS_SENSOR;
+	e.event_type = ServiceEventType::SERVICE_ACTIVE;
+	e.event_originator_unique_id = 0x12345678;
+	ServiceManager::inject_event(e);
+	CHECK_EQUAL((int)RGBLedColor::CYAN, (int)status_led->get_state());
+
+	// Operator holds the magnet to enter config → SHORT_HOLD → confirm blink:
+	// fast BLUE (period 50 ms), pending the release + re-engage.
+	fake_reed_switch->invoke_gesture(ReedSwitchGesture::SHORT_HOLD);
+	system_scheduler->run();
+	CHECK_TRUE(fsm_handle::is_confirmation_gesture_pending());
+	CHECK_EQUAL((int)RGBLedColor::BLUE, (int)status_led->get_state());
+	CHECK_TRUE(status_led->is_flashing());
+	CHECK_EQUAL(50, (int)fake_status_led->m_period);
+
+	// (1) A background GNSS end-of-session indicator must NOT stomp the blink.
+	e.event_type = ServiceEventType::GNSS_OFF_POWEROFF;
+	ServiceManager::inject_event(e);
+	CHECK_EQUAL((int)RGBLedColor::BLUE, (int)status_led->get_state());
+	CHECK_EQUAL(50, (int)fake_status_led->m_period);
+
+	// (2) The literal "boot white" (SetLEDBoot) must NOT stomp it either.
+	LEDState::dispatch<SetLEDBoot>({});
+	CHECK_EQUAL((int)RGBLedColor::BLUE, (int)status_led->get_state());
+	CHECK_EQUAL(50, (int)fake_status_led->m_period);
+
+	// (3) An Argos TX (MAGENTA) must NOT stomp it either.
+	LEDState::dispatch<SetLEDArgosTX>({});
+	CHECK_EQUAL((int)RGBLedColor::BLUE, (int)status_led->get_state());
+	CHECK_EQUAL(50, (int)fake_status_led->m_period);
+
+	// The gesture still resolves normally: release + re-engage enters config,
+	// clearing the pending flag so the resolved-state LED (ConfigNotConnected,
+	// BLUE flash, default 500 ms period) IS shown — proof the gate re-opens.
+	mock().enable();
+	mock().expectOneCall("set_device_name").onObject(mock_ble_service).withParameter("name", "LinkIt V4 0");
+	mock().expectOneCall("start").onObject(mock_ble_service).ignoreOtherParameters();
+	fake_reed_switch->invoke_gesture(ReedSwitchGesture::RELEASE);
+	fake_reed_switch->invoke_gesture(ReedSwitchGesture::ENGAGE);
+	system_scheduler->run();
+	CHECK_TRUE(fsm_handle::is_in_state<ConfigurationState>());
+	CHECK_FALSE(fsm_handle::is_confirmation_gesture_pending());
+	CHECK_EQUAL((int)RGBLedColor::BLUE, (int)status_led->get_state());
+	CHECK_EQUAL(500, (int)fake_status_led->m_period);
 }
 
 TEST(Sm, CheckTransitionToOffState)
