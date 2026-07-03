@@ -26,13 +26,10 @@ extern Timer *system_timer;
 #include "config_store.hpp"
 extern ConfigurationStore *configuration_store;
 
-#if SMD_UART
-// True when the BLIND MAC profile is active: ARGOS_BLIND_EN set AND the mode is
-// not SURFACING_BURST (surfacing runs its own progressive Doppler cascade; a
-// module-owned retx burst would double-transmit). Fills clamped retx_nb (1..127)
-// and retx_period_s. NOTE: reads the raw ARGOS_MODE — an LB/OoZ regime that
-// overrides the mode to SURFACING_BURST is not resolved here; do not pair BLIND
-// with a surfacing regime.
+// True when the BLIND MAC profile is active: ARGOS_BLIND_EN set AND the EFFECTIVE
+// mode is not SURFACING_BURST/DOPPLER (they run their own nRF-paced bursts; a
+// module-owned retx would double-transmit). Fills clamped retx_nb (1..127) and
+// retx_period_s. Applies to both SMD transports (UART + SPI).
 static bool smd_blind_active(unsigned int& retx_nb, unsigned int& retx_period_s) {
 	if (!configuration_store) return false;
 	// get_argos_configuration resolves the EFFECTIVE mode (LB/OoZ/HAULED) and
@@ -46,7 +43,6 @@ static bool smd_blind_active(unsigned int& retx_nb, unsigned int& retx_period_s)
 	retx_period_s = cfg.blind_retx_period_s;
 	return true;
 }
-#endif
 
 // Runtime degraded-mode flag shared with smd_sat_cmd_spi.cpp via the inline
 // accessors in smd_sat_registers.hpp. Default false — the autofallback path
@@ -713,17 +709,17 @@ void SmdSat::state_load_kmac() {
 	// Step 2: Send load_kmac_profil only when RCONF/credentials changed.
 	// When unchanged, the STM32 auto-initializes MAC from flash at POR —
 	// we just wait for MAC_OK in step 3.
-#if SMD_UART
-	// BLIND MAC profile (SMD-UART only). When ARGOS_BLIND_EN, push AT+KMAC=2
-	// with the packed burst config every session (the ctx must reach the MAC —
-	// don't rely on flash auto-init). Graceful: if the module rejects profile 2,
-	// fall back to BASIC. When blind is off, keep the flash-auto-init optimization.
-	// SMD-UART: push the KMAC profile EVERY session (blind or basic). A blind
-	// toggle (ARGOS_BLIND_EN) is not signaled by the RCONF-dirty flag, so relying
-	// on the STM32 flash auto-init would leave a disabled tag stuck in blind.
+	// BLIND MAC profile (both SMD transports — UART + SPI). Push the KMAC profile
+	// when: RCONF changed, blind is ON (its ctx must reach the MAC each session —
+	// a blind toggle isn't flagged RCONF-dirty and blind may not be flash-
+	// persisted), or we must switch back to BASIC after a blind session. Else keep
+	// the flash-auto-init optimization (steady-state BASIC pushes nothing — the
+	// existing SPI/RSPB boot timing is unchanged). Graceful: if the module rejects
+	// profile 2, fall back to BASIC (over SPI, BASIC sends the id only — 1 byte,
+	// unchanged — backward-compatible with pre-blind firmware).
 	unsigned int rn = 0, period = 0;
 	bool blind_en = smd_blind_active(rn, period);
-	{
+	if (m_needs_explicit_kmac_load || blind_en || m_kmac_blind_pushed) {
 		try {
 			if (blind_en) {
 				// KNS_MAC_BLIND_usrCfg_t packed, little-endian:
@@ -735,29 +731,19 @@ void SmdSat::state_load_kmac() {
 					0 };
 				try {
 					m_cmd.load_kmac_profil(2, ctx, sizeof(ctx));
+					m_kmac_blind_pushed = true;
 					DEBUG_INFO("SmdSat::%s: BLIND KMAC loaded (retx_nb=%u period=%us)", __func__, rn, period);
 				} catch (...) {
 					DEBUG_WARN("SmdSat::%s: BLIND KMAC (profile 2) rejected — falling back to BASIC", __func__);
 					m_cmd.load_kmac_profil(1);
+					m_kmac_blind_pushed = false;
 				}
 			} else {
 				TXTRACE("state_load_kmac: sending explicit load_kmac_profil(1)");
 				m_cmd.load_kmac_profil(1);
+				m_kmac_blind_pushed = false;
 			}
 			m_needs_explicit_kmac_load = false;
-		} catch (...) {
-			DEBUG_ERROR("SmdSat::%s: KMAC load failed", __func__);
-			SMD_STATE_CHANGE(load_kmac, error);
-			return;
-		}
-	}
-#else
-	if (m_needs_explicit_kmac_load) {
-		TXTRACE("state_load_kmac: sending explicit load_kmac_profil(1)");
-		try {
-			m_cmd.load_kmac_profil(1);
-			m_needs_explicit_kmac_load = false;
-			DEBUG_TRACE("SmdSat::%s: explicit KMAC load sent (RCONF changed)", __func__);
 		} catch (...) {
 			DEBUG_ERROR("SmdSat::%s: KMAC load failed", __func__);
 			SMD_STATE_CHANGE(load_kmac, error);
@@ -766,7 +752,6 @@ void SmdSat::state_load_kmac() {
 	} else {
 		TXTRACE("state_load_kmac: skip explicit KMAC (STM32 auto-inits from flash)");
 	}
-#endif
 
 	// Step 3: Poll READ_SPIMAC_STATE (0x27) for MAC ready.
 	// After explicit load_kmac_profil: MAC resets to MAC_OK (0x01).
@@ -1090,7 +1075,6 @@ void SmdSat::state_transmit_pending() {
 void SmdSat::state_transmitting_enter() {
 	DEBUG_TRACE("SmdSat::%s", __func__);
 	uint32_t total_timeout_ms = (m_tcxo_warmup_time * 1000) + 5000;
-#if SMD_UART
 	// BLIND: the module transmits retx_nb copies retx_period_s apart before it
 	// reports +TX — extend the poll window to cover the whole burst.
 	unsigned int rn = 0, period = 0;
@@ -1102,7 +1086,6 @@ void SmdSat::state_transmitting_enter() {
 		total_timeout_ms += (uint32_t)burst_ms;
 		DEBUG_INFO("SmdSat::%s: BLIND — TX poll window +%u ms (burst)", __func__, (uint32_t)burst_ms);
 	}
-#endif
 	m_state_counter = (total_timeout_ms / smdsat_timing_tx_poll_ms()) + 1;
 #if SMDSAT_AUTOFALLBACK_ENABLED
 	// Snapshot for cascade-failure detection in stop_send / power_off_immediate.
