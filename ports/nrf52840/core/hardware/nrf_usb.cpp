@@ -258,6 +258,19 @@ std::string NrfUSB::read_line()
 /// @brief Process pending USB events — call from main loop.
 void NrfUSB::process()
 {
+#ifdef BENCH_TEST
+	// Bench harness runs over WSL2/usbip, where the host CDC DTR assertion
+	// (SET_CONTROL_LINE_STATE) that normally raises APP_USBD_CDC_ACM_USER_EVT_PORT_OPEN
+	// is not reliably forwarded. Without PORT_OPEN the RX is never armed and every
+	// TX (logs AND '%' console replies) is gated off — the link looks dead. Once the
+	// USB device is enumerated/enabled, force the port open and arm RX so the bench
+	// console works regardless of host DTR behaviour. Idempotent; harmless if a real
+	// PORT_OPEN later fires. BENCH_TEST builds only — production keeps strict gating.
+	if (!m_port_open && nrf_drv_usbd_is_enabled()) {
+		set_port_open(true);
+		start_usb_read();
+	}
+#endif
 	usb_queue_process();
 }
 

@@ -1,0 +1,96 @@
+10:07:11.273  >> '%PING\r\n'
+10:07:11.374  %BENCH OK state=OPERATIONAL
+10:07:11.375  >> '%CFG\r\n'
+10:07:11.474  %CFG OK entering-config
+10:07:11.474  01/01/1970 00:01:16 [INFO]	react: ReedSwitchEvent: 1
+10:07:11.477  >> '%STATE\r\n'
+10:07:11.574  01/01/1970 00:01:16 [INFO]	react: ReedSwitchEvent: 3
+10:07:11.775  01/01/1970 00:01:16 [INFO]	react: ReedSwitchEvent: 0
+10:07:11.875  01/01/1970 00:01:16 [INFO]	Reed confirmation accepted: 1
+10:07:12.778  01/01/1970 00:01:17 [INFO]	exit: OperationalState
+10:07:13.179  01/01/1970 00:01:18 [WARN]	GPSService::service_cancel: active acquisition force-cancelled (safety timeout or teardown) — logging NO_FIX
+10:07:13.379  01/01/1970 00:01:18 [INFO]	M10QAsyncReceiver::power_off
+10:07:13.480  01/01/1970 00:01:18 [INFO]	GPSService::retry_counter: NO_FIX | ntry=1/unlimited
+10:07:14.683  01/01/1970 00:01:19 [WARN]	DepthPileManager::notify_peer_event: GNSS NO_FIX cached — will TX as 0xFF heartbeat (grid filler)
+10:07:14.981  >> '%STATE\r\n'
+10:07:15.385  01/01/1970 00:01:20 [INFO]	DepthPileManager: GPS NO_FIX heartbeat stored, burst_counter=4294967295 (0xFFFFFFFF=unlimited)
+10:07:16.287  01/01/1970 00:01:21 [INFO]	M10QAsyncReceiver::power_off_immediate: hard rail-cut (skip graceful FSM)
+10:07:16.488  01/01/1970 00:01:21 [INFO]	BMA400::disable_wakeup complete
+10:07:16.588  01/01/1970 00:01:21 [INFO]	entry: ConfigurationState
+10:07:16.789  <info> ap_timer: RTC: initialized.
+10:07:16.789  <info> p_timer: RTC: initializ.
+10:07:16.789  <info> p: Start advertising
+10:07:16.889  %STATE CONFIG
+10:07:16.889  %STATE CONFIG
+10:07:16.897  >> '%STATE\r\n'
+10:07:16.989  %STATE CONFIG
+10:07:16.998  >> '$STATR#000;\r'
+10:07:18.093  $O;STATR#0CB;IDT06=3FEBA4,IDT02=LinkIt V4,IDT03=v4.1.10-7-g6fab8266-dirty,ART01=01/01/1970 00:00:00,ART02=0,POT03=96,ART03=07/10/2021 22:41:14,ART10=0,ART11=0,IDT04=linkit-v4-kim,POT06=4.154,IDT10=1666914921,SYT01=81
+10:07:18.108  >> '$PARMR#011;IDT06,IDP12,IDT02\r'
+10:07:18.193  $O;PARMR#029;IDT06=3FEBA4,IDP12=279239,IDT02=LinkIt V4
+10:07:18.210  >> '$PARMW#009;GNP05=120\r'
+10:07:18.594  $O;PARMW#000;
+10:07:18.594  >> '$PARMR#005;GNP05\r'
+10:07:18.694  $O;PARMR#009;GNP05=120
+10:07:18.696  >> '$SATVF#000;\r'
+10:07:18.895  $N;SATVF#001;8
+10:07:18.898  >> '%OP\r\n'
+10:07:18.995  %OP OK leaving-config
+10:07:18.995  01/01/1970 00:01:23 [INFO]	react: ReedSwitchEvent: 1
+10:07:19.000  >> '%STATE\r\n'
+10:07:19.196  01/01/1970 00:01:23 [INFO]	react: ReedSwitchEvent: 3
+10:07:19.998  01/01/1970 00:01:24 [INFO]	react: ReedSwitchEvent: 0
+10:07:20.198  01/01/1970 00:01:25 [INFO]	Reed confirmation accepted: 2
+10:07:20.399  01/01/1970 00:01:25 [INFO]	exit: ConfigurationState
+10:07:20.499  01/01/1970 00:01:25 [INFO]	entry: PreOperationalState
+10:07:21.201  %STATE PREOP
+10:07:21.719  >> '%STATE\r\n'
+10:07:21.803  %STATE PREOP
+10:07:22.322  >> '%STATE\r\n'
+10:07:22.404  %STATE PREOP
+10:07:22.924  >> '%STATE\r\n'
+10:07:23.006  %STATE PREOP
+10:07:23.527  >> '%STATE\r\n'
+10:07:23.608  %STATE PREOP
+10:07:24.109  >> '%STATE\r\n'
+10:07:24.209  %STATE PREOP
+10:07:24.711  >> '%STATE\r\n'
+10:07:24.811  %STATE PREOP
+10:07:25.313  >> '%STATE\r\n'
+10:07:25.413  %STATE PREOP
+10:07:25.916  >> '%STATE\r\n'
+10:07:26.014  %STATE PREOP
+10:07:26.215  01/01/1970 00:01:31 [INFO]	exit: PreOperationalState
+10:07:26.416  01/01/1970 00:01:31 [INFO]	entry: OperationalState
+10:07:26.518  >> '%STATE\r\n'
+10:07:27.619  01/01/1970 00:01:32 [INFO]	RateLimiter: restored from noinit (count=0, head=0)
+10:07:27.719  01/01/1970 00:01:32 [INFO]	HauledModeService: restored from noinit (in_hauled=0, last_uw=0, returns=0)
+10:07:27.920  01/01/1970 00:01:32 [INFO]	SWSAnalog: sample delay from UNP08 = 1000 µs (noinit invalid)
+10:07:28.120  01/01/1970 00:01:32 [INFO]	SWSAnalog: Observed peak ADC=150 (from noinit)
+10:07:28.221  01/01/1970 00:01:33 [INFO]	SWSAnalog: Diagnostics restored from noinit stuck=0 coh=0 div=0 force=0 spike=0 peak=0 saadc=0
+10:07:28.722  01/01/1970 00:01:33 [INFO]	SWSAnalog: Calibration valid - air=50 water=150 thresh=90
+10:07:28.922  01/01/1970 00:01:33 [INFO]	SWSAnalog: Init - hyst=4% ratio=35%
+10:07:30.025  >> '%STATE\r\n'
+10:07:30.025  01/01/1970 00:01:34 [WARN]	KIM2Device::resync_rconf_cache: no RCONF configured (len=0)
+10:07:30.226  01/01/1970 00:01:35 [INFO]	ArgosTxService::service_init: Argos ID=4189092
+10:07:32.330  01/01/1970 00:01:37 [INFO]	ArgosTxService: GNSS has not updated the clock yet this session — TX held until first GPS fix
+10:07:33.530  >> '%STATE\r\n'
+10:07:34.034  01/01/1970 00:01:38 [INFO]	GPSService::retry_counter: ntry=1 limit=0 exhausted=0 aq_period=30s (first_schedule)
+10:07:34.135  01/01/1970 00:01:38 [INFO]	GPSService: next GNSS acquisition in 22 s (UTC-aligned, period=30 s)
+10:07:34.335  01/01/1970 00:01:39 [INFO]	BMA400LL::set_power_mode: 0 (LOW_POWER wakeup)
+10:07:34.436  %STATE OPERATIONAL
+10:07:34.436  01/01/1970 00:01:39 [WARN]	KIM2CommEventUartError: type=04 (state=0)
+10:07:34.439  >> '%GPS -21.0097 55.2707\r\n'
+10:07:34.636  %STATE OPERATIONAL
+10:07:34.637  %STATE OPERATIONAL
+10:07:34.737  01/01/1970 00:01:39 [WARN]	GPSService::bench_inject_fix: lat=-21.009700 lon=55.270700 hAcc=2500mm numSV=8
+10:07:34.837  01/01/1970 00:01:39 [INFO]	GPSService::retry_counter: reset ntry=1->0 (PVT fix)
+10:07:36.241  01/01/1970 00:01:41 [WARN]	Service::service_complete: service GNSS completed without being initiated
+10:07:36.341  %GPS OK lat=-21.009700 lon=55.270700
+10:07:57.295  01/01/1970 00:02:02 [INFO]	GPSService: SESSION_DIAG rtc_set=1 rtc=121 batt_mv=4171 lb=0 anow=1 ano=0 first_fix=1 ntry=0 dead=0
+10:07:57.997  01/01/1970 00:02:02 [INFO]	GPSService: M10Q on — nav_max=120 cold=0 cl=0 const=0x0f
+10:07:58.097  01/01/1970 00:02:02 [INFO]	M10QAsyncReceiver::power_on
+10:07:58.298  01/01/1970 00:02:03 [INFO]	M10QAsyncReceiver::state_poweron_enter
+10:07:59.902  01/01/1970 00:02:04 [WARN]	UBXCommsEventError: type=04 count=1 (boot transition, expected)
+10:08:02.609  01/01/1970 00:02:07 [INFO] IRQ	GNSS SW: ROM SPG 5.10 (7b202e) HW: 000A0000
+10:08:02.810  01/01/1970 00:02:07 [INFO] IRQ	GNSS UID: 8FAF580F2E

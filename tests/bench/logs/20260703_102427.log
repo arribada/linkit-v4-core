@@ -1,0 +1,28 @@
+10:24:27.605  >> '%PING\r\n'
+10:24:27.705  %BENCH OK state=OPERATIONAL
+10:24:27.706  >> '%CFG\r\n'
+10:24:27.805  %CFG OK entering-config
+10:24:27.805  01/01/1970 00:10:56 [INFO]	react: ReedSwitchEvent: 1
+10:24:27.808  >> '%STATE\r\n'
+10:24:27.906  01/01/1970 00:10:56 [INFO]	react: ReedSwitchEvent: 3
+10:24:28.507  01/01/1970 00:10:57 [INFO]	react: ReedSwitchEvent: 0
+10:24:28.708  01/01/1970 00:10:57 [INFO]	Reed confirmation accepted: 1
+10:24:28.808  01/01/1970 00:10:57 [INFO]	exit: OperationalState
+10:24:29.309  01/01/1970 00:10:57 [INFO]	M10QAsyncReceiver::power_off_immediate: hard rail-cut (skip graceful FSM)
+10:24:29.510  01/01/1970 00:10:57 [INFO]	BMA400::disable_wakeup complete
+10:24:29.610  01/01/1970 00:10:58 [INFO]	entry: ConfigurationState
+10:24:30.512  <info> app_timer: RTC: initiazed.
+10:24:30.512  <ino> app_timer: RTC: initialized.
+10:24:30.512  <info> app:tart advertising
+10:24:30.613  %STATE CONFIG
+10:24:30.630  >> '$PARMW#0CA;ARP51=03921FB104B92859209B18ABD009DE96,ARP52=3D678AF16B5A572078F3DBC95A1104E7,ARP53=550b4bec21009c7a7b5bebaa937cdb41,IDP14=03921fb104b92859209b18abd009de96,ARP54=1,IDP13=69B26EE789BD10109328437567F68469\r'
+10:24:31.916  $O;PARMW#000;
+10:24:31.916  01/01/1970 00:11:00 [WARN]	KIM2CommEventUartError: type=04 (state=0)
+10:24:31.921  >> '$SATVF#001;1\r'
+10:24:35.925  $O;SATVF#02E;279239,4189092,,402890000,402990000,27,LDK,1,1
+10:24:35.926  01/01/1970 00:11:04 [WARN]	KIM2CommEventUartError: type=04 (state=0)
+10:24:36.026  01/01/1970 00:11:04 [WARN]	KIM2CommEventUartError: type=04 (state=0)
+10:24:36.226  01/01/1970 00:11:04 [WARN]	KIM2CommEventUartError: type=04 (state=0)
+10:24:37.935  >> '$SATVF#001;0\r'
+10:24:38.832  $O;SATVF#02E;279239,4189092,,402890000,402990000,27,LDK,1,0
+10:24:38.832  01/01/1970 00:11:07 [WARN]	KIM2CommEventUartError: type=04 (state=0)

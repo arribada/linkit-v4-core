@@ -204,6 +204,20 @@ private:
 	bool m_last_dispatch_was_deep_idle = false;
 public:
 	bool last_dispatch_was_deep_idle() const { return m_last_dispatch_was_deep_idle; }
+#ifdef BENCH_TEST
+	/// @brief Bench harness — inject a synthetic valid 3D fix at (lat,lon) straight
+	/// into the post-fix pipeline (log → config-store → prepass → Argos scheduling),
+	/// bypassing the M10Q entirely (no antenna / sky view required). Unlike the
+	/// compile-fixed GPS_FAKE_POSITION driver hack (Saint-Paul only, auto-fires on
+	/// every session), this is runtime-parameterised and fires on demand via the
+	/// `%GPS` bench command. Compiled only with -DBENCH_TEST=ON; absent from
+	/// production builds.
+	/// @param lat      Latitude in degrees.
+	/// @param lon      Longitude in degrees.
+	/// @param hAcc_mm  Horizontal accuracy in mm (0 → default 2500 = 2.5 m).
+	/// @param numSV    Satellites used (0 → default 8).
+	void bench_inject_fix(double lat, double lon, uint32_t hAcc_mm, uint8_t numSV);
+#endif
 private:
 
 	void backup_charge_stop_internal();

@@ -1267,6 +1267,45 @@ void GPSService::gnss_data_callback(GNSSData data) {
     task_process_gnss_data();
 }
 
+#ifdef BENCH_TEST
+void GPSService::bench_inject_fix(double lat, double lon, uint32_t hAcc_mm, uint8_t numSV) {
+    GNSSData d = {};
+    d.fixType = 3;                        // 3D fix
+    d.valid   = 0x07;                     // validDate | validTime | fullyResolved
+    d.numSV   = numSV ? numSV : 8;
+    d.lat     = lat;
+    d.lon     = lon;
+    d.height  = 10000;                    // 10 m (mm)
+    d.hMSL    = 10000;
+    d.hAcc    = hAcc_mm ? hAcc_mm : 2500; // default 2.5 m
+    d.vAcc    = 3500;
+    d.pDOP    = 1.5f;
+    d.hDOP    = 1.0f;
+    d.vDOP    = 1.2f;
+    d.ttff    = 2000;                     // 2 s simulated TTFF
+    // Stamp the fix instant from the RTC so downstream time-of-fix logic and the
+    // CSV log carry a coherent timestamp (mirrors generate_fake_fix()).
+    if (rtc && rtc->is_set()) {
+        std::time_t now = rtc->gettime();
+        struct tm *t = gmtime(&now);
+        if (t) {
+            d.year  = (uint16_t)(t->tm_year + 1900);
+            d.month = (uint8_t)(t->tm_mon + 1);
+            d.day   = (uint8_t)t->tm_mday;
+            d.hour  = (uint8_t)t->tm_hour;
+            d.min   = (uint8_t)t->tm_min;
+            d.sec   = (uint8_t)t->tm_sec;
+        }
+    }
+    DEBUG_WARN("GPSService::bench_inject_fix: lat=%f lon=%f hAcc=%umm numSV=%u",
+               lat, lon, (unsigned)d.hAcc, (unsigned)d.numSV);
+    // Short-circuit any real acquisition still in flight so a later real PVT
+    // doesn't double-log on top of the injected one.
+    m_is_active = false;
+    gnss_data_callback(d);
+}
+#endif
+
 /// @brief Degraded fix callback — store data (does NOT set first_fix_found).
 /// @param data  Degraded PVT data (valid but low quality).
 void GPSService::gnss_degraded_callback(GNSSData data) {

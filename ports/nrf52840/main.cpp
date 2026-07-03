@@ -39,6 +39,9 @@
 #ifdef DEBUG_UART_TX_PIN
 #include "nrf_debug_uart.hpp"
 #endif
+#ifdef BENCH_TEST
+#include "bench_console.hpp"
+#endif
 
 // --- Battery monitor ---
 #if defined(BATTERY_MONITOR_ANALOG)
@@ -1292,6 +1295,12 @@ int main()
 
 	DEBUG_TRACE("Entering main SM...");
 	GenTracker::start();
+
+#ifdef BENCH_TEST
+	// Bench-test console: '%'-prefixed USB-CDC commands (%CFG/%OP/%GPS/...) for
+	// autonomous hardware-in-the-loop validation. Debug/bench builds only.
+	bench::start_poll();
+#endif
 
 	// Power rail management: cut peripheral power rails when no task is due soon.
 	// Threshold tuned from the original 5000 ms → 250 ms. The lower the threshold,

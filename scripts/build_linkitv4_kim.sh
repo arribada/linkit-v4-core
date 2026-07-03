@@ -75,6 +75,7 @@ RECOVER=false
 BUILD_TYPE=Release
 METRICS=OFF
 VALIDATION=OFF
+BENCH=OFF
 for arg in "$@"; do
     case $arg in
         --clean) CLEAN=true ;;
@@ -85,6 +86,9 @@ for arg in "$@"; do
         --no-metrics) METRICS=OFF ;;
         --validation) VALIDATION=ON ;;
         --no-validation) VALIDATION=OFF ;;
+        # Bench-test harness: '%' USB-CDC console (%CFG/%OP/%GPS) + GPS injection
+        # for autonomous HIL validation. Implies --debug (needs logs + no WDT).
+        --bench) BENCH=ON; BUILD_TYPE=Debug ;;
     esac
 done
 
@@ -115,6 +119,9 @@ else
     printf '\033[0m'
 fi
 printf '\033[1;36m   Optional log flags:  METRIC_LATENCY=%s   VALIDATION=%s\033[0m\n' "$METRICS" "$VALIDATION"
+if [ "$BENCH" = "ON" ]; then
+    printf '\033[1;35m   BENCH_TEST=ON  →  %% USB-CDC console (%%CFG/%%OP/%%GPS) + GPS injection active\033[0m\n'
+fi
 echo ""
 
 cd "$PROJECT_ROOT"
@@ -155,7 +162,7 @@ echo "  GNSS_HAS_BACKUP_BATTERY=${GNSS_HAS_BACKUP_BATTERY}"
 echo "  ENABLE_SWS_ANALOG=${ENABLE_SWS_ANALOG}"
 echo "  METRIC_LATENCY=${METRICS}  VALIDATION=${VALIDATION}"
 
-cmake -DCMAKE_TOOLCHAIN_FILE=../../toolchain_arm_gcc_nrf52.cmake -DDEBUG_LEVEL=3 -DBOARD=LINKIT -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DCAM_ENABLE=${CAM_ENABLE} -DBUZZER_ENABLE=${BUZZER_ENABLE} -DGNSS_HAS_BACKUP_BATTERY=${GNSS_HAS_BACKUP_BATTERY} -DBATTERY_CHEMISTRY=${BATTERY_CHEMISTRY} -DENABLE_SWS_ANALOG=${ENABLE_SWS_ANALOG} -DMETRIC_LATENCY_LOG_ENABLE=$([ "$METRICS" = "ON" ] && echo 1 || echo 0) -DVALIDATION_LOG_ENABLE=$([ "$VALIDATION" = "ON" ] && echo 1 || echo 0) ../..
+cmake -DCMAKE_TOOLCHAIN_FILE=../../toolchain_arm_gcc_nrf52.cmake -DDEBUG_LEVEL=3 -DBOARD=LINKIT -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DCAM_ENABLE=${CAM_ENABLE} -DBUZZER_ENABLE=${BUZZER_ENABLE} -DGNSS_HAS_BACKUP_BATTERY=${GNSS_HAS_BACKUP_BATTERY} -DBATTERY_CHEMISTRY=${BATTERY_CHEMISTRY} -DENABLE_SWS_ANALOG=${ENABLE_SWS_ANALOG} -DMETRIC_LATENCY_LOG_ENABLE=$([ "$METRICS" = "ON" ] && echo 1 || echo 0) -DVALIDATION_LOG_ENABLE=$([ "$VALIDATION" = "ON" ] && echo 1 || echo 0) -DBENCH_TEST=${BENCH} ../..
 make -j 20
 nrfutil settings generate --family NRF52840 --application LinkIt_board.hex --application-version 0 --bootloader-version 1 --bl-settings-version 2 --app-boot-validation VALIDATE_ECDSA_P256_SHA256 --sd-boot-validation VALIDATE_ECDSA_P256_SHA256 --softdevice ../../drivers/nRF5_SDK_17.0.2/components/softdevice/s140/hex/s140_nrf52_7.2.0_softdevice.hex --key-file ../../nrfutil_pkg_key.pem settings.hex
 mergehex -m ../../bootloader/secure_bootloader/linkitv4_v1.0/armgcc/_build/cls_bootloader_v1_linkit_merged.hex LinkIt_board.hex -o m1.hex

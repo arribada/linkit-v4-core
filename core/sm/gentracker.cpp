@@ -54,6 +54,9 @@ static inline uint16_t crc16_compute(const uint8_t *data, uint16_t length, const
 #ifdef USB_DTE_ENABLED
 #include "usb_interface.hpp"
 #endif
+#ifdef BENCH_TEST
+#include "bench_console.hpp"
+#endif
 
 // LoRa device instance (for bridge mode in process_usb_data)
 #if defined(LORA_RAK3172) && (LORA_RAK3172 == 1)
@@ -1270,6 +1273,17 @@ void ConfigurationState::process_usb_data() {
 		auto req = usb.read_line();
 
 		if (req.size()) {
+#ifdef BENCH_TEST
+			// Bench '%' commands share the CDC stream with DTE '$...#'. Route
+			// them to the bench console (e.g. %OP to leave config, %STATE) so
+			// they work while in ConfigurationState too. Never fed to the DTE
+			// parser.
+			if (req[0] == '%') {
+				bench::handle_line(req);
+				schedule_usb_poll();
+				return;
+			}
+#endif
 			// DTE protocol expects trailing \r which read_line() strips
 			req += '\r';
 			// Suppress console debug logs during DTE exchange to avoid
