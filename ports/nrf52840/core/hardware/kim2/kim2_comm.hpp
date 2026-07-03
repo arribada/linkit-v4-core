@@ -114,13 +114,19 @@ public:
 	unsigned int m_kineis_id = 0;      ///< Device ID from +ID= response
 	unsigned int m_hex_addr = 0;       ///< Device address from +ADDR= response
 	uint16_t m_tx_status = 0xFFFF;     ///< Last TX status from +TX= response
-	// KIM new-stack BLIND/SATDET puts a TX handler id FIRST in the delayed +TX:
-	//   basic:        +TX=<status>[,<data>]
-	//   blind/satdet: +TX=<handler>,<status>[,<data>]
-	// Set true once the module confirmed AT+KMAC=2 (BLIND) so the parser skips
-	// the leading handler field. Backward-compatible: false = basic / old stack.
-	// (KIM-specific: SMD instead APPENDS the handler last, keeping <status> first.)
+	// KIM +TX response format is FIRMWARE-VERSION dependent, NOT MAC-profile
+	// dependent:
+	//   old stack (any profile): +TX=<status>[,<data>]           (status FIRST)
+	//   new stack blind/satdet:  +TX=<handler>,<status>[,<data>]  (handler FIRST)
+	// The new stack ALWAYS emits a "+HDLR=<handler>" ack just before +OK for the
+	// AT+TX, so the presence of that ack in THIS TX cycle — not whether we loaded
+	// AT+KMAC=2 — is the correct discriminator. Older KIM firmware runs BLIND
+	// (AT+KMAC=2 accepted) yet still replies with the old status-first +TX; keying
+	// off m_blind_active there misreads the frame-data field as the status (e.g.
+	// "+TX=0,03387334..." -> stoi("03387334")&0xFFFF = 44998 "failure" on a real
+	// SUCCESS). m_hdlr_seen makes both stacks parse correctly. Reset at each AT+TX.
 	bool m_blind_active = false;
+	bool m_hdlr_seen = false;
 	void set_blind_active(bool active) { m_blind_active = active; }
 	std::string m_rconf_info;          ///< Last +RCONF=? response payload (diag)
 
