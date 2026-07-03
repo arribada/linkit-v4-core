@@ -58,6 +58,7 @@ static constexpr const char *ADDR_RESPONSE = "+ADDR=";
 static constexpr const char *RCONF_RESPONSE = "+RCONF=";
 static constexpr const char *TX_RESPONSE   = "+TX=";
 static constexpr const char *ERR_RESPONSE  = "+ERROR=";
+static constexpr const char *HDLR_RESPONSE = "+HDLR=";   // new-stack AT+TX immediate ack (before +OK)
 /// @}
 
 static constexpr uint8_t ID_SIZE   = 6;   ///< Decimal ID string length
@@ -113,6 +114,14 @@ public:
 	unsigned int m_kineis_id = 0;      ///< Device ID from +ID= response
 	unsigned int m_hex_addr = 0;       ///< Device address from +ADDR= response
 	uint16_t m_tx_status = 0xFFFF;     ///< Last TX status from +TX= response
+	// KIM new-stack BLIND/SATDET puts a TX handler id FIRST in the delayed +TX:
+	//   basic:        +TX=<status>[,<data>]
+	//   blind/satdet: +TX=<handler>,<status>[,<data>]
+	// Set true once the module confirmed AT+KMAC=2 (BLIND) so the parser skips
+	// the leading handler field. Backward-compatible: false = basic / old stack.
+	// (KIM-specific: SMD instead APPENDS the handler last, keeping <status> first.)
+	bool m_blind_active = false;
+	void set_blind_active(bool active) { m_blind_active = active; }
 	std::string m_rconf_info;          ///< Last +RCONF=? response payload (diag)
 
 	/// @param libuarte_async_instance  BSP UART instance index (default 1).

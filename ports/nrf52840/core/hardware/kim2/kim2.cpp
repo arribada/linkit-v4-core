@@ -721,10 +721,12 @@ bool KIM2Device::load_kmac() {
         std::string hex = Binascii::hexlify(std::string(reinterpret_cast<const char*>(ctx), sizeof(ctx)));
         if (send_AT(AT_SET_KMAC_BLIND, hex)) {
             DEBUG_INFO("KIM2Device::load_kmac: BLIND loaded (retx_nb=%u period=%us)", rn, period);
+            m_kim2_comm.set_blind_active(true);   // +TX will be handler-prefixed
             return true;
         }
         DEBUG_WARN("KIM2Device::load_kmac: BLIND (AT+KMAC=2) rejected — falling back to BASIC");
     }
+    m_kim2_comm.set_blind_active(false);          // basic +TX (no handler prefix)
     return send_AT(AT_SET_KMAC_BASIC);
 }
 

@@ -240,16 +240,28 @@ KIM2::RespType KIM2Comm::parse_rx_line_protocol(const std::string& line)
 	if (line.compare(0, err_len, ERR_RESPONSE) == 0)
 		return RESP_ERROR;
 
-	// +TX=<status>,<data>
+	// +HDLR=<TX handler id> — new-stack immediate ack, sent just before +OK.
+	// Informational: we advance on +OK, so recognise and ignore it (a benign
+	// type avoids "unknown line" noise on the new stack).
+	if (line.compare(0, strlen(HDLR_RESPONSE), HDLR_RESPONSE) == 0)
+		return RESP_CONFIG;
+
+	// +TX=<status>[,<data>]            (basic / old stack)
+	// +TX=<handler>,<status>[,<data>]  (blind/satdet — status is the 2nd field)
 	if (line.compare(0, tx_len, TX_RESPONSE) == 0) {
 		std::string resp = line.substr(tx_len);
+		if (m_blind_active) {
+			// Drop the leading TX handler field so <status> parses correctly.
+			size_t h = resp.find(',');
+			if (h != std::string::npos)
+				resp = resp.substr(h + 1);
+		}
 		size_t comma = resp.find(',');
-		if (comma != std::string::npos) {
-			try {
-				m_tx_status = static_cast<uint16_t>(std::stoi(resp.substr(0, comma)));
-			} catch (...) {
-				m_tx_status = 0xFFFF;
-			}
+		std::string status_str = (comma != std::string::npos) ? resp.substr(0, comma) : resp;
+		try {
+			m_tx_status = static_cast<uint16_t>(std::stoi(status_str));
+		} catch (...) {
+			m_tx_status = 0xFFFF;
 		}
 		return RESP_TX_STATUS;
 	}
