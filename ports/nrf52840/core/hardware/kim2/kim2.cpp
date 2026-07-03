@@ -407,7 +407,7 @@ bool KIM2Device::switch_modulation(KineisModulation mode, const std::string& rco
         return false;
     }
 
-    if (!send_AT(AT_SET_KMAC_BASIC)) {
+    if (!load_kmac()) {
         DEBUG_ERROR("KIM2Device::%s: failed to reload KMAC", __func__);
         return false;
     }
@@ -691,6 +691,43 @@ bool KIM2Device::send_AT(ATCmd cmd, const std::optional<std::string>& params, ui
 // Timeout management
 // ============================================================================
 
+// True when the BLIND MAC profile is active: ARGOS_BLIND_EN set AND the effective
+// mode is not SURFACING_BURST (which runs its own progressive Doppler cascade —
+// a module-owned retx burst would double-transmit). Fills clamped retx_nb (1..127)
+// and retx_period_s. Reads the raw ARGOS_MODE (LB/OoZ overrides to surfacing are
+// not resolved here — do not pair BLIND with a surfacing regime).
+static bool kim2_blind_active(unsigned int& retx_nb, unsigned int& retx_period_s) {
+    if (!configuration_store) return false;
+    // get_argos_configuration resolves the EFFECTIVE mode (LB/OoZ/HAULED) and
+    // clears blind_en for SURFACING_BURST/DOPPLER. evaluate() is cached (500 ms).
+    ArgosConfig cfg;
+    configuration_store->get_argos_configuration(cfg);
+    if (!cfg.blind_en) return false;
+    retx_nb = cfg.blind_retx_nb;
+    if (retx_nb < 1) retx_nb = 1; else if (retx_nb > 127) retx_nb = 127;
+    retx_period_s = cfg.blind_retx_period_s;
+    return true;
+}
+
+bool KIM2Device::load_kmac() {
+    unsigned int rn = 0, period = 0;
+    if (kim2_blind_active(rn, period)) {
+        // KNS_MAC_BLIND_usrCfg_t packed LE: {int8 retx_nb, uint8 nb_parallel=1, uint32 retx_period_s, int8 per_offset=0}
+        uint8_t ctx[7] = {
+            (uint8_t)rn, 1,
+            (uint8_t)(period & 0xFF), (uint8_t)((period >> 8) & 0xFF),
+            (uint8_t)((period >> 16) & 0xFF), (uint8_t)((period >> 24) & 0xFF),
+            0 };
+        std::string hex = Binascii::hexlify(std::string(reinterpret_cast<const char*>(ctx), sizeof(ctx)));
+        if (send_AT(AT_SET_KMAC_BLIND, hex)) {
+            DEBUG_INFO("KIM2Device::load_kmac: BLIND loaded (retx_nb=%u period=%us)", rn, period);
+            return true;
+        }
+        DEBUG_WARN("KIM2Device::load_kmac: BLIND (AT+KMAC=2) rejected — falling back to BASIC");
+    }
+    return send_AT(AT_SET_KMAC_BASIC);
+}
+
 void KIM2Device::initiate_timeout(unsigned int timeout_ms) {
 	cancel_timeout();
 	m_timeout.handle = system_scheduler->post_task_prio([this]() {
@@ -962,7 +999,7 @@ void KIM2Device::state_init()
         }
     }
 
-    if(!send_AT(AT_SET_KMAC_BASIC))
+    if(!load_kmac())
     {
         DEBUG_ERROR("KIM2Device::state_init: can not set KMAC");
         KIM2_STATE_CHANGE(init, error);
@@ -1145,7 +1182,7 @@ void KIM2Device::state_transmit_enter()
             return;
         }
 
-        if (!send_AT(AT_SET_KMAC_BASIC)) {
+        if (!load_kmac()) {
             DEBUG_ERROR("KIM2Device::state_transmit_enter: KMAC reload failed — aborting TX");
             m_tx_buffer.clear();
             KIM2_STATE_CHANGE(transmit, error);
@@ -1181,10 +1218,23 @@ void KIM2Device::state_transmit_enter()
     m_tx_ack_deadline_ms = PMU::get_timestamp_ms() + KIM2_TX_ACK_TIMEOUT_MS;  // 5 s, preserved
 
     notify(KineisEventTxStarted({}));
-    initiate_timeout(KIM2_TX_TIMEOUT_MS);
 
-    // Poll counter for TX completion (60 s backstop, unchanged)
-    m_tx_poll_counter = KIM2_TX_TIMEOUT_MS / KIM2_DELAY_POLL_MS;
+    // BLIND: the module bursts retx_nb copies retx_period_s apart before +TX —
+    // extend the completion window to cover the whole burst.
+    unsigned int tx_timeout_ms = KIM2_TX_TIMEOUT_MS;
+    unsigned int rn = 0, period = 0;
+    if (kim2_blind_active(rn, period)) {
+        // uint64 intermediate: rn(<=127) * period(<=65535) * 1000 overflows uint32.
+        // Cap at 2 h so an extreme config can't park the service indefinitely.
+        uint64_t burst_ms = (uint64_t)rn * (uint64_t)period * 1000ULL;
+        if (burst_ms > 7200000ULL) burst_ms = 7200000ULL;
+        tx_timeout_ms += (uint32_t)burst_ms;
+        DEBUG_INFO("KIM2Device::state_transmit_enter: BLIND — TX window %u ms", tx_timeout_ms);
+    }
+    initiate_timeout(tx_timeout_ms);
+
+    // Poll counter for TX completion (60 s backstop, extended in blind)
+    m_tx_poll_counter = tx_timeout_ms / KIM2_DELAY_POLL_MS;
 }
 
 /// @brief Poll TX: check for +TX= done, error, or poll timeout.

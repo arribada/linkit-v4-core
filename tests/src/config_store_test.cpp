@@ -495,6 +495,29 @@ TEST(ConfigStore, PARAM_NTRY_PER_MESSAGE)
 	CHECK_EQUAL(t, store->read_param<unsigned int>(ParamID::NTRY_PER_MESSAGE));
 }
 
+TEST(ConfigStore, PARAM_BLIND_MODE_DEFAULTS_AND_ROUNDTRIP)
+{
+	store = new LFSConfigurationStore(*main_filesystem);
+	store->init();
+
+	// Defaults: blind off, retx_nb=4, retx_period_s=60 (no behavior change)
+	CHECK_FALSE(store->read_param<bool>(ParamID::ARGOS_BLIND_EN));
+	CHECK_EQUAL(4U, store->read_param<unsigned int>(ParamID::ARGOS_BLIND_RETX_NB));
+	CHECK_EQUAL(60U, store->read_param<unsigned int>(ParamID::ARGOS_BLIND_RETX_PERIOD_S));
+
+	// Round-trip persists across reload
+	store->write_param(ParamID::ARGOS_BLIND_EN, true);
+	store->write_param(ParamID::ARGOS_BLIND_RETX_NB, 7U);
+	store->write_param(ParamID::ARGOS_BLIND_RETX_PERIOD_S, 90U);
+	store->save_params();
+	delete store;
+	store = new LFSConfigurationStore(*main_filesystem);
+	store->init();
+	CHECK_TRUE(store->read_param<bool>(ParamID::ARGOS_BLIND_EN));
+	CHECK_EQUAL(7U, store->read_param<unsigned int>(ParamID::ARGOS_BLIND_RETX_NB));
+	CHECK_EQUAL(90U, store->read_param<unsigned int>(ParamID::ARGOS_BLIND_RETX_PERIOD_S));
+}
+
 TEST(ConfigStore, PARAM_DUTY_CYCLE)
 {
 	store = new LFSConfigurationStore(*main_filesystem);

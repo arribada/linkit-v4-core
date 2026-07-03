@@ -442,6 +442,12 @@ const BaseMap param_map[] = {
 	// [242] After N consecutive GNSS sessions with no fix, force a true cold
 	// start (BBR wipe) on the next acquisition. 0 = disabled (default).
 	{ "GNSS_COLD_START_AFTER_NTRY", "GNP54", BaseEncoding::UINT, 0U, 255U, {}, true, true },
+	// [243] BLIND MAC profile enable — module-owned retransmission burst; default off = BASIC
+	{ "ARGOS_BLIND_EN",             "ARP44", BaseEncoding::BOOLEAN, 0, 0, {}, true, true },
+	// [244] BLIND retx_nb — module retransmissions per blind burst (KMAC ctx; int8 on module -> cap 127)
+	{ "ARGOS_BLIND_RETX_NB",        "ARP45", BaseEncoding::UINT, 1U, 127U, {}, true, true },
+	// [245] BLIND retx_period_s — interval (s) between module retransmissions (KMAC ctx; module range 60..65535)
+	{ "ARGOS_BLIND_RETX_PERIOD_S",  "ARP46", BaseEncoding::UINT, 60U, 65535U, {}, true, true },
 };
 
 const size_t param_map_size = sizeof(param_map) / sizeof(param_map[0]);

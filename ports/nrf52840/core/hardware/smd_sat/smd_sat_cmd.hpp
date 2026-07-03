@@ -54,7 +54,9 @@ public:
 	// ========================================================================
 	// KMAC (Key-based Message Authentication Code)
 	// ========================================================================
-	virtual void load_kmac_profil(uint8_t profile) = 0;
+	// Load a KMAC MAC profile. ctx (optional) = packed profile config bytes sent
+	// as hex after the profile id: "AT+KMAC=<profile>,<hex(ctx)>" (BLIND uses it).
+	virtual void load_kmac_profil(uint8_t profile, const uint8_t* ctx = nullptr, uint8_t ctx_len = 0) = 0;
 	virtual void read_kmac(uint8_t *profile) = 0;
 	virtual void get_kmac_status(uint8_t *status) = 0;
 

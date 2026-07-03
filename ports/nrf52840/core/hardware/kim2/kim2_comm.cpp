@@ -104,6 +104,7 @@ static constexpr ATCmdEntry cmd_table[] = {
 	{ AT_SET_RCONF,      "AT+RCONF=",          true },
 	{ AT_GET_RCONF,      "AT+RCONF=?\r\n",    false },
 	{ AT_SET_KMAC_BASIC, "AT+KMAC=1\r\n",     false },
+	{ AT_SET_KMAC_BLIND, "AT+KMAC=2,",         true  },
 	{ AT_TX,             "AT+TX=",              true },
 };
 

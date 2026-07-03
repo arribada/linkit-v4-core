@@ -435,8 +435,11 @@ enum class ParamID {
 	// trapped on stale/corrupt BBR (the "fixes stop after a couple of days"
 	// failure mode) without affecting healthy tags, which never reach N.
 	GNSS_COLD_START_AFTER_NTRY               = 242,
+	ARGOS_BLIND_EN                           = 243,  // bool: enable BLIND MAC profile (module-owned retx burst). Default false = BASIC (nRF-paced). SMD-UART + KIM2.
+	ARGOS_BLIND_RETX_NB                      = 244,  // uint 1..127: retransmissions the module sends per blind burst (KMAC retx_nb). NTRY_PER_MESSAGE stays the nRF-side count of blind sequences.
+	ARGOS_BLIND_RETX_PERIOD_S                = 245,  // uint 60..65535 s: interval between the module's blind retransmissions (KMAC retx_period_s). Distinct from TR_NOM (interval between blind sequences).
 	// === Sentinel (fixed regardless of #ifdef combinations) ===
-	__PARAM_SIZE                             = 243,
+	__PARAM_SIZE                             = 246,
 	__NULL_PARAM                             = 0xFFFF
 };
 

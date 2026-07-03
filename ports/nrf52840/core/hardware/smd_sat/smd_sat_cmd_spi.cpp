@@ -513,8 +513,9 @@ bool SmdSatCmdSpi::set_message_counter(uint16_t mc)
     return true;
 }
 
-void SmdSatCmdSpi::load_kmac_profil(uint8_t profile)
+void SmdSatCmdSpi::load_kmac_profil(uint8_t profile, const uint8_t* ctx, uint8_t ctx_len)
 {
+	(void)ctx; (void)ctx_len;  // BLIND ctx over SPI is out of scope — profile byte only
 	DEBUG_TRACE("SmdSatCmdSpi::%s: Load KMAC profile %u", __func__, profile);
 	if (!send_command_2phase(SMDSAT_CMD_WRITE_KMAC_REQ, SMDSAT_CMD_WRITE_KMAC, &profile, 1)) {
 		DEBUG_ERROR("SmdSatCmdSpi::%s: Failed to load KMAC profile", __func__);

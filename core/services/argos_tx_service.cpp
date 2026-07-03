@@ -707,10 +707,24 @@ bool ArgosTxService::service_cancel() {
 /// @brief TX timeout — TCXO warmup + 60s margin for satellite module response.
 /// @return Timeout in ms after which TX is considered failed.
 unsigned int ArgosTxService::service_next_timeout() {
-	// Safety timeout: if KineisEventTxComplete/DeviceError never arrives,
-	// the service framework will cancel and reschedule.
-	// Budget: power-on(2s) + KMAC(1s) + TX setup(1s) + TCXO warmup(5s) + TX(3s) + margin(18s) = 30s
-	return 30000;
+	// Safety timeout: if KineisEventTxComplete/DeviceError never arrives, the
+	// service framework cancels and reschedules.
+	// Base budget: power-on(2s)+KMAC(1s)+setup(1s)+TCXO(5s)+TX(3s)+margin(18s)=30s
+	unsigned int timeout_ms = 30000;
+	// BLIND: the module bursts retx_nb copies retx_period_s apart and only reports
+	// the completing +TX at the END of the whole burst. Extend the safety timeout
+	// to cover the burst so it does not cancel a legitimately in-progress blind TX.
+	// Capped at 2 h (keep retx_nb * retx_period_s under 2 h). blind_en here is the
+	// effective, mode-gated flag (false in SURFACING_BURST/DOPPLER).
+	ArgosConfig cfg;
+	configuration_store->get_argos_configuration(cfg);
+	if (cfg.blind_en) {
+		unsigned int rn = (cfg.blind_retx_nb < 1) ? 1 : cfg.blind_retx_nb;
+		uint64_t burst_ms = (uint64_t)rn * (uint64_t)cfg.blind_retx_period_s * 1000ULL;
+		if (burst_ms > 7200000ULL) burst_ms = 7200000ULL;
+		timeout_ms += (unsigned int)burst_ms;
+	}
+	return timeout_ms;
 }
 
 /// @brief Trigger reschedule on surfacing (for surfacing burst mode).
@@ -2024,9 +2038,17 @@ void ArgosTxService::react(KineisEventTxComplete const&) {
 		m_tcxo_skip_on_next_tx = false;
 	}
 
+	// BLIND: this single +TX corresponds to a module-owned burst of retx_nb copies
+	// on air. Count them all toward the airtime/session safety budgets so
+	// NTIME_SAT and the rate limiter keep bounding actual airtime.
+	ArgosConfig argos_config;
+	configuration_store->get_argos_configuration(argos_config);
+	unsigned int tx_copies = (argos_config.blind_en && argos_config.blind_retx_nb > 0)
+	                         ? argos_config.blind_retx_nb : 1;
+
 	// Increment TX counter
 	configuration_store->increment_tx_counter();
-	m_session_tx_count++;
+	m_session_tx_count += tx_copies;
 
 	// Update last TX date time
 	std::time_t t = service_current_time();
@@ -2035,8 +2057,6 @@ void ArgosTxService::react(KineisEventTxComplete const&) {
 	// Counters updated in RAM — flash persistence deferred to periodic flush / powerdown
 
 	// Check session TX limit (SHUTDOWN_NTIME_SAT / LB_SHUTDOWN_NTIME_SAT)
-	ArgosConfig argos_config;
-	configuration_store->get_argos_configuration(argos_config);
 	if (argos_config.shutdown_ntime_sat > 0 && m_session_tx_count >= argos_config.shutdown_ntime_sat) {
 		DEBUG_INFO("ArgosTxService: Session TX limit reached (%u/%u) | shutdown",
 		           m_session_tx_count, argos_config.shutdown_ntime_sat);
@@ -2112,7 +2132,8 @@ void ArgosTxService::react(KineisEventTxComplete const&) {
 	// Record the completed TX in the rolling-window rate limiter (Plan 1
 	// step 2). No-op if disabled. Placed AFTER cooldown arming so the rate
 	// limiter records every TX irrespective of cooldown trigger mode.
-	RateLimiter::record_tx(t);
+	for (unsigned int i = 0; i < tx_copies; i++)
+		RateLimiter::record_tx(t);
 
 	// Track wall-clock uptime of this TX completion for the spacing guard
 	// (2026-05). Uses monotonic uptime, not RTC, so it survives RTC rollback

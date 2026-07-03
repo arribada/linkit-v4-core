@@ -26,6 +26,28 @@ extern Timer *system_timer;
 #include "config_store.hpp"
 extern ConfigurationStore *configuration_store;
 
+#if SMD_UART
+// True when the BLIND MAC profile is active: ARGOS_BLIND_EN set AND the mode is
+// not SURFACING_BURST (surfacing runs its own progressive Doppler cascade; a
+// module-owned retx burst would double-transmit). Fills clamped retx_nb (1..127)
+// and retx_period_s. NOTE: reads the raw ARGOS_MODE — an LB/OoZ regime that
+// overrides the mode to SURFACING_BURST is not resolved here; do not pair BLIND
+// with a surfacing regime.
+static bool smd_blind_active(unsigned int& retx_nb, unsigned int& retx_period_s) {
+	if (!configuration_store) return false;
+	// get_argos_configuration resolves the EFFECTIVE mode (LB/OoZ/HAULED) and
+	// clears blind_en for SURFACING_BURST/DOPPLER. evaluate() inside is cached
+	// (500 ms) and already runs many times per second, so this is cheap.
+	ArgosConfig cfg;
+	configuration_store->get_argos_configuration(cfg);
+	if (!cfg.blind_en) return false;
+	retx_nb = cfg.blind_retx_nb;
+	if (retx_nb < 1) retx_nb = 1; else if (retx_nb > 127) retx_nb = 127;
+	retx_period_s = cfg.blind_retx_period_s;
+	return true;
+}
+#endif
+
 // Runtime degraded-mode flag shared with smd_sat_cmd_spi.cpp via the inline
 // accessors in smd_sat_registers.hpp. Default false — the autofallback path
 // flips it when SMD_MAX_CONSECUTIVE_ERRORS is reached. Touched only by the
@@ -691,6 +713,45 @@ void SmdSat::state_load_kmac() {
 	// Step 2: Send load_kmac_profil only when RCONF/credentials changed.
 	// When unchanged, the STM32 auto-initializes MAC from flash at POR —
 	// we just wait for MAC_OK in step 3.
+#if SMD_UART
+	// BLIND MAC profile (SMD-UART only). When ARGOS_BLIND_EN, push AT+KMAC=2
+	// with the packed burst config every session (the ctx must reach the MAC —
+	// don't rely on flash auto-init). Graceful: if the module rejects profile 2,
+	// fall back to BASIC. When blind is off, keep the flash-auto-init optimization.
+	// SMD-UART: push the KMAC profile EVERY session (blind or basic). A blind
+	// toggle (ARGOS_BLIND_EN) is not signaled by the RCONF-dirty flag, so relying
+	// on the STM32 flash auto-init would leave a disabled tag stuck in blind.
+	unsigned int rn = 0, period = 0;
+	bool blind_en = smd_blind_active(rn, period);
+	{
+		try {
+			if (blind_en) {
+				// KNS_MAC_BLIND_usrCfg_t packed, little-endian:
+				// {int8 retx_nb, uint8 nb_parallel_msg=1, uint32 retx_period_s, int8 per_offset=0}
+				uint8_t ctx[7] = {
+					(uint8_t)rn, 1,
+					(uint8_t)(period & 0xFF), (uint8_t)((period >> 8) & 0xFF),
+					(uint8_t)((period >> 16) & 0xFF), (uint8_t)((period >> 24) & 0xFF),
+					0 };
+				try {
+					m_cmd.load_kmac_profil(2, ctx, sizeof(ctx));
+					DEBUG_INFO("SmdSat::%s: BLIND KMAC loaded (retx_nb=%u period=%us)", __func__, rn, period);
+				} catch (...) {
+					DEBUG_WARN("SmdSat::%s: BLIND KMAC (profile 2) rejected — falling back to BASIC", __func__);
+					m_cmd.load_kmac_profil(1);
+				}
+			} else {
+				TXTRACE("state_load_kmac: sending explicit load_kmac_profil(1)");
+				m_cmd.load_kmac_profil(1);
+			}
+			m_needs_explicit_kmac_load = false;
+		} catch (...) {
+			DEBUG_ERROR("SmdSat::%s: KMAC load failed", __func__);
+			SMD_STATE_CHANGE(load_kmac, error);
+			return;
+		}
+	}
+#else
 	if (m_needs_explicit_kmac_load) {
 		TXTRACE("state_load_kmac: sending explicit load_kmac_profil(1)");
 		try {
@@ -705,6 +766,7 @@ void SmdSat::state_load_kmac() {
 	} else {
 		TXTRACE("state_load_kmac: skip explicit KMAC (STM32 auto-inits from flash)");
 	}
+#endif
 
 	// Step 3: Poll READ_SPIMAC_STATE (0x27) for MAC ready.
 	// After explicit load_kmac_profil: MAC resets to MAC_OK (0x01).
@@ -1028,6 +1090,19 @@ void SmdSat::state_transmit_pending() {
 void SmdSat::state_transmitting_enter() {
 	DEBUG_TRACE("SmdSat::%s", __func__);
 	uint32_t total_timeout_ms = (m_tcxo_warmup_time * 1000) + 5000;
+#if SMD_UART
+	// BLIND: the module transmits retx_nb copies retx_period_s apart before it
+	// reports +TX — extend the poll window to cover the whole burst.
+	unsigned int rn = 0, period = 0;
+	if (smd_blind_active(rn, period)) {
+		// uint64 intermediate: rn(<=127) * period(<=65535) * 1000 overflows uint32.
+		// Cap at 2 h so an extreme config can't park the service indefinitely.
+		uint64_t burst_ms = (uint64_t)rn * (uint64_t)period * 1000ULL;
+		if (burst_ms > 7200000ULL) burst_ms = 7200000ULL;
+		total_timeout_ms += (uint32_t)burst_ms;
+		DEBUG_INFO("SmdSat::%s: BLIND — TX poll window +%u ms (burst)", __func__, (uint32_t)burst_ms);
+	}
+#endif
 	m_state_counter = (total_timeout_ms / smdsat_timing_tx_poll_ms()) + 1;
 #if SMDSAT_AUTOFALLBACK_ENABLED
 	// Snapshot for cascade-failure detection in stop_send / power_off_immediate.

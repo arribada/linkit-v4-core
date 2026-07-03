@@ -171,6 +171,9 @@ private:
 	/// @param params      Optional parameter string.
 	/// @param timeout_ms  Max wait in ms (default 1000).
 	/// @return true if +OK received, false on timeout or +ERROR.
+	// Load the KMAC MAC profile honoring ARGOS_BLIND_EN: BLIND (AT+KMAC=2,<ctx>)
+	// with graceful fallback to BASIC (AT+KMAC=1) if the module rejects it.
+	bool load_kmac();
 	bool send_AT(KIM2::ATCmd cmd, const std::optional<std::string>& params = std::nullopt,
 	             uint16_t timeout_ms = 1000);
 
