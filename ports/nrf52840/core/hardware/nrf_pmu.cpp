@@ -249,6 +249,18 @@ void PMU::powerdown() {
 			static_cast<unsigned int>(rtc->gettime()));
 	}
 
+#ifdef BENCH_TEST
+	// Bench: the real power-off mechanism below (TPL5111 MCU_DONE pulse on RSPB,
+	// or System OFF) cuts VDD and we lose all host/UART/SWD control. State was
+	// just persisted (LAST_KNOWN_RTC + cooldown), so simulate the duty-cycle wake
+	// with an immediate soft reset instead: the pseudo-RTC chain and boot-modulo
+	// resume exactly as after a real TPL wake, but the board stays reachable.
+	// Compressed cycle: boot -> work -> powerdown -> reset -> boot ...
+	DEBUG_WARN("PMU::powerdown: BENCH_TEST — soft reset (simulated TPL wake, no power cut)");
+	PMU::delay_ms(50);
+	sd_nvic_SystemReset();
+#endif
+
 	// Shut down all peripherals before power-off (all boards)
 	NrfRGBLed::set_color_raw(BSP::GPIO::GPIO_LED_RED, BSP::GPIO::GPIO_LED_GREEN, BSP::GPIO::GPIO_LED_BLUE, RGBLedColor::BLACK);
 #ifdef SENSORS_PWR_PIN

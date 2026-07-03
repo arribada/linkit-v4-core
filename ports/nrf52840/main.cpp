@@ -1297,9 +1297,16 @@ int main()
 	GenTracker::start();
 
 #ifdef BENCH_TEST
-	// Bench-test console: '%'-prefixed USB-CDC commands (%CFG/%OP/%GPS/...) for
-	// autonomous hardware-in-the-loop validation. Debug/bench builds only.
+	// Bench-test hooks (debug/bench builds only).
+#ifdef EXTERNAL_WAKEUP
+	// RSPB: no USB, debug UART is TX-only — no interactive console. Auto-inject a
+	// fix each (reset-simulated) TPL duty-cycle so the SMD satellite TX runs; the
+	// host observes over the 921600 debug UART. Configs are uploaded out-of-band.
+	bench::start_auto_inject();
+#else
+	// LinkIt (KIM/SMD/LoRa): interactive '%'-prefixed USB-CDC console.
 	bench::start_poll();
+#endif
 #endif
 
 	// Power rail management: cut peripheral power rails when no task is due soon.

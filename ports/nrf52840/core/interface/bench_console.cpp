@@ -186,4 +186,38 @@ void bench::start_poll() {
         bench_poll, "BenchPoll", Scheduler::DEFAULT_PRIORITY, BENCH_POLL_MS);
 }
 
+namespace {
+
+Scheduler::TaskHandle s_autoinject_task;
+
+// RSPB auto-inject: once per boot, when Operational + gps_service is up, inject a
+// synthetic fix so the satellite TX pipeline runs with no antenna. Statics reset
+// on the soft reset that ends each simulated TPL cycle, so every boot injects once.
+void auto_inject_fire() {
+    static bool s_done = false;
+    static unsigned int s_tries = 0;
+    if (s_done)
+        return;
+    if (GenTracker::is_in_state<OperationalState>() && gps_service) {
+        s_done = true;
+        DEBUG_WARN("bench::auto_inject: injecting synthetic fix (RSPB duty-cycle)");
+        gps_service->bench_inject_fix(-21.0097, 55.2707, 2500, 8);
+        return;
+    }
+    if (++s_tries > 60) {   // ~60 s: give up (no GNSS service on this build)
+        DEBUG_WARN("bench::auto_inject: gps_service not ready after 60 s — TX will rely on heartbeat");
+        return;
+    }
+    s_autoinject_task = system_scheduler->post_task_prio(
+        auto_inject_fire, "BenchAutoInject", Scheduler::DEFAULT_PRIORITY, 1000);
+}
+
+}  // namespace
+
+void bench::start_auto_inject() {
+    DEBUG_WARN("bench::start_auto_inject: RSPB compressed duty-cycle — auto-inject fix once Operational");
+    s_autoinject_task = system_scheduler->post_task_prio(
+        auto_inject_fire, "BenchAutoInject", Scheduler::DEFAULT_PRIORITY, 5000);
+}
+
 #endif  // BENCH_TEST

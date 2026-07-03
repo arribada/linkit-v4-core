@@ -34,7 +34,14 @@ bool handle_line(const std::string& line);
 /// @brief Start the all-state USB poll task. Reads bench commands from USB-CDC in
 /// every FSM state EXCEPT ConfigurationState (there the config USB poller owns the
 /// RX and routes '%' lines back into handle_line). Call once after GenTracker::start().
+/// Used on USB boards (LinkIt).
 void start_poll();
+
+/// @brief RSPB path: no USB, debug UART is TX-only, so no interactive console.
+/// Instead auto-inject one synthetic GPS fix per boot once the FSM reaches
+/// Operational + gps_service is up, so each (reset-simulated) TPL duty-cycle
+/// drives the satellite TX pipeline with no antenna. Observe over the debug UART.
+void start_auto_inject();
 
 }  // namespace bench
 
