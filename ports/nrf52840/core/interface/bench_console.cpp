@@ -80,6 +80,19 @@ void cmd_gps(const std::string& line) {
     reply(buf);
 }
 
+void cmd_fastloc(const std::string& line) {
+    if (!GenTracker::is_in_state<OperationalState>()) {
+        reply("%GPSFL ERR not-operational (use %OP first)"); return;
+    }
+    if (!gps_service) { reply("%GPSFL ERR no-gps-service"); return; }
+    double lat = 0.0, lon = 0.0;
+    unsigned int hacc = 0, numsv = 0;
+    int n = sscanf(line.c_str(), "%%GPSFL %lf %lf %u %u", &lat, &lon, &hacc, &numsv);
+    if (n < 2) { reply("%GPSFL ERR usage: %GPSFL <lat> <lon> [hAcc_mm] [numSV]"); return; }
+    gps_service->bench_inject_fastloc(lat, lon, (uint32_t)hacc, (uint8_t)numsv);
+    reply("%GPSFL OK fastloc injected");
+}
+
 }  // namespace
 
 bool bench::handle_line(const std::string& raw) {
@@ -114,6 +127,20 @@ bool bench::handle_line(const std::string& raw) {
         }
     } else if (cmd == "%GPS") {
         cmd_gps(line);
+    } else if (cmd == "%GPSFL") {
+        cmd_fastloc(line);
+    } else if (cmd == "%GPSCL") {
+        if (!GenTracker::is_in_state<OperationalState>())
+            reply("%GPSCL ERR not-operational (use %OP first)");
+        else if (!gps_service)
+            reply("%GPSCL ERR no-gps-service");
+        else { gps_service->bench_inject_cloudlocate(); reply("%GPSCL OK cloudlocate injected"); }
+    } else if (cmd == "%NOFIX") {
+        if (!GenTracker::is_in_state<OperationalState>())
+            reply("%NOFIX ERR not-operational (use %OP first)");
+        else if (!gps_service)
+            reply("%NOFIX ERR no-gps-service");
+        else { gps_service->bench_inject_nofix(); reply("%NOFIX OK"); }
     } else if (cmd == "%DIVE" || cmd == "%SURFACE") {
         // Simulate the saltwater switch: broadcast the same UW_SENSOR event the SWS
         // service emits (source=UW_SENSOR, type=SERVICE_LOG_UPDATED, data=bool). Each

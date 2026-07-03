@@ -1312,6 +1312,64 @@ void GPSService::bench_inject_fix(double lat, double lon, uint32_t hAcc_mm, uint
     bench_force_initiated();
     gnss_data_callback(d);
 }
+
+/// @brief Fill a GNSSData's date/time from the RTC (shared by the bench injectors).
+static void bench_stamp_time(GNSSData& d) {
+    if (rtc && rtc->is_set()) {
+        std::time_t now = rtc->gettime();
+        struct tm *t = gmtime(&now);
+        if (t) {
+            d.year  = (uint16_t)(t->tm_year + 1900);
+            d.month = (uint8_t)(t->tm_mon + 1);
+            d.day   = (uint8_t)t->tm_mday;
+            d.hour  = (uint8_t)t->tm_hour;
+            d.min   = (uint8_t)t->tm_min;
+            d.sec   = (uint8_t)t->tm_sec;
+        }
+    }
+}
+
+void GPSService::bench_inject_fastloc(double lat, double lon, uint32_t hAcc_mm, uint8_t numSV) {
+    GNSSData d = {};
+    d.fixType = 2;                        // 2D / degraded fix
+    d.valid   = 0x07;
+    d.numSV   = numSV ? numSV : 4;
+    d.lat     = lat;
+    d.lon     = lon;
+    d.height  = 10000; d.hMSL = 10000;
+    d.hAcc    = hAcc_mm ? hAcc_mm : 50000;  // degraded: 50 m default
+    d.vAcc    = 60000;
+    d.pDOP    = 5.0f; d.hDOP = 4.0f; d.vDOP = 4.0f;
+    d.ttff    = 5000;
+    bench_stamp_time(d);
+    DEBUG_WARN("GPSService::bench_inject_fastloc: lat=%f lon=%f hAcc=%umm numSV=%u",
+               lat, lon, (unsigned)d.hAcc, (unsigned)d.numSV);
+    m_is_active = false;
+    bench_force_initiated();
+    gnss_degraded_callback(d);
+}
+
+void GPSService::bench_inject_cloudlocate() {
+    GNSSRawMeasurement raw;               // ctor zeroes buffers + clears has_* flags
+    raw.has_measc12 = true;
+    for (unsigned int i = 0; i < sizeof(raw.measc12); i++)
+        raw.measc12[i] = (uint8_t)(0xC0 + i);   // deterministic dummy MEASC12 blob
+    if (rtc && rtc->is_set())
+        raw.capture_time = (uint32_t)rtc->gettime();
+    DEBUG_WARN("GPSService::bench_inject_cloudlocate: MEASC12 raw measurement injected");
+    m_is_active = false;
+    bench_force_initiated();
+    gnss_cloudlocate_callback(raw);
+}
+
+void GPSService::bench_inject_nofix() {
+    DEBUG_WARN("GPSService::bench_inject_nofix: forcing NO_FIX end-of-session");
+    m_is_active = false;
+    bench_force_initiated();
+    GPSLogEntry log_entry = invalid_log_entry();
+    ServiceEventData event_data = log_entry;
+    service_complete(&event_data, &log_entry);
+}
 #endif
 
 /// @brief Degraded fix callback — store data (does NOT set first_fix_found).

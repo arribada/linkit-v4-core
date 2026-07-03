@@ -217,6 +217,15 @@ public:
 	/// @param hAcc_mm  Horizontal accuracy in mm (0 → default 2500 = 2.5 m).
 	/// @param numSV    Satellites used (0 → default 8).
 	void bench_inject_fix(double lat, double lon, uint32_t hAcc_mm, uint8_t numSV);
+	/// @brief Bench harness — inject a DEGRADED/FASTLOC fix (low-quality position)
+	/// via the gnss_degraded_callback path (event_type=FASTLOC).
+	void bench_inject_fastloc(double lat, double lon, uint32_t hAcc_mm, uint8_t numSV);
+	/// @brief Bench harness — inject a CLOUDLOCATE raw measurement (no on-device
+	/// position) via the gnss_cloudlocate_callback path (event_type=CLOUDLOCATE).
+	void bench_inject_cloudlocate();
+	/// @brief Bench harness — force a NO_FIX end-of-session (invalid_log_entry +
+	/// broadcast), driving the 0xFF heartbeat / NTRY back-off path on demand.
+	void bench_inject_nofix();
 #endif
 private:
 
