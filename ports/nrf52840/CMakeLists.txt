@@ -23,6 +23,9 @@ option(LORA_RAK3172 "Use RAK3172-SiP LoRa module instead of satellite" OFF)
 # GPS fix injection for autonomous hardware-in-the-loop validation. Debug builds
 # only; entirely compiled out of production firmware. See core/interface/bench_console.*
 option(BENCH_TEST "Enable bench-test serial console + GPS injection hook" OFF)
+# Bench diagnostic (RSPB/SMD): force the SMD LPM bitmap to NONE (always-on) so a
+# satellite-TX SPI failure can be attributed to STOP-mode wake vs the SPI itself.
+option(BENCH_FORCE_LPM_NONE "Bench: force SMD LPM=NONE (isolate SPI from STOP-mode wake)" OFF)
 
 # SMD timing safety knobs.
 #
@@ -703,6 +706,7 @@ target_compile_definitions(${TARGET_NAME} PRIVATE
     USB_DTE_ENABLED
     # Bench-test harness (autonomous HIL validation) — off in production
     $<$<BOOL:${BENCH_TEST}>:BENCH_TEST=1>
+    $<$<BOOL:${BENCH_FORCE_LPM_NONE}>:BENCH_FORCE_LPM_NONE=1>
     BUILD_TYPE=${CMAKE_BUILD_TYPE}
     #SCHEDULER_DEBUG
     DEBUG_ENABLE=1

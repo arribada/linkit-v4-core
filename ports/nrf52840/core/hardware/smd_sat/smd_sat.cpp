@@ -1316,6 +1316,15 @@ void SmdSat::set_tcxo_warmup_time(unsigned int time_s) {
 }
 
 void SmdSat::set_lpm_mode(uint8_t lpm_bitmap) {
+#ifdef BENCH_FORCE_LPM_NONE
+	// Bench diagnostic: force LPM=NONE (0x01) so the SMD never enters SLEEP/STOP.
+	// Isolates whether an SPI failure is the module failing to wake from a
+	// low-power mode (e.g. config SMD_LPM_MODE=4=STOP with an SMD firmware built
+	// without LPM) vs a genuine SPI hardware/protocol problem.
+	DEBUG_WARN("SmdSat::set_lpm_mode: BENCH_FORCE_LPM_NONE — forcing NONE (was 0x%02X)", lpm_bitmap);
+	m_lpm_mode = 0x01;
+	return;
+#endif
 	// Sanitize: STANDBY(0x08) and SHUTDOWN(0x10) require SAT_EXTWAKEUP pin
 #ifndef SAT_EXTWAKEUP
 	if (lpm_bitmap & 0x18) {
