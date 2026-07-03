@@ -1302,6 +1302,14 @@ void GPSService::bench_inject_fix(double lat, double lon, uint32_t hAcc_mm, uint
     // Short-circuit any real acquisition still in flight so a later real PVT
     // doesn't double-log on top of the injected one.
     m_is_active = false;
+    // Mark the GNSS service initiated so gnss_data_callback → task_process_gnss_data
+    // → service_complete() runs its FULL path instead of bailing on
+    // "!m_is_initiated". That full path calls service_log() → notify_log_updated()
+    // which broadcasts SERVICE_LOG_UPDATED carrying the valid GPS entry to peers.
+    // ArgosTxService consumes it to set m_gps_fix_corrected_clock ("TX unlocked")
+    // and DepthPileManager stores the fix. Without this the injected fix logs but
+    // never unlocks Argos TX — so LEGACY/BLIND could not be validated on the bench.
+    bench_force_initiated();
     gnss_data_callback(d);
 }
 #endif

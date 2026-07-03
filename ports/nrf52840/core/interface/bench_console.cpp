@@ -114,6 +114,18 @@ bool bench::handle_line(const std::string& raw) {
         }
     } else if (cmd == "%GPS") {
         cmd_gps(line);
+    } else if (cmd == "%DIVE" || cmd == "%SURFACE") {
+        // Simulate the saltwater switch: broadcast the same UW_SENSOR event the SWS
+        // service emits (source=UW_SENSOR, type=SERVICE_LOG_UPDATED, data=bool). Each
+        // Service::notify_peer_event routes it to notify_underwater_state(). %DIVE =
+        // wet (underwater=true), %SURFACE = dry (surfaced=false) — required to drive
+        // SURFACING_BURST's progressive Doppler cascade and underwater gating.
+        ServiceEvent e;
+        e.event_source = ServiceIdentifier::UW_SENSOR;
+        e.event_type   = ServiceEventType::SERVICE_LOG_UPDATED;
+        e.event_data   = (cmd == "%DIVE");   // true = underwater, false = surfaced
+        ServiceManager::notify_peer_event(e);
+        reply(cmd == "%DIVE" ? "%DIVE OK underwater" : "%SURFACE OK surfaced");
     } else {
         reply(std::string("%ERR unknown-cmd ") + cmd);
     }
