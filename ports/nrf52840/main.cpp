@@ -790,6 +790,12 @@ static LFSFileSystem& init_storage(NrfSwitch& nrf_reed_switch, Is25Flash& is25_f
 
 		// Check if this is not our turn to run based on modulo
 		if (boot_counter > 0 && !configuration_store->boot_count_check_modulo(boot_counter)) {
+#ifdef BENCH_TEST
+			// Bench: never modulo-powerdown — powerdown is suppressed anyway
+			// (see PMU::powerdown), and we want every boot to reach the work +
+			// Argos-TX path so the SMD SPI can be exercised and observed.
+			DEBUG_INFO("EXTERNAL_WAKEUP: BENCH_TEST — modulo skip suppressed, running this boot");
+#else
 			if (nrf_reed_switch.get_state()) {
 				DEBUG_INFO("EXTERNAL_WAKEUP: Magnet detected | skipping modulo powerdown");
 			} else {
@@ -799,6 +805,7 @@ static LFSFileSystem& init_storage(NrfSwitch& nrf_reed_switch, Is25Flash& is25_f
 				status_led->off();
 				PMU::powerdown();
 			}
+#endif
 		}
 		DEBUG_INFO("EXTERNAL_WAKEUP: Our turn to run | continuing boot");
 #else
