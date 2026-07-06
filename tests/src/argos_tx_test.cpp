@@ -290,6 +290,26 @@ TEST(ArgosTxService, SchedulerLegacyNoJitter)
 	sched.notify_tx_complete();
 }
 
+// Sealed-device guard (audit 2026-07): the periodic 24 h search must not
+// infinite-loop on a corrupt tx_interval_s==0 (period_ms==0 would spin the WDT
+// -> reboot -> x3 -> factory reset). Exercised through the public schedule_legacy
+// path: the guard throws, schedule_legacy catches it and returns INVALID_SCHEDULE.
+// The fact that this test RETURNS at all proves there is no infinite loop.
+TEST(ArgosTxService, SchedulerZeroIntervalNoHang)
+{
+	ArgosTxScheduler sched;
+	ArgosConfig config;
+	config.argos_tx_jitter_en = false;
+
+	config.tx_interval_s = 0;  // corrupt/degenerate period
+	CHECK_EQUAL(ArgosTxScheduler::INVALID_SCHEDULE, sched.schedule_legacy(config, 100));
+
+	// A valid interval still schedules normally on the same object (no regression)
+	config.tx_interval_s = 60;
+	sched.notify_tx_complete();
+	CHECK_EQUAL(0U, sched.schedule_legacy(config, 100));
+}
+
 TEST(ArgosTxService, SchedulerLegacyNoJitterWithEarliestTxSet)
 {
 	ArgosTxScheduler sched;

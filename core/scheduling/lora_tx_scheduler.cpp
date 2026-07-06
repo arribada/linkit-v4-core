@@ -41,6 +41,18 @@ int LoRaTxScheduler::compute_random_jitter(bool jitter_en, int min, int max) {
 void LoRaTxScheduler::schedule_periodic(unsigned int period_ms, bool jitter_en, unsigned int duty_cycle, uint64_t now_ms) {
 	uint64_t start_time;
 
+	// Sealed-device guard (audit 2026-07): the 24 h search loop below advances
+	// by period_ms — with 0 it never terminates AND never kicks the WDT, so a
+	// corrupted stored TR_NOM (DTE clamps writes to >=30 s but LittleFS does
+	// not checksum file DATA) would spin until the WDT resets, x3 -> factory
+	// reset. Fail cleanly instead — both callers catch this and return
+	// INVALID_SCHEDULE. (Mirrors the same guard in ArgosTxScheduler.)
+	if (period_ms == 0) {
+		DEBUG_ERROR("LoRaTxScheduler::schedule_periodic: period_ms=0 (corrupt config?) — TX schedule aborted");
+		m_curr_schedule_abs.reset();
+		throw ErrorCode::RESOURCE_NOT_AVAILABLE;
+	}
+
 	DEBUG_TRACE("LoRaTxScheduler::schedule_periodic: now=%llu last=%llu tr=%u jitter=%u", now_ms,
 			m_last_schedule_abs.has_value() ? m_last_schedule_abs.value() : 0,
 			period_ms, jitter_en);
