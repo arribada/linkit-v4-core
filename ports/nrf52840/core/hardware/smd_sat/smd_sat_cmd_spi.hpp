@@ -56,7 +56,7 @@ public:
 	void read_rconf_raw(uint8_t *rconf_raw, uint16_t *len) override;
 
 	// KMAC
-	void load_kmac_profil(uint8_t profile) override;
+	void load_kmac_profil(uint8_t profile, const uint8_t* ctx = nullptr, uint8_t ctx_len = 0) override;
 	void read_kmac(uint8_t *profile) override;
 	void get_kmac_status(uint8_t *status) override;
 

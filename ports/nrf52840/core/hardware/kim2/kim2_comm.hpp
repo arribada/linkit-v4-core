@@ -32,6 +32,7 @@ enum ATCmd {
 	AT_SET_RCONF,
 	AT_GET_RCONF,
 	AT_SET_KMAC_BASIC,
+	AT_SET_KMAC_BLIND,
 	AT_TX,
 	AT_UNKNOWN
 };
@@ -57,6 +58,7 @@ static constexpr const char *ADDR_RESPONSE = "+ADDR=";
 static constexpr const char *RCONF_RESPONSE = "+RCONF=";
 static constexpr const char *TX_RESPONSE   = "+TX=";
 static constexpr const char *ERR_RESPONSE  = "+ERROR=";
+static constexpr const char *HDLR_RESPONSE = "+HDLR=";   // new-stack AT+TX immediate ack (before +OK)
 /// @}
 
 static constexpr uint8_t ID_SIZE   = 6;   ///< Decimal ID string length
@@ -112,6 +114,20 @@ public:
 	unsigned int m_kineis_id = 0;      ///< Device ID from +ID= response
 	unsigned int m_hex_addr = 0;       ///< Device address from +ADDR= response
 	uint16_t m_tx_status = 0xFFFF;     ///< Last TX status from +TX= response
+	// KIM +TX response format is FIRMWARE-VERSION dependent, NOT MAC-profile
+	// dependent:
+	//   old stack (any profile): +TX=<status>[,<data>]           (status FIRST)
+	//   new stack blind/satdet:  +TX=<handler>,<status>[,<data>]  (handler FIRST)
+	// The new stack ALWAYS emits a "+HDLR=<handler>" ack just before +OK for the
+	// AT+TX, so the presence of that ack in THIS TX cycle — not whether we loaded
+	// AT+KMAC=2 — is the correct discriminator. Older KIM firmware runs BLIND
+	// (AT+KMAC=2 accepted) yet still replies with the old status-first +TX; keying
+	// off m_blind_active there misreads the frame-data field as the status (e.g.
+	// "+TX=0,03387334..." -> stoi("03387334")&0xFFFF = 44998 "failure" on a real
+	// SUCCESS). m_hdlr_seen makes both stacks parse correctly. Reset at each AT+TX.
+	bool m_blind_active = false;
+	bool m_hdlr_seen = false;
+	void set_blind_active(bool active) { m_blind_active = active; }
 	std::string m_rconf_info;          ///< Last +RCONF=? response payload (diag)
 
 	/// @param libuarte_async_instance  BSP UART instance index (default 1).

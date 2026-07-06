@@ -54,6 +54,9 @@ static inline uint16_t crc16_compute(const uint8_t *data, uint16_t length, const
 #ifdef USB_DTE_ENABLED
 #include "usb_interface.hpp"
 #endif
+#ifdef BENCH_TEST
+#include "bench_console.hpp"
+#endif
 
 // LoRa device instance (for bridge mode in process_usb_data)
 #if defined(LORA_RAK3172) && (LORA_RAK3172 == 1)
@@ -88,6 +91,11 @@ FSM_INITIAL_STATE(BuzzState, BuzzOff);
 
 using led_handle = LEDState;
 using buzz_handle = BuzzState;
+
+/// @brief Free-function bridge read by the LED state machine (ledsm.hpp) to give
+/// the confirmation-gesture blink priority over transient background LED events.
+/// Kept as a free function so ledsm stays decoupled from the GenTracker header.
+bool led_confirmation_gesture_pending() { return GenTracker::is_confirmation_gesture_pending(); }
 
 
 /// @brief Default event handler — ignore unhandled events.
@@ -1265,6 +1273,17 @@ void ConfigurationState::process_usb_data() {
 		auto req = usb.read_line();
 
 		if (req.size()) {
+#ifdef BENCH_TEST
+			// Bench '%' commands share the CDC stream with DTE '$...#'. Route
+			// them to the bench console (e.g. %OP to leave config, %STATE) so
+			// they work while in ConfigurationState too. Never fed to the DTE
+			// parser.
+			if (req[0] == '%') {
+				bench::handle_line(req);
+				schedule_usb_poll();
+				return;
+			}
+#endif
 			// DTE protocol expects trailing \r which read_line() strips
 			req += '\r';
 			// Suppress console debug logs during DTE exchange to avoid

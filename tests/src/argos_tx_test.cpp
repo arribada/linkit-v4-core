@@ -147,6 +147,19 @@ TEST_GROUP(ArgosTxService)
 		configuration_store->notify_gps_location(log);
 	}
 
+	void inject_gps_nofix(std::time_t t = 0) {
+		ServiceEvent e;
+		GPSLogEntry log = make_gps_location(false, 0, 0, t);
+		log.info.event_type = GPSEventType::NO_FIX;
+
+		e.event_source = ServiceIdentifier::GNSS_SENSOR;
+		e.event_type = ServiceEventType::SERVICE_LOG_UPDATED;
+		e.event_data = log;
+		e.event_originator_unique_id = 0x12345678;
+		ServiceManager::notify_peer_event(e);
+		configuration_store->notify_gps_location(log);
+	}
+
 	void notify_underwater_state(bool state) {
 		ServiceEvent e;
 		e.event_type = ServiceEventType::SERVICE_LOG_UPDATED;
@@ -172,15 +185,15 @@ TEST(ArgosTxService, DepthPileFillsAndEmpties)
 	// Should have 24 eligible entries
 	CHECK_EQUAL(24, dp.eligible());
 
-	// Retrieving the latest entry should not decrement burst counter
-	// for time sync burst case
+	// Retrieving the latest entry (time sync burst) does NOT consume a burst
+	// slot — deliberate deviation from v3 (see DepthPile::retrieve_latest)
 	v = dp.retrieve_latest();
 	CHECK_EQUAL(1, v.size());
 	CHECK_EQUAL(24, dp.eligible());
 	CHECK_EQUAL(23, v.at(0)->info.day); // Should be most recent
 
-	// Retrieve entire depth pile (in blocks of 3 — LDA2 long packet now carries 3 fixes
-	// to leave room for the firmware-embedded CRC8 at byte 23)
+	// Retrieve entire depth pile (in blocks of 3 — LDA2 long packet carries 3
+	// fixes to leave room for the firmware-embedded CRC8 at byte 23)
 	for (unsigned int i = 0; i < 8; i++) {
 		v = dp.retrieve(24);
 		CHECK_EQUAL(3, v.size());
@@ -212,8 +225,8 @@ TEST(ArgosTxService, DepthPile1)
 	// Should have 24 eligible entries
 	CHECK_EQUAL(24, dp.eligible());
 
-	// Retrieving the latest entry should not decrement burst counter
-	// for time sync burst case
+	// Retrieving the latest entry (time sync burst) does NOT consume a burst
+	// slot — deliberate deviation from v3 (see DepthPile::retrieve_latest)
 	v = dp.retrieve_latest();
 	CHECK_EQUAL(1, v.size());
 	CHECK_EQUAL(24, dp.eligible());
@@ -413,12 +426,11 @@ TEST(ArgosTxService, BuildLongGNSSPacket)
 	check_lda2_long_packet(x, "097166C6600781E0065CCD8CC00F03C1B19801E078");
 }
 
-// v2 LONG format: when positions are NON-uniformly spaced (no-fix gaps, as the
-// NO_TX / LAST_KNOWN policy produces by dropping the 0xFF grid-fillers), the
-// builder sets the format-version bit (168) + per-position skip fields so the
-// decoder can date each entry. delta=10min(600s); build_gnss_packet reverses to
-// most-recent-first, so skip[1]=2 (mid is 2 steps before newest), skip[2]=1.
-TEST(ArgosTxService, BuildLongGNSSPacketV2SkipNonUniform)
+// Legacy LONG format: whatever the position spacing (uniform or NOT), the frame
+// keeps the plain pre-v2 layout — bits 168+ (bytes 21/22) stay zero, dating is
+// the uniform delta_time_loc grid. (The 2026-06 v2 skip-field extension was
+// removed 2026-07: decoders expect the plain legacy frame.)
+TEST(ArgosTxService, BuildLongGNSSPacketNonUniformKeepsLegacyLayout)
 {
 	unsigned int size_bits;
 	GPSLogEntry newest = make_gps_location(1, 12.3, 44.4, 1652106702);
@@ -427,19 +439,16 @@ TEST(ArgosTxService, BuildLongGNSSPacketV2SkipNonUniform)
 	std::vector<GPSLogEntry*> v({&oldest, &mid, &newest}); // chronological asc; builder reverses
 	std::string x = ArgosPacketBuilder::build_gnss_packet(v, false, false, BaseDeltaTimeLoc::DELTA_T_10MIN, size_bits);
 	CHECK_EQUAL(ArgosPacketBuilder::LDA2_FRAME_BYTES, x.size());
-	// bit 168 version=1 ; bits 169-173 skip1=2 ; bits 174-178 skip2=1
-	// byte21 = 1 00010 00 = 0x88 ; byte22 = 1 00000 00 = 0x20
-	CHECK_EQUAL(0x88, (unsigned int)(unsigned char)x[21]);
-	CHECK_EQUAL(0x20, (unsigned int)(unsigned char)x[22]);
-	// CRC8 self-consistent (must cover the new skip bits)
+	// Non-uniform spacing must NOT set any trailing format/skip bits
+	CHECK_EQUAL(0x00, (unsigned int)(unsigned char)x[21]);
+	CHECK_EQUAL(0x00, (unsigned int)(unsigned char)x[22]);
+	// CRC8 self-consistent
 	unsigned char expected_crc = CRC8::checksum(x, ArgosPacketBuilder::LDA2_DATA_BITS);
 	CHECK_EQUAL((unsigned int)expected_crc, (unsigned int)(unsigned char)x[23]);
 }
 
-// v2 LONG format backward-compat: uniformly-spaced positions (e.g. EMPTY_POS with
-// 0xFF grid-fill, or all-equal timestamps) keep version bit = 0 and a zero skip
-// region (bytes 21/22) -> byte-identical to the legacy frame.
-TEST(ArgosTxService, BuildLongGNSSPacketV2UniformIsLegacy)
+// Legacy LONG format: uniformly-spaced positions — same zero trailing region.
+TEST(ArgosTxService, BuildLongGNSSPacketUniformKeepsLegacyLayout)
 {
 	unsigned int size_bits;
 	GPSLogEntry a = make_gps_location(1, 12.3, 44.4, 1652106702);
@@ -451,13 +460,44 @@ TEST(ArgosTxService, BuildLongGNSSPacketV2UniformIsLegacy)
 	CHECK_EQUAL(0x00, (unsigned int)(unsigned char)x[22]);
 }
 
-// LAST_KNOWN age cap (ARP37): a cached position older than ARGOS_LAST_KNOWN_MAX_AGE_S
-// is NOT re-transmitted (degrades to NO_TX). Strict mock: no expectOneCall("send")
-// after start -> any transmission would fail the test.
-TEST(ArgosTxService, LegacyLastKnownDropsStalePosition)
+// First-message gate (non-RSPB): without a valid GPS fix yet this session, the
+// clock is not GPS-corrected, so NO message is sent — not even a NO_FIX
+// heartbeat. (RSPB is exempt at compile time and would send the empty position.)
+TEST(ArgosTxService, LegacyNoTxBeforeFirstFix)
 {
-	fake_config_store->write_param(ParamID::ARGOS_TX_NO_FIX_POLICY, (unsigned int)BaseTxNoFixPolicy::LAST_KNOWN);
-	fake_config_store->write_param(ParamID::ARGOS_LAST_KNOWN_MAX_AGE_S, (unsigned int)3600);  // 1h cap
+	fake_config_store->write_param(ParamID::ARGOS_MODE, BaseArgosMode::LEGACY);
+	fake_config_store->write_param(ParamID::ARGOS_DEPTH_PILE, BaseDepthPile::DEPTH_PILE_1);
+	fake_config_store->write_param(ParamID::ARGOS_HEXID, (unsigned int)0x01234567U);
+	fake_config_store->write_param(ParamID::LB_EN, false);
+	fake_config_store->write_param(ParamID::TR_NOM, (unsigned int)10);
+	fake_config_store->write_param(ParamID::ARGOS_TIME_SYNC_BURST_EN, false);
+
+	ArgosTxService serv(*mock_kineis);
+	std::time_t t = 1652105502000;  // ms
+	fake_rtc->settime(t/1000);   // clock IS set (e.g. DTE/pseudo-RTC) but never by GPS
+	fake_timer->set_counter(t);
+
+	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
+	serv.start();
+
+	// Only NO_FIX results — no real fix to unlock TX -> strict mock asserts silence
+	inject_gps_nofix(t/1000);
+	t += 10000;
+	fake_rtc->settime(t/1000);
+	fake_timer->set_counter(t);
+	system_scheduler->run();
+	inject_gps_nofix(t/1000);
+	t += 10000;
+	fake_rtc->settime(t/1000);
+	fake_timer->set_counter(t);
+	system_scheduler->run();
+	mock().checkExpectations();  // no "send" expected
+}
+
+// After a real GPS fix corrects the clock (unlocks TX), a subsequent no-fix
+// cycle transmits the NO_FIX 0xFF heartbeat.
+TEST(ArgosTxService, LegacyNoFixHeartbeatAfterFix)
+{
 	fake_config_store->write_param(ParamID::ARGOS_MODE, BaseArgosMode::LEGACY);
 	fake_config_store->write_param(ParamID::ARGOS_DEPTH_PILE, BaseDepthPile::DEPTH_PILE_1);
 	fake_config_store->write_param(ParamID::ARGOS_HEXID, (unsigned int)0x01234567U);
@@ -473,55 +513,35 @@ TEST(ArgosTxService, LegacyLastKnownDropsStalePosition)
 	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
 	serv.start();
 
-	// Inject a real fix already 2h old (> the 1h cap).
-	inject_gps_location(1, 11.8768, -33.8232, (t/1000) - 7200);
-
-	// Fire the scheduled TX: process_gnss_burst must drop the stale position -> NO send.
+	// Real fix unlocks TX and is transmitted (SHORT, 96 bits)
+	inject_gps_location(1, 11.8768, -33.8232, t/1000);
+	mock().expectOneCall("send").onObject(mock_kineis).withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2).
+			withUnsignedIntParameter("size_bits", 96);
 	t += serv.get_last_schedule();
 	fake_rtc->settime(t/1000);
 	fake_timer->set_counter(t);
 	system_scheduler->run();
-	mock().checkExpectations();  // no "send" was expected -> asserts the stale fix was not transmitted
-}
+	mock_kineis->notify(KineisEventTxComplete({}));
 
-// LAST_KNOWN: a FRESH cached position (age <= ARP37) IS transmitted — positive
-// complement to LegacyLastKnownDropsStalePosition.
-TEST(ArgosTxService, LegacyLastKnownSendsFreshPosition)
-{
-	fake_config_store->write_param(ParamID::ARGOS_TX_NO_FIX_POLICY, (unsigned int)BaseTxNoFixPolicy::LAST_KNOWN);
-	fake_config_store->write_param(ParamID::ARGOS_LAST_KNOWN_MAX_AGE_S, (unsigned int)3600);
-	fake_config_store->write_param(ParamID::ARGOS_MODE, BaseArgosMode::LEGACY);
-	fake_config_store->write_param(ParamID::ARGOS_DEPTH_PILE, BaseDepthPile::DEPTH_PILE_1);
-	fake_config_store->write_param(ParamID::ARGOS_HEXID, (unsigned int)0x01234567U);
-	fake_config_store->write_param(ParamID::LB_EN, false);
-	fake_config_store->write_param(ParamID::TR_NOM, (unsigned int)10);
-	fake_config_store->write_param(ParamID::ARGOS_TIME_SYNC_BURST_EN, false);
-
-	ArgosTxService serv(*mock_kineis);
-	std::time_t t = 1652105502000;  // ms
-	fake_rtc->settime(t/1000);
-	fake_timer->set_counter(t);
-
-	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
-	serv.start();
-
-	inject_gps_location(1, 11.8768, -33.8232, t/1000);  // fresh (age ~0 << 1h cap)
-
-	mock().expectOneCall("send").onObject(mock_kineis).ignoreOtherParameters();
+	// Now a no-fix cycle -> NO_FIX heartbeat cached and transmitted as SHORT 0xFF
+	inject_gps_nofix(t/1000);
+	mock().expectOneCall("send").onObject(mock_kineis).withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2).
+			withUnsignedIntParameter("size_bits", 96);
 	t += serv.get_last_schedule();
 	fake_rtc->settime(t/1000);
 	fake_timer->set_counter(t);
 	system_scheduler->run();
-	mock().checkExpectations();  // 'send' fulfilled -> the fresh last-known position was transmitted
+	mock().checkExpectations();
 }
 
-// NO_TX (default): a GPS cycle that yields only a NO_FIX result transmits nothing
-// (the 0xFF heartbeat is not cached, so there is no eligible entry).
-TEST(ArgosTxService, LegacyNoTxNoMessageWithoutFix)
+// v3 grid fillers: the NO_FIX entry stays in the pile even after a real fix
+// arrives (no purge in LEGACY/DUTY_CYCLE/PASS_PREDICTION) so it keeps its slot
+// on the delta_time_loc grid — the next packet is a LONG (192-bit) carrying
+// the real fix plus the 0xFF filler.
+TEST(ArgosTxService, LegacyNoFixFillerKeptAfterRealFix)
 {
-	fake_config_store->write_param(ParamID::ARGOS_TX_NO_FIX_POLICY, (unsigned int)BaseTxNoFixPolicy::NO_TX);
 	fake_config_store->write_param(ParamID::ARGOS_MODE, BaseArgosMode::LEGACY);
-	fake_config_store->write_param(ParamID::ARGOS_DEPTH_PILE, BaseDepthPile::DEPTH_PILE_1);
+	fake_config_store->write_param(ParamID::ARGOS_DEPTH_PILE, BaseDepthPile::DEPTH_PILE_4);
 	fake_config_store->write_param(ParamID::ARGOS_HEXID, (unsigned int)0x01234567U);
 	fake_config_store->write_param(ParamID::LB_EN, false);
 	fake_config_store->write_param(ParamID::TR_NOM, (unsigned int)10);
@@ -535,10 +555,27 @@ TEST(ArgosTxService, LegacyNoTxNoMessageWithoutFix)
 	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
 	serv.start();
 
-	// Only a NO_FIX result available — under NO_TX it is not cached -> nothing to TX.
-	inject_gps_location(0, 11.8768, -33.8232, t/1000);
+	// GPS cycle 1: no fix -> heartbeat cached, but the first-message gate holds
+	// TX (no real fix yet) -> silence
+	inject_gps_nofix(t/1000);
+	t += 10000;
+	fake_rtc->settime(t/1000);
+	fake_timer->set_counter(t);
 	system_scheduler->run();
-	mock().checkExpectations();  // no "send" expected -> asserts silence
+	mock().checkExpectations();  // gate: no send yet
+
+	// GPS cycle 2: real fix -> unlocks TX; the FIX purge keeps the NO_FIX filler
+	// (include_no_fix=false in planned modes) -> pile = [NO_FIX, FIX] ->
+	// LONG packet (192 bits) with the fix + 0xFF filler
+	inject_gps_location(1, 11.8768, -33.8232, t/1000);
+	mock().expectOneCall("send").onObject(mock_kineis).withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2).
+			withUnsignedIntParameter("size_bits", 192);
+	t += serv.get_last_schedule();
+	fake_rtc->settime(t/1000);
+	fake_timer->set_counter(t);
+	system_scheduler->run();
+	mock_kineis->notify(KineisEventTxComplete({}));
+	mock().checkExpectations();
 }
 
 
@@ -622,9 +659,9 @@ TEST(ArgosTxService, TimeSyncBurstPosFix)
 
 TEST(ArgosTxService, TimeSyncBurstNoPosFix)
 {
-	// Asserts EMPTY_POS no-fix behavior (TX a 0xFF position without a fix) — now
-	// opt-in; the default ARGOS_TX_NO_FIX_POLICY is NO_TX (no message without a fix).
-	fake_config_store->write_param(ParamID::ARGOS_TX_NO_FIX_POLICY, (unsigned int)BaseTxNoFixPolicy::EMPTY_POS);
+	// Time-sync burst fires only after the GNSS has updated the clock this
+	// session (like v3). A NO_FIX cycle does not update the clock, so the
+	// first-message gate holds TX -> silence.
 	double frequency = 900.22;
 	BaseArgosMode mode = BaseArgosMode::LEGACY;
 	BaseArgosPower power = BaseArgosPower::POWER_1000_MW;
@@ -652,31 +689,20 @@ TEST(ArgosTxService, TimeSyncBurstNoPosFix)
 	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
 	serv.start();
 
-	// Time sync burst with invalid GPS: should still send (with invalid position encoded as all-1s)
-	mock().expectOneCall("send").onObject(mock_kineis).withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2).
-			withUnsignedIntParameter("size_bits", 96);
-	inject_gps_location(0, 11.8768, -33.8232, t);
+	// Only NO_FIX (clock not GNSS-updated) -> time-sync held by the gate -> silence
+	inject_gps_nofix(t);
 	system_scheduler->run();
-
-	mock_kineis->notify(KineisEventTxComplete({}));
+	mock().checkExpectations();  // no "send"
 
 	mock().expectOneCall("power_off_immediate").onObject(mock_kineis);
 	mock().expectOneCall("stop_send").onObject(mock_kineis);
 	serv.stop();
-
-	// No time sync should be scheduled now
-	bool time_sync_en = false;
-	fake_config_store->write_param(ParamID::ARGOS_TIME_SYNC_BURST_EN, time_sync_en);
-	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
-	serv.start();
-	inject_gps_location(1, 11.8768, -33.8232, t);
-	system_scheduler->run();
 }
 
 TEST(ArgosTxService, TimeSyncBurstNoPosOrTimeFix)
 {
-	// Asserts EMPTY_POS no-fix behavior — now opt-in (default policy is NO_TX).
-	fake_config_store->write_param(ParamID::ARGOS_TX_NO_FIX_POLICY, (unsigned int)BaseTxNoFixPolicy::EMPTY_POS);
+	// No time fix and no GNSS fix: both the RTC-unknown gate and the
+	// first-message gate hold TX -> silence.
 	double frequency = 900.22;
 	BaseArgosMode mode = BaseArgosMode::LEGACY;
 	BaseArgosPower power = BaseArgosPower::POWER_1000_MW;
@@ -702,11 +728,10 @@ TEST(ArgosTxService, TimeSyncBurstNoPosOrTimeFix)
 	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
 	serv.start();
 
-	// Even without valid GPS or time fix, should still send (invalid position encoded as all-1s)
-	mock().expectOneCall("send").onObject(mock_kineis).withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2).
-			withUnsignedIntParameter("size_bits", 96);
-	inject_gps_location(0, 11.8768, -33.8232, t);
+	// Without a valid time or GPS fix, nothing is transmitted
+	inject_gps_nofix(t);
 	system_scheduler->run();
+	mock().checkExpectations();  // silence
 }
 
 TEST(ArgosTxService, LegacyTxServiceInv)
@@ -763,9 +788,10 @@ TEST(ArgosTxService, LegacyTxServiceInv)
 
 TEST(ArgosTxService, LegacyTxLowBattery)
 {
-	// Relies on the legacy replay behavior (burst_counter=UINT_MAX) = EMPTY_POS,
-	// now opt-in (default policy NO_TX bounds replay to NTRY_PER_MESSAGE).
-	fake_config_store->write_param(ParamID::ARGOS_TX_NO_FIX_POLICY, (unsigned int)BaseTxNoFixPolicy::EMPTY_POS);
+	// Relies on unlimited replay: LB_NTRY_PER_MESSAGE=0 (0 = unlimited replay in
+	// LEGACY/DUTY_CYCLE/PASS_PREDICTION; the LB default of 4 would otherwise
+	// bound the single LB pile entry to 4 TX).
+	fake_config_store->write_param(ParamID::LB_NTRY_PER_MESSAGE, 0U);
 	double frequency = 900.22;
 	BaseArgosMode mode = BaseArgosMode::LEGACY;
 	BaseArgosPower power = BaseArgosPower::POWER_1000_MW;
@@ -822,8 +848,6 @@ TEST(ArgosTxService, LegacyTxLowBattery)
 
 TEST(ArgosTxService, LegacyTxOutOfZone)
 {
-	// Relies on the legacy replay behavior (EMPTY_POS), now opt-in (default NO_TX).
-	fake_config_store->write_param(ParamID::ARGOS_TX_NO_FIX_POLICY, (unsigned int)BaseTxNoFixPolicy::EMPTY_POS);
 	double frequency = 900.22;
 	BaseArgosMode mode = BaseArgosMode::LEGACY;
 	BaseArgosPower power = BaseArgosPower::POWER_1000_MW;
@@ -1017,8 +1041,6 @@ TEST(ArgosTxService, TxServiceCancelledDuringTx)
 
 TEST(ArgosTxService, LegacyTxServiceDepthPile1)
 {
-	// Relies on the legacy replay behavior (EMPTY_POS), now opt-in (default NO_TX).
-	fake_config_store->write_param(ParamID::ARGOS_TX_NO_FIX_POLICY, (unsigned int)BaseTxNoFixPolicy::EMPTY_POS);
 	double frequency = 900.22;
 	BaseArgosMode mode = BaseArgosMode::LEGACY;
 	BaseArgosPower power = BaseArgosPower::POWER_1000_MW;
@@ -1324,9 +1346,8 @@ TEST(ArgosTxService, DPHardFaultPartialDepthPile)
 
 TEST(ArgosTxService, UnderwaterFor24HoursDryTimeZero)
 {
-	// Relies on the cached fix staying transmittable across the dive (EMPTY_POS,
-	// burst_counter=UINT_MAX) — now opt-in (default NO_TX makes a one-shot fix inert).
-	fake_config_store->write_param(ParamID::ARGOS_TX_NO_FIX_POLICY, (unsigned int)BaseTxNoFixPolicy::EMPTY_POS);
+	// Relies on the cached fix staying transmittable across the dive
+	// (NTRY_PER_MESSAGE default 0 = unlimited replay).
 	double frequency = 900.22;
 	BaseArgosMode mode = BaseArgosMode::LEGACY;
 	BaseArgosPower power = BaseArgosPower::POWER_1000_MW;
@@ -2619,6 +2640,110 @@ TEST(ArgosTxService, NtryZeroSendsOnce)
 	fake_timer->set_counter(t);
 	system_scheduler->run();
 	mock().checkExpectations();
+}
+
+// LEGACY (and DUTY_CYCLE/PASS_PREDICTION): NTRY_PER_MESSAGE=0 means UNLIMITED
+// replay — once a valid fix is in the depth pile it keeps being retransmitted
+// every TR_NOM until evicted by newer fixes. (Without a valid fix nothing is
+// cached — silence.)
+TEST(ArgosTxService, LegacyNtryZeroUnlimitedReplay)
+{
+	fake_config_store->write_param(ParamID::ARGOS_MODE, BaseArgosMode::LEGACY);
+	fake_config_store->write_param(ParamID::ARGOS_DEPTH_PILE, BaseDepthPile::DEPTH_PILE_1);
+	fake_config_store->write_param(ParamID::ARGOS_HEXID, (unsigned int)0x01234567U);
+	fake_config_store->write_param(ParamID::LB_EN, false);
+	fake_config_store->write_param(ParamID::TR_NOM, (unsigned int)10);
+	fake_config_store->write_param(ParamID::ARGOS_TIME_SYNC_BURST_EN, false);
+	fake_config_store->write_param(ParamID::NTRY_PER_MESSAGE, 0U);
+
+	ArgosTxService serv(*mock_kineis);
+	std::time_t t = 1652105502000;  // ms
+	fake_rtc->settime(t/1000);
+	fake_timer->set_counter(t);
+
+	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
+	serv.start();
+
+	inject_gps_location(1, 11.8768, -33.8232, t/1000);
+
+	// Far more cycles than any bounded counter would allow — every one must TX
+	for (unsigned int i = 0; i < 8; i++) {
+		mock().expectOneCall("send").onObject(mock_kineis).ignoreOtherParameters();
+		t += serv.get_last_schedule();
+		fake_rtc->settime(t/1000);
+		fake_timer->set_counter(t);
+		system_scheduler->run();
+		mock_kineis->notify(KineisEventTxComplete({}));
+	}
+	mock().checkExpectations();
+}
+
+// LEGACY: NTRY_PER_MESSAGE=3 → the pile is swept exactly 3 times (each entry
+// TX'd 3 times), then all entries are inert and the service goes silent until
+// a new fix arrives.
+TEST(ArgosTxService, LegacyNtryBoundsPileSweeps)
+{
+	fake_config_store->write_param(ParamID::ARGOS_MODE, BaseArgosMode::LEGACY);
+	fake_config_store->write_param(ParamID::ARGOS_DEPTH_PILE, BaseDepthPile::DEPTH_PILE_1);
+	fake_config_store->write_param(ParamID::ARGOS_HEXID, (unsigned int)0x01234567U);
+	fake_config_store->write_param(ParamID::LB_EN, false);
+	fake_config_store->write_param(ParamID::TR_NOM, (unsigned int)10);
+	fake_config_store->write_param(ParamID::ARGOS_TIME_SYNC_BURST_EN, false);
+	fake_config_store->write_param(ParamID::NTRY_PER_MESSAGE, 3U);
+
+	ArgosTxService serv(*mock_kineis);
+	std::time_t t = 1652105502000;  // ms
+	fake_rtc->settime(t/1000);
+	fake_timer->set_counter(t);
+
+	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
+	serv.start();
+
+	inject_gps_location(1, 11.8768, -33.8232, t/1000);
+
+	// Exactly 3 transmissions of the single-entry pile
+	for (unsigned int i = 0; i < 3; i++) {
+		mock().expectOneCall("send").onObject(mock_kineis).ignoreOtherParameters();
+		t += serv.get_last_schedule();
+		fake_rtc->settime(t/1000);
+		fake_timer->set_counter(t);
+		system_scheduler->run();
+		mock_kineis->notify(KineisEventTxComplete({}));
+	}
+
+	// 4th cycle: burst_counter exhausted → no send
+	t += 10000;
+	fake_rtc->settime(t/1000);
+	fake_timer->set_counter(t);
+	system_scheduler->run();
+	mock().checkExpectations();
+}
+
+// Depth pile sweep semantics behind NTRY: pile [A,B,C] with burst_counter=2 →
+// retrieve() rotates newest-first through the pile (C,B,A), completes 2 full
+// sweeps, then everything is inert.
+TEST(ArgosTxService, DepthPileNtrySweepRotation)
+{
+	DepthPile<GPSLogEntry> dp;
+	dp.set_max_size(4);
+	GPSLogEntry a{}; a.info.day = 1;
+	GPSLogEntry b{}; b.info.day = 2;
+	GPSLogEntry c{}; c.info.day = 3;
+	dp.store(a, 2);
+	dp.store(b, 2);
+	dp.store(c, 2);
+
+	// retrieve(depth=4, max_messages=1): one entry per TX slot, newest-first
+	int expected[6] = { 3, 2, 1, 3, 2, 1 };  // two full sweeps C,B,A
+	for (unsigned int i = 0; i < 6; i++) {
+		std::vector<GPSLogEntry*> v = dp.retrieve(4, 1);
+		CHECK_EQUAL(1u, (unsigned int)v.size());
+		CHECK_EQUAL(expected[i], (int)v.at(0)->info.day);
+	}
+
+	// Third sweep: all burst counters exhausted
+	CHECK_EQUAL(0u, (unsigned int)dp.retrieve(4, 1).size());
+	CHECK_EQUAL(0u, dp.eligible());
 }
 
 // === BaseGnssStrategy::REUSE_LAST helpers (Plan 1 step 1) =================

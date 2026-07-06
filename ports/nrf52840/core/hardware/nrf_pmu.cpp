@@ -249,6 +249,22 @@ void PMU::powerdown() {
 			static_cast<unsigned int>(rtc->gettime()));
 	}
 
+#ifdef BENCH_TEST
+	// Bench: EVERY power-off path below cuts VDD and we lose host/UART/SWD access.
+	// On RSPB the TPL5111 latch drops power the moment the MCU stops holding it
+	// (MCU_DONE pulse OR the brown-out that follows a soft reset on a marginal
+	// rail), so even a "simulated wake" soft reset loses the board. Instead,
+	// SUPPRESS powerdown entirely: keep the MCU running so the TPL keeps power
+	// latched, leave MCU_DONE de-asserted, and return so the scheduler keeps
+	// driving GNSS + Argos-TX cycles. State was already persisted above. The
+	// board never powers down and stays reachable indefinitely for validation.
+	DEBUG_WARN("PMU::powerdown: BENCH_TEST — powerdown SUPPRESSED (staying alive, TPL power held)");
+#ifdef MCU_DONE_PIN
+	GPIOPins::clear(MCU_DONE_PIN);  // ensure DONE stays de-asserted (high-Z on D0S1)
+#endif
+	return;
+#endif
+
 	// Shut down all peripherals before power-off (all boards)
 	NrfRGBLed::set_color_raw(BSP::GPIO::GPIO_LED_RED, BSP::GPIO::GPIO_LED_GREEN, BSP::GPIO::GPIO_LED_BLUE, RGBLedColor::BLACK);
 #ifdef SENSORS_PWR_PIN

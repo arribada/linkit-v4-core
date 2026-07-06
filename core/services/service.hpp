@@ -128,6 +128,13 @@ protected:
 	/// @param entry       Optional raw log entry.
 	/// @param reschedule  true to reschedule after completion (default: true).
 	void service_complete(ServiceEventData *event_data = nullptr, void *entry = nullptr, bool reschedule = true);
+#ifdef BENCH_TEST
+	/// @brief Bench-only: force the service into the "initiated/started" state so a
+	/// synthetic completion (e.g. GPSService::bench_inject_fix) runs the FULL
+	/// service_complete() path — including service_log() → SERVICE_LOG_UPDATED
+	/// broadcast — instead of bailing on "!m_is_initiated". Zero prod footprint.
+	void bench_force_initiated() { m_is_started = true; m_is_initiated = true; }
+#endif
 	/// @brief Notify peers that this service is now active.
 	void service_active();
 	/// @brief Fill log header date/time fields from epoch time.

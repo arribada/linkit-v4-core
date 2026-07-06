@@ -55,6 +55,7 @@ private:
 	bool m_stopping;
 	bool is_kmac_profil_loaded = false;       ///< Routes idle_pending → load_kmac for boot config (TCXO, LPM)
 	bool m_needs_explicit_kmac_load = true;   ///< True when RCONF changed and explicit load_kmac_profil SPI command is needed.
+	bool m_kmac_blind_pushed = false;         ///< True while the last pushed KMAC profile was BLIND — forces a BASIC push when blind is turned off within a session.
 	                                          ///< False when RCONF unchanged — STM32 auto-inits MAC from flash at POR.
 	bool m_credentials_written = false;
 	bool m_rconf_recovery_attempted = false;

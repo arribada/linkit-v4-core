@@ -75,6 +75,7 @@ RECOVER=false
 BUILD_TYPE=Release
 METRICS=OFF
 VALIDATION=OFF
+BENCH=OFF
 for arg in "$@"; do
     case $arg in
         --clean) CLEAN=true ;;
@@ -85,6 +86,12 @@ for arg in "$@"; do
         --no-metrics) METRICS=OFF ;;
         --validation) VALIDATION=ON ;;
         --no-validation) VALIDATION=OFF ;;
+        # Bench harness: auto-inject a fix each (reset-simulated) TPL duty-cycle
+        # + powerdown->soft-reset so the board stays reachable over the debug UART.
+        # Implies --debug (logs on UART). See ports/nrf52840/core/interface/bench_console.*
+        --bench) BENCH=ON; BUILD_TYPE=Debug ;;
+        # Bench diagnostic: also force SMD LPM=NONE (isolate SPI from STOP-mode wake).
+        --bench-lpm-none) BENCH=ON; BENCH_FORCE_LPM_NONE=ON; BUILD_TYPE=Debug ;;
     esac
 done
 
@@ -203,6 +210,8 @@ cmake -DCMAKE_TOOLCHAIN_FILE=../../toolchain_arm_gcc_nrf52.cmake \
       -DWAKEUP_PERIOD_DEFAULT=${WAKEUP_PERIOD} \
       -DMETRIC_LATENCY_LOG_ENABLE=$([ "$METRICS" = "ON" ] && echo 1 || echo 0) \
       -DVALIDATION_LOG_ENABLE=$([ "$VALIDATION" = "ON" ] && echo 1 || echo 0) \
+      -DBENCH_TEST=${BENCH} \
+      -DBENCH_FORCE_LPM_NONE=${BENCH_FORCE_LPM_NONE:-OFF} \
       ../..
 
 make -j 20

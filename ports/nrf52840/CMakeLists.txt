@@ -19,6 +19,13 @@ set(LIB_DIR       ../../libraries)
 set(BOARD "LINKIT" CACHE STRING "Board to compile for")
 option(ARGOS_SMD "Use SMD satellite module" OFF)
 option(LORA_RAK3172 "Use RAK3172-SiP LoRa module instead of satellite" OFF)
+# Bench-test harness: '%'-prefixed USB-CDC console (%CFG/%OP/%GPS/...) + runtime
+# GPS fix injection for autonomous hardware-in-the-loop validation. Debug builds
+# only; entirely compiled out of production firmware. See core/interface/bench_console.*
+option(BENCH_TEST "Enable bench-test serial console + GPS injection hook" OFF)
+# Bench diagnostic (RSPB/SMD): force the SMD LPM bitmap to NONE (always-on) so a
+# satellite-TX SPI failure can be attributed to STOP-mode wake vs the SPI itself.
+option(BENCH_FORCE_LPM_NONE "Bench: force SMD LPM=NONE (isolate SPI from STOP-mode wake)" OFF)
 
 # SMD timing safety knobs.
 #
@@ -523,6 +530,7 @@ target_sources(${TARGET_NAME} PRIVATE
     $<$<STREQUAL:${BATTERY_MONITOR_TYPE},STC3117>:${CMAKE_CURRENT_SOURCE_DIR}/core/hardware/stc3117/Generic_I2C.c>
     ${PROJ_DIR}/core/hardware/nrf_i2c.cpp
     ${PROJ_DIR}/core/hardware/nrf_usb.cpp
+    $<$<BOOL:${BENCH_TEST}>:${PROJ_DIR}/core/interface/bench_console.cpp>
     $<$<STREQUAL:${BOARD},RSPB>:${CMAKE_CURRENT_SOURCE_DIR}/core/hardware/nrf_debug_uart.cpp>
     ${PROJ_DIR}/core/interface/ble_interface.cpp
     ${PROJ_DIR}/core/interface/ble_stm_ota.c
@@ -696,6 +704,9 @@ target_compile_definitions(${TARGET_NAME} PRIVATE
     $<$<STREQUAL:${BATTERY_MONITOR_TYPE},ANALOG>:BATTERY_CHEMISTRY=${BATTERY_CHEMISTRY}>
     # USB DTE interface (parallel with BLE)
     USB_DTE_ENABLED
+    # Bench-test harness (autonomous HIL validation) — off in production
+    $<$<BOOL:${BENCH_TEST}>:BENCH_TEST=1>
+    $<$<BOOL:${BENCH_FORCE_LPM_NONE}>:BENCH_FORCE_LPM_NONE=1>
     BUILD_TYPE=${CMAKE_BUILD_TYPE}
     #SCHEDULER_DEBUG
     DEBUG_ENABLE=1

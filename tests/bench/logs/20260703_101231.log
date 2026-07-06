@@ -1,0 +1,78 @@
+10:12:31.140  >> '%PING\r\n'
+10:12:31.241  %BENCH OK state=OPERATIONAL
+10:12:31.242  >> '%CFG\r\n'
+10:12:31.341  %CFG OK entering-config
+10:12:31.341  01/01/1970 00:06:36 [INFO]	react: ReedSwitchEvent: 1
+10:12:31.344  >> '%STATE\r\n'
+10:12:31.441  01/01/1970 00:06:36 [INFO]	react: ReedSwitchEvent: 3
+10:12:31.542  01/01/1970 00:06:36 [INFO]	react: ReedSwitchEvent: 0
+10:12:32.143  01/01/1970 00:06:37 [INFO]	Reed confirmation accepted: 1
+10:12:32.343  01/01/1970 00:06:37 [INFO]	exit: OperationalState
+10:12:32.744  01/01/1970 00:06:37 [INFO]	M10QAsyncReceiver::power_off_immediate: hard rail-cut (skip graceful FSM)
+10:12:32.945  01/01/1970 00:06:37 [INFO]	BMA400::disable_wakeup complete
+10:12:33.146  01/01/1970 00:06:37 [INFO]	entry: ConfigurationState
+10:12:33.246  <info> app: Start adverising
+10:12:33.346  %STATE CONFIG
+10:12:33.359  >> '%STATE\r\n'
+10:12:33.447  %STATE CONFIG
+10:12:33.461  >> '$STATR#000;\r'
+10:12:34.549  $O;STATR#0CC;IDT06=3FEBA4,IDT02=LinkIt V4,IDT03=v4.1.10-7-g6fab8266-dirty,ART01=01/01/1970 00:00:00,ART02=0,POT03=96,ART03=07/10/2021 22:41:14,ART10=0,ART11=0,IDT04=linkit-v4-kim,POT06=4.168,IDT10=1666914921,SYT01=398
+10:12:34.550  >> '$PARMR#011;IDT06,IDP12,IDT02\r'
+10:12:34.650  $O;PARMR#029;IDT06=3FEBA4,IDP12=279239,IDT02=LinkIt V4
+10:12:34.652  >> '$PARMW#009;GNP05=120\r'
+10:12:35.051  $O;PARMW#000;
+10:12:35.056  >> '$PARMR#005;GNP05\r'
+10:12:35.151  $O;PARMR#009;GNP05=120
+10:12:35.157  >> '$SATVF#000;\r'
+10:12:36.153  $N;SATVF#001;8
+10:12:36.166  >> '%OP\r\n'
+10:12:36.254  %OP OK leaving-config
+10:12:36.254  01/01/1970 00:06:41 [INFO]	react: ReedSwitchEvent: 1
+10:12:36.267  >> '%STATE\r\n'
+10:12:36.454  01/01/1970 00:06:41 [INFO]	react: ReedSwitchEvent: 3
+10:12:36.555  01/01/1970 00:06:41 [INFO]	react: ReedSwitchEvent: 0
+10:12:36.755  01/01/1970 00:06:41 [INFO]	Reed confirmation accepted: 2
+10:12:36.855  01/01/1970 00:06:41 [INFO]	exit: ConfigurationState
+10:12:37.056  01/01/1970 00:06:41 [INFO]	entry: PreOperationalState
+10:12:38.359  %STATE PREOP
+10:12:38.866  >> '%STATE\r\n'
+10:12:38.960  %STATE PREOP
+10:12:39.469  >> '%STATE\r\n'
+10:12:39.562  %STATE PREOP
+10:12:40.072  >> '%STATE\r\n'
+10:12:40.164  %STATE PREOP
+10:12:40.675  >> '%STATE\r\n'
+10:12:40.765  %STATE PREOP
+10:12:41.278  >> '%STATE\r\n'
+10:12:41.367  %STATE PREOP
+10:12:41.881  >> '%STATE\r\n'
+10:12:41.968  %STATE PREOP
+10:12:42.484  >> '%STATE\r\n'
+10:12:42.570  %STATE PREOP
+10:12:43.087  >> '%STATE\r\n'
+10:12:43.171  %STATE PREOP
+10:12:43.372  01/01/1970 00:06:48 [INFO]	exit: PreOperationalState
+10:12:43.572  01/01/1970 00:06:48 [INFO]	entry: OperationalState
+10:12:43.690  >> '%STATE\r\n'
+10:12:44.074  01/01/1970 00:06:48 [INFO]	RateLimiter: restored from noinit (count=0, head=0)
+10:12:44.174  01/01/1970 00:06:49 [INFO]	HauledModeService: restored from noinit (in_hauled=0, last_uw=0, returns=0)
+10:12:44.375  01/01/1970 00:06:49 [INFO]	SWSAnalog: sample delay from UNP08 = 1000 µs (noinit invalid)
+10:12:44.575  01/01/1970 00:06:49 [INFO]	SWSAnalog: Observed peak ADC=150 (from noinit)
+10:12:45.377  01/01/1970 00:06:50 [INFO]	SWSAnalog: Diagnostics restored from noinit stuck=0 coh=0 div=0 force=0 spike=0 peak=0 saadc=0
+10:12:45.578  01/01/1970 00:06:50 [INFO]	SWSAnalog: Calibration valid - air=50 water=150 thresh=90
+10:12:45.778  01/01/1970 00:06:50 [INFO]	SWSAnalog: Init - hyst=4% ratio=35%
+10:12:46.696  >> '%STATE\r\n'
+10:12:46.981  01/01/1970 00:06:51 [WARN]	KIM2Device::resync_rconf_cache: no RCONF configured (len=0)
+10:12:47.082  01/01/1970 00:06:51 [INFO]	ArgosTxService::service_init: Argos ID=4189092
+10:12:49.287  01/01/1970 00:06:54 [INFO]	ArgosTxService: GNSS has not updated the clock yet this session — TX held until first GPS fix
+10:12:49.702  >> '%GPS -21.0097 55.2707\r\n'
+10:12:51.191  01/01/1970 00:06:56 [INFO]	GPSService::retry_counter: ntry=1 limit=0 exhausted=0 aq_period=30s (first_schedule)
+10:12:51.292  01/01/1970 00:06:56 [INFO]	GPSService: next GNSS acquisition in 4 s (UTC-aligned, period=30 s)
+10:12:51.492  01/01/1970 00:06:56 [INFO]	BMA400LL::set_power_mode: 0 (LOW_POWER wakeup)
+10:12:51.693  %STATE OPERATIONAL
+10:12:51.693  01/01/1970 00:06:56 [WARN]	KIM2CommEventUartError: type=04 (state=0)
+10:12:51.893  %STATE OPERATIONAL
+10:12:51.893  01/01/1970 00:06:56 [WARN]	GPSService::bench_inject_fix: lat=-21.009700 lon=55.270700 hAcc=2500mm numSV=8
+10:12:51.994  01/01/1970 00:06:56 [INFO]	GPSService::retry_counter: reset ntry=1->0 (PVT fix)
+10:12:53.297  01/01/1970 00:06:58 [WARN]	Service::service_complete: service GNSS completed without being initiated
+10:12:53.497  %GPS OK lat=-21.009700 lon=55.270700

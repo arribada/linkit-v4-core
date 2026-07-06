@@ -390,7 +390,7 @@ unsigned int GPSService::service_next_schedule_in_ms() {
 		uint64_t now_ms = PMU::get_timestamp_ms();
 		constexpr uint64_t DEEP_IDLE_HARD_CAP_MS = 24ULL * 3600ULL * 1000ULL;
 		if (now_ms - m_deep_idle_started_at_ms > DEEP_IDLE_HARD_CAP_MS) {
-			DEBUG_WARN("R5: deep-idle > 24 h (%llu ms) — forcing rail-cycle",
+			DEBUG_WARN("GPSService: deep-idle exceeded 24 h hard-cap (%llu ms) — forcing M10Q rail-cycle",
 			           (unsigned long long)(now_ms - m_deep_idle_started_at_ms));
 			m_device.power_off();
 			m_deep_idle_started_at_ms = 0;
@@ -509,6 +509,7 @@ unsigned int GPSService::service_next_schedule_in_ms() {
                  : m_is_first_fix_found ? "dloc_arg_nom" : "cold_start_retry_period");
 
     if (aq_period == 0) {
+    	DEBUG_INFO("GPSService: aq_period=0 (config) — GNSS periodic scheduling disabled");
     	return Service::SCHEDULE_DISABLED;
     }
 
@@ -518,6 +519,9 @@ unsigned int GPSService::service_next_schedule_in_ms() {
     DEBUG_TRACE("GPSService::reschedule: is_first=%u first_fix=%u cold=%u aqperiod=%u now=%u next=%u",
     		(unsigned int)m_is_first_schedule, (unsigned int)m_is_first_fix_found, (unsigned int)gnss_config.cold_start_retry_period, (unsigned int)aq_period,
 			(unsigned int)now, (unsigned int)next_schedule);
+
+    DEBUG_INFO("GPSService: next GNSS acquisition in %u s (UTC-aligned, period=%u s)",
+               (unsigned int)(next_schedule - now), (unsigned int)aq_period);
 
     // Find the time in milliseconds until this schedule (cast to uint64_t to prevent
     // overflow when aq_period > 4294 seconds, since the result is truncated to unsigned int)
@@ -721,6 +725,9 @@ void GPSService::service_initiate() {
 	m_is_first_schedule = false;
 	m_wakeup_time = service_current_timer();
 	m_is_active = true;
+	DEBUG_INFO("GPSService: M10Q on — nav_max=%u cold=%u cl=%u const=0x%02x",
+	           (unsigned int)nav_settings.max_nav_samples, (unsigned int)force_cold,
+	           (unsigned int)nav_settings.cloudlocate_enable, (unsigned int)nav_settings.constellation_mask);
 	m_device.power_on(nav_settings);
 }
 
@@ -731,6 +738,7 @@ bool GPSService::service_cancel() {
 	DEBUG_TRACE("GPSService::service_cancel");
 
 	if (m_is_active) {
+		DEBUG_WARN("GPSService::service_cancel: active acquisition force-cancelled (safety timeout or teardown) — logging NO_FIX");
 		m_is_active = false;
 		try_enter_deep_idle_or_poweroff();   // 2026-05 deep-idle dispatch
 		GPSLogEntry log_entry = invalid_log_entry();
@@ -796,7 +804,7 @@ bool GPSService::service_is_usable_underwater() {
 /// @return GPSLogEntry with valid=false and current battery/time.
 GPSLogEntry GPSService::invalid_log_entry()
 {
-    DEBUG_INFO("GPSService::invalid_log_entry");
+    DEBUG_TRACE("GPSService::invalid_log_entry");
     m_cold_start_ntry++;
     unsigned int ntry_limit = configuration_store->read_param<unsigned int>(ParamID::GNSS_NTRY);
     DEBUG_INFO("GPSService::retry_counter: NO_FIX | ntry=%u/%s", m_cold_start_ntry,
@@ -957,7 +965,7 @@ void GPSService::task_process_gnss_data()
 /// @brief Process degraded GNSS fix (fastloc) — log entry with FASTLOC event type.
 void GPSService::task_process_degraded_gnss_data()
 {
-    DEBUG_INFO("GPSService::task_process_degraded_gnss_data");
+    DEBUG_TRACE("GPSService::task_process_degraded_gnss_data");
     DEBUG_INFO("GPSService::retry_counter: reset ntry=%u->0 (DEGRADED_PVT success)", m_cold_start_ntry);
     m_cold_start_ntry = 0;
 
@@ -998,7 +1006,7 @@ void GPSService::task_process_degraded_gnss_data()
 /// @brief Process CloudLocate raw measurement — overlay blob into GPSLogEntry position fields.
 void GPSService::task_process_cloudlocate_data()
 {
-    DEBUG_INFO("GPSService::task_process_cloudlocate_data");
+    DEBUG_TRACE("GPSService::task_process_cloudlocate_data");
     // Note (QA review R6): CloudLocate emits raw measurements without an on-device
     // position. Resetting m_cold_start_ntry here treats the raw capture as a
     // "successful" cold-start outcome — chains of CloudLocate captures will
@@ -1066,7 +1074,7 @@ void GPSService::task_process_cloudlocate_data()
 void GPSService::react(const GPSEventMaxNavSamples&) {
 	if (!m_is_active)
 		return;
-    DEBUG_TRACE("GPSService::react(GPSEventMaxNavSamples)");
+    DEBUG_INFO("GPSService::react(GPSEventMaxNavSamples): acquisition timeout — no fix, ending session");
     m_is_active = false;
     try_enter_deep_idle_or_poweroff();   // 2026-05 deep-idle dispatch
     GPSLogEntry log_entry = invalid_log_entry();
@@ -1081,7 +1089,7 @@ void GPSService::react(const GPSEventMaxNavSamples&) {
 void GPSService::react(const GPSEventMaxSatSamples&) {
 	if (!m_is_active)
 		return;
-    DEBUG_TRACE("GPSService::react(GPSEventMaxSatSamples) — no signal acquired, aborting");
+    DEBUG_INFO("GPSService::react(GPSEventMaxSatSamples): no satellites acquired — no fix, ending session");
     m_is_active = false;
     try_enter_deep_idle_or_poweroff();   // 2026-05 deep-idle dispatch
     GPSLogEntry log_entry = invalid_log_entry();
@@ -1096,7 +1104,7 @@ void GPSService::react(const GPSEventMaxSatSamples&) {
 void GPSService::react(const GPSEventError&) {
 	if (!m_is_active)
 		return;
-    DEBUG_TRACE("GPSService::react(GPSEventError)");
+    DEBUG_WARN("GPSService::react(GPSEventError): GNSS device error — aborting session, logging NO_FIX");
     m_is_active = false;
     try_enter_deep_idle_or_poweroff();   // 2026-05 deep-idle dispatch
     GPSLogEntry log_entry = invalid_log_entry();
@@ -1112,6 +1120,7 @@ void GPSService::react(const GPSEventError&) {
 /// state_enterbackup which bails to poweroff).
 void GPSService::react(const GPSEventPowerOff&) {
     if (m_backup_active) {
+        DEBUG_WARN("GPSService: backup-charge aborted by unexpected device power-off");
         m_backup_active = false;
         system_scheduler->cancel_task(m_backup_exit_task);
         // Fire stop callback so the FSM can recover (async hardware failure path).
@@ -1258,6 +1267,111 @@ void GPSService::gnss_data_callback(GNSSData data) {
     task_process_gnss_data();
 }
 
+#ifdef BENCH_TEST
+void GPSService::bench_inject_fix(double lat, double lon, uint32_t hAcc_mm, uint8_t numSV) {
+    GNSSData d = {};
+    d.fixType = 3;                        // 3D fix
+    d.valid   = 0x07;                     // validDate | validTime | fullyResolved
+    d.numSV   = numSV ? numSV : 8;
+    d.lat     = lat;
+    d.lon     = lon;
+    d.height  = 10000;                    // 10 m (mm)
+    d.hMSL    = 10000;
+    d.hAcc    = hAcc_mm ? hAcc_mm : 2500; // default 2.5 m
+    d.vAcc    = 3500;
+    d.pDOP    = 1.5f;
+    d.hDOP    = 1.0f;
+    d.vDOP    = 1.2f;
+    d.ttff    = 2000;                     // 2 s simulated TTFF
+    // Stamp the fix instant from the RTC so downstream time-of-fix logic and the
+    // CSV log carry a coherent timestamp (mirrors generate_fake_fix()).
+    if (rtc && rtc->is_set()) {
+        std::time_t now = rtc->gettime();
+        struct tm *t = gmtime(&now);
+        if (t) {
+            d.year  = (uint16_t)(t->tm_year + 1900);
+            d.month = (uint8_t)(t->tm_mon + 1);
+            d.day   = (uint8_t)t->tm_mday;
+            d.hour  = (uint8_t)t->tm_hour;
+            d.min   = (uint8_t)t->tm_min;
+            d.sec   = (uint8_t)t->tm_sec;
+        }
+    }
+    DEBUG_WARN("GPSService::bench_inject_fix: lat=%f lon=%f hAcc=%umm numSV=%u",
+               lat, lon, (unsigned)d.hAcc, (unsigned)d.numSV);
+    // Short-circuit any real acquisition still in flight so a later real PVT
+    // doesn't double-log on top of the injected one.
+    m_is_active = false;
+    // Mark the GNSS service initiated so gnss_data_callback → task_process_gnss_data
+    // → service_complete() runs its FULL path instead of bailing on
+    // "!m_is_initiated". That full path calls service_log() → notify_log_updated()
+    // which broadcasts SERVICE_LOG_UPDATED carrying the valid GPS entry to peers.
+    // ArgosTxService consumes it to set m_gps_fix_corrected_clock ("TX unlocked")
+    // and DepthPileManager stores the fix. Without this the injected fix logs but
+    // never unlocks Argos TX — so LEGACY/BLIND could not be validated on the bench.
+    bench_force_initiated();
+    gnss_data_callback(d);
+}
+
+/// @brief Fill a GNSSData's date/time from the RTC (shared by the bench injectors).
+static void bench_stamp_time(GNSSData& d) {
+    if (rtc && rtc->is_set()) {
+        std::time_t now = rtc->gettime();
+        struct tm *t = gmtime(&now);
+        if (t) {
+            d.year  = (uint16_t)(t->tm_year + 1900);
+            d.month = (uint8_t)(t->tm_mon + 1);
+            d.day   = (uint8_t)t->tm_mday;
+            d.hour  = (uint8_t)t->tm_hour;
+            d.min   = (uint8_t)t->tm_min;
+            d.sec   = (uint8_t)t->tm_sec;
+        }
+    }
+}
+
+void GPSService::bench_inject_fastloc(double lat, double lon, uint32_t hAcc_mm, uint8_t numSV) {
+    GNSSData d = {};
+    d.fixType = 2;                        // 2D / degraded fix
+    d.valid   = 0x07;
+    d.numSV   = numSV ? numSV : 4;
+    d.lat     = lat;
+    d.lon     = lon;
+    d.height  = 10000; d.hMSL = 10000;
+    d.hAcc    = hAcc_mm ? hAcc_mm : 50000;  // degraded: 50 m default
+    d.vAcc    = 60000;
+    d.pDOP    = 5.0f; d.hDOP = 4.0f; d.vDOP = 4.0f;
+    d.ttff    = 5000;
+    bench_stamp_time(d);
+    DEBUG_WARN("GPSService::bench_inject_fastloc: lat=%f lon=%f hAcc=%umm numSV=%u",
+               lat, lon, (unsigned)d.hAcc, (unsigned)d.numSV);
+    m_is_active = false;
+    bench_force_initiated();
+    gnss_degraded_callback(d);
+}
+
+void GPSService::bench_inject_cloudlocate() {
+    GNSSRawMeasurement raw;               // ctor zeroes buffers + clears has_* flags
+    raw.has_measc12 = true;
+    for (unsigned int i = 0; i < sizeof(raw.measc12); i++)
+        raw.measc12[i] = (uint8_t)(0xC0 + i);   // deterministic dummy MEASC12 blob
+    if (rtc && rtc->is_set())
+        raw.capture_time = (uint32_t)rtc->gettime();
+    DEBUG_WARN("GPSService::bench_inject_cloudlocate: MEASC12 raw measurement injected");
+    m_is_active = false;
+    bench_force_initiated();
+    gnss_cloudlocate_callback(raw);
+}
+
+void GPSService::bench_inject_nofix() {
+    DEBUG_WARN("GPSService::bench_inject_nofix: forcing NO_FIX end-of-session");
+    m_is_active = false;
+    bench_force_initiated();
+    GPSLogEntry log_entry = invalid_log_entry();
+    ServiceEventData event_data = log_entry;
+    service_complete(&event_data, &log_entry);
+}
+#endif
+
 /// @brief Degraded fix callback — store data (does NOT set first_fix_found).
 /// @param data  Degraded PVT data (valid but low quality).
 void GPSService::gnss_degraded_callback(GNSSData data) {
@@ -1378,7 +1492,7 @@ void GPSService::notify_peer_event(ServiceEvent& e) {
 					// one. The ArgosTx SERVICE_INACTIVE handler below
 					// reschedules properly once TX is done (or has errored out).
 					service_reschedule(false);
-					DEBUG_TRACE("GPSService: surfaced — GNSS deferred until first Argos TX completes");
+					DEBUG_INFO("GPSService: surfaced — GNSS deferred until first Argos TX completes");
 				}
 			}
 #endif
@@ -1460,7 +1574,7 @@ bool GPSService::request_backup_charge(unsigned int duration_s) {
 	//    here because the GNSS service may still be cycling, and we'd disrupt the
 	//    acquisition schedule.
 	if (!m_on_backup_charge_start) {
-		DEBUG_INFO("GPSService::request_backup_charge: periodic path, hardware busy — skipping cycle");
+		DEBUG_INFO("GPSService::request_backup_charge: no DTE callbacks set, hardware busy — request skipped");
 		return false;
 	}
 

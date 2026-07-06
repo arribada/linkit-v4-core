@@ -78,7 +78,7 @@ void ArgosTxScheduler::schedule_periodic(unsigned int period_ms, bool jitter_en,
 	// Handle the case where earliest TX time has been set
 	while (m_earliest_schedule.has_value())
 	{
-		DEBUG_TRACE("ArgosTxScheduler::schedule_periodic: earliest TX is in %llu", m_earliest_schedule.value() - now_ms);
+		DEBUG_TRACE("ArgosTxScheduler::schedule_periodic: earliest TX constraint: earliest=%llu now=%llu", m_earliest_schedule.value(), now_ms);
 
 		// If earliest TX is later than last known schedule
 		if (m_earliest_schedule.value() >= now_ms) {
@@ -132,7 +132,7 @@ void ArgosTxScheduler::schedule_periodic(unsigned int period_ms, bool jitter_en,
 	uint64_t elapsed_time = 0;
 	while (elapsed_time <= (MSECS_PER_SECOND * SECONDS_PER_DAY)) {
 		if (is_in_duty_cycle(start_time, duty_cycle) && start_time >= now_ms) {
-			DEBUG_TRACE("ArgosTxScheduler::schedule_periodic: found schedule @ %llu", start_time);
+			DEBUG_INFO("ArgosTxScheduler::schedule_periodic: TX scheduled @ %llu (in %llu ms)", start_time, start_time - now_ms);
 			m_curr_schedule_abs = start_time;
 			return;
 		} else {
@@ -141,7 +141,7 @@ void ArgosTxScheduler::schedule_periodic(unsigned int period_ms, bool jitter_en,
 		}
 	}
 
-	DEBUG_ERROR("ArgosTxScheduler::schedule_periodic: no schedule found!");
+	DEBUG_ERROR("ArgosTxScheduler::schedule_periodic: no TX slot found in 24h search (duty_cycle=0x%06X period=%u ms) — TX schedule aborted", duty_cycle, period_ms);
 	m_curr_schedule_abs.reset();
 	throw ErrorCode::RESOURCE_NOT_AVAILABLE;
 }
@@ -154,7 +154,7 @@ unsigned int ArgosTxScheduler::schedule_prepass(ArgosConfig& config, BasePassPre
 
 	// We must have a previous GPS location to proceed
 	if (!m_location.has_value()) {
-		DEBUG_WARN("ArgosTxScheduler::schedule_prepass: current GPS location is not presently known");
+		DEBUG_WARN("ArgosTxScheduler::schedule_prepass: no known GPS location, cannot predict passes — TX disabled until next GPS fix");
 		m_last_schedule_abs.reset();
 		return INVALID_SCHEDULE;
 	}
@@ -164,7 +164,7 @@ unsigned int ArgosTxScheduler::schedule_prepass(ArgosConfig& config, BasePassPre
 
 	// If we were deferred by UW event then recompute using earliest TX as start
 	if (m_earliest_schedule.has_value() && m_earliest_schedule.value() > now_ms) {
-		DEBUG_TRACE("ArgosTxScheduler::schedule_prepass: using earliest TX @ %.3f",
+		DEBUG_TRACE("ArgosTxScheduler::schedule_prepass: deferred start, earliest TX in %.3f s",
 		            static_cast<double>(m_earliest_schedule.value() - now_ms) / MSECS_PER_SECOND);
 		start_time_ms = m_earliest_schedule.value();
 	}
@@ -177,7 +177,7 @@ unsigned int ArgosTxScheduler::schedule_prepass(ArgosConfig& config, BasePassPre
 	p_tm = std::gmtime(&stop_time);
 	struct tm tm_stop = *p_tm;
 
-	DEBUG_INFO("ArgosTxScheduler::schedule_prepass: window start=%llu now=%llu stop=%llu",
+	DEBUG_TRACE("ArgosTxScheduler::schedule_prepass: window start=%llu now=%llu stop=%llu",
 	           static_cast<unsigned long long>(start_time), static_cast<unsigned long long>(now),
 	           static_cast<unsigned long long>(stop_time));
 
@@ -242,7 +242,7 @@ unsigned int ArgosTxScheduler::schedule_prepass(ArgosConfig& config, BasePassPre
 		                     static_cast<uint8_t>(tm_start.tm_sec) };
 	}
 
-	DEBUG_ERROR("ArgosTxScheduler::schedule_prepass: no passes found in 24h window");
+	DEBUG_ERROR("ArgosTxScheduler::schedule_prepass: no satellite pass found in 24h window (stale AOP or elevation config?) — TX disabled until next GPS fix");
 	return INVALID_SCHEDULE;
 }
 
@@ -275,7 +275,7 @@ unsigned int ArgosTxScheduler::schedule_legacy(ArgosConfig& config, std::time_t 
 /// @brief Set earliest allowed TX time (e.g., after SWS dry_time_before_tx).
 /// @param earliest  Earliest TX epoch time (seconds).
 void ArgosTxScheduler::set_earliest_schedule(std::time_t earliest) {
-	DEBUG_TRACE("ArgosTxScheduler::set_earliest_schedule: t=%llu", earliest);
+	DEBUG_TRACE("ArgosTxScheduler::set_earliest_schedule: t=%llu", static_cast<unsigned long long>(earliest));
 	m_earliest_schedule = (uint64_t)earliest * MSECS_PER_SECOND;
 }
 
@@ -283,17 +283,20 @@ void ArgosTxScheduler::set_earliest_schedule(std::time_t earliest) {
 /// @param lon  Longitude in degrees.
 /// @param lat  Latitude in degrees.
 void ArgosTxScheduler::set_last_location(double lon, double lat) {
+	DEBUG_TRACE("ArgosTxScheduler::set_last_location: lon=%f lat=%f", lon, lat);
 	m_location = Location(lon, lat);
 }
 
 /// @brief Force next TX at absolute time t (used for time sync burst).
 /// @param t  TX epoch time (seconds).
 void ArgosTxScheduler::schedule_at(std::time_t t) {
-	DEBUG_TRACE("ArgosTxScheduler::schedule_at: t=%llu", t);
+	DEBUG_TRACE("ArgosTxScheduler::schedule_at: t=%llu", static_cast<unsigned long long>(t));
 	m_curr_schedule_abs = (uint64_t)t * MSECS_PER_SECOND;
 }
 
 /// @brief Notify that TX completed — saves current schedule as last for TR_NOM calculation.
 void ArgosTxScheduler::notify_tx_complete() {
+	DEBUG_TRACE("ArgosTxScheduler::notify_tx_complete: TR_NOM anchor=%llu",
+	            m_curr_schedule_abs.has_value() ? m_curr_schedule_abs.value() : 0);
 	m_last_schedule_abs = m_curr_schedule_abs;
 }

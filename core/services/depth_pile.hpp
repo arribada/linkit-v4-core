@@ -109,6 +109,12 @@ public:
 		std::vector<T*> v;
 		if (m_entry.size()) {
 			unsigned int idx = m_entry.size()-1;
+			// Deliberately non-consuming (deviation from v3, which decremented
+			// here): consuming would (a) burn the repetition even when the
+			// time-sync TX is skipped by the modulation-fit guards, and (b)
+			// desynchronize the GPS pile rotation from the sensor piles when
+			// sensor TX is enabled. The time-sync burst is therefore a free
+			// extra transmission on top of NTRY_PER_MESSAGE.
 			if (m_entry[idx].burst_counter)
 				v.push_back(&m_entry[idx].data);
 		}
@@ -195,13 +201,16 @@ public:
 		return m_gps_depth_pile.eligible();
 	}
 
-	/// @brief Remove all CloudLocate/Fastloc/NO_FIX entries from GPS depth pile.
-	/// Called when a real GPS fix arrives to replace degraded entries.
-	unsigned int purge_non_fix_entries() {
-		return m_gps_depth_pile.remove_if([](const GPSLogEntry& e) {
+	/// @brief Remove CloudLocate/Fastloc (and optionally NO_FIX) entries from the
+	/// GPS depth pile. Called when a real GPS fix arrives to replace degraded
+	/// entries. @p include_no_fix=false keeps the NO_FIX 0xFF heartbeats — used
+	/// by LEGACY/DUTY_CYCLE/PASS_PREDICTION where they are delta_time_loc grid
+	/// fillers that must keep their slot (v3 dating).
+	unsigned int purge_non_fix_entries(bool include_no_fix = true) {
+		return m_gps_depth_pile.remove_if([include_no_fix](const GPSLogEntry& e) {
 			return e.info.event_type == GPSEventType::CLOUDLOCATE ||
 			       e.info.event_type == GPSEventType::FASTLOC ||
-			       e.info.event_type == GPSEventType::NO_FIX;
+			       (include_no_fix && e.info.event_type == GPSEventType::NO_FIX);
 		});
 	}
 

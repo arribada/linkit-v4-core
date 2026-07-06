@@ -91,11 +91,6 @@ struct ArgosConfig {
 	// the HAULED branch of get_argos_configuration; all other branches keep
 	// FRESH so existing GNSS paths are byte-identical to pre-Plan-1 code.
 	BaseGnssStrategy gnss_strategy;
-	// Argos TX policy when a cycle has no fresh fix (ARP36) + max-age cap for the
-	// LAST_KNOWN mode (ARP37). Single global read. Distinct from HAULED_GNSS_STRAT
-	// (HMP13), which governs hauled GPS acquisition strategy. See BaseTxNoFixPolicy.
-	BaseTxNoFixPolicy tx_no_fix_policy;
-	unsigned int last_known_max_age_s;
 	unsigned int argos_rx_aop_update_period;
 	std::time_t last_aop_update;
 	bool        cert_tx_enable;
@@ -109,6 +104,12 @@ struct ArgosConfig {
 	std::string radioconf_ldk;
 	std::string radioconf_lda2;
 	std::string radioconf_vlda4;
+	// BLIND MAC profile (module-owned retransmission). Global (not per-regime):
+	// blind_en selects KMAC BLIND vs BASIC; blind_retx_nb/period_s are the module
+	// burst config. NTRY_PER_MESSAGE stays the nRF-side count of blind sequences.
+	bool blind_en;
+	unsigned int blind_retx_nb;
+	unsigned int blind_retx_period_s;
 };
 
 enum class ConfigMode {
@@ -123,7 +124,15 @@ enum class ConfigMode {
 class ConfigurationStore {
 
 protected:
-	static inline const unsigned int m_config_version_code = 0x1c07e800 | 0x1E;
+	// 0x1F (2026-07): ARP36/ARP37 removed from the serialized set (slots 223/224
+	// back to reserved). The June builds (b8a4946e+) serialized them WITHOUT a
+	// version bump, so config.dat generations with and without those records
+	// share 0x1E — sequential deserialization would misalign and silently
+	// factory-reset every param after slot 222. Bumping forces the documented
+	// recovery path instead: keep ARGOS_DECID/ARGOS_HEXID, reset the rest,
+	// reprovision after upgrade.
+	// 0x20 (2026-07): +ARGOS_BLIND_EN/RETX_NB/RETX_PERIOD_S (slots 243-245, blind MAC profile).
+	static inline const unsigned int m_config_version_code = 0x1c07e800 | 0x20;
 	static inline const unsigned int m_config_version_code_aop = 0x1c07e800 | 0x03;
 	static inline const std::array<BaseType,MAX_CONFIG_ITEMS> default_params { {
 		/* ARGOS_DECID */ 0U,
@@ -354,8 +363,8 @@ protected:
 		/* [220] AXL_FIFO_ENABLE */ (bool)false,       // false=single sample, true=FIFO batch averaging
 		/* [221] AXL_FIFO_SAMPLE_COUNT */ 50U,         // 1-170 samples per batch
 		/* [222] LED_HRS24_RTC_CUTOFF */ static_cast<std::time_t>(0U),  // 0=unset, auto-set by GPSService at first valid fix to (now+24h)
-		/* [223] ARGOS_TX_NO_FIX_POLICY */ 0U,         // 0=NO_TX (default) / 1=LAST_KNOWN / 2=EMPTY_POS (reclaimed from GNSS_BCKP_CHARGE_INT)
-		/* [224] ARGOS_LAST_KNOWN_MAX_AGE_S */ 86400U, // 24h: max age of last-known fix for LAST_KNOWN (reclaimed from GNSS_BCKP_CHARGE_DUR)
+		/* [223] _RESERVED_223 */ 0U,                  // Was ARGOS_TX_NO_FIX_POLICY (removed 2026-07 — no-fix behavior hardwired); before that GNSS_BCKP_CHARGE_INT
+		/* [224] _RESERVED_224 */ 0U,                  // Was ARGOS_LAST_KNOWN_MAX_AGE_S (removed 2026-07 with LAST_KNOWN policy); before that GNSS_BCKP_CHARGE_DUR
 		/* [225] _RESERVED_225 */ (bool)false,         // Was GNSS_BCKP_CHARGE_UW_ONLY — deprecated 2026-05, slot reserved for flash compat
 		/* [226] SMD_DEGRADED_MODE */ 0U,              // 0 = FAST timings (default); 1 = SAFE (set by SmdSat::degraded_mode_engage)
 		/* [227] ARGOS_CACHED_MODULATION */ 0U,        // 0 = LDA2 (default), 1 = LDK, 2 = VLDA4 (mirrors SmdArgosModulation enum)
@@ -374,6 +383,9 @@ protected:
 		/* [240] GNSS_DEEP_IDLE_AFTER_OFF_S */ 0U,     // 0=disabled (immediate poweroff, default — no behavior change); 0xFFFFFFFF=never poweroff (rail always on, M10Q in deep-idle); else=duration in seconds. Replaces deprecated GNSS_BCKP_CHARGE_* (slots 223-225).
 		/* [241] GNSS_CLOUDLOCATE_ONLY */ (bool)false, // FAST3b: when true + FASTLOC_MODE=CLOUDLOCATE, end GNSS session on first raw measurement (skip full PVT wait). Off by default to preserve current behavior.
 		/* [242] GNSS_COLD_START_AFTER_NTRY */ 0U,     // 0=disabled (default, no regression). N>0=force a real cold start (BBR wipe + cold timeout) after N consecutive GNSS sessions with no fix, to recover a receiver stuck on stale assistance.
+		/* [243] ARGOS_BLIND_EN */ (bool)false,        // BASIC by default (no behavior change)
+		/* [244] ARGOS_BLIND_RETX_NB */ 4U,            // module retransmissions per blind burst
+		/* [245] ARGOS_BLIND_RETX_PERIOD_S */ 60U,     // seconds between module retransmissions
 	}};
 	static inline const BasePassPredict default_prepass = {
 		/* version_code */ m_config_version_code_aop,
@@ -879,13 +891,10 @@ public:
 		// behavior for every non-HAULED path. Only the HAULED override branch
 		// (below) sets it to REUSE_LAST / OFF when the user requests.
 		argos_config.gnss_strategy = BaseGnssStrategy::FRESH;
-		// No-fix TX policy is a single GLOBAL param (read once, applies to the
-		// LB / OUT_OF_ZONE / NORMAL cascade and hauled-promoted modes). Separate
-		// knob from HAULED_GNSS_STRAT (HMP13).
-		argos_config.tx_no_fix_policy = static_cast<BaseTxNoFixPolicy>(
-			read_param<unsigned int>(ParamID::ARGOS_TX_NO_FIX_POLICY));
-		argos_config.last_known_max_age_s = read_param<unsigned int>(ParamID::ARGOS_LAST_KNOWN_MAX_AGE_S);
-
+		// BLIND MAC profile — global params (read once, apply to all regimes).
+		argos_config.blind_en = read_param<bool>(ParamID::ARGOS_BLIND_EN);
+		argos_config.blind_retx_nb = read_param<unsigned int>(ParamID::ARGOS_BLIND_RETX_NB);
+		argos_config.blind_retx_period_s = read_param<unsigned int>(ParamID::ARGOS_BLIND_RETX_PERIOD_S);
 		// Predict whether HAULED override will engage. Used to gate
 		// "NORMAL/OUT_OF_ZONE mode detected" logs in the cascade so they
 		// don't alternate with "HAULED mode engaged" each tick. Single
@@ -1062,6 +1071,14 @@ public:
 		// Mark GNSS disabled if certification is set
 		if (argos_config.cert_tx_enable)
 			argos_config.gnss_en = false;
+
+		// BLIND is disabled when the EFFECTIVE mode (after LB/OoZ/HAULED override)
+		// runs its own nRF-paced burst — SURFACING_BURST and DOPPLER — because a
+		// module-owned retx would double-transmit. Makes argos_config.blind_en the
+		// mode-aware source of truth for the drivers and the TX service.
+		if (argos_config.mode == BaseArgosMode::SURFACING_BURST ||
+		    argos_config.mode == BaseArgosMode::DOPPLER)
+			argos_config.blind_en = false;
 
 		// Adaptive modulation configuration
 		argos_config.adaptive_modulation = read_param<bool>(ParamID::ARGOS_ADAPTIVE_MODULATION);

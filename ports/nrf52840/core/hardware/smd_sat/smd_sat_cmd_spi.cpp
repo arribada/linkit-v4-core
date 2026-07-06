@@ -513,10 +513,22 @@ bool SmdSatCmdSpi::set_message_counter(uint16_t mc)
     return true;
 }
 
-void SmdSatCmdSpi::load_kmac_profil(uint8_t profile)
+void SmdSatCmdSpi::load_kmac_profil(uint8_t profile, const uint8_t* ctx, uint8_t ctx_len)
 {
-	DEBUG_TRACE("SmdSatCmdSpi::%s: Load KMAC profile %u", __func__, profile);
-	if (!send_command_2phase(SMDSAT_CMD_WRITE_KMAC_REQ, SMDSAT_CMD_WRITE_KMAC, &profile, 1)) {
+	// CMD_WRITE_KMAC payload = [profile_id][ctx...]. BASIC/NONE send the id only
+	// (1 byte, unchanged — backward-compatible). BLIND appends the 7-byte packed
+	// ctx: feat-blind firmware parses it; older firmware ignores the extra bytes
+	// (reads the id only). The A+ framing already handles LEN/CRC.
+	uint8_t payload[1 + 7];
+	payload[0] = profile;
+	uint8_t len = 1;
+	if (ctx != nullptr && ctx_len > 0) {
+		if (ctx_len > (uint8_t)(sizeof(payload) - 1)) ctx_len = (uint8_t)(sizeof(payload) - 1);
+		memcpy(&payload[1], ctx, ctx_len);
+		len = (uint8_t)(1 + ctx_len);
+	}
+	DEBUG_TRACE("SmdSatCmdSpi::%s: Load KMAC profile %u (data_len=%u)", __func__, profile, len);
+	if (!send_command_2phase(SMDSAT_CMD_WRITE_KMAC_REQ, SMDSAT_CMD_WRITE_KMAC, payload, len)) {
 		DEBUG_ERROR("SmdSatCmdSpi::%s: Failed to load KMAC profile", __func__);
 		throw ErrorCode::SPI_COMMS_ERROR;
 	}

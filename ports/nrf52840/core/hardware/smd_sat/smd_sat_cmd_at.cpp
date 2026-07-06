@@ -402,9 +402,14 @@ void SmdSatCmdAt::read_rconf_raw(uint8_t *rconf_raw, uint16_t *len)
 // KMAC
 // ============================================================================
 
-void SmdSatCmdAt::load_kmac_profil(uint8_t profile)
+void SmdSatCmdAt::load_kmac_profil(uint8_t profile, const uint8_t* ctx, uint8_t ctx_len)
 {
-	if (!send_at("AT+KMAC=" + std::to_string(profile))) {
+	std::string cmd = "AT+KMAC=" + std::to_string(profile);
+	if (ctx != nullptr && ctx_len > 0) {
+		// Append the packed profile config as hex: "AT+KMAC=<id>,<hex>"
+		cmd += "," + Binascii::hexlify(std::string(reinterpret_cast<const char*>(ctx), ctx_len));
+	}
+	if (!send_at(cmd)) {
 		throw ErrorCode::RESOURCE_NOT_AVAILABLE;
 	}
 }

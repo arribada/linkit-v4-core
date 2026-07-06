@@ -104,6 +104,7 @@ static constexpr ATCmdEntry cmd_table[] = {
 	{ AT_SET_RCONF,      "AT+RCONF=",          true },
 	{ AT_GET_RCONF,      "AT+RCONF=?\r\n",    false },
 	{ AT_SET_KMAC_BASIC, "AT+KMAC=1\r\n",     false },
+	{ AT_SET_KMAC_BLIND, "AT+KMAC=2,",         true  },
 	{ AT_TX,             "AT+TX=",              true },
 };
 
@@ -113,6 +114,11 @@ bool KIM2Comm::send_at_cmd(ATCmd cmd, const std::optional<std::string>& params)
 		return false;
 	}
 	const auto& entry = cmd_table[cmd];
+
+	// Fresh AT+TX cycle: forget any prior +HDLR ack so the delayed +TX status is
+	// parsed against THIS transmission's stack format (see m_hdlr_seen).
+	if (cmd == AT_TX)
+		m_hdlr_seen = false;
 
 	m_tx_buffer = entry.prefix;
 	if (entry.expects_params && params.has_value()) {
@@ -165,8 +171,14 @@ void KIM2Comm::on_rx_line(std::string& line)
 	}
 
 	// Diagnostic: trace every line received from the module so we can see
-	// +OK / +RCONF= / +ERROR= / +TX= etc. during debugging.
+	// +OK / +RCONF= / +ERROR= / +TX= etc. during debugging. Elevated to INFO on
+	// the bench so the raw module responses (incl. the exact +TX= format, which
+	// varies by KIM2 firmware version) are visible without a TRACE-level build.
+#ifdef BENCH_TEST
+	DEBUG_INFO("KIM2 RX: %s", line.c_str());
+#else
 	DEBUG_TRACE("KIM2 RX: %s", line.c_str());
+#endif
 
 	RespType msg = parse_rx_line_protocol(line);
 
@@ -239,16 +251,34 @@ KIM2::RespType KIM2Comm::parse_rx_line_protocol(const std::string& line)
 	if (line.compare(0, err_len, ERR_RESPONSE) == 0)
 		return RESP_ERROR;
 
-	// +TX=<status>,<data>
+	// +HDLR=<TX handler id> — new-stack immediate ack, sent just before +OK.
+	// Informational: we advance on +OK, so recognise and ignore it (a benign
+	// type avoids "unknown line" noise on the new stack). Its PRESENCE flags that
+	// this firmware puts the handler first in the delayed +TX (see m_hdlr_seen).
+	if (line.compare(0, strlen(HDLR_RESPONSE), HDLR_RESPONSE) == 0) {
+		m_hdlr_seen = true;
+		return RESP_CONFIG;
+	}
+
+	// +TX=<status>[,<data>]            (old stack — status FIRST, any MAC profile)
+	// +TX=<handler>,<status>[,<data>]  (new stack blind/satdet — handler FIRST)
+	// Discriminate on whether THIS TX cycle produced a +HDLR ack (new stack), NOT
+	// on m_blind_active: old KIM firmware runs BLIND but keeps the status-first
+	// format, and dropping a field there parses the frame-data hex as the status.
 	if (line.compare(0, tx_len, TX_RESPONSE) == 0) {
 		std::string resp = line.substr(tx_len);
+		if (m_hdlr_seen) {
+			// New stack: drop the leading handler field so <status> parses.
+			size_t h = resp.find(',');
+			if (h != std::string::npos)
+				resp = resp.substr(h + 1);
+		}
 		size_t comma = resp.find(',');
-		if (comma != std::string::npos) {
-			try {
-				m_tx_status = static_cast<uint16_t>(std::stoi(resp.substr(0, comma)));
-			} catch (...) {
-				m_tx_status = 0xFFFF;
-			}
+		std::string status_str = (comma != std::string::npos) ? resp.substr(0, comma) : resp;
+		try {
+			m_tx_status = static_cast<uint16_t>(std::stoi(status_str));
+		} catch (...) {
+			m_tx_status = 0xFFFF;
 		}
 		return RESP_TX_STATUS;
 	}

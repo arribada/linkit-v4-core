@@ -364,8 +364,8 @@ enum class ParamID {
 	// 2026-05 deep-idle refactor) are reclaimed for the Argos "no fresh fix" TX
 	// policy. Slot 225 (former GNSS_BCKP_CHARGE_UW_ONLY, GNP49) stays reserved for
 	// flash-layout compat with devices provisioned before the migration.
-	ARGOS_TX_NO_FIX_POLICY                   = 223,  // BaseTxNoFixPolicy: 0=NO_TX, 1=LAST_KNOWN, 2=EMPTY_POS — what to TX in LEGACY/DUTY_CYCLE/PASS_PREDICTION when no fresh fix this cycle. Default NO_TX (no message). Effective mode (incl. hauled-promoted); SURFACING_BURST excluded (own cascade); HAULED REUSE_LAST/OFF via HMP13.
-	ARGOS_LAST_KNOWN_MAX_AGE_S               = 224,  // uint seconds: max age of the last known good fix for LAST_KNOWN; older -> behaves as NO_TX. Default 86400 (24h). Distinct from GNSS_REUSE_FIX_MAX_AGE_S (hauled REUSE_LAST).
+	_RESERVED_223                            = 223,  // Was ARGOS_TX_NO_FIX_POLICY (ARP36, removed 2026-07 — v3 no-fix behavior hardwired: NO_FIX cycles TX a 0xFF heartbeat/grid-filler); before that GNSS_BCKP_CHARGE_INT
+	_RESERVED_224                            = 224,  // Was ARGOS_LAST_KNOWN_MAX_AGE_S (ARP37, removed 2026-07 with the LAST_KNOWN policy); before that GNSS_BCKP_CHARGE_DUR
 	_RESERVED_225                            = 225,
 	// === SMD degraded-mode flag (slot 226) ===
 	SMD_DEGRADED_MODE                        = 226,  // uint: 0 = FAST timings (default); 1 = SAFE timings (set by SmdSat after repeated SPI errors). Persists across reboot when SMDSAT_AUTOFALLBACK is built in. Read-only via DTE.
@@ -435,8 +435,11 @@ enum class ParamID {
 	// trapped on stale/corrupt BBR (the "fixes stop after a couple of days"
 	// failure mode) without affecting healthy tags, which never reach N.
 	GNSS_COLD_START_AFTER_NTRY               = 242,
+	ARGOS_BLIND_EN                           = 243,  // bool: enable BLIND MAC profile (module-owned retx burst). Default false = BASIC (nRF-paced). SMD-UART + KIM2.
+	ARGOS_BLIND_RETX_NB                      = 244,  // uint 1..127: retransmissions the module sends per blind burst (KMAC retx_nb). NTRY_PER_MESSAGE stays the nRF-side count of blind sequences.
+	ARGOS_BLIND_RETX_PERIOD_S                = 245,  // uint 60..65535 s: interval between the module's blind retransmissions (KMAC retx_period_s). Distinct from TR_NOM (interval between blind sequences).
 	// === Sentinel (fixed regardless of #ifdef combinations) ===
-	__PARAM_SIZE                             = 243,
+	__PARAM_SIZE                             = 246,
 	__NULL_PARAM                             = 0xFFFF
 };
 
@@ -694,22 +697,6 @@ enum class BaseGnssStrategy : uint8_t {
 	FRESH       = 0,
 	REUSE_LAST  = 1,
 	OFF         = 2
-};
-
-// Argos TX policy when a cycle has no FRESH GPS fix. Applies to the EFFECTIVE
-// LEGACY / DUTY_CYCLE / PASS_PREDICTION mode (incl. hauled-promoted). SURFACING_BURST
-// keeps its own progressive cascade; HAULED REUSE_LAST/OFF route via BaseGnssStrategy
-// (gnss_en=false) and are not age-capped. Param ARGOS_TX_NO_FIX_POLICY (ARP36).
-//   NO_TX      = no satellite message; real fixes are still TX'd NTRY_PER_MESSAGE
-//                times then go inert (no infinite replay, no NO_FIX 0xFF heartbeat).
-//   LAST_KNOWN = keep TX'ing the last known good position as long as it is fresher
-//                than ARGOS_LAST_KNOWN_MAX_AGE_S; no NO_FIX 0xFF heartbeat.
-//   EMPTY_POS  = legacy v4 behavior: NO_FIX cached as a 0xFF position heartbeat,
-//                real fixes replayed indefinitely (burst_counter = UINT_MAX).
-enum class BaseTxNoFixPolicy : uint8_t {
-	NO_TX      = 0,
-	LAST_KNOWN = 1,
-	EMPTY_POS  = 2
 };
 
 enum class BaseLEDMode {
