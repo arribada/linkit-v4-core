@@ -976,10 +976,18 @@ int ConfigurationState::on_ble_event(BLEServiceEvent& event) {
 }
 
 
-/// @brief BLE inactivity timeout — return to Operational after 20 min idle.
+/// @brief BLE inactivity timeout after 20 min idle in config.
+/// Sealed-device hardening (audit 2026-07): this used to transit<OffState>,
+/// which on LinkIt means System OFF with the reed magnet as the only wake
+/// source — an operator who configured a tag and sealed/released the animal
+/// without the explicit exit gesture would get a device that silently powers
+/// itself OFF 20 minutes later (a dead deployment at sea). Mirror the NORMAL
+/// config-exit gesture (EXIT_CONFIG -> PreOperationalState -> Operational)
+/// so the tag resumes its mission. A deliberate power-off stays available via
+/// the reed LONG_HOLD (POWEROFF) gesture and the DTE command — both untouched.
 void ConfigurationState::on_ble_inactivity_timeout() {
-	DEBUG_INFO("BLE Inactivity Timeout");
-	transit<OffState>();
+	DEBUG_INFO("BLE Inactivity Timeout — returning to operation (as if exit gesture)");
+	transit<PreOperationalState>();
 }
 
 /// @brief Visual heartbeat during DTE-triggered backup charge: brief YELLOW flash

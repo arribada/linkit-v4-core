@@ -486,10 +486,14 @@ TEST(Sm, CheckBLEInactivityTimeout)
 	CHECK_TRUE(fsm_handle::is_in_state<ConfigurationState>());
 	mock().disable();
 
-	// Wait until BLE inactivity timeout (20 minutes = 1,200,000 ms)
+	// Wait until BLE inactivity timeout (20 minutes = 1,200,000 ms).
+	// Sealed-device hardening (audit 2026-07): the timeout now returns to
+	// operation (via PreOperationalState, exactly like the normal exit-config
+	// gesture) instead of OffState — transiting to OffState would System-OFF a
+	// sealed LinkIt whose operator forgot the exit gesture before release.
 	fake_timer->set_counter(1201000);
 	system_scheduler->run();
-	CHECK_TRUE(fsm_handle::is_in_state<OffState>());
+	CHECK_TRUE(fsm_handle::is_in_state<PreOperationalState>());
 }
 
 
