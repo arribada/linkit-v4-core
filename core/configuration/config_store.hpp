@@ -927,7 +927,7 @@ public:
 			argos_config.tx_interval_s = read_param<unsigned int>(ParamID::TR_LB);
 			argos_config.dry_time_before_tx = read_param<unsigned int>(ParamID::DRY_TIME_BEFORE_TX);
 			argos_config.underwater_en = read_param<bool>(ParamID::UNDERWATER_EN);
-			argos_config.argos_id = read_param<unsigned int>(ParamID::ARGOS_HEXID);
+			argos_config.argos_id = read_param<unsigned int>(ParamID::ARGOS_DECID);
 			argos_config.prepass_min_elevation = read_param<double>(ParamID::PP_MIN_ELEVATION);
 			argos_config.prepass_max_elevation = read_param<double>(ParamID::PP_MAX_ELEVATION);
 			argos_config.prepass_min_duration = read_param<unsigned int>(ParamID::PP_MIN_DURATION);
@@ -957,7 +957,7 @@ public:
 			argos_config.tx_interval_s = read_param<unsigned int>(ParamID::ZONE_ARGOS_REPETITION_SECONDS);
 			argos_config.dry_time_before_tx = read_param<unsigned int>(ParamID::DRY_TIME_BEFORE_TX);
 			argos_config.underwater_en = read_param<bool>(ParamID::UNDERWATER_EN);
-			argos_config.argos_id = read_param<unsigned int>(ParamID::ARGOS_HEXID);
+			argos_config.argos_id = read_param<unsigned int>(ParamID::ARGOS_DECID);
 			argos_config.prepass_min_elevation = read_param<double>(ParamID::PP_MIN_ELEVATION);
 			argos_config.prepass_max_elevation = read_param<double>(ParamID::PP_MAX_ELEVATION);
 			argos_config.prepass_min_duration = read_param<unsigned int>(ParamID::PP_MIN_DURATION);
@@ -988,7 +988,7 @@ public:
 			argos_config.tx_interval_s = read_param<unsigned int>(ParamID::TR_NOM);
 			argos_config.dry_time_before_tx = read_param<unsigned int>(ParamID::DRY_TIME_BEFORE_TX);
 			argos_config.underwater_en = read_param<bool>(ParamID::UNDERWATER_EN);
-			argos_config.argos_id = read_param<unsigned int>(ParamID::ARGOS_HEXID);
+			argos_config.argos_id = read_param<unsigned int>(ParamID::ARGOS_DECID);
 			argos_config.prepass_min_elevation = read_param<double>(ParamID::PP_MIN_ELEVATION);
 			argos_config.prepass_max_elevation = read_param<double>(ParamID::PP_MAX_ELEVATION);
 			argos_config.prepass_min_duration = read_param<unsigned int>(ParamID::PP_MIN_DURATION);
