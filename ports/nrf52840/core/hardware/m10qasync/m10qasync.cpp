@@ -174,6 +174,20 @@ void M10QAsyncReceiver::power_on(const GPSNavSettings& nav_settings) {
             DEBUG_INFO("M10QAsyncReceiver::power_on: wake from deep-idle via EXTINT (fail_count=%u, slept_ms=%llu)",
                        m_consecutive_wake_failures,
                        (unsigned long long)slept_ms);
+            // 2026-07 audit: apply the incoming nav_settings and reset per-session
+            // state on the deep-idle fast-path too. Without this a SECOND GNSS
+            // acquisition in the same power cycle reuses stale nav_settings,
+            // carries over m_num_sat_samples (instant early-abort of the fresh
+            // fix), and can serve the PRIOR surface's degraded/raw position.
+            m_nav_settings = nav_settings;
+            m_num_nav_samples = 0;
+            m_num_sat_samples = 0;
+            m_num_consecutive_fixes = m_nav_settings.num_consecutive_fixes;
+            m_has_degraded_pvt = false;
+            std::memset(&m_degraded_pvt, 0, sizeof(m_degraded_pvt));
+            m_has_raw_measurement = false;
+            m_raw_measurement = GNSSRawMeasurement();
+            m_cloudlocate_ready_notified = false;
             // M10Q wakes on EXTINT rising edge. Re-init UART driver (was
             // deinit'd in state_enterbackup step 3 to save the UART block
             // power during deep-idle). Then pulse EXTINT and let the

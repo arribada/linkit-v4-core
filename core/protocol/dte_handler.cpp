@@ -1739,6 +1739,15 @@ std::string DTEHandler::RTCW_REQ(int error_code, std::vector<BaseType>& arg_list
 		return DTEEncoder::encode(DTECommand::RTCW_RESP, (int)DTEError::VALUE_OUT_OF_RANGE);
 	}
 
+	// Plausibility window [2020-01-01, 2035-01-01]: a millisecond value, a bad
+	// provisioning number, or a far-future timestamp is otherwise settime()'d AND
+	// durably persisted to LAST_KNOWN_RTC, putting the pseudo-RTC chain decades
+	// off (same horizon as the boot-time RTC_MAX_VALID guard).
+	if (timestamp < 1577836800U || timestamp > 2051222400U) {
+		DEBUG_WARN("DTEHandler::RTCW_REQ: implausible timestamp %u rejected", timestamp);
+		return DTEEncoder::encode(DTECommand::RTCW_RESP, (int)DTEError::VALUE_OUT_OF_RANGE);
+	}
+
 	if (!rtc) {
 		return DTEEncoder::encode(DTECommand::RTCW_RESP, (int)DTEError::INCORRECT_DATA);
 	}

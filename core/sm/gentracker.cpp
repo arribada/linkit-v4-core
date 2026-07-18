@@ -560,6 +560,31 @@ void OffState::exit() {
 }
 
 /// @brief PreOp entry — verify config valid, mount QSPI, start watchdog, transition to Operational.
+// One tick of the PreOp stuck-reed escape (2026-07 audit). Re-posts ITSELF each
+// TRANSIT_PERIOD_MS while a confirmation gesture is pending, so the elapsed
+// counter advances and the force-transit fires after PREOP_STUCK_REED_MAX_MS.
+// The previous re-arm used a one-shot lambda that neither counted nor
+// rescheduled, so a stuck-closed reed wedged the device in PreOp forever at
+// active current (catastrophic drain for a sealed device).
+void PreOperationalState::preop_transit_tick() {
+	if (m_confirmation_pending != ConfirmationPending::NONE) {
+		m_preop_stuck_reed_ticks++;
+		if (m_preop_stuck_reed_ticks * TRANSIT_PERIOD_MS >= PREOP_STUCK_REED_MAX_MS) {
+			DEBUG_WARN("PreOperationalState: reed appears stuck (%u ms in confirmation) — forcing Operational transit",
+			           m_preop_stuck_reed_ticks * TRANSIT_PERIOD_MS);
+			m_confirmation_pending = ConfirmationPending::NONE;
+			m_preop_stuck_reed_ticks = 0;
+			transit<OperationalState>();
+			return;
+		}
+		m_preop_state_task = system_scheduler->post_task_prio([this](){ preop_transit_tick(); },
+			"GenTrackerPreOpRetransitOperationalState", Scheduler::DEFAULT_PRIORITY, TRANSIT_PERIOD_MS);
+		return;
+	}
+	m_preop_stuck_reed_ticks = 0;
+	transit<OperationalState>();
+}
+
 void PreOperationalState::entry() {
 	DEBUG_INFO("entry: PreOperationalState");
 	if (configuration_store->is_valid()) {
@@ -601,12 +626,11 @@ void PreOperationalState::entry() {
 					transit<OperationalState>();
 					return;
 				}
-				// Re-arm the task instead of returning without rescheduling.
-				m_preop_state_task = system_scheduler->post_task_prio([this](){
-					if (m_confirmation_pending == ConfirmationPending::NONE) {
-						transit<OperationalState>();
-					}
-				}, "GenTrackerPreOpRetransitOperationalState", Scheduler::DEFAULT_PRIORITY, TRANSIT_PERIOD_MS);
+				// Re-arm with the self-re-posting tick (NOT a one-shot lambda that
+				// neither counts nor reschedules — the old code let a stuck-closed
+				// reed wedge the device in PreOp forever at active current).
+				m_preop_state_task = system_scheduler->post_task_prio([this](){ preop_transit_tick(); },
+					"GenTrackerPreOpRetransitOperationalState", Scheduler::DEFAULT_PRIORITY, TRANSIT_PERIOD_MS);
 				return;
 			}
 			m_preop_stuck_reed_ticks = 0;
@@ -634,9 +658,16 @@ void PreOperationalState::exit() {
 void OperationalState::entry() {
 	DEBUG_INFO("entry: OperationalState");
 
-	// Successful boot reached — clear the boot-fail counter. The sealed-device
-	// recovery infrastructure considers reaching this state proof of a good boot.
-	bootfail_reset();
+	// Successful boot reached — clear the boot-fail counter, but DEFER it until
+	// the device has stayed in Operational for BOOTFAIL_CLEAR_DWELL_MS (2026-07
+	// audit). A deterministic runtime fault firing right after entry would
+	// otherwise find a just-cleared counter in ErrorState, soft-reset, re-enter
+	// Operational, clear again, fault again — an unbounded reset loop that on
+	// RSPB drains the battery (reset does not cut power) and never escalates to
+	// OffState. exit() cancels this task, so a fault-driven exit before the dwell
+	// preserves the escalation budget.
+	m_bootfail_clear_task = system_scheduler->post_task_prio([](){ bootfail_reset(); },
+		"GenTrackerBootfailClear", Scheduler::DEFAULT_PRIORITY, BOOTFAIL_CLEAR_DWELL_MS);
 
 	// Start periodic config flush (counters → flash every 30 min)
 	m_config_flush_active = true;
@@ -752,6 +783,9 @@ void OperationalState::service_event_handler(ServiceEvent& e) {
 
 void OperationalState::exit() {
 	DEBUG_INFO("exit: OperationalState");
+	// Cancel the deferred boot-fail clear: exiting before the dwell (usually a
+	// fault -> ErrorState) must NOT clear the escalation budget (2026-07 audit).
+	system_scheduler->cancel_task(m_bootfail_clear_task);
 	// Stop periodic config flush and do a final save to persist counters.
 	// EVERY destructive step below is independently try/catched: a teardown
 	// exception (e.g. SMD SPI dies mid-service_term, BLE stop hits SoftDevice

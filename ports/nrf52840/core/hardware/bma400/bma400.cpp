@@ -304,6 +304,11 @@ void BMA400LL::read_xyz(double& x, double& y, double& z, int16_t& temperature)
 	if (!data_ready) {
 		DEBUG_WARN("BMA400::read_xyz: DRDY timeout");
 		setup_sleep_mode();
+		// Don't leave x/y/z (= m_last_x/y/z) at the previous cycle's values: a
+		// frozen at-rest sample would feed mortality as a fresh LOW-activity
+		// reading (false death signal). Zero them so compute_activity's
+		// implausible-g_mag guard treats it as "no valid reading" (biased ALIVE).
+		x = 0.0; y = 0.0; z = 0.0;
 		return;
 	}
 
@@ -396,6 +401,7 @@ void BMA400LL::calibrate_offset(uint8_t g_range, double& offset_x, double& offse
 	PMU::delay_ms(100);
 
 	DEBUG_TRACE("BMA400: calibrating (%u samples)...", N_SAMPLES);
+	unsigned int n_ok = 0;
 	for (uint8_t i = 0; i < N_SAMPLES; ++i) {
 		// Wait for DRDY with timeout
 		uint16_t int_status = 0;
@@ -412,16 +418,35 @@ void BMA400LL::calibrate_offset(uint8_t g_range, double& offset_x, double& offse
 
 		struct bma400_sensor_data data;
 		rslt = bma400_get_accel_data(BMA400_DATA_ONLY, &data, &m_bma400_dev);
+		if (rslt != BMA400_OK) {
+			DEBUG_WARN("BMA400: calibrate accel read failed at sample %u", i);
+			continue;
+		}
 		acc_x += lsb_to_ms2(data.x, g_force, 12) / GRAVITY;
 		acc_y += lsb_to_ms2(data.y, g_force, 12) / GRAVITY;
 		acc_z += lsb_to_ms2(data.z, g_force, 12) / GRAVITY;
+		n_ok++;
 	}
 
 	setup_sleep_mode();
 
-	offset_x = acc_x / N_SAMPLES;
-	offset_y = acc_y / N_SAMPLES;
-	offset_z = acc_z / N_SAMPLES;
+	// Divide by the number of samples that ACTUALLY landed, not the constant
+	// N_SAMPLES: if DRDY was failing most iterations `continue` above, and
+	// dividing by 200 yields garbage (all-skipped -> offset_z=0 instead of ~1g)
+	// that would be written to AXL.CAL. If nothing landed, keep identity offsets
+	// (no calibration) rather than write zeros.
+	if (n_ok == 0) {
+		DEBUG_ERROR("BMA400: calibration failed — no valid samples; using identity offsets");
+		offset_x = 0.0;
+		offset_y = 0.0;
+		offset_z = 1.0;
+	} else {
+		if (n_ok < N_SAMPLES / 2)
+			DEBUG_WARN("BMA400: calibration used only %u/%u samples", n_ok, (unsigned)N_SAMPLES);
+		offset_x = acc_x / n_ok;
+		offset_y = acc_y / n_ok;
+		offset_z = acc_z / n_ok;
+	}
 
 	DEBUG_TRACE("BMA400: calibrated x=%.4f y=%.4f z=%.4f g", offset_x, offset_y, offset_z);
 }
@@ -733,6 +758,10 @@ void BMA400::read_fifo_batch()
 		PMU::delay_ms(wait_ms);
 	}
 
+	// NOTE (2026-07 audit): FIFO batch mode does NOT refresh die temperature —
+	// port 0 (temperature) keeps its last single-read value. Mortality uses the
+	// thermistor body temp (not this), so this only affects the AXL log's temp
+	// column when FIFO mode is used exclusively. Documented, not corrected.
 	BMA400FifoSample samples[170];
 	unsigned int count = m_bma400.read_fifo(samples, m_fifo_sample_count);
 

@@ -18,7 +18,9 @@
 
 class Is25Flash : public FlashInterface {
 public:
-	Is25Flash() : FlashInterface(IS25_BLOCK_COUNT, IS25_BLOCK_SIZE, IS25_PAGE_SIZE),
+	// FlashInterface(block_size, blocks, page_size) — pass in the declared order
+	// (harmless today only because IS25_BLOCK_SIZE == IS25_BLOCK_COUNT == 4096).
+	Is25Flash() : FlashInterface(IS25_BLOCK_SIZE, IS25_BLOCK_COUNT, IS25_PAGE_SIZE),
 		m_is_init(false), m_power_ref_count(0) {}
 
 	/**

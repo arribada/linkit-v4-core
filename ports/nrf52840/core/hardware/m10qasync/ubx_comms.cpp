@@ -287,7 +287,7 @@ void UBXComms::handle_rx_buffer(uint8_t * buffer, unsigned int length) {
             }
 
             // Shift any surplus remaining data to the start of RX buffer
-            std::memcpy(m_rx_buffer, curr_buffer, curr_length);
+            std::memmove(m_rx_buffer, curr_buffer, curr_length);  // overlapping src/dst
             m_rx_buffer_offset = curr_length;
 
 	    } else {

@@ -698,9 +698,12 @@ static LFSFileSystem& init_storage(NrfSwitch& nrf_reed_switch, Is25Flash& is25_f
 		// Field-deployed corruption tends to flip bits in the high half of the
 		// value, producing far-future values. The upper bound catches those.
 		// Tighter defense is the LFS file-level integrity (LittleFS CRC).
-		constexpr unsigned int RTC_MAX_VALID = 4102444800U; // 2100-01-01
+		// Near-term horizon (2035, not 2100): tight enough to reject a bit30/bit31
+		// flip in a ~2026 value, which lands in 2059 / 2093 — both were < the old
+		// 2100 bound and thus slipped through.
+		constexpr unsigned int RTC_MAX_VALID = 2051222400U; // 2035-01-01
 		if (last_rtc > RTC_MAX_VALID) {
-			DEBUG_WARN("Suspicious LAST_KNOWN_RTC=%u (post-2100), treating as corrupt", last_rtc);
+			DEBUG_WARN("Suspicious LAST_KNOWN_RTC=%u (post-2035), treating as corrupt", last_rtc);
 			last_rtc = 0;  // force virtual RTC fallback
 		}
 #ifdef EXTERNAL_WAKEUP
@@ -714,9 +717,17 @@ static LFSFileSystem& init_storage(NrfSwitch& nrf_reed_switch, Is25Flash& is25_f
 		bool genuine_timer_wake = (PMU::reset_cause() == ResetCause::POWER_ON);
 		if (last_rtc > 0 && wakeup_period > 0 && genuine_timer_wake) {
 			unsigned int pseudo_rtc = last_rtc + wakeup_period;
-			configuration_store->write_param(ParamID::LAST_KNOWN_RTC, pseudo_rtc);
-			rtc->settime(static_cast<std::time_t>(pseudo_rtc));
-			DEBUG_INFO("EXTERNAL_WAKEUP: Pseudo RTC set to %u (last=%u + period=%u)", pseudo_rtc, last_rtc, wakeup_period);
+			// Clamp the advanced value to the same 2035 horizon and catch a uint
+			// wrap: a corrupt WAKEUP_PERIOD (or a near-horizon last_rtc) must not
+			// push the RTC decades ahead and then get persisted below.
+			if (pseudo_rtc < last_rtc || pseudo_rtc > RTC_MAX_VALID) {
+				DEBUG_WARN("EXTERNAL_WAKEUP: pseudo_rtc=%u out of range — restoring last_rtc without advance", pseudo_rtc);
+				rtc->settime(static_cast<std::time_t>(last_rtc));
+			} else {
+				configuration_store->write_param(ParamID::LAST_KNOWN_RTC, pseudo_rtc);
+				rtc->settime(static_cast<std::time_t>(pseudo_rtc));
+				DEBUG_INFO("EXTERNAL_WAKEUP: Pseudo RTC set to %u (last=%u + period=%u)", pseudo_rtc, last_rtc, wakeup_period);
+			}
 		} else if (last_rtc > 0) {
 			rtc->settime(static_cast<std::time_t>(last_rtc));
 			DEBUG_INFO("EXTERNAL_WAKEUP: Restored LAST_KNOWN_RTC=%u without advance (reset_cause=%d)",
@@ -824,6 +835,14 @@ static void init_core_services(LFSFileSystem& lfs_file_system, Is25Flash& is25_f
 	static SysLogFormatter sys_log_formatter;
 	static FsLog fs_system_log(&lfs_file_system, "system.log", 1024*1024);
 	fs_system_log.set_log_formatter(&sys_log_formatter);
+#ifdef EXTERNAL_WAKEUP
+	// RSPB does a REAL power cut every wake and DEBUG_TO_SYSTEMLOG would otherwise
+	// write 128 bytes + a set_attr metadata commit (two LittleFS ops) to flash for
+	// EVERY routine INFO line â heavy flash wear + battery cost over many wakes/day
+	// for a year. Persist only WARN/ERROR; the console (UART/USB) path still emits
+	// full DEBUG for field debugging without touching flash.
+	fs_system_log.set_log_level(LOG_LEVEL_WARN);
+#endif
 	DebugLogger::system_log = &fs_system_log;
 
 	DEBUG_TRACE("RAM access...");

@@ -479,6 +479,13 @@ void GPSService::service_initiate() {
 			// the framework calls reschedule() which routes back through
 			// service_next_schedule_in_ms (which will return the same
 			// reschedule_s and re-arm the timer correctly).
+			// L20 audit fix: the deep-idle bookkeeping was already cleared above
+			// (auto-off cancelled, m_deep_idle_started_at_ms=0), so the R5 hygiene
+			// cap can no longer reclaim the rail. If the M10Q is still in deep-idle
+			// (rail on, PMREQ-backup), cut it now — else it stays powered for a
+			// session we are not going to run.
+			if (m_device.is_in_deep_idle())
+				m_device.poweroff_from_deep_idle();
 			m_is_active = false;
 			service_complete(nullptr, nullptr, true);
 			return;

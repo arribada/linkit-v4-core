@@ -126,6 +126,7 @@ public:
 	}
 
 	std::vector<T*> retrieve(unsigned int depth, unsigned int max_messages=3) {
+		if (depth == 0) depth = 1;  // guard /0 below on a corrupted depth_pile config (mirrors set_max_size)
 		max_messages = std::min(depth, max_messages);
 		unsigned int max_index = (depth + (max_messages-1)) / max_messages;
 		unsigned int span = std::min(max_messages, (unsigned int)m_entry.size());

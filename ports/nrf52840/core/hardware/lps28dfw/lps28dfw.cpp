@@ -94,8 +94,13 @@ void LPS28DFW::read(double& temperature, double& pressure)
 		}
 	} while (!status.drdy_pres && --retries > 0);
 
-	if (retries == 0)
-		DEBUG_WARN("LPS28DFW::read: DRDY timeout (%u ms)", DRDY_TIMEOUT_MS);
+	if (retries == 0) {
+		// Conversion never completed. Do NOT fall through to data_get(): it would
+		// read stale/zero PRESS_OUT/TEMP_OUT and return a fabricated 0 as a valid
+		// sample. Fail the read so SensorService drops it (like the other paths).
+		DEBUG_WARN("LPS28DFW::read: DRDY timeout (%u ms) — failing read", DRDY_TIMEOUT_MS);
+		throw ErrorCode::I2C_COMMS_ERROR;
+	}
 
 	lps28dfw_data_t data;
 	if (lps28dfw_data_get(&m_ctx, &m_mode, &data) != 0) {

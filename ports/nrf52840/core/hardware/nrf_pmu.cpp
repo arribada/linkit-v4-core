@@ -59,8 +59,13 @@ static void pof_soc_evt_handler(uint32_t evt_id, void * p_context) {
 		// next clean-shutdown save_params or periodic flush. Trade-off
 		// accepted: lose <=30 min of RTC vs. risk corrupting all 227 params.
 		if (configuration_store && rtc && rtc->is_set()) {
-			configuration_store->write_param(ParamID::LAST_KNOWN_RTC,
-				static_cast<unsigned int>(rtc->gettime()));
+			// write_param throws CONFIG_STORE_CORRUPTED if config is invalid, and
+			// this runs inside a SoftDevice SOC observer with no unwind target ->
+			// std::terminate. The POF handler must never throw.
+			try {
+				configuration_store->write_param(ParamID::LAST_KNOWN_RTC,
+					static_cast<unsigned int>(rtc->gettime()));
+			} catch (...) {}
 		}
 	}
 }
@@ -279,7 +284,15 @@ void PMU::powerdown() {
 	// this cuts VDD directly.
 	DEBUG_TRACE("Attempt power off using power control pin");
 	GPIOPins::clear(POWER_CONTROL_PIN);
-	PMU::delay_ms(1000);  // Wait for load switch to take effect (if real power-off)
+#if defined(EXTERNAL_WAKEUP)
+	// On RSPB, POWER_CONTROL_PIN only gates the peripheral/board rail — the nRF
+	// is on the TPL5111 output and is actually cut by the MCU_DONE pulse below.
+	// A 1000ms settle here is pure wasted active current every wake and only
+	// delays the power cut; a short rail settle is enough.
+	PMU::delay_ms(20);
+#else
+	PMU::delay_ms(1000);  // Wait for the real load switch to take effect
+#endif
 #endif
 
 #if defined(PSEUDO_POWER_OFF)

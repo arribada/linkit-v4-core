@@ -92,6 +92,12 @@ private:
 	unsigned int m_preop_stuck_reed_ticks = 0;
 	static constexpr unsigned int PREOP_STUCK_REED_MAX_MS = 20000;  // 20 s
 
+	// One tick of the stuck-reed escape: while a confirmation gesture is pending,
+	// count elapsed time and force-transit to Operational after the timeout;
+	// re-posts ITSELF each tick (not a one-shot lambda) so the counter actually
+	// advances and the force-transit can fire.
+	void preop_transit_tick();
+
 public:
 	void entry() override;
 	void exit() override;
@@ -102,6 +108,12 @@ class OperationalState : public GenTracker, public BatteryMonitorEventListener
 {
 private:
 	void service_event_handler(ServiceEvent &e);
+	// Deferred boot-fail-counter clear (2026-07 audit): only clear after the
+	// device has dwelt healthily in Operational for BOOTFAIL_CLEAR_DWELL_MS, so a
+	// deterministic fault firing right after entry doesn't reset the escalation
+	// budget (which would soft-reset-loop forever without ever reaching OffState).
+	Scheduler::TaskHandle m_bootfail_clear_task;
+	static constexpr unsigned int BOOTFAIL_CLEAR_DWELL_MS = 60000;  // 60 s
 
 public:
 	void entry() override;

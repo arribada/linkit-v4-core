@@ -12,7 +12,11 @@
 #include <optional>
 #include "inplace_function.hpp"
 
-#define MAX_NUM_TIMERS 48  ///< Maximum concurrent pending schedules
+// Must be >= the scheduler's MAX_NUM_TASKS (64): each deferred task posts one
+// timer schedule, so a smaller timer list makes add_schedule ETL-assert (reset)
+// at 48 BEFORE the scheduler's own full()-guard (sized to MAX_NUM_TASKS) can drop
+// gracefully — making that guard dead code. Keep the two aligned.
+#define MAX_NUM_TIMERS 64  ///< Maximum concurrent pending schedules (>= MAX_NUM_TASKS)
 
 #ifndef INPLACE_FUNCTION_SIZE_TIMER
 #define INPLACE_FUNCTION_SIZE_TIMER 48  ///< Inline storage for schedule callbacks (bytes)

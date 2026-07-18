@@ -310,6 +310,9 @@ bool NrfI2C::wait_for_transfer(uint8_t bus, uint32_t timeout_ms) {
 			return false;
 		}
 
+		// Safety net for longer per-op timeouts. Unreachable at the current
+		// I2C_OPERATION_TIMEOUT_MS (100ms << the 500ms first-kick, << the 15-min
+		// WDT), kept so a future longer timeout still kicks. (2026-07 audit note.)
 		if (elapsed >= next_wdt_kick) {
 			PMU::kick_watchdog();
 			next_wdt_kick = elapsed + 500;
@@ -361,6 +364,14 @@ bool NrfI2C::transfer_with_retry(uint8_t bus, uint8_t address,
 		if (retry < I2C_MAX_RETRIES - 1) {
 			recover_bus(bus);
 			PMU::delay_ms(5);
+			// recover_bus() disables the bus (m_is_enabled=false, TWIM left
+			// uninitialised) when clock-stretch + full reset both fail. Re-issuing
+			// nrfx_twim_rx/tx on it then drives an uninitialised peripheral
+			// (nrfx only NRFX_ASSERTs, compiled out in release). Abort instead.
+			if (!m_is_enabled[bus]) {
+				DEBUG_ERROR("I2C %s(0x%02X): bus disabled after recovery — aborting", op_name, address);
+				break;
+			}
 		}
 	}
 

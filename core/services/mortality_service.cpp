@@ -149,11 +149,16 @@ void MortalityService::notify_peer_event(ServiceEvent& event)
 				// the streak reaches MORTALITY_NO_FIX_FALLBACK_SESSIONS the
 				// evaluation below runs without a fix (partial stationarity).
 				m_no_fix_counted = true;
-				if (m_state.no_fix_sessions < UINT8_MAX)
+				// Persist ONLY when the streak actually changes: once it
+				// saturates at UINT8_MAX, rewriting the 128-byte MortalityLogEntry
+				// to flash on every subsequent no-fix wake is pure flash wear +
+				// battery cost for no state change (L25).
+				if (m_state.no_fix_sessions < UINT8_MAX) {
 					m_state.no_fix_sessions++;
-				DEBUG_INFO("MortalityService: no GPS fix this session (no-fix streak=%u)",
-						m_state.no_fix_sessions);
-				persist_state();
+					DEBUG_INFO("MortalityService: no GPS fix this session (no-fix streak=%u)",
+							m_state.no_fix_sessions);
+					persist_state();
+				}
 			}
 		}
 	}
