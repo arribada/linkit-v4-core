@@ -772,6 +772,19 @@ void BMA400::read_fifo_batch()
 double BMA400::compute_activity()
 {
 	double g_mag = std::sqrt(m_last_x * m_last_x + m_last_y * m_last_y + m_last_z * m_last_z);
+
+	// M3 (2026-07): a healthy accelerometer always senses ~1g total magnitude.
+	// g_mag ~= 0 means every axis read ~0 (stuck bus / disconnected sensor). The
+	// |g_mag - 1| metric would turn that into MAX activity (255) via fragile
+	// accidental arithmetic. Make the failure EXPLICIT and biased toward ALIVE
+	// (max activity => not immobile), matching the mortality design's rule that
+	// a missing/failed sensor must never push a LIVE bird toward a false death.
+	if (g_mag < 0.1) {
+		DEBUG_WARN("BMA400: implausible g_mag=%.3f (stuck/disconnected?) — activity biased toward ALIVE", g_mag);
+		m_last_activity = 255;
+		return 255.0;
+	}
+
 	double activity_g = std::abs(g_mag - 1.0);
 
 	uint8_t g_range = m_bma400.range_to_g(m_bma400.get_range());

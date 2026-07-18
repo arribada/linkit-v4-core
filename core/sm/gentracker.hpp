@@ -36,6 +36,12 @@ public:
 	static void periodic_config_flush();
 	static inline bool m_config_flush_active = false;
 	static void notify_bad_filesystem_error();
+	/// @brief Recover from an exception thrown DURING the pre-FSM init phases
+	/// (before BootState::entry runs its own boot-fail check). Shares the
+	/// .noinit boot-fail counter: bounded reset retries, factory_reset after N,
+	/// then a battery-safe terminal powerdown. Never lets an init exception
+	/// escape main() into a silent std::terminate / watchdog hang.
+	static void recover_from_init_failure();
 
 protected:
 	enum class ConfirmationPending { NONE, ENTER_CONFIG, EXIT_CONFIG, POWEROFF };

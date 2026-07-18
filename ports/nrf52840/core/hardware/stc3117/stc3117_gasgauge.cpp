@@ -112,7 +112,16 @@ int GaugeBatteryMonitor::init() {
             break;  // Ready
         }
         if (counter < 0) {
-            DEBUG_ERROR("STC3117: Communication error during startup");
+            DEBUG_ERROR("STC3117: Communication error during startup — stopping gauge");
+            // M7 (2026-07): GasGauge_Start already set GG_RUN=1 (~70 uA vs ~3 uA
+            // standby). shutdown() is a no-op here because m_is_init is still
+            // false, so stop the gauge directly (best-effort) to avoid leaking
+            // ~70 uA until the next TPL5111 power cut — a recurring cost on every
+            // glitchy wake over a year-long deployment.
+            {
+                SensorsPowerGuard power_guard;  // VSENSORS for I2C bus stability
+                GasGauge_Stop();
+            }
             return -1;
         }
         nrf_delay_ms(STC3117_COUNTER_CHECK_MS);
@@ -240,7 +249,16 @@ void GaugeBatteryMonitor::internal_update() {
     // 1. Initialize gauge (wake from standby)
     int status = this->init();
     if (status != STC3117_OK) {
-        DEBUG_ERROR("STC3117: Failed to init for reading");
+        DEBUG_ERROR("STC3117: Failed to init for reading — assuming LOW battery (fail-safe)");
+        // H3 (2026-07): a dead/erroring gauge must NOT masquerade as nominal.
+        // The old behavior kept the optimistic default (~50%), so a genuinely
+        // near-empty tag with a flaky gauge ran full GNSS+TX to hardware
+        // brown-out. Degrade to low-battery (Doppler) mode — conservative — but
+        // never assert CRITICAL on a read failure alone (that would power the
+        // tag down on every wake on a transient I2C glitch). A real critical
+        // cell is still caught the moment the gauge reads successfully.
+        m_is_low_level = true;
+        m_is_critical_voltage = false;
         return;
     }
 
@@ -272,7 +290,11 @@ void GaugeBatteryMonitor::internal_update() {
         level = static_cast<uint8_t>(STC3117_GG_struct.SOC / 10);
     }
     else {
-        DEBUG_ERROR("STC3117: Read error (status=%d)", status);
+        DEBUG_ERROR("STC3117: Read error (status=%d) — assuming LOW battery (fail-safe)", status);
+        // H3: see the init-fail path above — degrade to low-battery mode,
+        // never brick (critical powerdown) on a transient read error.
+        m_is_low_level = true;
+        m_is_critical_voltage = false;
         this->shutdown();
         return;
     }
@@ -311,8 +333,17 @@ void GaugeBatteryMonitor::internal_update() {
     m_last_voltage_mv = mv;
     m_last_level = level;
 
-    // Set flags (both based on SOC level)
-    m_is_critical_voltage = m_filtered_values[1] < m_critical_level;
+    // Set flags. CRITICAL requires BOTH the fuel-gauge SOC AND the OCV voltage
+    // estimate to be below critical (H3, 2026-07). A gauge glitch (unsettled OCV
+    // at cold power-up, PORDET/BATFAIL) can report a low SOC on a HEALTHY cell;
+    // the old SOC-only critical check then powered the tag down on every wake,
+    // silently bricking the mission (recoverable only with a magnet). The
+    // voltage cross-check vetoes that false-critical while still catching a
+    // genuinely empty cell (both indicators agree). Low-battery (Doppler) mode
+    // stays SOC-only — a false "low" only costs one Doppler wake, never a brick.
+    uint8_t volt_soc_crit = estimate_soc_from_voltage(m_filtered_values[0]);
+    m_is_critical_voltage = (m_filtered_values[1] < m_critical_level) &&
+                            (volt_soc_crit < m_critical_level);
     m_is_low_level = m_filtered_values[1] < m_low_level;
 }
 

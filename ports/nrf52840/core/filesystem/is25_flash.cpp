@@ -37,29 +37,44 @@ bool Is25Flash::init()
 	config.io3_level = true;
 	config.wipwait   = false;
 
-	// Issue a wake-up command in case the device is in deep sleep
-	config.opcode = IS25LP128F::RDPD;
-	config.length = NRF_QSPI_CINSTR_LEN_1B;
-	config.wren = false;
+	// Wake the device (RDPD) and verify its JEDEC ID. A cold power-up can leave
+	// the NOR still completing its own power-on for a few ms, so a single read
+	// can transiently mis-identify. Retry a few times with a longer settle
+	// before giving up — on a sealed EXTERNAL_WAKEUP board a false "not
+	// identified" costs an entire wake cycle (and the caller historically spun
+	// forever feeding the watchdog, draining the battery to death).
+	constexpr int JEDEC_MAX_ATTEMPTS = 3;
+	bool identified = false;
+	for (int attempt = 0; attempt < JEDEC_MAX_ATTEMPTS && !identified; attempt++)
+	{
+		// Issue a wake-up command in case the device is in deep sleep
+		config.opcode = IS25LP128F::RDPD;
+		config.length = NRF_QSPI_CINSTR_LEN_1B;
+		config.wren = false;
+		nrfx_qspi_cinstr_xfer(&config, nullptr, nullptr);
 
-	nrfx_qspi_cinstr_xfer(&config, nullptr, nullptr);
+		nrf_delay_ms(5);  // settle: RDPD wake + NOR power-on completion
 
-	nrf_delay_ms(1);
+		// Read and check the SPI device ID matches the expected value
+		config.opcode = IS25LP128F::RDJDID;
+		config.length = NRF_QSPI_CINSTR_LEN_4B;
+		config.wren = false;
+		nrfx_qspi_cinstr_xfer(&config, nullptr, rx_buffer);
 
-	// Read and check the SPI device ID matches the expected value
-	config.opcode = IS25LP128F::RDJDID;
-	config.length = NRF_QSPI_CINSTR_LEN_4B;
-	config.wren = false;
+		identified = (rx_buffer[0] == IS25LP128F::MANUFACTURER_ID &&
+		              rx_buffer[1] == IS25LP128F::MEMORY_TYPE_ID &&
+		              rx_buffer[2] == IS25LP128F::CAPACITY_ID);
+		if (!identified)
+			DEBUG_WARN("IS25LP128F ID mismatch (attempt %d/%d): %02x %02x %02x",
+			           attempt + 1, JEDEC_MAX_ATTEMPTS,
+			           rx_buffer[0], rx_buffer[1], rx_buffer[2]);
+	}
 
-	nrfx_qspi_cinstr_xfer(&config, nullptr, rx_buffer);
-
-	if (rx_buffer[0] != IS25LP128F::MANUFACTURER_ID ||
-		rx_buffer[1] != IS25LP128F::MEMORY_TYPE_ID ||
-		rx_buffer[2] != IS25LP128F::CAPACITY_ID)
+	if (!identified)
 	{
 		nrfx_qspi_uninit();
 		nrf_peripheral_power_reset(NRF_QSPI_BASE_ADDR);
-		DEBUG_ERROR("IS25LP128F not correctly identified");
+		DEBUG_ERROR("IS25LP128F not correctly identified after %d attempts", JEDEC_MAX_ATTEMPTS);
 		return false;
 	}
 

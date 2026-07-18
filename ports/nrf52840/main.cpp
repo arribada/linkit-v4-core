@@ -448,8 +448,22 @@ static InitContext init_peripherals()
 	DEBUG_TRACE("IS25 flash...");
 	static Is25Flash is25_flash;
 	if (!is25_flash.init()) {
-		DEBUG_ERROR("IS25 flash init failed — cannot continue without filesystem");
-		fault_blink_loop(RGBLedColor::RED, 100);
+		DEBUG_ERROR("IS25 flash init failed — powering down for a clean retry");
+		// Do NOT spin here feeding the watchdog: on a sealed EXTERNAL_WAKEUP
+		// board a WDT-fed loop never resets and never pulses MCU_DONE, draining
+		// the battery to death with no recovery. Give a brief, bounded RED
+		// diagnostic flash (no watchdog kick), then powerdown(): on RSPB the
+		// TPL5111 cold-cycles and retries next wake (best chance to clear a
+		// transient QSPI/NOR glitch); on LinkIt this enters pseudo power-off.
+		// powerdown() runs before configuration_store exists, so its
+		// LAST_KNOWN_RTC save is safely skipped (guarded on configuration_store).
+		for (int i = 0; i < 6; i++) {
+			NrfRGBLed::set_color_raw(BSP::GPIO::GPIO_LED_RED, BSP::GPIO::GPIO_LED_GREEN, BSP::GPIO::GPIO_LED_BLUE, RGBLedColor::RED);
+			nrf_delay_ms(100);
+			NrfRGBLed::set_color_raw(BSP::GPIO::GPIO_LED_RED, BSP::GPIO::GPIO_LED_GREEN, BSP::GPIO::GPIO_LED_BLUE, RGBLedColor::BLACK);
+			nrf_delay_ms(100);
+		}
+		PMU::powerdown();
 	}
 
 	return {nrf_reed_switch, is25_flash};
@@ -653,13 +667,23 @@ static LFSFileSystem& init_storage(NrfSwitch& nrf_reed_switch, Is25Flash& is25_f
 			last_rtc = 0;  // force virtual RTC fallback
 		}
 #ifdef EXTERNAL_WAKEUP
-		// Pseudo RTC: advance the last known RTC by WAKEUP_PERIOD at each boot.
+		// Pseudo RTC: advance the last known RTC by WAKEUP_PERIOD on a genuine
+		// power-on wake. L1 (2026-07): only a POWER_ON reset (TPL5111 timer /
+		// reed) represents a real elapsed WAKEUP_PERIOD. A soft/WDT reset reboot
+		// does NOT, so advancing on those would race the pseudo-RTC ahead of real
+		// time (a reset storm could jump it hours) until the next GNSS sync
+		// corrects it. On those, restore the last known RTC without advancing.
 		unsigned int wakeup_period = configuration_store->read_param<unsigned int>(ParamID::WAKEUP_PERIOD);
-		if (last_rtc > 0 && wakeup_period > 0) {
+		bool genuine_timer_wake = (PMU::reset_cause() == ResetCause::POWER_ON);
+		if (last_rtc > 0 && wakeup_period > 0 && genuine_timer_wake) {
 			unsigned int pseudo_rtc = last_rtc + wakeup_period;
 			configuration_store->write_param(ParamID::LAST_KNOWN_RTC, pseudo_rtc);
 			rtc->settime(static_cast<std::time_t>(pseudo_rtc));
 			DEBUG_INFO("EXTERNAL_WAKEUP: Pseudo RTC set to %u (last=%u + period=%u)", pseudo_rtc, last_rtc, wakeup_period);
+		} else if (last_rtc > 0) {
+			rtc->settime(static_cast<std::time_t>(last_rtc));
+			DEBUG_INFO("EXTERNAL_WAKEUP: Restored LAST_KNOWN_RTC=%u without advance (reset_cause=%d)",
+				last_rtc, (int)PMU::reset_cause());
 		} else {
 			DEBUG_INFO("EXTERNAL_WAKEUP: No pseudo RTC available (last_rtc=%u, wakeup_period=%u)", last_rtc, wakeup_period);
 		}
@@ -1120,15 +1144,22 @@ static void init_runtime(NrfSwitch& nrf_reed_switch)
 	// TPL5111 shutdown timer — powerdown after SHUTDOWN_TIMER seconds
 	{
 		unsigned int shutdown_timer = configuration_store->read_param<unsigned int>(ParamID::SHUTDOWN_TIMER);
-		if (shutdown_timer > 0) {
-			DEBUG_INFO("EXTERNAL_WAKEUP: Shutdown timer scheduled for %u seconds", shutdown_timer);
-			system_scheduler->post_task_prio([]() {
-				DEBUG_INFO("EXTERNAL_WAKEUP: Shutdown timer expired | powering down");
-				PMU::powerdown();
-			}, "SHUTDOWN_TIMER", Scheduler::DEFAULT_PRIORITY, shutdown_timer * 1000);
-		} else {
-			DEBUG_INFO("EXTERNAL_WAKEUP: Shutdown timer disabled (SHUTDOWN_TIMER=0)");
-		}
+		// H2 (2026-07): ALWAYS schedule an awake-time backstop. If SHUTDOWN_TIMER
+		// is 0 (its firmware default, and the value a field factory_reset would
+		// restore) and SHUTDOWN_NTIME_SAT is also 0, nothing else ends the wake:
+		// the device idles in OperationalState at active current until the
+		// battery goes critical, because on RSPB the 15-min WDT reset does NOT
+		// cut power. So fall back to a generous hard cap — well above any
+		// legitimate session (cold GNSS acq + TX, even with RX) but far below the
+		// TPL5111 wake period (~1h45) — instead of scheduling no powerdown at all.
+		constexpr unsigned int SHUTDOWN_HARD_CAP_S = 1800;  // 30 min absolute ceiling
+		unsigned int effective_shutdown = (shutdown_timer > 0) ? shutdown_timer : SHUTDOWN_HARD_CAP_S;
+		DEBUG_INFO("EXTERNAL_WAKEUP: Awake cap scheduled for %u s (SHUTDOWN_TIMER=%u)",
+			effective_shutdown, shutdown_timer);
+		system_scheduler->post_task_prio([]() {
+			DEBUG_INFO("EXTERNAL_WAKEUP: Awake cap reached | powering down");
+			PMU::powerdown();
+		}, "SHUTDOWN_TIMER", Scheduler::DEFAULT_PRIORITY, effective_shutdown * 1000);
 	}
 #endif
 }
@@ -1163,18 +1194,39 @@ int main()
 		nrf_gpio_cfg_default(ext_int.pin_number);  // high-Z input
 	}
 
-	auto [reed, flash] = init_peripherals();
-	init_power_on_check(reed);
+	// H1 (2026-07): the init phases below run BEFORE the FSM's boot-fail check.
+	// Without this barrier an exception (save_params -> CONFIG_STORE_CORRUPTED,
+	// a throwing FS mount, etc.) escapes main() -> std::terminate -> abort() ->
+	// a 15-min watchdog hang per cycle with no escalation — and on RSPB a WDT
+	// reset does not cut power, so it drains the battery to death. Route init
+	// faults through the shared sealed-device recovery ladder instead.
+	try {
+		auto [reed, flash] = init_peripherals();
+		init_power_on_check(reed);
 
-	auto& lfs = init_storage(reed, flash);
-	init_battery();
-	init_core_services(lfs, flash);
-	init_communication(lfs);
-	init_sensors(lfs);
-	init_runtime(reed);
+		auto& lfs = init_storage(reed, flash);
+		init_battery();
+		init_core_services(lfs, flash);
+		init_communication(lfs);
+		init_sensors(lfs);
+		init_runtime(reed);
+	} catch (...) {
+		DEBUG_ERROR("main: unhandled exception during init phases — entering recovery");
+		GenTracker::recover_from_init_failure();  // does not return
+	}
 
 	DEBUG_TRACE("Entering main SM...");
-	GenTracker::start();
+	try {
+		GenTracker::start();
+	} catch (...) {
+		// A synchronous throw from FSM start (e.g. BootState::entry). BootState
+		// already bumped the boot-fail counter, so a bounded reset lets that
+		// machinery escalate on the next boot rather than hanging here.
+		DEBUG_ERROR("main: unhandled exception from FSM start — resetting");
+		PMU::kick_watchdog();
+		PMU::delay_ms(100);
+		PMU::reset(false);
+	}
 
 	// Power rail management: cut peripheral power rails when no task is due soon.
 	// Threshold tuned from the original 5000 ms → 250 ms. The lower the threshold,

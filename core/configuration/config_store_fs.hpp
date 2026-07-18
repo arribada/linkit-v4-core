@@ -438,6 +438,36 @@ private:
 			}
 		}
 
+		// H6 (2026-07): also preserve the battery / duty-cycle SAFETY params.
+		// factory_reset() is on the AUTOMATIC boot-fail recovery path, so
+		// reverting these to firmware defaults would hand back a sealed device
+		// that wakes twice as often (BOOT_COUNTER_MODULO 4->2), never
+		// self-powers-down (SHUTDOWN_TIMER 600->0, SHUTDOWN_NTIME_SAT 3->0) and
+		// has no low-battery throttle (LB_EN 1->0) — draining a tag that cannot
+		// be re-provisioned in the field. Serialization is key-based, so these
+		// non-contiguous IDs deserialize correctly alongside the DECID/HEXID set.
+		static constexpr ParamID PRESERVED_SAFETY_PARAMS[] = {
+			ParamID::LB_EN,
+			ParamID::LB_THRESHOLD,
+			ParamID::LB_CRITICAL_THRESH,
+			ParamID::LB_SHUTDOWN_NTIME_SAT,
+#ifdef EXTERNAL_WAKEUP
+			ParamID::SHUTDOWN_TIMER,
+			ParamID::BOOT_COUNTER_MODULO,
+			ParamID::WAKEUP_PERIOD,
+			ParamID::SHUTDOWN_NTIME_SAT,
+#endif
+		};
+		for (ParamID pid : PRESERVED_SAFETY_PARAMS) {
+			unsigned int idx = (unsigned int)pid;
+			if (m_params.at(idx).index() != default_params.at(idx).index())
+				m_params.at(idx) = default_params.at(idx);
+			if (!serialize_config_entry(f, idx)) {
+				DEBUG_TRACE("serialize_config: failed to serialize safety param %u", idx);
+				throw CONFIG_STORE_CORRUPTED;
+			}
+		}
+
 		DEBUG_TRACE("ConfigurationStoreLFS::serialize_protected_config: saved protected params to config.data");
 	}
 

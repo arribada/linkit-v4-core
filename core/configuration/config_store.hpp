@@ -1124,10 +1124,15 @@ public:
 		unsigned int modulo = read_param<unsigned int>(ParamID::BOOT_COUNTER_MODULO);
 
 		// Protection: modulo must be >= 2 to avoid running every boot (modulo=1)
-		// or division by zero (modulo=0). If misconfigured, always allow boot.
+		// or division by zero (modulo=0). If misconfigured, fail SAFE by allowing
+		// the boot to run — returning false here would power the device down on
+		// EVERY wake (caller shuts down when this returns false), silencing the
+		// tag. This branch is corruption-only (DTE floors PWP03 at 2 and the
+		// mortality duty-cycle write is clamped >=2), so running every wake is an
+		// acceptable, non-bricking fallback.
 		if (modulo < 2) {
 			DEBUG_WARN("BOOT_COUNTER_MODULO=%u invalid (must be >=2) | allowing boot", modulo);
-			return false;
+			return true;
 		}
 
 		if (boot_counter % modulo == 0) {

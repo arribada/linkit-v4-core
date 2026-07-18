@@ -237,6 +237,7 @@ struct __attribute__((packed)) MortalityInfo {
 	double           last_lat;         // GPS lat for stationarity check
 	double           last_lon;         // GPS lon for stationarity check
 	uint32_t         last_eval_epoch;  // Epoch of last daily evaluation
+	uint8_t          no_fix_sessions;  // H4: consecutive sessions with a GPS attempt but no valid fix
 };
 
 struct __attribute__((packed)) MortalityLogEntry {

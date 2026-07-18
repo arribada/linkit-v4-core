@@ -137,7 +137,17 @@ public:
      */
     static void start_test_mode();
     static void stop_test_mode();
+#if ENABLE_SWS_ANALOG
     static bool is_test_running();
+#else
+    // Boards without the SWS analog channel (e.g. RSPB, ENABLE_SWS_ANALOG=0) do
+    // NOT compile sws_analog_service.cpp, yet core code (ServiceManager cooldown,
+    // GenTracker LED dispatch) calls is_test_running() unconditionally. SWS test
+    // mode can never run when the service is absent, so provide an inline `false`
+    // stub to keep those call sites linking. Without this the RSPB firmware
+    // fails to link (undefined reference to SWSAnalogService::is_test_running()).
+    static bool is_test_running() { return false; }
+#endif
 
     /// Default test-mode auto-stop timeout (1h). Acts as a battery-drain
     /// safety net if the operator forgets to send SWSTST,0 before deployment.

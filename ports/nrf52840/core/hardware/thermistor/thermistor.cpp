@@ -108,6 +108,16 @@ double Thermistor::convert_temp(float adc)
 	constexpr double R_BOTTOM = 10000.0;  // 10k fixed resistor
 	double r_therm = R_BOTTOM * ((3.3 / v) - 1.0);
 
+	// M3 (2026-07): a rail-pinned reading (shorted / open NTC) collapses r_therm
+	// to <= 0, which feeds log(0) = -inf below and yields a FINITE but bogus
+	// ~-273 C that passes the downstream isnan check and would false-trip
+	// mortality hypothermia scoring. Reject it as an invalid read (throws in
+	// read(), which the sensor framework drops without emitting a peer event).
+	if (r_therm <= 0.0) {
+		DEBUG_ERROR("Thermistor: non-physical r_therm=%.1f (NTC shorted/open) — rejecting", r_therm);
+		return NAN;
+	}
+
 	// NTC thermistor properties
 	constexpr double R0 = 10000.0;   // Resistance at 25C
 	constexpr double T0 = 298.15;    // 25C in Kelvin
@@ -127,6 +137,14 @@ double Thermistor::convert_temp(float adc)
 	double tempC = tempK - 273.15;
 
 	tempC = tempC + m_offset_temp;
+
+	// M3: final physical-range sanity. An erratic/open NTC can still yield an
+	// out-of-range value that would false-trip mortality hypothermia scoring;
+	// reject anything outside a generous environmental band for a bird tracker.
+	if (tempC < -60.0 || tempC > 125.0) {
+		DEBUG_ERROR("Thermistor: non-physical tempC=%.1f — rejecting", tempC);
+		return NAN;
+	}
 	return tempC;
 }
 

@@ -289,6 +289,60 @@ static void bootfail_reset() {
 	bootfail_save();
 }
 
+/// @brief Recover from an exception thrown during the pre-FSM init phases.
+///
+/// H1 (2026-07): the init phases in main() run BEFORE BootState::entry, so an
+/// exception there (e.g. save_params -> CONFIG_STORE_CORRUPTED, or a throwing
+/// FS mount) used to escape main() -> std::terminate -> abort() -> a 15-min
+/// watchdog hang per cycle with NO escalation. On RSPB that reset does not cut
+/// power, so it repeats forever and drains the battery. This routes those
+/// faults through the same sealed-device escalation ladder as BootState/
+/// ErrorState, using the shared .noinit counter.
+void GenTracker::recover_from_init_failure() {
+	bootfail_increment();
+	bootfail_load();
+	uint16_t fails = s_bootfail_noinit.consecutive_failures;
+
+	if (fails >= BOOT_RETRY_BEFORE_FACTORY && !s_bootfail_noinit.factory_reset_attempted) {
+		// Wipe the (possibly corrupt) config store and retry — factory_reset
+		// preserves DECID/HEXID/calibration. Mirrors BootState::entry.
+		DEBUG_ERROR("recover_from_init_failure: %u failed boots — attempting factory_reset",
+		            static_cast<unsigned int>(fails));
+		s_bootfail_noinit.factory_reset_attempted = 1;
+		s_bootfail_noinit.consecutive_failures = 0;
+		bootfail_save();
+		PMU::kick_watchdog();
+		try {
+			if (configuration_store) configuration_store->factory_reset();
+		} catch (...) {
+			DEBUG_ERROR("recover_from_init_failure: factory_reset itself threw");
+		}
+		PMU::kick_watchdog();
+		PMU::delay_ms(100);
+		PMU::reset(false);
+	} else if (fails >= BOOT_RETRY_MAX) {
+		// Terminal: stop draining. powerdown() on RSPB pulses MCU_DONE so the
+		// TPL5111 cuts power and retries at the next periodic wake (~0.1 µA
+		// meanwhile) rather than a continuous active-current reset loop. Wrapped
+		// in try/catch so a save_params throw (dead flash) falls back to reset.
+		DEBUG_ERROR("recover_from_init_failure: %u failed boots — terminal powerdown",
+		            static_cast<unsigned int>(fails));
+		PMU::kick_watchdog();
+		PMU::delay_ms(100);
+		try {
+			PMU::powerdown();
+		} catch (...) {
+			PMU::reset(false);
+		}
+	} else {
+		DEBUG_ERROR("recover_from_init_failure: %u failed boots — reset retry",
+		            static_cast<unsigned int>(fails));
+		PMU::kick_watchdog();
+		PMU::delay_ms(100);
+		PMU::reset(false);
+	}
+}
+
 /// @brief Dispatch ErrorEvent with BAD_FILESYSTEM to trigger ErrorState.
 void GenTracker::notify_bad_filesystem_error() {
 	ErrorEvent event;
