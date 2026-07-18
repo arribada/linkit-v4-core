@@ -55,6 +55,7 @@ TEST_GROUP(UBXANO)
 
 	void teardown() {
 		delete fake_rtc;
+		rtc = nullptr;  // null the global so a later group's UW event can't deref freed rtc
 	}
 };
 

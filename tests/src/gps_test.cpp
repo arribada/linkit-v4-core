@@ -57,6 +57,7 @@ TEST_GROUP(GPSService)
 		delete system_scheduler;
 		delete fake_timer;
 		delete fake_rtc;
+		rtc = nullptr;  // null the global so a later group's UW event can't deref freed rtc
 		delete fake_config_store;
 		delete fake_battery_mon;
 		delete mock_m10q;

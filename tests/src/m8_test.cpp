@@ -92,6 +92,7 @@ TEST_GROUP(M8)
         delete fake_config;
         delete fake_timer;
         delete fake_rtc;
+        rtc = nullptr;  // null the global so a later group's UW event can't deref freed rtc
     }
 
     void expect_power_on() {
