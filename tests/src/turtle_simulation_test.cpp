@@ -330,6 +330,7 @@ TEST_GROUP(TurtleSimulation)
         delete fake_config;
         delete fake_timer;
         delete fake_rtc;
+        rtc = nullptr;  // null the global so a later group's UW event can't deref freed rtc
     }
 
     void simulate_timestep(uint32_t step_seconds) {

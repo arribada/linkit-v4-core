@@ -37,6 +37,7 @@ TEST_GROUP(CDTMock)
 	void teardown() {
 		ram_filesystem->umount();
 		delete ram_filesystem;
+		main_filesystem = nullptr;  // null global so a later Calibration deref cannot use freed fs
 		delete ram_flash;
 	}
 

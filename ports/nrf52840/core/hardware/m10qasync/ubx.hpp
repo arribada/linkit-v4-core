@@ -8,6 +8,7 @@
 #include <vector>
 #include <cstdint>
 #include <cstddef>
+#include <new>      // placement new for safe MSG_VALSET construction
 
 namespace UBX
 {
@@ -260,11 +261,22 @@ namespace UBX
                 FLASH = 1 << 2   // Update in Flash layer
             };
 
-            // FIXME: Flexible array member with C++ constructor is UB. The constructor
-            // writes past the struct via reinterpret_cast<uint8_t*>(this + 1), which
-            // corrupts the stack when constructed as a local variable. Works on GCC 10.3
-            // ARM by luck. Should use placement new into a properly-sized buffer (see
-            // MSG_VALGET usage at m10qasync.cpp:1228 for the correct pattern).
+            // Max cfgData bytes for a single VALSET message. Bounded by the UBX
+            // packet buffer (MAX_PACKET_LEN=256) minus header/CRC; the real
+            // configs use <= ~112 B (14 key/value pairs), so this is generous.
+            static constexpr size_t MSG_VALSET_MAX_CFG = 256;
+
+            // MSG_VALSET has a flexible array member (cfgData[]): sizeof == 4 and
+            // the constructor fills the key/value bytes via `this + 1`. It MUST
+            // therefore be constructed with placement-new into a buffer that has
+            // room for the header (4 B) + all key/value bytes — NOT as a bare
+            // stack local, which is only 4 B and whose constructor overflows the
+            // stack (UB; "worked by luck" on GCC 10.3 ARM until an ASan run in
+            // 2026-07 caught it). Every call site now does:
+            //   alignas(MSG_VALSET) uint8_t buf[sizeof(MSG_VALSET) + MSG_VALSET_MAX_CFG];
+            //   auto& msg = *new (buf) MSG_VALSET(version, layers, params);
+            // send_packet_with_expect still copies sizeof(MSG_VALSET)+dynamic_size
+            // = 4 + cfgDataSize bytes, so only the header + used cfgData go on air.
             struct __attribute__((__packed__)) MSG_VALSET {
                 uint8_t version;        // Message version (0x00)
                 uint8_t layers;         // Bitfield for layer selection (e.g., RAM, BBR, FLASH)

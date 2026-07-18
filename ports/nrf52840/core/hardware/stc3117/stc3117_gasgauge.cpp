@@ -117,11 +117,9 @@ int GaugeBatteryMonitor::init() {
             // standby). shutdown() is a no-op here because m_is_init is still
             // false, so stop the gauge directly (best-effort) to avoid leaking
             // ~70 uA until the next TPL5111 power cut — a recurring cost on every
-            // glitchy wake over a year-long deployment.
-            {
-                SensorsPowerGuard power_guard;  // VSENSORS for I2C bus stability
-                GasGauge_Stop();
-            }
+            // glitchy wake over a year-long deployment. The function-scope
+            // power_guard (top of init()) already holds VSENSORS for the I2C bus.
+            GasGauge_Stop();
             return -1;
         }
         nrf_delay_ms(STC3117_COUNTER_CHECK_MS);

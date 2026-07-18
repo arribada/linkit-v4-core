@@ -474,6 +474,8 @@ TEST(ArgosTxService, TimeSyncBurstPosFix)
 	mock_kineis->notify(KineisEventTxComplete({}));
 
 	mock().expectOneCall("stop_send").onObject(mock_kineis);
+	// service_term() powers the radio off immediately (battery saving) — expect it.
+	mock().expectOneCall("power_off_immediate").onObject(mock_kineis);
 	serv.stop();
 
 	// No time sync should be scheduled now
@@ -523,6 +525,8 @@ TEST(ArgosTxService, TimeSyncBurstNoPosFix)
 	mock_kineis->notify(KineisEventTxComplete({}));
 
 	mock().expectOneCall("stop_send").onObject(mock_kineis);
+	// service_term() powers the radio off immediately (battery saving) — expect it.
+	mock().expectOneCall("power_off_immediate").onObject(mock_kineis);
 	serv.stop();
 
 	// No time sync should be scheduled now
@@ -1028,6 +1032,8 @@ TEST(ArgosTxService, LastTxIsUpdated)
 	CHECK_EQUAL(1652105502U, (unsigned int)last_tx);
 
 	mock().expectOneCall("stop_send").onObject(mock_kineis);
+	// service_term() powers the radio off immediately (battery saving) — expect it.
+	mock().expectOneCall("power_off_immediate").onObject(mock_kineis);
 	serv.stop();
 }
 

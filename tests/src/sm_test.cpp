@@ -104,6 +104,7 @@ TEST_GROUP(Sm)
 
 	void teardown() {
 		delete main_filesystem;
+		main_filesystem = nullptr;  // null global so a later Calibration deref cannot use freed fs
 		delete location_scheduler;
 		delete system_scheduler;
 		delete comms_scheduler;

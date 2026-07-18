@@ -38,3 +38,4 @@ tests/trackertests_report.html.log
 tests/turtle_simulation_report.html
 tests/turtle_short_surface.csv
 tests/turtle_short_surface.html
+tests/build-asan/
