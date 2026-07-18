@@ -123,14 +123,18 @@ static void rtc_event_handler(drv_rtc_t const * const p_instance)
 	if (drv_rtc_overflow_pending(p_instance)) {
 		g_overflow_count = g_overflow_count + 1;
 	} else if (drv_rtc_compare_pending(p_instance, 0)) {
-		// Fire all due schedules
-		auto it = g_schedules.begin();
-		while (it != g_schedules.end()) {
+		// Fire all due schedules. Re-derive the front each iteration and erase the
+		// fired node BEFORE its callback: callbacks run in THIS ISR and may call
+		// cancel_schedule() (LED transitions cancel timer handles) which erases an
+		// arbitrary node; a live iterator held across the callback would dangle
+		// -> use-after-free on the next pass.
+		while (!g_schedules.empty()) {
+			auto it = g_schedules.begin();
 			if (it->m_target_ticks > current_ticks())
 				break;  // List is sorted — no more due
 
 			Schedule sched = *it;
-			it = g_schedules.erase(it);
+			g_schedules.erase(it);
 			if (sched.m_func)
 				sched.m_func();
 		}

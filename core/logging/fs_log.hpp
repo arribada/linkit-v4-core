@@ -209,6 +209,13 @@ public:
 			filename += "." + std::to_string(file_index);
 			if (m_file_read)
 				delete m_file_read;
+			// Reset to a consistent state BEFORE the (throwing) LFSFile ctor:
+			// lfs_file_open throws on a corrupt/worn/missing chunk, and if we
+			// left m_file_read pointing at the just-freed object a later read()
+			// would re-enter this branch and double-free it. (write()/truncate()
+			// already use this null-first pattern.)
+			m_file_read = nullptr;
+			m_last_read_index = (unsigned int)-1;
 			m_file_read = new LFSFile(m_filesystem, filename.c_str(), LFS_O_RDONLY);
 			m_last_read_index = file_index;
 		}

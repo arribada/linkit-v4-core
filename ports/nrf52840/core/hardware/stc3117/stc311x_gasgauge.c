@@ -530,8 +530,12 @@ int STC31xx_GetRunningCounter(void)
 	/* read STC3117_REG_COUNTER */
 	status = STC31xx_ReadUnsignedWord16(STC311x_REG_COUNTER, &value);
 
+	/* On I2C error, propagate the negative status. Assigning -1 to the
+	 * `unsigned short value` made this return 65535, so callers testing
+	 * `counter < 0` (e.g. the init ready-check comm-error/GG_RUN-stop path)
+	 * never saw the error — a genuinely negative return is required. */
 	if(status < 0) //error
-		value = -1;
+		return status;
 
 	return ((int)value);
 }

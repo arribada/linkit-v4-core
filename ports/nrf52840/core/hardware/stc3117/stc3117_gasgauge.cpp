@@ -167,7 +167,13 @@ int GaugeBatteryMonitor::i2c_write(int I2cSlaveAddr, int RegAddress, unsigned ch
         return STC3117_OK;
     }
 
-    if (NumberOfBytes > static_cast<int>(STC3117_MAX_BUFFER_LEN + sizeof(reg_addr))) {
+    // buffer[STC3117_MAX_BUFFER_LEN] holds reg_addr at [0] then NumberOfBytes at
+    // [1..NumberOfBytes] (last index = NumberOfBytes). Reject anything that would
+    // write past the buffer, and a negative count that memcpy would treat as a
+    // huge size_t. The old bound (> LEN + sizeof(reg_addr)) let NumberOfBytes ==
+    // LEN or LEN+1 through -> a 1-2 byte stack-buffer overflow.
+    if (NumberOfBytes < 0 ||
+        NumberOfBytes + static_cast<int>(sizeof(reg_addr)) > static_cast<int>(STC3117_MAX_BUFFER_LEN)) {
         return STC3117_E_OUT_OF_RANGE;
     }
 

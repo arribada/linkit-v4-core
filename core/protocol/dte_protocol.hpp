@@ -1555,8 +1555,11 @@ public:
 		if (str_pos + size_of_length_field >= str.size())
 			return false;
 
-		size_t length;
-		sscanf(&str[str_pos], "%3zX", &length);
+		size_t length = 0;
+		// Reject a non-hex length field instead of reading `length` uninitialized
+		// below (the return value was previously ignored -> UB on e.g. "$PARMR#zzz;").
+		if (sscanf(&str[str_pos], "%3zX", &length) != 1)
+			return false;
 		str_pos += size_of_length_field;
 
 		// Check the command deliminator //

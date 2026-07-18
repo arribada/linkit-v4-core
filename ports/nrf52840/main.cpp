@@ -231,9 +231,47 @@ FSM_INITIAL_STATE(GenTracker, BootState)
 	}
 }
 
+// Bounded fault-reset recovery (2026-07 audit). On RSPB a soft reset does NOT
+// cut power, so a DETERMINISTIC CPU fault — e.g. one hit every boot during init,
+// BEFORE the FSM boot-fail counter (BootState) ever runs — would reset-loop
+// forever at active current and drain a sealed tag (a C++ try/catch cannot catch
+// a HardFault, so the init-phase barrier does not cover this). Count consecutive
+// fault resets in .noinit — wiped by a TPL5111 power cut, so it only accumulates
+// within ONE power-on session — and after N escalate: on EXTERNAL_WAKEUP pulse
+// MCU_DONE directly (NO flash writes, we're in a fault context) so the TPL5111
+// cuts power and retries at the next periodic wake (~0.1 uA) with a clean boot.
+#ifndef CPPUTEST
+static __attribute__((section(".noinit"))) volatile uint32_t s_fault_magic;
+static __attribute__((section(".noinit"))) volatile uint32_t s_fault_count;
+#else
+static uint32_t s_fault_magic, s_fault_count;
+#endif
+static constexpr uint32_t FAULT_MAGIC = 0xFA017C0DUL;
+static constexpr uint32_t FAULT_RESET_MAX = 5;
+
+[[noreturn]] static void fault_terminal(PMULogType type) {
+	if (s_fault_magic != FAULT_MAGIC) { s_fault_magic = FAULT_MAGIC; s_fault_count = 0; }
+	s_fault_count = s_fault_count + 1;   // not ++ : volatile ++ is deprecated (-Werror=volatile)
+	PMU::save_stack(type);
+	if (s_fault_count >= FAULT_RESET_MAX) {
+#if defined(EXTERNAL_WAKEUP) && defined(MCU_DONE_PIN)
+		// Terminal: hand off to the TPL5111 without touching flash. Raw nrf_gpio
+		// so it works even if GPIOPins::initialise() had not run when the fault hit.
+		auto& done = BSP::GPIO_Inits[MCU_DONE_PIN];
+		nrf_gpio_cfg_output(done.pin_number);
+		nrf_gpio_pin_set(done.pin_number);
+		PMU::delay_ms(100);
+		nrf_gpio_pin_clear(done.pin_number);
+		PMU::delay_ms(2000);   // wait for the TPL5111 to cut power
+#endif
+		// Power not cut (or non-EXTERNAL_WAKEUP board) — fall through to reset.
+	}
+	for (;;) { PMU::reset(false); }
+}
+
 extern "C" void HardFault_Handler() {
 #ifdef NDEBUG
-	for (;;) { PMU::save_stack(PMULogType::HARDFAULT); PMU::reset(false); }
+	fault_terminal(PMULogType::HARDFAULT);
 #else
 	fault_blink_loop(RGBLedColor::RED);
 #endif
@@ -241,7 +279,7 @@ extern "C" void HardFault_Handler() {
 
 extern "C" void MemoryManagement_Handler(void) {
 #ifdef NDEBUG
-	for (;;) { PMU::save_stack(PMULogType::MMAN); PMU::reset(false); }
+	fault_terminal(PMULogType::MMAN);
 #else
 	fault_blink_loop(RGBLedColor::YELLOW);
 #endif
@@ -253,8 +291,7 @@ extern "C" {
 	/// @brief Called by -fstack-protector when the canary is corrupted.
 	void __wrap___stack_chk_fail(void) {
 #ifdef NDEBUG
-		PMU::save_stack(PMULogType::STACK);
-		PMU::reset(false);
+		fault_terminal(PMULogType::STACK);
 #else
 		fault_blink_loop(RGBLedColor::MAGENTA);
 #endif
@@ -263,7 +300,7 @@ extern "C" {
 
 extern "C" void vApplicationMallocFailedHook() {
 #ifdef NDEBUG
-	for (;;) { PMU::save_stack(PMULogType::MALLOC); PMU::reset(false); }
+	fault_terminal(PMULogType::MALLOC);
 #else
 	fault_blink_loop(RGBLedColor::CYAN);
 #endif
@@ -276,7 +313,7 @@ void etl_error_handler(const etl::exception& e)
 {
 	DEBUG_TRACE("ETL error: %s in %s : %u", e.what(), e.file_name(), e.line_number());
 #ifdef NDEBUG
-	for (;;) { PMU::save_stack(PMULogType::ETL); PMU::reset(false); }
+	fault_terminal(PMULogType::ETL);
 #else
 	fault_blink_loop(RGBLedColor::RED, 200);
 #endif

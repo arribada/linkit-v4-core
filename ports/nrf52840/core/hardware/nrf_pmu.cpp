@@ -225,13 +225,23 @@ void PMU::powerdown() {
 	// Persist cooldown state to noinit RAM before shutdown
 	ServiceManager::save_cooldown_state();
 
-	// Persist current RTC for pseudo RTC chain on next boot
+	// Persist current RTC for pseudo RTC chain on next boot. Best-effort ONLY:
+	// write_param()/save_params() throw CONFIG_STORE_CORRUPTED on a flash write
+	// failure (worn/full/transient after a year sealed) or invalid config. An
+	// unguarded throw here would unwind out of powerdown() BEFORE the MCU_DONE
+	// pulse below — on RSPB that means the TPL5111 is never told to cut power,
+	// so the device stays powered and drains the battery to death. The power cut
+	// is NOT optional; durable RTC persistence is. Swallow any failure.
 	if (configuration_store && rtc && rtc->is_set()) {
-		configuration_store->write_param(ParamID::LAST_KNOWN_RTC,
-			static_cast<unsigned int>(rtc->gettime()));
-		configuration_store->save_params();
-		DEBUG_TRACE("PMU::powerdown: Saved LAST_KNOWN_RTC = %u",
-			static_cast<unsigned int>(rtc->gettime()));
+		try {
+			configuration_store->write_param(ParamID::LAST_KNOWN_RTC,
+				static_cast<unsigned int>(rtc->gettime()));
+			configuration_store->save_params();
+			DEBUG_TRACE("PMU::powerdown: Saved LAST_KNOWN_RTC = %u",
+				static_cast<unsigned int>(rtc->gettime()));
+		} catch (...) {
+			DEBUG_ERROR("PMU::powerdown: LAST_KNOWN_RTC save failed — proceeding to power cut");
+		}
 	}
 
 	// Shut down all peripherals before power-off (all boards)

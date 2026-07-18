@@ -421,54 +421,54 @@ private:
 		if (f.write((void *)&m_config_version_code, sizeof(m_config_version_code)) != sizeof(m_config_version_code))
 			throw CONFIG_STORE_CORRUPTED;
 
-		for (unsigned int i = 0; i <= (unsigned int)ParamID::ARGOS_HEXID ; i++) {
-			// Check variant index (type) matches default parameter
-			if (m_params.at(i).index() != default_params.at(i).index()) {
-				DEBUG_TRACE("serialize_config: protected param %u variant index mismatch expected %u but got %u - repairing",
-						i,
-						default_params.at(i).index(),
-						m_params.at(i).index());
-				// Reset parameter to back to factory default
-				m_params.at(i) = default_params.at(i);
-			}
-
-			if (!serialize_config_entry(f, i)) {
-				DEBUG_TRACE("serialize_config: failed to serialize protected param %u", i);
-				throw CONFIG_STORE_CORRUPTED;
-			}
-		}
-
-		// H6 (2026-07): also preserve the battery / duty-cycle SAFETY params.
-		// factory_reset() is on the AUTOMATIC boot-fail recovery path, so
-		// reverting these to firmware defaults would hand back a sealed device
+		// factory_reset() is on the AUTOMATIC boot-fail recovery path. Preserve
+		// device identity (DECID/HEXID) AND the battery/duty-cycle SAFETY params
+		// (H6) from the current config; reset everything else to firmware
+		// default. Reverting the safety params would hand back a sealed device
 		// that wakes twice as often (BOOT_COUNTER_MODULO 4->2), never
 		// self-powers-down (SHUTDOWN_TIMER 600->0, SHUTDOWN_NTIME_SAT 3->0) and
 		// has no low-battery throttle (LB_EN 1->0) — draining a tag that cannot
-		// be re-provisioned in the field. Serialization is key-based, so these
-		// non-contiguous IDs deserialize correctly alongside the DECID/HEXID set.
-		static constexpr ParamID PRESERVED_SAFETY_PARAMS[] = {
-			ParamID::LB_EN,
-			ParamID::LB_THRESHOLD,
-			ParamID::LB_CRITICAL_THRESH,
-			ParamID::LB_SHUTDOWN_NTIME_SAT,
+		// be re-provisioned in the field.
+		//
+		// CRITICAL (2026-07 audit): deserialize_config() is POSITIONAL — it reads
+		// entries strictly in index order and uses the key only to VALIDATE, not
+		// to seek. A SPARSE file (only the preserved entries) therefore misaligns
+		// the reader and silently corrupts/resets params. So write a DENSE file:
+		// every implemented param, in index order, exactly like serialize_config().
+		// (if-comparisons, not a switch: the codebase builds with -Werror=switch-enum
+		// which would require every ParamID enumerator to be listed.)
+		auto is_preserved = [](unsigned int idx) -> bool {
+			if (idx == (unsigned int)ParamID::ARGOS_DECID ||
+			    idx == (unsigned int)ParamID::ARGOS_HEXID ||
+			    idx == (unsigned int)ParamID::LB_EN ||
+			    idx == (unsigned int)ParamID::LB_THRESHOLD ||
+			    idx == (unsigned int)ParamID::LB_CRITICAL_THRESH ||
+			    idx == (unsigned int)ParamID::LB_SHUTDOWN_NTIME_SAT)
+				return true;
 #ifdef EXTERNAL_WAKEUP
-			ParamID::SHUTDOWN_TIMER,
-			ParamID::BOOT_COUNTER_MODULO,
-			ParamID::WAKEUP_PERIOD,
-			ParamID::SHUTDOWN_NTIME_SAT,
+			if (idx == (unsigned int)ParamID::SHUTDOWN_TIMER ||
+			    idx == (unsigned int)ParamID::BOOT_COUNTER_MODULO ||
+			    idx == (unsigned int)ParamID::WAKEUP_PERIOD ||
+			    idx == (unsigned int)ParamID::SHUTDOWN_NTIME_SAT)
+				return true;
 #endif
+			return false;
 		};
-		for (ParamID pid : PRESERVED_SAFETY_PARAMS) {
-			unsigned int idx = (unsigned int)pid;
-			if (m_params.at(idx).index() != default_params.at(idx).index())
-				m_params.at(idx) = default_params.at(idx);
-			if (!serialize_config_entry(f, idx)) {
-				DEBUG_TRACE("serialize_config: failed to serialize safety param %u", idx);
+
+		for (unsigned int i = 0; i < MAX_CONFIG_ITEMS; i++) {
+			if (!param_map[i].is_implemented)
+				continue;
+			// Non-preserved slots -> factory default. Preserved slots keep their
+			// current value (repaired to default only if the variant type drifted).
+			if (!is_preserved(i) || m_params.at(i).index() != default_params.at(i).index())
+				m_params.at(i) = default_params.at(i);
+			if (!serialize_config_entry(f, i)) {
+				DEBUG_ERROR("serialize_protected_config: failed to serialize param %u", i);
 				throw CONFIG_STORE_CORRUPTED;
 			}
 		}
 
-		DEBUG_TRACE("ConfigurationStoreLFS::serialize_protected_config: saved protected params to config.data");
+		DEBUG_TRACE("ConfigurationStoreLFS::serialize_protected_config: saved dense config.dat (identity + safety preserved)");
 	}
 
 	/// @brief Persist all sensor calibration data to flash.

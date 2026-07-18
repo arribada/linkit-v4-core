@@ -956,7 +956,19 @@ void SmdSat::state_transmit_pending() {
 		GPIOPins::release_to_highz(SMD_VPA_PIN);
 		DEBUG_TRACE("SmdSat::%s: VPA released for TX", __func__);
 #endif
-		if (!m_cmd.initiate_tx(m_tx_buffer)) {
+		bool tx_started = false;
+		try {
+			tx_started = m_cmd.initiate_tx(m_tx_buffer);
+		} catch (...) {
+			// initiate_tx -> send_command_aplus throws ErrorCode::SPI_COMMS_ERROR
+			// on a transient SPIM fault. Absorb it locally (like every other SPI
+			// call in this driver) so it routes to the SMD error state + cooldown
+			// + autofallback accounting, instead of unwinding to a global
+			// ErrorEvent that bypasses SMD recovery and leaves m_tx_buffer stale.
+			DEBUG_ERROR("SmdSat::%s: initiate_tx threw (SPI) — aborting TX", __func__);
+			tx_started = false;
+		}
+		if (!tx_started) {
 			DEBUG_ERROR("SmdSat::%s: initiate_tx failed, aborting TX", __func__);
 			m_tx_buffer.clear();
 			SMD_STATE_CHANGE(transmit_pending, error);
@@ -1004,7 +1016,18 @@ void SmdSat::state_transmitting_exit() {
 }
 
 void SmdSat::state_transmitting() {
-	if (m_cmd.is_tx_finished()) {
+	bool tx_finished = false;
+	try {
+		tx_finished = m_cmd.is_tx_finished();
+	} catch (...) {
+		// SPI poll can throw ErrorCode::SPI_COMMS_ERROR mid-TX. Route to the SMD
+		// error state locally instead of unwinding to a global ErrorEvent.
+		DEBUG_ERROR("SmdSat::%s: is_tx_finished threw (SPI) — routing to SMD error", __func__);
+		m_tx_buffer.clear();
+		SMD_STATE_CHANGE(transmitting, error);
+		return;
+	}
+	if (tx_finished) {
 		if (m_tx_buffer.size()) {
 			TXTRACE("state_transmitting: TX FINISHED — total elapsed");
 			m_tx_buffer.clear();
@@ -1013,7 +1036,14 @@ void SmdSat::state_transmitting() {
 			// failure). Only MAC_TX_DONE should fire KineisEventTxComplete —
 			// otherwise AFTER_LAST_TX cooldown arms on a failed TX and locks
 			// out the whole surface cycle even though no packet was sent.
-			bool tx_success = m_cmd.is_tx_successful();
+			bool tx_success = false;
+			try {
+				tx_success = m_cmd.is_tx_successful();
+			} catch (...) {
+				DEBUG_ERROR("SmdSat::%s: is_tx_successful threw (SPI) — routing to SMD error", __func__);
+				SMD_STATE_CHANGE(transmitting, error);
+				return;
+			}
 			if (!tx_success) {
 				TXTRACE("state_transmitting: TX FAILED (timeout/error) — notifying DeviceError");
 				notify(KineisEventDeviceError({}));
