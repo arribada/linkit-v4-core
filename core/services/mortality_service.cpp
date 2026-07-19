@@ -45,13 +45,26 @@ void MortalityService::service_init()
 	m_no_fix_counted = false;
 	m_fallback_evaluated = false;
 
-	// Restore persisted state from log
+	// Restore persisted state from log. The read is wrapped: FsLog::read opens an
+	// LFSFile whose ctor throws on a corrupt/worn/missing chunk, and service_init
+	// runs from ServiceManager::startall(), which — unlike stopall() — has NO
+	// per-service exception barrier. An escaping throw would abort startup of every
+	// later service, propagate to the main-loop catch → ErrorState → boot-fail
+	// counter, and on a sealed RSPB tag (soft reset does not cut power) spin a
+	// battery-draining reset loop. Fail SAFE to a fresh ALIVE state instead
+	// (design priority 1: bounded recovery, never thrash).
 	if (get_logger() && get_logger()->num_entries() > 0) {
-		MortalityLogEntry last_entry;
-		get_logger()->read(&last_entry, get_logger()->num_entries() - 1);
-		m_state = last_entry.info;
-		DEBUG_INFO("MortalityService: Restored state: confidence=%u%% days=%u status=%u",
-				m_state.confidence, m_state.consecutive_days, (unsigned int)m_state.status);
+		try {
+			MortalityLogEntry last_entry;
+			get_logger()->read(&last_entry, get_logger()->num_entries() - 1);
+			m_state = last_entry.info;
+			DEBUG_INFO("MortalityService: Restored state: confidence=%u%% days=%u status=%u",
+					m_state.confidence, m_state.consecutive_days, (unsigned int)m_state.status);
+		} catch (...) {
+			memset(&m_state, 0, sizeof(m_state));
+			m_state.status = MortalityStatus::ALIVE;
+			DEBUG_ERROR("MortalityService: state restore failed (corrupt log) — starting fresh");
+		}
 	} else {
 		memset(&m_state, 0, sizeof(m_state));
 		m_state.status = MortalityStatus::ALIVE;
@@ -169,10 +182,21 @@ void MortalityService::notify_peer_event(ServiceEvent& event)
 	//    activity+temperature + partial stationarity (evaluate_mortality awards
 	//    MORTALITY_NO_FIX_GPS_SCORE when m_has_gps is false). Guarded to run at
 	//    most once per session so it doesn't over-weight the EMA.
+	//
+	// The fallback gates on BOTH sensors (activity AND temperature), not either:
+	// AXL and thermistor arrive as two separate peer events, and evaluate_mortality
+	// latches m_fallback_evaluated + resets the session flags, so whichever event
+	// fires the evaluation is the only sensor scored. With an OR gate the fallback
+	// fired on the first-arriving sensor and could never combine both, capping the
+	// session score at 40+0+15=55 (or 0+30+15=45) — below the 80 needed to advance
+	// consecutive_days. A dead bird under dense canopy (never fixes GPS) would then
+	// reach SUSPECTED but NEVER CONFIRMED, defeating H4's entire purpose. Requiring
+	// both sensors lets the fallback score the intended 40+30+15=85 once activity
+	// and temperature are collected, regardless of peer-event ordering.
 	bool have_other_sensor = (m_has_activity || m_has_temperature);
 	if (have_other_sensor && m_has_gps) {
 		evaluate_mortality();
-	} else if (have_other_sensor && !m_fallback_evaluated &&
+	} else if (m_has_activity && m_has_temperature && !m_fallback_evaluated &&
 			MORTALITY_NO_FIX_FALLBACK_SESSIONS > 0 &&
 			m_state.no_fix_sessions >= MORTALITY_NO_FIX_FALLBACK_SESSIONS) {
 		m_fallback_evaluated = true;
@@ -190,11 +214,21 @@ bool MortalityService::all_inputs_collected() const
 	return m_has_activity && m_has_temperature && m_has_gps;
 }
 
-unsigned int MortalityService::day_of_year(std::time_t epoch) const
+/// @brief Monotonic per-day key used to detect a calendar-day boundary between
+///        evaluations. Returns a strictly increasing (year, day-of-year) index
+///        rather than the bare tm_yday, so that:
+///          - a fresh unit (last_eval_epoch == 0) evaluating on Jan 1 UTC is not
+///            aliased with the epoch==0 "never evaluated" sentinel, and
+///          - the day counter cannot collide across a New-Year boundary on a
+///            multi-year sealed deployment (yday resets to 0 every Jan 1).
+///        Only equality of consecutive keys matters to the caller, so the exact
+///        magnitude is irrelevant; *366 (> max yday) guarantees no cross-year
+///        collision. epoch==0 keeps returning 0 as the "never evaluated" sentinel.
+unsigned int MortalityService::eval_day_index(std::time_t epoch) const
 {
 	if (epoch == 0) return 0;
 	struct tm *t = gmtime(&epoch);
-	return t ? t->tm_yday : 0;
+	return t ? static_cast<unsigned int>((t->tm_year + 1900) * 366 + t->tm_yday) : 0;
 }
 
 /// @brief Compute mortality confidence (0-100%) from activity, body temp, GPS stationarity.
@@ -258,8 +292,8 @@ void MortalityService::evaluate_mortality()
 
 	// --- Day boundary check ---
 	std::time_t now = service_current_time();
-	unsigned int current_day = day_of_year(now);
-	unsigned int last_day = day_of_year(static_cast<std::time_t>(m_state.last_eval_epoch));
+	unsigned int current_day = eval_day_index(now);
+	unsigned int last_day = eval_day_index(static_cast<std::time_t>(m_state.last_eval_epoch));
 
 	if (now > 0 && now <= static_cast<std::time_t>(UINT32_MAX) && current_day != last_day) {
 		m_state.last_eval_epoch = static_cast<uint32_t>(now);
@@ -295,33 +329,35 @@ void MortalityService::evaluate_mortality()
 	if (duty_modulo == 1)
 		duty_modulo = 2;
 
-	if (duty_modulo > 0) {
-		unsigned int current_modulo = service_read_param<unsigned int>(ParamID::BOOT_COUNTER_MODULO);
-		unsigned int original = service_read_param<unsigned int>(ParamID::MORTALITY_ORIGINAL_MODULO);
+	unsigned int current_modulo = service_read_param<unsigned int>(ParamID::BOOT_COUNTER_MODULO);
+	unsigned int original = service_read_param<unsigned int>(ParamID::MORTALITY_ORIGINAL_MODULO);
 
-		if (m_state.status == MortalityStatus::CONFIRMED) {
-			// Apply (or RE-apply) the dead-bird cadence. Gating on the actual
-			// modulo value rather than the status EDGE self-heals the case where
-			// a TPL5111 power cut dropped the (RAM-only) modulo write while the
-			// CONFIRMED state (FsLog) persisted (M2, 2026-07): the next
-			// evaluation sees current_modulo != duty_modulo and re-applies it.
-			if (current_modulo != duty_modulo) {
-				if (original == 0)
-					service_write_param(ParamID::MORTALITY_ORIGINAL_MODULO, current_modulo);
-				service_write_param(ParamID::BOOT_COUNTER_MODULO, duty_modulo);
-				DEBUG_INFO("MortalityService: CONFIRMED — duty cycle adapted to modulo=%u", duty_modulo);
-			}
-		} else if (original > 0) {
-			// Not CONFIRMED (ALIVE or SUSPECTED) — restore the original cadence.
-			// H5 (2026-07): recovery walks CONFIRMED -> SUSPECTED -> ALIVE, so
-			// restoring only on the atomic CONFIRMED->ALIVE edge left the dead
-			// cadence stuck forever once a bird improved through SUSPECTED.
-			// Restore on ANY transition out of CONFIRMED instead.
-			service_write_param(ParamID::BOOT_COUNTER_MODULO, original);
-			unsigned int zero = 0U;
-			service_write_param(ParamID::MORTALITY_ORIGINAL_MODULO, zero);
-			DEBUG_INFO("MortalityService: not CONFIRMED — restored duty cycle modulo=%u", original);
+	if (duty_modulo > 0 && m_state.status == MortalityStatus::CONFIRMED) {
+		// Apply (or RE-apply) the dead-bird cadence. Gating on the actual
+		// modulo value rather than the status EDGE self-heals the case where
+		// a TPL5111 power cut dropped the (RAM-only) modulo write while the
+		// CONFIRMED state (FsLog) persisted (M2, 2026-07): the next
+		// evaluation sees current_modulo != duty_modulo and re-applies it.
+		if (current_modulo != duty_modulo) {
+			if (original == 0)
+				service_write_param(ParamID::MORTALITY_ORIGINAL_MODULO, current_modulo);
+			service_write_param(ParamID::BOOT_COUNTER_MODULO, duty_modulo);
+			DEBUG_INFO("MortalityService: CONFIRMED — duty cycle adapted to modulo=%u", duty_modulo);
 		}
+	} else if (original > 0) {
+		// Restore the original cadence whenever we are NOT holding the dead
+		// cadence. This covers two exits, and the restore lives OUTSIDE the
+		// `duty_modulo > 0` guard on purpose:
+		//  - H5 recovery: status walked CONFIRMED -> SUSPECTED -> ALIVE (restore
+		//    on ANY transition out of CONFIRMED, not just the atomic ->ALIVE edge,
+		//    else the dead cadence sticks once a bird improves through SUSPECTED).
+		//  - Feature disabled after adaptation (operator writes MTP06=0): nesting
+		//    this under `duty_modulo > 0` previously stranded the tag at the dead
+		//    cadence forever — "disable" became a one-way trap.
+		service_write_param(ParamID::BOOT_COUNTER_MODULO, original);
+		unsigned int zero = 0U;
+		service_write_param(ParamID::MORTALITY_ORIGINAL_MODULO, zero);
+		DEBUG_INFO("MortalityService: not holding dead cadence — restored duty cycle modulo=%u", original);
 	}
 #endif
 

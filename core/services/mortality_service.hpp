@@ -102,5 +102,5 @@ private:
 	void evaluate_mortality();
 	void persist_state();
 	bool all_inputs_collected() const;
-	unsigned int day_of_year(std::time_t epoch) const;
+	unsigned int eval_day_index(std::time_t epoch) const;
 };
