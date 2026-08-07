@@ -1,0 +1,58 @@
+# depslib dependency file v1.0
+1623857887 source:j:\git\loc-argos\cprojects\code_blocks_projects\prepas v4.0\main.c
+	<unistd.h>
+	<stdio.h>
+	<stdlib.h>
+	<math.h>
+	<string.h>
+	"prepas.h"
+	"utils.h"
+	<time.h>
+
+1623683300 j:\git\loc-argos\cprojects\code_blocks_projects\prepas v4.0\main.h
+	"stm32l4xx_hal.h"
+
+1623166034 j:\git\loc-argos\cprojects\code_blocks_projects\prepas v4.0\prepas.h
+
+1576496921 j:\git\loc-argos\cprojects\code_blocks_projects\prepas v4.0\utils.h
+
+1623170288 source:j:\git\loc-argos\cprojects\code_blocks_projects\prepas v4.0\prepas.c
+	<stdio.h>
+	<stdlib.h>
+	<math.h>
+	<string.h>
+	"utils.h"
+	"prepas.h"
+
+1581950017 source:j:\git\loc-argos\cprojects\code_blocks_projects\prepas v4.0\utils.c
+	<math.h>
+	"prepas.h"
+	"utils.h"
+
+1758438601 source:d:\git2\loc-argos\cprojects\code_blocks_projects\prepas v4.0\main.c
+	<unistd.h>
+	<stdio.h>
+	<stdlib.h>
+	<math.h>
+	<string.h>
+	"prepas.h"
+	"utils.h"
+	<time.h>
+
+1758439019 d:\git2\loc-argos\cprojects\code_blocks_projects\prepas v4.0\prepas.h
+
+1757518925 d:\git2\loc-argos\cprojects\code_blocks_projects\prepas v4.0\utils.h
+
+1758438185 source:d:\git2\loc-argos\cprojects\code_blocks_projects\prepas v4.0\prepas.c
+	<stdio.h>
+	<stdlib.h>
+	<math.h>
+	<string.h>
+	"utils.h"
+	"prepas.h"
+
+1757519507 source:d:\git2\loc-argos\cprojects\code_blocks_projects\prepas v4.0\utils.c
+	<math.h>
+	"prepas.h"
+	"utils.h"
+

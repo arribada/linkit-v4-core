@@ -1,0 +1,585 @@
+GAS LISTING /tmp/cctN1xPY.s 			page 1
+
+
+   1              		.file	"utils.c"
+   2              		.text
+   3              		.globl	su_date_jmahms_stu20
+   5              		.seh_proc	su_date_jmahms_stu20
+   6              	su_date_jmahms_stu20:
+   7 0000 55       		pushq	%rbp
+   8              		.seh_pushreg	%rbp
+   9 0001 57       		pushq	%rdi
+  10              		.seh_pushreg	%rdi
+  11 0002 56       		pushq	%rsi
+  12              		.seh_pushreg	%rsi
+  13 0003 53       		pushq	%rbx
+  14              		.seh_pushreg	%rbx
+  15 0004 4883EC38 		subq	$56, %rsp
+  16              		.seh_stackalloc	56
+  17 0008 0F117424 		movups	%xmm6, 32(%rsp)
+  17      20
+  18              		.seh_savexmm	%xmm6, 32
+  19              		.seh_endprologue
+  20 000d 89CF     		movl	%ecx, %edi
+  21 000f 89D3     		movl	%edx, %ebx
+  22 0011 4489CE   		movl	%r9d, %esi
+  23 0014 8D42FF   		leal	-1(%rdx), %eax
+  24 0017 83F80B   		cmpl	$11, %eax
+  25 001a 7613     		jbe	.L9
+  26 001c B8010000 		movl	$1, %eax
+  26      00
+  27              	.L1:
+  28 0021 0F107424 		movups	32(%rsp), %xmm6
+  28      20
+  29 0026 4883C438 		addq	$56, %rsp
+  30 002a 5B       		popq	%rbx
+  31 002b 5E       		popq	%rsi
+  32 002c 5F       		popq	%rdi
+  33 002d 5D       		popq	%rbp
+  34 002e C3       		ret
+  35              	.L9:
+  36 002f 418D901C 		leal	-2020(%r8), %edx
+  36      F8FFFF
+  37 0036 418D8096 		leal	-1898(%r8), %eax
+  37      F8FFFF
+  38 003d 4489C1   		movl	%r8d, %ecx
+  39 0040 81E96D07 		subl	$1901, %ecx
+  39      0000
+  40 0046 0F49C1   		cmovns	%ecx, %eax
+  41 0049 C1F802   		sarl	$2, %eax
+  42 004c 69D26D01 		imull	$365, %edx, %edx
+  42      0000
+  43 0052 8D6C02E3 		leal	-29(%rdx,%rax), %ebp
+  44 0056 660FEFF6 		pxor	%xmm6, %xmm6
+  45 005a F2410F2A 		cvtsi2sdl	%r8d, %xmm6
+  45      F0
+  46 005f F20F100D 		movsd	.LC0(%rip), %xmm1
+  46      68000000 
+  47 0067 660F10C6 		movupd	%xmm6, %xmm0
+  48 006b E8000000 		call	fmod
+  48      00
+GAS LISTING /tmp/cctN1xPY.s 			page 2
+
+
+  49 0070 F20F5805 		addsd	.LC1(%rip), %xmm0
+  49      70000000 
+  50 0078 F20F100D 		movsd	.LC2(%rip), %xmm1
+  50      78000000 
+  51 0080 660F2FC8 		comisd	%xmm0, %xmm1
+  52 0084 7755     		ja	.L10
+  53 0086 B8020000 		movl	$2, %eax
+  53      00
+  54              	.L3:
+  55 008b 83EB01   		subl	$1, %ebx
+  56 008e 83E801   		subl	$1, %eax
+  57 0091 4898     		cltq
+  58 0093 4863DB   		movslq	%ebx, %rbx
+  59 0096 488D1458 		leaq	(%rax,%rbx,2), %rdx
+  60 009a 488D0500 		leaq	ek_quanti(%rip), %rax
+  60      000000
+  61 00a1 032C90   		addl	(%rax,%rdx,4), %ebp
+  62 00a4 8D443DFF 		leal	-1(%rbp,%rdi), %eax
+  63 00a8 69C08051 		imull	$86400, %eax, %eax
+  63      0100
+  64 00ae 69F6100E 		imull	$3600, %esi, %esi
+  64      0000
+  65 00b4 01C6     		addl	%eax, %esi
+  66 00b6 6B842480 		imull	$60, 128(%rsp), %eax
+  66      0000003C 
+  67 00be 01C6     		addl	%eax, %esi
+  68 00c0 03B42488 		addl	136(%rsp), %esi
+  68      000000
+  69 00c7 488B8424 		movq	144(%rsp), %rax
+  69      90000000 
+  70 00cf 8930     		movl	%esi, (%rax)
+  71 00d1 B8000000 		movl	$0, %eax
+  71      00
+  72 00d6 E946FFFF 		jmp	.L1
+  72      FF
+  73              	.L10:
+  74 00db F20F100D 		movsd	.LC0(%rip), %xmm1
+  74      68000000 
+  75 00e3 660F10C6 		movupd	%xmm6, %xmm0
+  76 00e7 E8000000 		call	fmod
+  76      00
+  77 00ec F20F5805 		addsd	.LC1(%rip), %xmm0
+  77      70000000 
+  78 00f4 F20F2CC0 		cvttsd2sil	%xmm0, %eax
+  79 00f8 EB91     		jmp	.L3
+  80              		.seh_endproc
+  81              		.globl	su_date_stu20_jmahms
+  83              		.seh_proc	su_date_stu20_jmahms
+  84              	su_date_stu20_jmahms:
+  85 00fa 4155     		pushq	%r13
+  86              		.seh_pushreg	%r13
+  87 00fc 4154     		pushq	%r12
+  88              		.seh_pushreg	%r12
+  89 00fe 55       		pushq	%rbp
+  90              		.seh_pushreg	%rbp
+  91 00ff 57       		pushq	%rdi
+  92              		.seh_pushreg	%rdi
+GAS LISTING /tmp/cctN1xPY.s 			page 3
+
+
+  93 0100 56       		pushq	%rsi
+  94              		.seh_pushreg	%rsi
+  95 0101 53       		pushq	%rbx
+  96              		.seh_pushreg	%rbx
+  97 0102 4883EC28 		subq	$40, %rsp
+  98              		.seh_stackalloc	40
+  99              		.seh_endprologue
+ 100 0106 4889D7   		movq	%rdx, %rdi
+ 101 0109 4C89C6   		movq	%r8, %rsi
+ 102 010c 4D89CC   		movq	%r9, %r12
+ 103 010f 4C8B8C24 		movq	128(%rsp), %r9
+ 103      80000000 
+ 104 0117 4C8B8424 		movq	136(%rsp), %r8
+ 104      88000000 
+ 105 011f 85C9     		testl	%ecx, %ecx
+ 106 0121 0F88B001 		js	.L19
+ 106      0000
+ 107 0127 4863E9   		movslq	%ecx, %rbp
+ 108 012a 4869ED07 		imulq	$-1037155065, %rbp, %rbp
+ 108      452EC2
+ 109 0131 48C1ED20 		shrq	$32, %rbp
+ 110 0135 01CD     		addl	%ecx, %ebp
+ 111 0137 C1FD10   		sarl	$16, %ebp
+ 112 013a 89C8     		movl	%ecx, %eax
+ 113 013c C1F81F   		sarl	$31, %eax
+ 114 013f 29C5     		subl	%eax, %ebp
+ 115 0141 69C580AE 		imull	$-86400, %ebp, %eax
+ 115      FEFF
+ 116 0147 01C1     		addl	%eax, %ecx
+ 117 0149 4863C1   		movslq	%ecx, %rax
+ 118 014c 4869C0C5 		imulq	$-1851608123, %rax, %rax
+ 118      B3A291
+ 119 0153 48C1E820 		shrq	$32, %rax
+ 120 0157 01C8     		addl	%ecx, %eax
+ 121 0159 C1F80B   		sarl	$11, %eax
+ 122 015c 89CA     		movl	%ecx, %edx
+ 123 015e C1FA1F   		sarl	$31, %edx
+ 124 0161 29D0     		subl	%edx, %eax
+ 125 0163 418901   		movl	%eax, (%r9)
+ 126 0166 69C0F0F1 		imull	$-3600, %eax, %eax
+ 126      FFFF
+ 127 016c 01C8     		addl	%ecx, %eax
+ 128 016e 4863D0   		movslq	%eax, %rdx
+ 129 0171 4869D289 		imulq	$-2004318071, %rdx, %rdx
+ 129      888888
+ 130 0178 48C1EA20 		shrq	$32, %rdx
+ 131 017c 01C2     		addl	%eax, %edx
+ 132 017e C1FA05   		sarl	$5, %edx
+ 133 0181 89C1     		movl	%eax, %ecx
+ 134 0183 C1F91F   		sarl	$31, %ecx
+ 135 0186 29CA     		subl	%ecx, %edx
+ 136 0188 418910   		movl	%edx, (%r8)
+ 137 018b 89D1     		movl	%edx, %ecx
+ 138 018d C1E104   		sall	$4, %ecx
+ 139 0190 29CA     		subl	%ecx, %edx
+ 140 0192 8D0490   		leal	(%rax,%rdx,4), %eax
+ 141 0195 488B9C24 		movq	144(%rsp), %rbx
+GAS LISTING /tmp/cctN1xPY.s 			page 4
+
+
+ 141      90000000 
+ 142 019d 8903     		movl	%eax, (%rbx)
+ 143 019f 83F83B   		cmpl	$59, %eax
+ 144 01a2 7E30     		jle	.L13
+ 145 01a4 83E83C   		subl	$60, %eax
+ 146 01a7 8903     		movl	%eax, (%rbx)
+ 147 01a9 418B00   		movl	(%r8), %eax
+ 148 01ac 83C001   		addl	$1, %eax
+ 149 01af 418900   		movl	%eax, (%r8)
+ 150 01b2 83F83B   		cmpl	$59, %eax
+ 151 01b5 7E1D     		jle	.L13
+ 152 01b7 83E83C   		subl	$60, %eax
+ 153 01ba 418900   		movl	%eax, (%r8)
+ 154 01bd 418B01   		movl	(%r9), %eax
+ 155 01c0 83C001   		addl	$1, %eax
+ 156 01c3 418901   		movl	%eax, (%r9)
+ 157 01c6 83F817   		cmpl	$23, %eax
+ 158 01c9 7E09     		jle	.L13
+ 159 01cb 83E818   		subl	$24, %eax
+ 160 01ce 418901   		movl	%eax, (%r9)
+ 161 01d1 83C501   		addl	$1, %ebp
+ 162              	.L13:
+ 163 01d4 660FEFC0 		pxor	%xmm0, %xmm0
+ 164 01d8 F20F2AC5 		cvtsi2sdl	%ebp, %xmm0
+ 165 01dc F20F5805 		addsd	.LC3(%rip), %xmm0
+ 165      80000000 
+ 166 01e4 F20F5E05 		divsd	.LC4(%rip), %xmm0
+ 166      88000000 
+ 167 01ec F20F5AC0 		cvtsd2ss	%xmm0, %xmm0
+ 168 01f0 F30F2CD8 		cvttss2sil	%xmm0, %ebx
+ 169 01f4 8D83E407 		leal	2020(%rbx), %eax
+ 169      0000
+ 170 01fa 41890424 		movl	%eax, (%r12)
+ 171 01fe 448D6B7A 		leal	122(%rbx), %r13d
+ 172 0202 89DA     		movl	%ebx, %edx
+ 173 0204 83C277   		addl	$119, %edx
+ 174 0207 440F49EA 		cmovns	%edx, %r13d
+ 175 020b 41C1FD02 		sarl	$2, %r13d
+ 176 020f 4183ED1D 		subl	$29, %r13d
+ 177 0213 660FEFC0 		pxor	%xmm0, %xmm0
+ 178 0217 F20F2AC0 		cvtsi2sdl	%eax, %xmm0
+ 179 021b F20F100D 		movsd	.LC0(%rip), %xmm1
+ 179      68000000 
+ 180 0223 E8000000 		call	fmod
+ 180      00
+ 181 0228 F20F5805 		addsd	.LC1(%rip), %xmm0
+ 181      70000000 
+ 182 0230 F20F100D 		movsd	.LC2(%rip), %xmm1
+ 182      78000000 
+ 183 0238 660F2FC8 		comisd	%xmm0, %xmm1
+ 184 023c 7746     		ja	.L23
+ 185 023e 41BB0200 		movl	$2, %r11d
+ 185      0000
+ 186              	.L14:
+ 187 0244 69DB93FE 		imull	$-365, %ebx, %ebx
+ 187      FFFF
+ 188 024a 01DD     		addl	%ebx, %ebp
+GAS LISTING /tmp/cctN1xPY.s 			page 5
+
+
+ 189 024c 4429ED   		subl	%r13d, %ebp
+ 190 024f 8D5501   		leal	1(%rbp), %edx
+ 191 0252 C7060100 		movl	$1, (%rsi)
+ 191      0000
+ 192              	.L16:
+ 193 0258 8B06     		movl	(%rsi), %eax
+ 194 025a 8D48FF   		leal	-1(%rax), %ecx
+ 195 025d 458D43FF 		leal	-1(%r11), %r8d
+ 196 0261 4D63C8   		movslq	%r8d, %r9
+ 197 0264 4C63D1   		movslq	%ecx, %r10
+ 198 0267 4F8D1451 		leaq	(%r9,%r10,2), %r10
+ 199 026b 4C8D0D00 		leaq	ek_quanti(%rip), %r9
+ 199      000000
+ 200 0272 43391491 		cmpl	%edx, (%r9,%r10,4)
+ 201 0276 7D32     		jge	.L17
+ 202 0278 83F80C   		cmpl	$12, %eax
+ 203 027b 7F2D     		jg	.L17
+ 204 027d 83C001   		addl	$1, %eax
+ 205 0280 8906     		movl	%eax, (%rsi)
+ 206 0282 EBD4     		jmp	.L16
+ 207              	.L23:
+ 208 0284 660FEFC0 		pxor	%xmm0, %xmm0
+ 209 0288 F2410F2A 		cvtsi2sdl	(%r12), %xmm0
+ 209      0424
+ 210 028e F20F100D 		movsd	.LC0(%rip), %xmm1
+ 210      68000000 
+ 211 0296 E8000000 		call	fmod
+ 211      00
+ 212 029b F20F5805 		addsd	.LC1(%rip), %xmm0
+ 212      70000000 
+ 213 02a3 F2440F2C 		cvttsd2sil	%xmm0, %r11d
+ 213      D8
+ 214 02a8 EB9A     		jmp	.L14
+ 215              	.L17:
+ 216 02aa 890E     		movl	%ecx, (%rsi)
+ 217 02ac 83E901   		subl	$1, %ecx
+ 218 02af 4D63C0   		movslq	%r8d, %r8
+ 219 02b2 4863C9   		movslq	%ecx, %rcx
+ 220 02b5 498D0C48 		leaq	(%r8,%rcx,2), %rcx
+ 221 02b9 488D0500 		leaq	ek_quanti(%rip), %rax
+ 221      000000
+ 222 02c0 2B1488   		subl	(%rax,%rcx,4), %edx
+ 223 02c3 8917     		movl	%edx, (%rdi)
+ 224 02c5 B8000000 		movl	$0, %eax
+ 224      00
+ 225              	.L11:
+ 226 02ca 4883C428 		addq	$40, %rsp
+ 227 02ce 5B       		popq	%rbx
+ 228 02cf 5E       		popq	%rsi
+ 229 02d0 5F       		popq	%rdi
+ 230 02d1 5D       		popq	%rbp
+ 231 02d2 415C     		popq	%r12
+ 232 02d4 415D     		popq	%r13
+ 233 02d6 C3       		ret
+ 234              	.L19:
+ 235 02d7 B8010000 		movl	$1, %eax
+ 235      00
+GAS LISTING /tmp/cctN1xPY.s 			page 6
+
+
+ 236 02dc EBEC     		jmp	.L11
+ 237              		.seh_endproc
+ 238              		.globl	mod_angle
+ 240              		.seh_proc	mod_angle
+ 241              	mod_angle:
+ 242 02de 4883EC38 		subq	$56, %rsp
+ 243              		.seh_stackalloc	56
+ 244 02e2 0F117424 		movups	%xmm6, 32(%rsp)
+ 244      20
+ 245              		.seh_savexmm	%xmm6, 32
+ 246              		.seh_endprologue
+ 247 02e7 0F10F0   		movups	%xmm0, %xmm6
+ 248 02ea F30F5AC0 		cvtss2sd	%xmm0, %xmm0
+ 249 02ee F20F100D 		movsd	.LC5(%rip), %xmm1
+ 249      90000000 
+ 250 02f6 E8000000 		call	fmod
+ 250      00
+ 251 02fb F20F5AC0 		cvtsd2ss	%xmm0, %xmm0
+ 252 02ff 660FEFC9 		pxor	%xmm1, %xmm1
+ 253 0303 0F2FCE   		comiss	%xmm6, %xmm1
+ 254 0306 770A     		ja	.L28
+ 255              	.L24:
+ 256 0308 0F107424 		movups	32(%rsp), %xmm6
+ 256      20
+ 257 030d 4883C438 		addq	$56, %rsp
+ 258 0311 C3       		ret
+ 259              	.L28:
+ 260 0312 F30F5805 		addss	.LC7(%rip), %xmm0
+ 260      98000000 
+ 261 031a EBEC     		jmp	.L24
+ 262              		.seh_endproc
+ 263              		.globl	diff_angle
+ 265              		.seh_proc	diff_angle
+ 266              	diff_angle:
+ 267 031c 4883EC28 		subq	$40, %rsp
+ 268              		.seh_stackalloc	40
+ 269              		.seh_endprologue
+ 270 0320 F30F5CC8 		subss	%xmm0, %xmm1
+ 271 0324 0F10C1   		movups	%xmm1, %xmm0
+ 272 0327 E8B2FFFF 		call	mod_angle
+ 272      FF
+ 273 032c 0F2F059C 		comiss	.LC8(%rip), %xmm0
+ 273      000000
+ 274 0333 7608     		jbe	.L29
+ 275 0335 F30F5C05 		subss	.LC7(%rip), %xmm0
+ 275      98000000 
+ 276              	.L29:
+ 277 033d 4883C428 		addq	$40, %rsp
+ 278 0341 C3       		ret
+ 279              		.seh_endproc
+ 280              		.globl	partition
+ 282              		.seh_proc	partition
+ 283              	partition:
+ 284 0342 55       		pushq	%rbp
+ 285              		.seh_pushreg	%rbp
+ 286 0343 57       		pushq	%rdi
+ 287              		.seh_pushreg	%rdi
+GAS LISTING /tmp/cctN1xPY.s 			page 7
+
+
+ 288 0344 56       		pushq	%rsi
+ 289              		.seh_pushreg	%rsi
+ 290 0345 53       		pushq	%rbx
+ 291              		.seh_pushreg	%rbx
+ 292              		.seh_endprologue
+ 293 0346 4963C1   		movslq	%r9d, %rax
+ 294 0349 488D2C82 		leaq	(%rdx,%rax,4), %rbp
+ 295 034d 48634500 		movslq	0(%rbp), %rax
+ 296 0351 8B3481   		movl	(%rcx,%rax,4), %esi
+ 297 0354 418D40FF 		leal	-1(%r8), %eax
+ 298 0358 EB04     		jmp	.L34
+ 299              	.L35:
+ 300 035a 4183C001 		addl	$1, %r8d
+ 301              	.L34:
+ 302 035e 4539C8   		cmpl	%r9d, %r8d
+ 303 0361 7D26     		jge	.L37
+ 304 0363 4D63D0   		movslq	%r8d, %r10
+ 305 0366 4E8D1492 		leaq	(%rdx,%r10,4), %r10
+ 306 036a 458B1A   		movl	(%r10), %r11d
+ 307 036d 4963DB   		movslq	%r11d, %rbx
+ 308 0370 393499   		cmpl	%esi, (%rcx,%rbx,4)
+ 309 0373 7DE5     		jge	.L35
+ 310 0375 83C001   		addl	$1, %eax
+ 311 0378 4863D8   		movslq	%eax, %rbx
+ 312 037b 488D1C9A 		leaq	(%rdx,%rbx,4), %rbx
+ 313 037f 8B3B     		movl	(%rbx), %edi
+ 314 0381 44891B   		movl	%r11d, (%rbx)
+ 315 0384 41893A   		movl	%edi, (%r10)
+ 316 0387 EBD1     		jmp	.L35
+ 317              	.L37:
+ 318 0389 4863C8   		movslq	%eax, %rcx
+ 319 038c 488D548A 		leaq	4(%rdx,%rcx,4), %rdx
+ 319      04
+ 320 0391 8B0A     		movl	(%rdx), %ecx
+ 321 0393 448B4500 		movl	0(%rbp), %r8d
+ 322 0397 448902   		movl	%r8d, (%rdx)
+ 323 039a 894D00   		movl	%ecx, 0(%rbp)
+ 324 039d 83C001   		addl	$1, %eax
+ 325 03a0 5B       		popq	%rbx
+ 326 03a1 5E       		popq	%rsi
+ 327 03a2 5F       		popq	%rdi
+ 328 03a3 5D       		popq	%rbp
+ 329 03a4 C3       		ret
+ 330              		.seh_endproc
+ 331              		.globl	quicksort_index2
+ 333              		.seh_proc	quicksort_index2
+ 334              	quicksort_index2:
+ 335 03a5 4154     		pushq	%r12
+ 336              		.seh_pushreg	%r12
+ 337 03a7 55       		pushq	%rbp
+ 338              		.seh_pushreg	%rbp
+ 339 03a8 57       		pushq	%rdi
+ 340              		.seh_pushreg	%rdi
+ 341 03a9 56       		pushq	%rsi
+ 342              		.seh_pushreg	%rsi
+ 343 03aa 53       		pushq	%rbx
+ 344              		.seh_pushreg	%rbx
+GAS LISTING /tmp/cctN1xPY.s 			page 8
+
+
+ 345 03ab 4883EC20 		subq	$32, %rsp
+ 346              		.seh_stackalloc	32
+ 347              		.seh_endprologue
+ 348 03af 4889CD   		movq	%rcx, %rbp
+ 349 03b2 4889D7   		movq	%rdx, %rdi
+ 350 03b5 4489C6   		movl	%r8d, %esi
+ 351 03b8 4489CB   		movl	%r9d, %ebx
+ 352 03bb 4539C8   		cmpl	%r9d, %r8d
+ 353 03be 7C0B     		jl	.L40
+ 354              	.L38:
+ 355 03c0 4883C420 		addq	$32, %rsp
+ 356 03c4 5B       		popq	%rbx
+ 357 03c5 5E       		popq	%rsi
+ 358 03c6 5F       		popq	%rdi
+ 359 03c7 5D       		popq	%rbp
+ 360 03c8 415C     		popq	%r12
+ 361 03ca C3       		ret
+ 362              	.L40:
+ 363 03cb E872FFFF 		call	partition
+ 363      FF
+ 364 03d0 4189C4   		movl	%eax, %r12d
+ 365 03d3 448D48FF 		leal	-1(%rax), %r9d
+ 366 03d7 4189F0   		movl	%esi, %r8d
+ 367 03da 4889FA   		movq	%rdi, %rdx
+ 368 03dd 4889E9   		movq	%rbp, %rcx
+ 369 03e0 E8C0FFFF 		call	quicksort_index2
+ 369      FF
+ 370 03e5 4189D9   		movl	%ebx, %r9d
+ 371 03e8 458D4424 		leal	1(%r12), %r8d
+ 371      01
+ 372 03ed 4889FA   		movq	%rdi, %rdx
+ 373 03f0 4889E9   		movq	%rbp, %rcx
+ 374 03f3 E8ADFFFF 		call	quicksort_index2
+ 374      FF
+ 375 03f8 EBC6     		jmp	.L38
+ 376              		.seh_endproc
+ 377              		.globl	quicksort_index
+ 379              		.seh_proc	quicksort_index
+ 380              	quicksort_index:
+ 381 03fa 4883EC28 		subq	$40, %rsp
+ 382              		.seh_stackalloc	40
+ 383              		.seh_endprologue
+ 384 03fe B8000000 		movl	$0, %eax
+ 384      00
+ 385              	.L42:
+ 386 0403 4439C0   		cmpl	%r8d, %eax
+ 387 0406 7D0C     		jge	.L44
+ 388 0408 4C63D0   		movslq	%eax, %r10
+ 389 040b 42890492 		movl	%eax, (%rdx,%r10,4)
+ 390 040f 83C001   		addl	$1, %eax
+ 391 0412 EBEF     		jmp	.L42
+ 392              	.L44:
+ 393 0414 458D48FF 		leal	-1(%r8), %r9d
+ 394 0418 41B80000 		movl	$0, %r8d
+ 394      0000
+ 395 041e E882FFFF 		call	quicksort_index2
+ 395      FF
+GAS LISTING /tmp/cctN1xPY.s 			page 9
+
+
+ 396 0423 90       		nop
+ 397 0424 4883C428 		addq	$40, %rsp
+ 398 0428 C3       		ret
+ 399              		.seh_endproc
+ 400              		.globl	safe_modulo
+ 402              		.seh_proc	safe_modulo
+ 403              	safe_modulo:
+ 404              		.seh_endprologue
+ 405 0429 89C8     		movl	%ecx, %eax
+ 406 042b 4189D0   		movl	%edx, %r8d
+ 407 042e 99       		cltd
+ 408 042f 41F7F8   		idivl	%r8d
+ 409 0432 89D0     		movl	%edx, %eax
+ 410 0434 85D2     		testl	%edx, %edx
+ 411 0436 7801     		js	.L47
+ 412              	.L45:
+ 413 0438 C3       		ret
+ 414              	.L47:
+ 415 0439 428D0402 		leal	(%rdx,%r8), %eax
+ 416 043d EBF9     		jmp	.L45
+ 417              		.seh_endproc
+ 418              		.globl	ek_quanti
+ 419 043f 90       		.section .rdata,"dr"
+ 420              		.align 32
+ 421              	ek_quanti:
+ 422 0000 00000000 		.long	0
+ 423 0004 00000000 		.long	0
+ 424 0008 1F000000 		.long	31
+ 425 000c 1F000000 		.long	31
+ 426 0010 3C000000 		.long	60
+ 427 0014 3B000000 		.long	59
+ 428 0018 5B000000 		.long	91
+ 429 001c 5A000000 		.long	90
+ 430 0020 79000000 		.long	121
+ 431 0024 78000000 		.long	120
+ 432 0028 98000000 		.long	152
+ 433 002c 97000000 		.long	151
+ 434 0030 B6000000 		.long	182
+ 435 0034 B5000000 		.long	181
+ 436 0038 D5000000 		.long	213
+ 437 003c D4000000 		.long	212
+ 438 0040 F4000000 		.long	244
+ 439 0044 F3000000 		.long	243
+ 440 0048 12010000 		.long	274
+ 441 004c 11010000 		.long	273
+ 442 0050 31010000 		.long	305
+ 443 0054 30010000 		.long	304
+ 444 0058 4F010000 		.long	335
+ 445 005c 4E010000 		.long	334
+ 446 0060 00000000 		.long	0
+ 447 0064 00000000 		.long	0
+ 448              		.align 8
+ 449              	.LC0:
+ 450 0068 00000000 		.long	0
+ 451 006c 00001040 		.long	1074790400
+ 452              		.align 8
+ 453              	.LC1:
+GAS LISTING /tmp/cctN1xPY.s 			page 10
+
+
+ 454 0070 00000000 		.long	0
+ 455 0074 0000F03F 		.long	1072693248
+ 456              		.align 8
+ 457              	.LC2:
+ 458 0078 00000000 		.long	0
+ 459 007c 00000040 		.long	1073741824
+ 460              		.align 8
+ 461              	.LC3:
+ 462 0080 00000000 		.long	0
+ 463 0084 0000E03F 		.long	1071644672
+ 464              		.align 8
+ 465              	.LC4:
+ 466 0088 00000000 		.long	0
+ 467 008c 00D47640 		.long	1081529344
+ 468              		.align 8
+ 469              	.LC5:
+ 470 0090 00000000 		.long	0
+ 471 0094 00807640 		.long	1081507840
+ 472              		.align 4
+ 473              	.LC7:
+ 474 0098 0000B443 		.long	1135869952
+ 475              		.align 4
+ 476              	.LC8:
+ 477 009c 00003443 		.long	1127481344
+ 478              		.ident	"GCC: (GNU) 9.3-win32 20200320"
+GAS LISTING /tmp/cctN1xPY.s 			page 11
+
+
+DEFINED SYMBOLS
+                            *ABS*:0000000000000000 utils.c
+     /tmp/cctN1xPY.s:6      .text:0000000000000000 su_date_jmahms_stu20
+     /tmp/cctN1xPY.s:421    .rdata:0000000000000000 ek_quanti
+     /tmp/cctN1xPY.s:84     .text:00000000000000fa su_date_stu20_jmahms
+     /tmp/cctN1xPY.s:241    .text:00000000000002de mod_angle
+     /tmp/cctN1xPY.s:266    .text:000000000000031c diff_angle
+     /tmp/cctN1xPY.s:283    .text:0000000000000342 partition
+     /tmp/cctN1xPY.s:334    .text:00000000000003a5 quicksort_index2
+     /tmp/cctN1xPY.s:380    .text:00000000000003fa quicksort_index
+     /tmp/cctN1xPY.s:403    .text:0000000000000429 safe_modulo
+
+UNDEFINED SYMBOLS
+fmod

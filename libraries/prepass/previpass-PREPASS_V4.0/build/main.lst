@@ -1,0 +1,1134 @@
+GAS LISTING /tmp/ccQ4bhcP.s 			page 1
+
+
+   1              		.file	"main.c"
+   2              		.text
+   4              		.section .rdata,"dr"
+   5              	.LC0:
+   6 0000 43757272 		.ascii "Current directory : %s\12\0"
+   6      656E7420 
+   6      64697265 
+   6      63746F72 
+   6      79203A20 
+   7              	.LC1:
+   8 0018 0A25730A 		.ascii "\12%s\12\0"
+   8      00
+   9              	.LC2:
+  10 001d 53746172 		.ascii "Starting program\0"
+  10      74696E67 
+  10      2070726F 
+  10      6772616D 
+  10      00
+  11              	.LC3:
+  12 002e 0A526561 		.ascii "\12Reading configuration file\0"
+  12      64696E67 
+  12      20636F6E 
+  12      66696775 
+  12      72617469 
+  13              	.LC4:
+  14 004a 7200     		.ascii "r\0"
+  15 004c 00000000 		.align 8
+  16              	.LC5:
+  17 0050 4572726F 		.ascii "Error while opening configuration file\0"
+  17      72207768 
+  17      696C6520 
+  17      6F70656E 
+  17      696E6720 
+  18              	.LC6:
+  19 0077 257300   		.ascii "%s\0"
+  20              	.LC7:
+  21 007a 256600   		.ascii "%f\0"
+  22              	.LC8:
+  23 007d 25346420 		.ascii "%4d %02d %02d %02d %02d %02d \0"
+  23      25303264 
+  23      20253032 
+  23      64202530 
+  23      32642025 
+  24              	.LC9:
+  25 009b 256400   		.ascii "%d\0"
+  26              	.LC10:
+  27 009e 0A526561 		.ascii "\12Reading satellite AOPs file\0"
+  27      64696E67 
+  27      20736174 
+  27      656C6C69 
+  27      74652041 
+  28              	.LC11:
+  29 00bb 4572726F 		.ascii "Error while reading AOP file\0"
+  29      72207768 
+  29      696C6520 
+  29      72656164 
+  29      696E6720 
+GAS LISTING /tmp/ccQ4bhcP.s 			page 2
+
+
+  30              	.LC12:
+  31 00d8 2000     		.ascii " \0"
+  32 00da 00000000 		.align 8
+  32      0000
+  33              	.LC13:
+  34 00e0 4E756D62 		.ascii "Number of AOP > NB_MAX_SAT, ignoring rest of AOPs...\0"
+  34      6572206F 
+  34      6620414F 
+  34      50203E20 
+  34      4E425F4D 
+  35              	.LC14:
+  36 0115 0A0A4E73 		.ascii "\12\12Nsat: %d\12\0"
+  36      61743A20 
+  36      25640A00 
+  37              	.LC15:
+  38 0121 4C617469 		.ascii "Latitude: %f\12\0"
+  38      74756465 
+  38      3A202566 
+  38      0A00
+  39              	.LC16:
+  40 012f 4C6F6E67 		.ascii "Longitude: %f\12\0"
+  40      69747564 
+  40      653A2025 
+  40      660A00
+  41 013e 0000     		.align 8
+  42              	.LC17:
+  43 0140 53746172 		.ascii "Start date: %d %d %d %d %d %d\12\0"
+  43      74206461 
+  43      74653A20 
+  43      25642025 
+  43      64202564 
+  44              	.LC18:
+  45 015f 456E6420 		.ascii "End date: %d %d %d %d %d %d\12\0"
+  45      64617465 
+  45      3A202564 
+  45      20256420 
+  45      25642025 
+  46 017c 00000000 		.align 8
+  47              	.LC19:
+  48 0180 0A0A546F 		.ascii "\12\12Total number of found visibilities: %d\12\0"
+  48      74616C20 
+  48      6E756D62 
+  48      6572206F 
+  48      6620666F 
+  49              	.LC21:
+  50 01aa 0A0A4578 		.ascii "\12\12Execution duration: %f\12\0"
+  50      65637574 
+  50      696F6E20 
+  50      64757261 
+  50      74696F6E 
+  51 01c4 00000000 		.align 8
+  52              	.LC22:
+  53 01c8 4572726F 		.ascii "Error while executing prepas. return code = %d\12\0"
+  53      72207768 
+  53      696C6520 
+  53      65786563 
+  53      7574696E 
+GAS LISTING /tmp/ccQ4bhcP.s 			page 3
+
+
+  54              	.LC23:
+  55 01f8 7700     		.ascii "w\0"
+  56 01fa 00000000 		.align 8
+  56      0000
+  57              	.LC24:
+  58 0200 7361743B 		.ascii "sat;dt_start_j;pass_elev_max;pass_duration;start_azimuth;middle_azimuth;end_azimuth\12\0"
+  58      64745F73 
+  58      74617274 
+  58      5F6A3B70 
+  58      6173735F 
+  59 0255 000000   		.align 8
+  60              	.LC25:
+  61 0258 25733B25 		.ascii "%s;%4ld-%02ld-%02ld %02ld:%02ld:%02ld;%6.2f;%6.2f;%9.2f;%9.2f;%9.2f\12\0"
+  61      346C642D 
+  61      2530326C 
+  61      642D2530 
+  61      326C6420 
+  62              		.text
+  63              		.globl	main
+  65              		.seh_proc	main
+  66              	main:
+  67 0000 4156     		pushq	%r14
+  68              		.seh_pushreg	%r14
+  69 0002 4155     		pushq	%r13
+  70              		.seh_pushreg	%r13
+  71 0004 4154     		pushq	%r12
+  72              		.seh_pushreg	%r12
+  73 0006 55       		pushq	%rbp
+  74              		.seh_pushreg	%rbp
+  75 0007 57       		pushq	%rdi
+  76              		.seh_pushreg	%rdi
+  77 0008 56       		pushq	%rsi
+  78              		.seh_pushreg	%rsi
+  79 0009 53       		pushq	%rbx
+  80              		.seh_pushreg	%rbx
+  81 000a B8D06715 		movl	$1402832, %eax
+  81      00
+  82 000f E8000000 		call	___chkstk_ms
+  82      00
+  83 0014 4829C4   		subq	%rax, %rsp
+  84              		.seh_stackalloc	1402832
+  85              		.seh_endprologue
+  86 0017 89CB     		movl	%ecx, %ebx
+  87 0019 4889D6   		movq	%rdx, %rsi
+  88 001c E8000000 		call	__main
+  88      00
+  89 0021 83FB01   		cmpl	$1, %ebx
+  90 0024 0F8FED04 		jg	.L17
+  90      0000
+  91              	.L2:
+  92 002a 488DB424 		leaq	1402528(%rsp), %rsi
+  92      A0661500 
+  93 0032 BA2C0100 		movl	$300, %edx
+  93      00
+  94 0037 4889F1   		movq	%rsi, %rcx
+  95 003a E8000000 		call	getcwd
+  95      00
+GAS LISTING /tmp/ccQ4bhcP.s 			page 4
+
+
+  96 003f 488D9C24 		leaq	352(%rsp), %rbx
+  96      60010000 
+  97 0047 4989F0   		movq	%rsi, %r8
+  98 004a 488D1500 		leaq	.LC0(%rip), %rdx
+  98      000000
+  99 0051 4889D9   		movq	%rbx, %rcx
+ 100 0054 E8000000 		call	sprintf
+ 100      00
+ 101 0059 4889DA   		movq	%rbx, %rdx
+ 102 005c 488D0D18 		leaq	.LC1(%rip), %rcx
+ 102      000000
+ 103 0063 E8000000 		call	printf
+ 103      00
+ 104 0068 48B87072 		movabsq	$7160568794877096560, %rax
+ 104      65706173 
+ 104      5F63
+ 105 0072 48BA6F6E 		movabsq	$8679613403534618223, %rdx
+ 105      6669672E 
+ 105      7478
+ 106 007c 48898424 		movq	%rax, 320(%rsp)
+ 106      40010000 
+ 107 0084 48899424 		movq	%rdx, 328(%rsp)
+ 107      48010000 
+ 108 008c 66C78424 		movw	$116, 336(%rsp)
+ 108      50010000 
+ 108      7400
+ 109 0096 48B8616F 		movabsq	$8391166444899954529, %rax
+ 109      705F6C69 
+ 109      7374
+ 110 00a0 48898424 		movq	%rax, 307(%rsp)
+ 110      33010000 
+ 111 00a8 C784243B 		movl	$1954051118, 315(%rsp)
+ 111      0100002E 
+ 111      747874
+ 112 00b3 C684243F 		movb	$0, 319(%rsp)
+ 112      01000000 
+ 113 00bb 48B87072 		movabsq	$8241432705446015600, %rax
+ 113      65706173 
+ 113      5F72
+ 114 00c5 48BA6573 		movabsq	$8371755701201367909, %rdx
+ 114      756C7473 
+ 114      2E74
+ 115 00cf 48898424 		movq	%rax, 288(%rsp)
+ 115      20010000 
+ 116 00d7 48899424 		movq	%rdx, 296(%rsp)
+ 116      28010000 
+ 117 00df 66C78424 		movw	$29816, 304(%rsp)
+ 117      30010000 
+ 117      7874
+ 118 00e9 C6842432 		movb	$0, 306(%rsp)
+ 118      01000000 
+ 119 00f1 488D0D1D 		leaq	.LC2(%rip), %rcx
+ 119      000000
+ 120 00f8 E8000000 		call	puts
+ 120      00
+ 121 00fd 488D0D2E 		leaq	.LC3(%rip), %rcx
+ 121      000000
+GAS LISTING /tmp/ccQ4bhcP.s 			page 5
+
+
+ 122 0104 E8000000 		call	puts
+ 122      00
+ 123 0109 488D8C24 		leaq	320(%rsp), %rcx
+ 123      40010000 
+ 124 0111 488D154A 		leaq	.LC4(%rip), %rdx
+ 124      000000
+ 125 0118 E8000000 		call	fopen
+ 125      00
+ 126 011d 4889C6   		movq	%rax, %rsi
+ 127 0120 4885C0   		testq	%rax, %rax
+ 128 0123 0F84FC03 		je	.L18
+ 128      0000
+ 129 0129 488D9C24 		leaq	144(%rsp), %rbx
+ 129      90000000 
+ 130 0131 4989C0   		movq	%rax, %r8
+ 131 0134 BA840000 		movl	$132, %edx
+ 131      00
+ 132 0139 4889D9   		movq	%rbx, %rcx
+ 133 013c E8000000 		call	fgets
+ 133      00
+ 134 0141 4889DA   		movq	%rbx, %rdx
+ 135 0144 488D0D77 		leaq	.LC6(%rip), %rcx
+ 135      000000
+ 136 014b E8000000 		call	printf
+ 136      00
+ 137 0150 488DBC24 		leaq	1402432(%rsp), %rdi
+ 137      40661500 
+ 138 0158 4C8D8424 		leaq	1402436(%rsp), %r8
+ 138      44661500 
+ 139 0160 488D157A 		leaq	.LC7(%rip), %rdx
+ 139      000000
+ 140 0167 4889D9   		movq	%rbx, %rcx
+ 141 016a E8000000 		call	sscanf
+ 141      00
+ 142 016f 4989F0   		movq	%rsi, %r8
+ 143 0172 BA840000 		movl	$132, %edx
+ 143      00
+ 144 0177 4889D9   		movq	%rbx, %rcx
+ 145 017a E8000000 		call	fgets
+ 145      00
+ 146 017f 4889DA   		movq	%rbx, %rdx
+ 147 0182 488D0D77 		leaq	.LC6(%rip), %rcx
+ 147      000000
+ 148 0189 E8000000 		call	printf
+ 148      00
+ 149 018e 4989F8   		movq	%rdi, %r8
+ 150 0191 488D157A 		leaq	.LC7(%rip), %rdx
+ 150      000000
+ 151 0198 4889D9   		movq	%rbx, %rcx
+ 152 019b E8000000 		call	sscanf
+ 152      00
+ 153 01a0 4989F0   		movq	%rsi, %r8
+ 154 01a3 BA840000 		movl	$132, %edx
+ 154      00
+ 155 01a8 4889D9   		movq	%rbx, %rcx
+ 156 01ab E8000000 		call	fgets
+ 156      00
+GAS LISTING /tmp/ccQ4bhcP.s 			page 6
+
+
+ 157 01b0 4889DA   		movq	%rbx, %rdx
+ 158 01b3 488D0D77 		leaq	.LC6(%rip), %rcx
+ 158      000000
+ 159 01ba E8000000 		call	printf
+ 159      00
+ 160 01bf 488D8424 		leaq	1402460(%rsp), %rax
+ 160      5C661500 
+ 161 01c7 48894424 		movq	%rax, 56(%rsp)
+ 161      38
+ 162 01cc 488D8424 		leaq	1402456(%rsp), %rax
+ 162      58661500 
+ 163 01d4 48894424 		movq	%rax, 48(%rsp)
+ 163      30
+ 164 01d9 488D8424 		leaq	1402452(%rsp), %rax
+ 164      54661500 
+ 165 01e1 48894424 		movq	%rax, 40(%rsp)
+ 165      28
+ 166 01e6 488D8424 		leaq	1402448(%rsp), %rax
+ 166      50661500 
+ 167 01ee 48894424 		movq	%rax, 32(%rsp)
+ 167      20
+ 168 01f3 4C8D8C24 		leaq	1402444(%rsp), %r9
+ 168      4C661500 
+ 169 01fb 4C8D8424 		leaq	1402440(%rsp), %r8
+ 169      48661500 
+ 170 0203 488D157D 		leaq	.LC8(%rip), %rdx
+ 170      000000
+ 171 020a 4889D9   		movq	%rbx, %rcx
+ 172 020d E8000000 		call	sscanf
+ 172      00
+ 173 0212 4989F0   		movq	%rsi, %r8
+ 174 0215 BA840000 		movl	$132, %edx
+ 174      00
+ 175 021a 4889D9   		movq	%rbx, %rcx
+ 176 021d E8000000 		call	fgets
+ 176      00
+ 177 0222 4889DA   		movq	%rbx, %rdx
+ 178 0225 488D0D77 		leaq	.LC6(%rip), %rcx
+ 178      000000
+ 179 022c E8000000 		call	printf
+ 179      00
+ 180 0231 488D8424 		leaq	1402484(%rsp), %rax
+ 180      74661500 
+ 181 0239 48894424 		movq	%rax, 56(%rsp)
+ 181      38
+ 182 023e 488D8424 		leaq	1402480(%rsp), %rax
+ 182      70661500 
+ 183 0246 48894424 		movq	%rax, 48(%rsp)
+ 183      30
+ 184 024b 488D8424 		leaq	1402476(%rsp), %rax
+ 184      6C661500 
+ 185 0253 48894424 		movq	%rax, 40(%rsp)
+ 185      28
+ 186 0258 488D8424 		leaq	1402472(%rsp), %rax
+ 186      68661500 
+ 187 0260 48894424 		movq	%rax, 32(%rsp)
+ 187      20
+GAS LISTING /tmp/ccQ4bhcP.s 			page 7
+
+
+ 188 0265 4C8D8C24 		leaq	1402468(%rsp), %r9
+ 188      64661500 
+ 189 026d 4C8D8424 		leaq	1402464(%rsp), %r8
+ 189      60661500 
+ 190 0275 488D157D 		leaq	.LC8(%rip), %rdx
+ 190      000000
+ 191 027c 4889D9   		movq	%rbx, %rcx
+ 192 027f E8000000 		call	sscanf
+ 192      00
+ 193 0284 4989F0   		movq	%rsi, %r8
+ 194 0287 BA840000 		movl	$132, %edx
+ 194      00
+ 195 028c 4889D9   		movq	%rbx, %rcx
+ 196 028f E8000000 		call	fgets
+ 196      00
+ 197 0294 4889DA   		movq	%rbx, %rdx
+ 198 0297 488D0D77 		leaq	.LC6(%rip), %rcx
+ 198      000000
+ 199 029e E8000000 		call	printf
+ 199      00
+ 200 02a3 4C8D8424 		leaq	1402488(%rsp), %r8
+ 200      78661500 
+ 201 02ab 488D157A 		leaq	.LC7(%rip), %rdx
+ 201      000000
+ 202 02b2 4889D9   		movq	%rbx, %rcx
+ 203 02b5 E8000000 		call	sscanf
+ 203      00
+ 204 02ba 4989F0   		movq	%rsi, %r8
+ 205 02bd BA840000 		movl	$132, %edx
+ 205      00
+ 206 02c2 4889D9   		movq	%rbx, %rcx
+ 207 02c5 E8000000 		call	fgets
+ 207      00
+ 208 02ca 4889DA   		movq	%rbx, %rdx
+ 209 02cd 488D0D77 		leaq	.LC6(%rip), %rcx
+ 209      000000
+ 210 02d4 E8000000 		call	printf
+ 210      00
+ 211 02d9 4C8D8424 		leaq	1402492(%rsp), %r8
+ 211      7C661500 
+ 212 02e1 488D157A 		leaq	.LC7(%rip), %rdx
+ 212      000000
+ 213 02e8 4889D9   		movq	%rbx, %rcx
+ 214 02eb E8000000 		call	sscanf
+ 214      00
+ 215 02f0 4989F0   		movq	%rsi, %r8
+ 216 02f3 BA840000 		movl	$132, %edx
+ 216      00
+ 217 02f8 4889D9   		movq	%rbx, %rcx
+ 218 02fb E8000000 		call	fgets
+ 218      00
+ 219 0300 4889DA   		movq	%rbx, %rdx
+ 220 0303 488D0D77 		leaq	.LC6(%rip), %rcx
+ 220      000000
+ 221 030a E8000000 		call	printf
+ 221      00
+ 222 030f 4C8D8424 		leaq	1402496(%rsp), %r8
+GAS LISTING /tmp/ccQ4bhcP.s 			page 8
+
+
+ 222      80661500 
+ 223 0317 488D157A 		leaq	.LC7(%rip), %rdx
+ 223      000000
+ 224 031e 4889D9   		movq	%rbx, %rcx
+ 225 0321 E8000000 		call	sscanf
+ 225      00
+ 226 0326 4989F0   		movq	%rsi, %r8
+ 227 0329 BA840000 		movl	$132, %edx
+ 227      00
+ 228 032e 4889D9   		movq	%rbx, %rcx
+ 229 0331 E8000000 		call	fgets
+ 229      00
+ 230 0336 4889DA   		movq	%rbx, %rdx
+ 231 0339 488D0D77 		leaq	.LC6(%rip), %rcx
+ 231      000000
+ 232 0340 E8000000 		call	printf
+ 232      00
+ 233 0345 4C8D8424 		leaq	1402500(%rsp), %r8
+ 233      84661500 
+ 234 034d 488D157A 		leaq	.LC7(%rip), %rdx
+ 234      000000
+ 235 0354 4889D9   		movq	%rbx, %rcx
+ 236 0357 E8000000 		call	sscanf
+ 236      00
+ 237 035c 4989F0   		movq	%rsi, %r8
+ 238 035f BA840000 		movl	$132, %edx
+ 238      00
+ 239 0364 4889D9   		movq	%rbx, %rcx
+ 240 0367 E8000000 		call	fgets
+ 240      00
+ 241 036c 4889DA   		movq	%rbx, %rdx
+ 242 036f 488D0D77 		leaq	.LC6(%rip), %rcx
+ 242      000000
+ 243 0376 E8000000 		call	printf
+ 243      00
+ 244 037b 4C8D8424 		leaq	1402504(%rsp), %r8
+ 244      88661500 
+ 245 0383 488D157A 		leaq	.LC7(%rip), %rdx
+ 245      000000
+ 246 038a 4889D9   		movq	%rbx, %rcx
+ 247 038d E8000000 		call	sscanf
+ 247      00
+ 248 0392 4989F0   		movq	%rsi, %r8
+ 249 0395 BA840000 		movl	$132, %edx
+ 249      00
+ 250 039a 4889D9   		movq	%rbx, %rcx
+ 251 039d E8000000 		call	fgets
+ 251      00
+ 252 03a2 4889DA   		movq	%rbx, %rdx
+ 253 03a5 488D0D77 		leaq	.LC6(%rip), %rcx
+ 253      000000
+ 254 03ac E8000000 		call	printf
+ 254      00
+ 255 03b1 4C8D8424 		leaq	1402508(%rsp), %r8
+ 255      8C661500 
+ 256 03b9 488D157A 		leaq	.LC7(%rip), %rdx
+ 256      000000
+GAS LISTING /tmp/ccQ4bhcP.s 			page 9
+
+
+ 257 03c0 4889D9   		movq	%rbx, %rcx
+ 258 03c3 E8000000 		call	sscanf
+ 258      00
+ 259 03c8 4989F0   		movq	%rsi, %r8
+ 260 03cb BA840000 		movl	$132, %edx
+ 260      00
+ 261 03d0 4889D9   		movq	%rbx, %rcx
+ 262 03d3 E8000000 		call	fgets
+ 262      00
+ 263 03d8 4889DA   		movq	%rbx, %rdx
+ 264 03db 488D0D77 		leaq	.LC6(%rip), %rcx
+ 264      000000
+ 265 03e2 E8000000 		call	printf
+ 265      00
+ 266 03e7 4C8D8424 		leaq	1402512(%rsp), %r8
+ 266      90661500 
+ 267 03ef 488D159B 		leaq	.LC9(%rip), %rdx
+ 267      000000
+ 268 03f6 4889D9   		movq	%rbx, %rcx
+ 269 03f9 E8000000 		call	sscanf
+ 269      00
+ 270 03fe 4989F0   		movq	%rsi, %r8
+ 271 0401 BA840000 		movl	$132, %edx
+ 271      00
+ 272 0406 4889D9   		movq	%rbx, %rcx
+ 273 0409 E8000000 		call	fgets
+ 273      00
+ 274 040e 4889DA   		movq	%rbx, %rdx
+ 275 0411 488D0D77 		leaq	.LC6(%rip), %rcx
+ 275      000000
+ 276 0418 E8000000 		call	printf
+ 276      00
+ 277 041d 4C8D8424 		leaq	1402516(%rsp), %r8
+ 277      94661500 
+ 278 0425 488D159B 		leaq	.LC9(%rip), %rdx
+ 278      000000
+ 279 042c 4889D9   		movq	%rbx, %rcx
+ 280 042f E8000000 		call	sscanf
+ 280      00
+ 281 0434 4889F1   		movq	%rsi, %rcx
+ 282 0437 E8000000 		call	fclose
+ 282      00
+ 283 043c 488D0D9E 		leaq	.LC10(%rip), %rcx
+ 283      000000
+ 284 0443 E8000000 		call	puts
+ 284      00
+ 285 0448 488D8C24 		leaq	307(%rsp), %rcx
+ 285      33010000 
+ 286 0450 488D154A 		leaq	.LC4(%rip), %rdx
+ 286      000000
+ 287 0457 E8000000 		call	fopen
+ 287      00
+ 288 045c 4889C3   		movq	%rax, %rbx
+ 289 045f 4885C0   		testq	%rax, %rax
+ 290 0462 0F84D300 		je	.L19
+ 290      0000
+ 291 0468 41BC0000 		movl	$0, %r12d
+GAS LISTING /tmp/ccQ4bhcP.s 			page 10
+
+
+ 291      0000
+ 292              	.L5:
+ 293 046e 4889D9   		movq	%rbx, %rcx
+ 294 0471 E8000000 		call	feof
+ 294      00
+ 295 0476 89C6     		movl	%eax, %esi
+ 296 0478 85C0     		testl	%eax, %eax
+ 297 047a 0F85C302 		jne	.L6
+ 297      0000
+ 298 0480 488D8C24 		leaq	144(%rsp), %rcx
+ 298      90000000 
+ 299 0488 4989D8   		movq	%rbx, %r8
+ 300 048b BA840000 		movl	$132, %edx
+ 300      00
+ 301 0490 E8000000 		call	fgets
+ 301      00
+ 302 0495 4885C0   		testq	%rax, %rax
+ 303 0498 0F84A502 		je	.L6
+ 303      0000
+ 304 049e 488DBC24 		leaq	144(%rsp), %rdi
+ 304      90000000 
+ 305 04a6 48C7C1FF 		movq	$-1, %rcx
+ 305      FFFFFF
+ 306 04ad B8000000 		movl	$0, %eax
+ 306      00
+ 307 04b2 F2AE     		repnz scasb
+ 308 04b4 48F7D1   		notq	%rcx
+ 309 04b7 488D41FF 		leaq	-1(%rcx), %rax
+ 310 04bb 81F98400 		cmpl	$132, %ecx
+ 310      0000
+ 311 04c1 0F847C02 		je	.L6
+ 311      0000
+ 312 04c7 83F809   		cmpl	$9, %eax
+ 313 04ca 7EA2     		jle	.L5
+ 314 04cc 488DBC24 		leaq	144(%rsp), %rdi
+ 314      90000000 
+ 315 04d4 4889FA   		movq	%rdi, %rdx
+ 316 04d7 488D0D77 		leaq	.LC6(%rip), %rcx
+ 316      000000
+ 317 04de E8000000 		call	printf
+ 317      00
+ 318 04e3 488D15D8 		leaq	.LC12(%rip), %rdx
+ 318      000000
+ 319 04ea 4889F9   		movq	%rdi, %rcx
+ 320 04ed E8000000 		call	strtok
+ 320      00
+ 321 04f2 4889C7   		movq	%rax, %rdi
+ 322 04f5 4885C0   		testq	%rax, %rax
+ 323 04f8 0F844502 		je	.L6
+ 323      0000
+ 324 04fe 4963C4   		movslq	%r12d, %rax
+ 325 0501 486BC034 		imulq	$52, %rax, %rax
+ 326 0505 488D8C04 		leaq	1400864(%rsp,%rax), %rcx
+ 326      20601500 
+ 327 050d 4889FA   		movq	%rdi, %rdx
+ 328 0510 E8000000 		call	strcpy
+ 328      00
+GAS LISTING /tmp/ccQ4bhcP.s 			page 11
+
+
+ 329 0515 EB51     		jmp	.L8
+ 330              	.L17:
+ 331 0517 488B4E08 		movq	8(%rsi), %rcx
+ 332 051b E8000000 		call	chdir
+ 332      00
+ 333 0520 E905FBFF 		jmp	.L2
+ 333      FF
+ 334              	.L18:
+ 335 0525 488D0D50 		leaq	.LC5(%rip), %rcx
+ 335      000000
+ 336 052c E8000000 		call	printf
+ 336      00
+ 337 0531 BDFFFFFF 		movl	$-1, %ebp
+ 337      FF
+ 338 0536 E9460500 		jmp	.L1
+ 338      00
+ 339              	.L19:
+ 340 053b 488D0DBB 		leaq	.LC11(%rip), %rcx
+ 340      000000
+ 341 0542 E8000000 		call	printf
+ 341      00
+ 342 0547 BDFFFFFF 		movl	$-1, %ebp
+ 342      FF
+ 343 054c E9300500 		jmp	.L1
+ 343      00
+ 344              	.L9:
+ 345 0551 488D15D8 		leaq	.LC12(%rip), %rdx
+ 345      000000
+ 346 0558 B9000000 		movl	$0, %ecx
+ 346      00
+ 347 055d E8000000 		call	strtok
+ 347      00
+ 348 0562 4889C7   		movq	%rax, %rdi
+ 349 0565 83C601   		addl	$1, %esi
+ 350              	.L8:
+ 351 0568 83FE04   		cmpl	$4, %esi
+ 352 056b 7EE4     		jle	.L9
+ 353 056d 4C8DAC24 		leaq	1400864(%rsp), %r13
+ 353      20601500 
+ 354 0575 4963F4   		movslq	%r12d, %rsi
+ 355 0578 486BF634 		imulq	$52, %rsi, %rsi
+ 356 057c 4D8D7435 		leaq	0(%r13,%rsi), %r14
+ 356      00
+ 357 0581 4D8D4604 		leaq	4(%r14), %r8
+ 358 0585 488D159B 		leaq	.LC9(%rip), %rdx
+ 358      000000
+ 359 058c 4889F9   		movq	%rdi, %rcx
+ 360 058f E8000000 		call	sscanf
+ 360      00
+ 361 0594 488D15D8 		leaq	.LC12(%rip), %rdx
+ 361      000000
+ 362 059b B9000000 		movl	$0, %ecx
+ 362      00
+ 363 05a0 E8000000 		call	strtok
+ 363      00
+ 364 05a5 4889C1   		movq	%rax, %rcx
+ 365 05a8 4D8D4608 		leaq	8(%r14), %r8
+GAS LISTING /tmp/ccQ4bhcP.s 			page 12
+
+
+ 366 05ac 488D159B 		leaq	.LC9(%rip), %rdx
+ 366      000000
+ 367 05b3 E8000000 		call	sscanf
+ 367      00
+ 368 05b8 488D15D8 		leaq	.LC12(%rip), %rdx
+ 368      000000
+ 369 05bf B9000000 		movl	$0, %ecx
+ 369      00
+ 370 05c4 E8000000 		call	strtok
+ 370      00
+ 371 05c9 4889C1   		movq	%rax, %rcx
+ 372 05cc 4D8D460C 		leaq	12(%r14), %r8
+ 373 05d0 488D159B 		leaq	.LC9(%rip), %rdx
+ 373      000000
+ 374 05d7 E8000000 		call	sscanf
+ 374      00
+ 375 05dc 488D15D8 		leaq	.LC12(%rip), %rdx
+ 375      000000
+ 376 05e3 B9000000 		movl	$0, %ecx
+ 376      00
+ 377 05e8 E8000000 		call	strtok
+ 377      00
+ 378 05ed 4889C1   		movq	%rax, %rcx
+ 379 05f0 498D7C35 		leaq	16(%r13,%rsi), %rdi
+ 379      10
+ 380 05f5 4989F8   		movq	%rdi, %r8
+ 381 05f8 488D159B 		leaq	.LC9(%rip), %rdx
+ 381      000000
+ 382 05ff E8000000 		call	sscanf
+ 382      00
+ 383 0604 488D15D8 		leaq	.LC12(%rip), %rdx
+ 383      000000
+ 384 060b B9000000 		movl	$0, %ecx
+ 384      00
+ 385 0610 E8000000 		call	strtok
+ 385      00
+ 386 0615 4889C1   		movq	%rax, %rcx
+ 387 0618 4C8D4704 		leaq	4(%rdi), %r8
+ 388 061c 488D159B 		leaq	.LC9(%rip), %rdx
+ 388      000000
+ 389 0623 E8000000 		call	sscanf
+ 389      00
+ 390 0628 488D15D8 		leaq	.LC12(%rip), %rdx
+ 390      000000
+ 391 062f B9000000 		movl	$0, %ecx
+ 391      00
+ 392 0634 E8000000 		call	strtok
+ 392      00
+ 393 0639 4889C1   		movq	%rax, %rcx
+ 394 063c 4C8D4708 		leaq	8(%rdi), %r8
+ 395 0640 488D159B 		leaq	.LC9(%rip), %rdx
+ 395      000000
+ 396 0647 E8000000 		call	sscanf
+ 396      00
+ 397 064c 488D15D8 		leaq	.LC12(%rip), %rdx
+ 397      000000
+ 398 0653 B9000000 		movl	$0, %ecx
+GAS LISTING /tmp/ccQ4bhcP.s 			page 13
+
+
+ 398      00
+ 399 0658 E8000000 		call	strtok
+ 399      00
+ 400 065d 4889C1   		movq	%rax, %rcx
+ 401 0660 4C8D470C 		leaq	12(%rdi), %r8
+ 402 0664 488D157A 		leaq	.LC7(%rip), %rdx
+ 402      000000
+ 403 066b E8000000 		call	sscanf
+ 403      00
+ 404 0670 488D15D8 		leaq	.LC12(%rip), %rdx
+ 404      000000
+ 405 0677 B9000000 		movl	$0, %ecx
+ 405      00
+ 406 067c E8000000 		call	strtok
+ 406      00
+ 407 0681 4889C1   		movq	%rax, %rcx
+ 408 0684 498D7C35 		leaq	32(%r13,%rsi), %rdi
+ 408      20
+ 409 0689 4989F8   		movq	%rdi, %r8
+ 410 068c 488D157A 		leaq	.LC7(%rip), %rdx
+ 410      000000
+ 411 0693 E8000000 		call	sscanf
+ 411      00
+ 412 0698 488D15D8 		leaq	.LC12(%rip), %rdx
+ 412      000000
+ 413 069f B9000000 		movl	$0, %ecx
+ 413      00
+ 414 06a4 E8000000 		call	strtok
+ 414      00
+ 415 06a9 4889C1   		movq	%rax, %rcx
+ 416 06ac 4C8D4704 		leaq	4(%rdi), %r8
+ 417 06b0 488D157A 		leaq	.LC7(%rip), %rdx
+ 417      000000
+ 418 06b7 E8000000 		call	sscanf
+ 418      00
+ 419 06bc 488D15D8 		leaq	.LC12(%rip), %rdx
+ 419      000000
+ 420 06c3 B9000000 		movl	$0, %ecx
+ 420      00
+ 421 06c8 E8000000 		call	strtok
+ 421      00
+ 422 06cd 4889C1   		movq	%rax, %rcx
+ 423 06d0 4C8D4708 		leaq	8(%rdi), %r8
+ 424 06d4 488D157A 		leaq	.LC7(%rip), %rdx
+ 424      000000
+ 425 06db E8000000 		call	sscanf
+ 425      00
+ 426 06e0 488D15D8 		leaq	.LC12(%rip), %rdx
+ 426      000000
+ 427 06e7 B9000000 		movl	$0, %ecx
+ 427      00
+ 428 06ec E8000000 		call	strtok
+ 428      00
+ 429 06f1 4889C1   		movq	%rax, %rcx
+ 430 06f4 4C8D470C 		leaq	12(%rdi), %r8
+ 431 06f8 488D157A 		leaq	.LC7(%rip), %rdx
+ 431      000000
+GAS LISTING /tmp/ccQ4bhcP.s 			page 14
+
+
+ 432 06ff E8000000 		call	sscanf
+ 432      00
+ 433 0704 488D15D8 		leaq	.LC12(%rip), %rdx
+ 433      000000
+ 434 070b B9000000 		movl	$0, %ecx
+ 434      00
+ 435 0710 E8000000 		call	strtok
+ 435      00
+ 436 0715 4889C1   		movq	%rax, %rcx
+ 437 0718 4D8D4435 		leaq	48(%r13,%rsi), %r8
+ 437      30
+ 438 071d 488D157A 		leaq	.LC7(%rip), %rdx
+ 438      000000
+ 439 0724 E8000000 		call	sscanf
+ 439      00
+ 440 0729 4183C401 		addl	$1, %r12d
+ 441 072d 4183FC1D 		cmpl	$29, %r12d
+ 442 0731 0F8E37FD 		jle	.L5
+ 442      FFFF
+ 443 0737 488D0DE0 		leaq	.LC13(%rip), %rcx
+ 443      000000
+ 444 073e E8000000 		call	printf
+ 444      00
+ 445              	.L6:
+ 446 0743 4489E2   		movl	%r12d, %edx
+ 447 0746 488D0D15 		leaq	.LC14(%rip), %rcx
+ 447      010000
+ 448 074d E8000000 		call	printf
+ 448      00
+ 449 0752 660FEFC9 		pxor	%xmm1, %xmm1
+ 450 0756 F30F5A8C 		cvtss2sd	1402436(%rsp), %xmm1
+ 450      24446615 
+ 450      00
+ 451 075f 66480F7E 		movq	%xmm1, %rdx
+ 451      CA
+ 452 0764 488D0D21 		leaq	.LC15(%rip), %rcx
+ 452      010000
+ 453 076b E8000000 		call	printf
+ 453      00
+ 454 0770 660FEFC9 		pxor	%xmm1, %xmm1
+ 455 0774 F30F5A8C 		cvtss2sd	1402432(%rsp), %xmm1
+ 455      24406615 
+ 455      00
+ 456 077d 66480F7E 		movq	%xmm1, %rdx
+ 456      CA
+ 457 0782 488D0D2F 		leaq	.LC16(%rip), %rcx
+ 457      010000
+ 458 0789 E8000000 		call	printf
+ 458      00
+ 459 078e 8B84245C 		movl	1402460(%rsp), %eax
+ 459      661500
+ 460 0795 89442430 		movl	%eax, 48(%rsp)
+ 461 0799 8B842458 		movl	1402456(%rsp), %eax
+ 461      661500
+ 462 07a0 89442428 		movl	%eax, 40(%rsp)
+ 463 07a4 8B842454 		movl	1402452(%rsp), %eax
+ 463      661500
+GAS LISTING /tmp/ccQ4bhcP.s 			page 15
+
+
+ 464 07ab 89442420 		movl	%eax, 32(%rsp)
+ 465 07af 448B8C24 		movl	1402448(%rsp), %r9d
+ 465      50661500 
+ 466 07b7 448B8424 		movl	1402444(%rsp), %r8d
+ 466      4C661500 
+ 467 07bf 8B942448 		movl	1402440(%rsp), %edx
+ 467      661500
+ 468 07c6 488D0D40 		leaq	.LC17(%rip), %rcx
+ 468      010000
+ 469 07cd E8000000 		call	printf
+ 469      00
+ 470 07d2 8B842474 		movl	1402484(%rsp), %eax
+ 470      661500
+ 471 07d9 89442430 		movl	%eax, 48(%rsp)
+ 472 07dd 8B842470 		movl	1402480(%rsp), %eax
+ 472      661500
+ 473 07e4 89442428 		movl	%eax, 40(%rsp)
+ 474 07e8 8B84246C 		movl	1402476(%rsp), %eax
+ 474      661500
+ 475 07ef 89442420 		movl	%eax, 32(%rsp)
+ 476 07f3 448B8C24 		movl	1402472(%rsp), %r9d
+ 476      68661500 
+ 477 07fb 448B8424 		movl	1402468(%rsp), %r8d
+ 477      64661500 
+ 478 0803 8B942460 		movl	1402464(%rsp), %edx
+ 478      661500
+ 479 080a 488D0D5F 		leaq	.LC18(%rip), %rcx
+ 479      010000
+ 480 0811 E8000000 		call	printf
+ 480      00
+ 481 0816 4889D9   		movq	%rbx, %rcx
+ 482 0819 E8000000 		call	fclose
+ 482      00
+ 483 081e E8000000 		call	clock
+ 483      00
+ 484 0823 89C6     		movl	%eax, %esi
+ 485 0825 BB000000 		movl	$0, %ebx
+ 485      00
+ 486              	.L11:
+ 487 082a 85DB     		testl	%ebx, %ebx
+ 488 082c 7E59     		jle	.L12
+ 489 082e E8000000 		call	clock
+ 489      00
+ 490 0833 89C3     		movl	%eax, %ebx
+ 491 0835 8B9424CC 		movl	1402828(%rsp), %edx
+ 491      671500
+ 492 083c 488D0D80 		leaq	.LC19(%rip), %rcx
+ 492      010000
+ 493 0843 E8000000 		call	printf
+ 493      00
+ 494 0848 29F3     		subl	%esi, %ebx
+ 495 084a 660FEFC9 		pxor	%xmm1, %xmm1
+ 496 084e F20F2ACB 		cvtsi2sdl	%ebx, %xmm1
+ 497 0852 F20F5E0D 		divsd	.LC20(%rip), %xmm1
+ 497      A0020000 
+ 498 085a 66480F7E 		movq	%xmm1, %rdx
+ 498      CA
+GAS LISTING /tmp/ccQ4bhcP.s 			page 16
+
+
+ 499 085f 488D0DAA 		leaq	.LC21(%rip), %rcx
+ 499      010000
+ 500 0866 E8000000 		call	printf
+ 500      00
+ 501 086b 85ED     		testl	%ebp, %ebp
+ 502 086d 744F     		je	.L13
+ 503 086f 89EA     		movl	%ebp, %edx
+ 504 0871 488D0DC8 		leaq	.LC22(%rip), %rcx
+ 504      010000
+ 505 0878 E8000000 		call	printf
+ 505      00
+ 506 087d BD000000 		movl	$0, %ebp
+ 506      00
+ 507 0882 E9FA0100 		jmp	.L1
+ 507      00
+ 508              	.L12:
+ 509 0887 488D9424 		leaq	1400864(%rsp), %rdx
+ 509      20601500 
+ 510 088f 488D8C24 		leaq	1402432(%rsp), %rcx
+ 510      40661500 
+ 511 0897 488D8424 		leaq	1402828(%rsp), %rax
+ 511      CC671500 
+ 512 089f 48894424 		movq	%rax, 32(%rsp)
+ 512      20
+ 513 08a4 4C8D8C24 		leaq	864(%rsp), %r9
+ 513      60030000 
+ 514 08ac 4589E0   		movl	%r12d, %r8d
+ 515 08af E8000000 		call	prepas
+ 515      00
+ 516 08b4 89C5     		movl	%eax, %ebp
+ 517 08b6 83C301   		addl	$1, %ebx
+ 518 08b9 E96CFFFF 		jmp	.L11
+ 518      FF
+ 519              	.L13:
+ 520 08be 488D8C24 		leaq	288(%rsp), %rcx
+ 520      20010000 
+ 521 08c6 488D15F8 		leaq	.LC23(%rip), %rdx
+ 521      010000
+ 522 08cd E8000000 		call	fopen
+ 522      00
+ 523 08d2 4989C4   		movq	%rax, %r12
+ 524 08d5 4989C1   		movq	%rax, %r9
+ 525 08d8 41B85400 		movl	$84, %r8d
+ 525      0000
+ 526 08de BA010000 		movl	$1, %edx
+ 526      00
+ 527 08e3 488D0D00 		leaq	.LC24(%rip), %rcx
+ 527      020000
+ 528 08ea E8000000 		call	fwrite
+ 528      00
+ 529 08ef 488D4424 		leaq	116(%rsp), %rax
+ 529      74
+ 530 08f4 48894424 		movq	%rax, 48(%rsp)
+ 530      30
+ 531 08f9 8B84245C 		movl	1402460(%rsp), %eax
+ 531      661500
+ 532 0900 89442428 		movl	%eax, 40(%rsp)
+GAS LISTING /tmp/ccQ4bhcP.s 			page 17
+
+
+ 533 0904 8B842458 		movl	1402456(%rsp), %eax
+ 533      661500
+ 534 090b 89442420 		movl	%eax, 32(%rsp)
+ 535 090f 448B8C24 		movl	1402452(%rsp), %r9d
+ 535      54661500 
+ 536 0917 448B8424 		movl	1402440(%rsp), %r8d
+ 536      48661500 
+ 537 091f 8B94244C 		movl	1402444(%rsp), %edx
+ 537      661500
+ 538 0926 8B8C2450 		movl	1402448(%rsp), %ecx
+ 538      661500
+ 539 092d E8000000 		call	su_date_jmahms_stu20
+ 539      00
+ 540 0932 89EF     		movl	%ebp, %edi
+ 541              	.L14:
+ 542 0934 39BC24CC 		cmpl	%edi, 1402828(%rsp)
+ 542      671500
+ 543 093b 0F8E3801 		jle	.L20
+ 543      0000
+ 544 0941 4863F7   		movslq	%edi, %rsi
+ 545 0944 488D1CF5 		leaq	0(,%rsi,8), %rbx
+ 545      00000000 
+ 546 094c 4889D8   		movq	%rbx, %rax
+ 547 094f 4829F0   		subq	%rsi, %rax
+ 548 0952 660FEFC0 		pxor	%xmm0, %xmm0
+ 549 0956 F30F2A44 		cvtsi2ssl	116(%rsp), %xmm0
+ 549      2474
+ 550 095c F30F5884 		addss	868(%rsp,%rax,4), %xmm0
+ 550      84640300 
+ 550      00
+ 551 0965 488D9424 		leaq	140(%rsp), %rdx
+ 551      8C000000 
+ 552 096d F30F2CC8 		cvttss2sil	%xmm0, %ecx
+ 553 0971 488D4424 		leaq	120(%rsp), %rax
+ 553      78
+ 554 0976 48894424 		movq	%rax, 48(%rsp)
+ 554      30
+ 555 097b 488D4424 		leaq	124(%rsp), %rax
+ 555      7C
+ 556 0980 48894424 		movq	%rax, 40(%rsp)
+ 556      28
+ 557 0985 488D8424 		leaq	128(%rsp), %rax
+ 557      80000000 
+ 558 098d 48894424 		movq	%rax, 32(%rsp)
+ 558      20
+ 559 0992 4C8D8C24 		leaq	132(%rsp), %r9
+ 559      84000000 
+ 560 099a 4C8D8424 		leaq	136(%rsp), %r8
+ 560      88000000 
+ 561 09a2 E8000000 		call	su_date_stu20_jmahms
+ 561      00
+ 562 09a7 4989DA   		movq	%rbx, %r10
+ 563 09aa 4929F2   		subq	%rsi, %r10
+ 564 09ad 4A638494 		movslq	864(%rsp,%r10,4), %rax
+ 564      60030000 
+ 565 09b5 4C8D1C40 		leaq	(%rax,%rax,2), %r11
+ 566 09b9 4A8D0498 		leaq	(%rax,%r11,4), %rax
+GAS LISTING /tmp/ccQ4bhcP.s 			page 18
+
+
+ 567 09bd 660FEFC0 		pxor	%xmm0, %xmm0
+ 568 09c1 F3420F5A 		cvtss2sd	888(%rsp,%r10,4), %xmm0
+ 568      84947803 
+ 568      0000
+ 569 09cb F20F1144 		movsd	%xmm0, 104(%rsp)
+ 569      2468
+ 570 09d1 660FEFC0 		pxor	%xmm0, %xmm0
+ 571 09d5 F3420F5A 		cvtss2sd	884(%rsp,%r10,4), %xmm0
+ 571      84947403 
+ 571      0000
+ 572 09df F20F1144 		movsd	%xmm0, 96(%rsp)
+ 572      2460
+ 573 09e5 660FEFC0 		pxor	%xmm0, %xmm0
+ 574 09e9 F3420F5A 		cvtss2sd	880(%rsp,%r10,4), %xmm0
+ 574      84947003 
+ 574      0000
+ 575 09f3 F20F1144 		movsd	%xmm0, 88(%rsp)
+ 575      2458
+ 576 09f9 660FEFC0 		pxor	%xmm0, %xmm0
+ 577 09fd F3420F5A 		cvtss2sd	876(%rsp,%r10,4), %xmm0
+ 577      84946C03 
+ 577      0000
+ 578 0a07 F20F1144 		movsd	%xmm0, 80(%rsp)
+ 578      2450
+ 579 0a0d 660FEFC0 		pxor	%xmm0, %xmm0
+ 580 0a11 F3420F5A 		cvtss2sd	872(%rsp,%r10,4), %xmm0
+ 580      84946803 
+ 580      0000
+ 581 0a1b F20F1144 		movsd	%xmm0, 72(%rsp)
+ 581      2448
+ 582 0a21 8B542478 		movl	120(%rsp), %edx
+ 583 0a25 89542440 		movl	%edx, 64(%rsp)
+ 584 0a29 8B54247C 		movl	124(%rsp), %edx
+ 585 0a2d 89542438 		movl	%edx, 56(%rsp)
+ 586 0a31 8B942480 		movl	128(%rsp), %edx
+ 586      000000
+ 587 0a38 89542430 		movl	%edx, 48(%rsp)
+ 588 0a3c 8B94248C 		movl	140(%rsp), %edx
+ 588      000000
+ 589 0a43 89542428 		movl	%edx, 40(%rsp)
+ 590 0a47 8B942488 		movl	136(%rsp), %edx
+ 590      000000
+ 591 0a4e 89542420 		movl	%edx, 32(%rsp)
+ 592 0a52 448B8C24 		movl	132(%rsp), %r9d
+ 592      84000000 
+ 593 0a5a 4C8D8484 		leaq	1400864(%rsp,%rax,4), %r8
+ 593      20601500 
+ 594 0a62 488D1558 		leaq	.LC25(%rip), %rdx
+ 594      020000
+ 595 0a69 4C89E1   		movq	%r12, %rcx
+ 596 0a6c E8000000 		call	fprintf
+ 596      00
+ 597 0a71 83C701   		addl	$1, %edi
+ 598 0a74 E9BBFEFF 		jmp	.L14
+ 598      FF
+ 599              	.L20:
+ 600 0a79 4C89E1   		movq	%r12, %rcx
+GAS LISTING /tmp/ccQ4bhcP.s 			page 19
+
+
+ 601 0a7c E8000000 		call	fclose
+ 601      00
+ 602              	.L1:
+ 603 0a81 89E8     		movl	%ebp, %eax
+ 604 0a83 4881C4D0 		addq	$1402832, %rsp
+ 604      671500
+ 605 0a8a 5B       		popq	%rbx
+ 606 0a8b 5E       		popq	%rsi
+ 607 0a8c 5F       		popq	%rdi
+ 608 0a8d 5D       		popq	%rbp
+ 609 0a8e 415C     		popq	%r12
+ 610 0a90 415D     		popq	%r13
+ 611 0a92 415E     		popq	%r14
+ 612 0a94 C3       		ret
+ 613              		.seh_endproc
+ 614 0a95 90909090 		.section .rdata,"dr"
+ 614      90909090 
+ 614      909090
+ 615 029d 000000   		.align 8
+ 616              	.LC20:
+ 617 02a0 00000000 		.long	0
+ 618 02a4 00408F40 		.long	1083129856
+ 619              		.ident	"GCC: (GNU) 9.3-win32 20200320"
+GAS LISTING /tmp/ccQ4bhcP.s 			page 20
+
+
+DEFINED SYMBOLS
+                            *ABS*:0000000000000000 main.c
+     /tmp/ccQ4bhcP.s:66     .text:0000000000000000 main
+
+UNDEFINED SYMBOLS
+__main
+___chkstk_ms
+getcwd
+sprintf
+printf
+puts
+fopen
+fgets
+sscanf
+fclose
+feof
+strtok
+strcpy
+chdir
+clock
+prepas
+fwrite
+su_date_jmahms_stu20
+su_date_stu20_jmahms
+fprintf
