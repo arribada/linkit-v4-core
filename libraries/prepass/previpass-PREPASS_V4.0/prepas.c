@@ -293,7 +293,7 @@ int prepas (st_config * config, st_aop * ptr_aop, int Nsat, st_res * tab_resus, 
 			 * lon_min ne prend pas en compte la r�gression du DGA
 			 * lon_min2 la prend en compte
 			 */
-
+			nb_orb = 0.0;
 			lon_min2 = lon_min;
 			if (aop->dgap < 0.0) {
 				//retranche � lon_min la correction driftDGA qui a �t� prise en compte dans calcul_longitude_sat
@@ -360,9 +360,9 @@ int prepas (st_config * config, st_aop * ptr_aop, int Nsat, st_res * tab_resus, 
 		T_START = (num_period == 1)? date_debut_sec20: T_STOP;
 		T_STOP = T_START + (long)(loop_period * 86400.0);
 		printf("\nnext period\n");
-		printf("T_START: %d\n", T_START);
-		printf("T_STOP: %d\n", T_STOP);
-		printf("date_fin_sec20: %d\n", date_fin_sec20);
+		printf("T_START: %ld\n", T_START);
+		printf("T_STOP: %ld\n", T_STOP);
+		printf("date_fin_sec20: %ld\n", date_fin_sec20);
 		printf("no_final_date: %d\n", no_final_date);
 
 		/*

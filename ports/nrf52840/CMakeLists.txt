@@ -443,7 +443,7 @@ target_include_directories(${TARGET_NAME} SYSTEM PRIVATE
     ${LIB_DIR}/inplace_function
     ${LIB_DIR}/littlefs
     ${LIB_DIR}/CmBacktrace/cm_backtrace
-    ${LIB_DIR}/prepass/prepass_package_code-PREPAS_V3.4
+    ${LIB_DIR}/prepass/previpass-PREPASS_V4.0
     ${CORE_DIR}/ble_services
     ${CORE_DIR}/hardware
     ${CORE_DIR}/services
@@ -480,8 +480,8 @@ target_include_directories(${TARGET_NAME} SYSTEM PRIVATE
 target_sources(${TARGET_NAME} PRIVATE
     ${LIB_DIR}/littlefs/lfs_util.c
     ${LIB_DIR}/littlefs/lfs.c
-    ${LIB_DIR}/prepass/prepass_package_code-PREPAS_V3.4/previpass.c
-    ${LIB_DIR}/prepass/prepass_package_code-PREPAS_V3.4/previpass_util.c
+    ${LIB_DIR}/prepass/previpass-PREPASS_V4.0/prepas.c
+    ${LIB_DIR}/prepass/previpass-PREPASS_V4.0/utils.c
     ${LIB_DIR}/CmBacktrace/cm_backtrace/cm_backtrace.c
     ${SDK_ROOT}/components/ble/common/ble_advdata.c
     ${SDK_ROOT}/components/ble/ble_advertising/ble_advertising.c
@@ -866,7 +866,8 @@ target_compile_options(${TARGET_NAME} PRIVATE
     -g3
 )
 
-set_source_files_properties(${LIB_DIR}/prepass/prepass_package_code-PREPAS_V3.4/previpass.c PROPERTIES COMPILE_FLAGS "-Wno-unused-parameter -Wno-switch-enum -Wno-switch")
+set_source_files_properties(${LIB_DIR}/prepass/previpass-PREPASS_V4.0/prepas.c PROPERTIES COMPILE_FLAGS "-Wno-double-promotion")
+set_source_files_properties(${LIB_DIR}/prepass/previpass-PREPASS_V4.0/utils.c PROPERTIES COMPILE_FLAGS "-Wno-double-promotion")
 
 set_source_files_properties(${LIB_DIR}/CmBacktrace/cm_backtrace/cm_backtrace.c PROPERTIES COMPILE_FLAGS "-Wno-unused-const-variable -Wno-unused-variable")
 
