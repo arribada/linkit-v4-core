@@ -444,6 +444,7 @@ target_include_directories(${TARGET_NAME} SYSTEM PRIVATE
     ${LIB_DIR}/littlefs
     ${LIB_DIR}/CmBacktrace/cm_backtrace
     ${LIB_DIR}/prepass/previpass-PREPASS_V4.0
+    ${LIB_DIR}/prepass/previpass_compat_layer
     ${CORE_DIR}/ble_services
     ${CORE_DIR}/hardware
     ${CORE_DIR}/services
@@ -482,6 +483,7 @@ target_sources(${TARGET_NAME} PRIVATE
     ${LIB_DIR}/littlefs/lfs.c
     ${LIB_DIR}/prepass/previpass-PREPASS_V4.0/prepas.c
     ${LIB_DIR}/prepass/previpass-PREPASS_V4.0/utils.c
+    ${LIB_DIR}/prepass/previpass_compat_layer/previpass.c
     ${LIB_DIR}/CmBacktrace/cm_backtrace/cm_backtrace.c
     ${SDK_ROOT}/components/ble/common/ble_advdata.c
     ${SDK_ROOT}/components/ble/ble_advertising/ble_advertising.c
