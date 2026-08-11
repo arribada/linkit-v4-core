@@ -626,14 +626,24 @@ if(ENABLE_MORTALITY_SENSOR EQUAL 1)
 endif()
 
 
-# Normalize all ENABLE_* flags to 0/1 for C++ compile definitions.
-# CMake booleans (ON/OFF/TRUE/FALSE) must be converted to integers
-# because target_compile_definitions passes them as-is to the preprocessor.
+# Normalize every boolean flag that becomes a compile definition to 0/1.
+# CMake booleans (ON/OFF/TRUE/FALSE/YES/NO) must be converted to integers
+# because target_compile_definitions passes them as-is to the preprocessor:
+# `-DFOO=ON` makes `#if FOO` test the undefined identifier ON, which the
+# preprocessor substitutes with 0. A flag left out of this list therefore ships
+# silently disabled however loudly the build banner claims otherwise — which is
+# exactly what happened to GNSS_HAS_BACKUP_BATTERY, the one flag that had been
+# omitted here, for as long as it existed.
+#
+# INVARIANT: every `NAME=${VAR}` entry in target_compile_definitions below whose
+# VAR is boolean must appear in this list, or be normalised by its own if/else
+# (ARGOS_SMD_ENABLED, SMDSAT_*_VAL, LORA_*_VAL). Add new flags here.
 foreach(_flag
     ENABLE_CAM_SENSOR ENABLE_BUZZER ENABLE_PH_SENSOR
     ENABLE_SEA_TEMP_SENSOR ENABLE_PRESSURE_SENSOR ENABLE_ALS_SENSOR
     ENABLE_CDT_SENSOR ENABLE_AXL_SENSOR ENABLE_THERMISTOR_SENSOR
-    ENABLE_MORTALITY_SENSOR ENABLE_SWS_LOG ENABLE_SWS_ANALOG)
+    ENABLE_MORTALITY_SENSOR ENABLE_SWS_LOG ENABLE_SWS_ANALOG
+    GNSS_HAS_BACKUP_BATTERY)
     if(${_flag})
         set(${_flag} 1)
     else()

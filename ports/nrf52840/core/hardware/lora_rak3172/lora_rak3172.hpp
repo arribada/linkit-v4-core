@@ -156,6 +156,7 @@ private:
 
     // TX state
     std::string m_packet_buffer;    // Hex-encoded payload waiting to be sent
+    bool m_join_attempted;          // A join was already tried for the packet currently buffered
 
     // Configuration tracking
     unsigned int m_config_step;

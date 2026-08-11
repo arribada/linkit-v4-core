@@ -153,7 +153,16 @@ echo "Build tag: $(cat TAG_NAME)"
 ARGOS_SMD=${ARGOS_SMD:-ON}
 ENABLE_AXL_SENSOR=${ENABLE_AXL_SENSOR:-OFF}
 ENABLE_SWS_LOG=${ENABLE_SWS_LOG:-OFF}
-GNSS_HAS_BACKUP_BATTERY=${GNSS_HAS_BACKUP_BATTERY:-ON}
+# GNSS_HAS_BACKUP_BATTERY: set ON only when V_BCKP on the M10Q is actually
+# backed (coin cell / supercap). It enables the BBR fast-path reconfigure, which
+# on a board with no backup supply fails its baud-sync probe every session and
+# falls back to the full configure walk — pure waste.
+# Default is OFF, and that is deliberate: until the CMake normalisation fix this
+# script passed the literal `ON` into `#if GNSS_HAS_BACKUP_BATTERY`, which the
+# preprocessor evaluated as 0. Every SMD build ever shipped therefore had the
+# fast path disabled. Defaulting to OFF keeps that behaviour byte-for-byte
+# instead of silently enabling it on hardware that may not have the coin cell.
+GNSS_HAS_BACKUP_BATTERY=${GNSS_HAS_BACKUP_BATTERY:-OFF}
 BATTERY_CHEMISTRY=${BATTERY_CHEMISTRY:-BATT_CHEM_LS17500_2P}
 # SMD timing safety knobs.
 #

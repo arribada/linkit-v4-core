@@ -108,7 +108,11 @@ printf '\033[1;36m   Optional log flags:  METRIC_LATENCY=%s   VALIDATION=%s\033[
 echo ""
 
 cd "$PROJECT_ROOT"
-BUILD_DIR="ports/nrf52840/build/LINKIT_LORA"
+# Build subdirectory, overridable so a deployment-specific wrapper (see
+# build_linkitv4_lora_cyprus.sh) gets its own CMake cache. Sharing one cache
+# between two configurations means whichever script ran last silently decides
+# what a bare `make` produces.
+BUILD_DIR="ports/nrf52840/build/${LORA_BUILD_SUBDIR:-LINKIT_LORA}"
 if [ "$CLEAN" = true ]; then
     echo "Cleaning build directory..."
     rm -rf "$BUILD_DIR"
@@ -139,14 +143,34 @@ echo "Build tag: $(cat TAG_NAME)"
 
 # LinkIt V4 LoRa build configuration
 # - LORA_RAK3172=ON: Use RAK3172-SiP LoRa module
-# - ENABLE_AXL_SENSOR=ON: Enable BMA400 accelerometer
+# - ENABLE_AXL_SENSOR: BMA400 accelerometer (default OFF)
 ENABLE_AXL_SENSOR=${ENABLE_AXL_SENSOR:-OFF}
-DISABLE_LORA_DCS=${DISABLE_LORA_DCS:-OFF}
 ENABLE_SWS_LOG=${ENABLE_SWS_LOG:-OFF}
+
+# Duty cycle. The user-facing switch is DISABLE_LORA_DCS, the CMake option is
+# its inverse (LORA_DCS_ENABLE=ON means the RAK3172 enforces ETSI EN 300 220).
+# Translate explicitly: passing DISABLE_LORA_DCS straight through to
+# -DLORA_DCS_ENABLE silently shipped AT+DCS=0 on every default build, i.e. no
+# duty-cycle enforcement at all, which is illegal for an EU deployment.
+DISABLE_LORA_DCS=${DISABLE_LORA_DCS:-OFF}
+if [ "$DISABLE_LORA_DCS" = "ON" ]; then
+    LORA_DCS_ENABLE=OFF
+else
+    LORA_DCS_ENABLE=ON
+fi
 # BATTERY_CHEMISTRY: discharge LUT (default BATT_CHEM_LS17500_2P — 2x Saft LiSOCl2 @ 3.6V parallel)
 # Options: BATT_CHEM_{S18650_2600|CGR18650_2250|NCR18650_3100_3400|LS17500_2P}
 BATTERY_CHEMISTRY=${BATTERY_CHEMISTRY:-BATT_CHEM_LS17500_2P}
-GNSS_HAS_BACKUP_BATTERY=${GNSS_HAS_BACKUP_BATTERY:-ON}
+# GNSS_HAS_BACKUP_BATTERY: set ON only when V_BCKP on the M10Q is actually
+# backed (coin cell / supercap). It enables the BBR fast-path reconfigure, which
+# on a board with no backup supply fails its baud-sync probe every session and
+# falls back to the full configure walk — pure waste.
+# Default is OFF, and that is deliberate: until the CMake normalisation fix this
+# script passed the literal `ON` into `#if GNSS_HAS_BACKUP_BATTERY`, which the
+# preprocessor evaluated as 0. Every LoRa build ever shipped therefore had the
+# fast path disabled. Defaulting to OFF keeps that behaviour byte-for-byte
+# instead of silently enabling it on hardware that may not have the coin cell.
+GNSS_HAS_BACKUP_BATTERY=${GNSS_HAS_BACKUP_BATTERY:-OFF}
 
 
 
@@ -154,7 +178,7 @@ echo "Building LinkIt V4 LoRa RAK3172 with configuration:"
 echo "  LORA_RAK3172=ON"
 echo "  ENABLE_AXL_SENSOR=${ENABLE_AXL_SENSOR}"
 echo "  ENABLE_SWS_LOG=${ENABLE_SWS_LOG}"
-echo "  DISABLE_LORA_DCS=${DISABLE_LORA_DCS}"
+echo "  DISABLE_LORA_DCS=${DISABLE_LORA_DCS} -> LORA_DCS_ENABLE=${LORA_DCS_ENABLE}"
 echo "  BATTERY_CHEMISTRY=${BATTERY_CHEMISTRY}"
 echo "  GNSS_HAS_BACKUP_BATTERY=${GNSS_HAS_BACKUP_BATTERY}"
 echo ""
@@ -167,7 +191,7 @@ cmake -DCMAKE_TOOLCHAIN_FILE=../../toolchain_arm_gcc_nrf52.cmake \
       -DENABLE_AXL_SENSOR=${ENABLE_AXL_SENSOR} \
       -DENABLE_SWS_LOG=${ENABLE_SWS_LOG} \
       -DGNSS_HAS_BACKUP_BATTERY=${GNSS_HAS_BACKUP_BATTERY} \
-      -DLORA_DCS_ENABLE=${DISABLE_LORA_DCS} \
+      -DLORA_DCS_ENABLE=${LORA_DCS_ENABLE} \
       -DBATTERY_CHEMISTRY=${BATTERY_CHEMISTRY} \
       -DMETRIC_LATENCY_LOG_ENABLE=$([ "$METRICS" = "ON" ] && echo 1 || echo 0) \
       -DVALIDATION_LOG_ENABLE=$([ "$VALIDATION" = "ON" ] && echo 1 || echo 0) \
@@ -261,7 +285,7 @@ fi
 
 echo ""
 echo "Build complete!"
-echo "Output files in: ports/nrf52840/build/LINKIT_LORA/"
+echo "Output files in: ports/nrf52840/build/${LORA_BUILD_SUBDIR:-LINKIT_LORA}/"
 echo ""
 echo "Files generated:"
 ls -la ${TARGET_NAME}-* 2>/dev/null || true
@@ -276,7 +300,7 @@ fi
 
 # Show flash command
 TAG=$(cat TAG_NAME)
-BUILD_DIR="ports/nrf52840/build/LINKIT_LORA"
+BUILD_DIR="ports/nrf52840/build/${LORA_BUILD_SUBDIR:-LINKIT_LORA}"
 echo ""
 echo "Flash commands:"
 echo "  NOTE: If flashing fails with 'Access protection enabled', the device has"
