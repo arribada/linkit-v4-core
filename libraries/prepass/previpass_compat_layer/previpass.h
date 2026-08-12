@@ -373,6 +373,12 @@ PREVIPASS_compute_next_pass
  *     (cfg, aop, n, SAT_DNLK_OFF, SAT_UPLK_ON_KINEIS_V1, &p)
  *   next two-way pass usable by a KIM2 module
  *     (cfg, aop, n, SAT_DNLK_ON, SAT_UPLK_ON_KINEIS_V1, &p)
+ *
+ * The pass returned always ends after config->start, so a caller walking
+ * the constellation pass by pass can move its search forward safely. Move
+ * it to "pass end + 1 s" rather than exactly "pass end": the engine
+ * recomputes each pass relative to the new start date, and the rounding to
+ * whole seconds can otherwise hand back the same pass one more time.
  */
 bool
 PREVIPASS_compute_next_pass_with_status

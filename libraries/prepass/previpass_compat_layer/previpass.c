@@ -412,25 +412,42 @@ static struct SatPassLinkedListElement_t *run_engine(
 		const struct AopSatelliteEntry_t *sat;
 		struct SatelliteNextPassPrediction_t pass;
 		uint8_t engine_idx = (uint8_t)res->num_sat;
+		uint32_t pass_epoch;
 		int32_t duration_s;
 		int32_t elevation;
 		uint16_t pos;
 
 		if (engine_idx >= engine_sats)
 			continue;
-		if (passes_per_sat[engine_idx] >= config->maxPasses)
-			continue;
-		++passes_per_sat[engine_idx];
 
-		sat = &aopTable[aop_index_map[engine_idx]];
-
-		pass.epoch = start_sec70 + (uint32_t)(int32_t)lrintf(res->delta_start);
+		pass_epoch = start_sec70 + (uint32_t)(int32_t)lrintf(res->delta_start);
 
 		duration_s = (int32_t)lrintf(res->pass_duration * 60.0f);
 		if (duration_s < 0)
 			duration_s = 0;
 		if (duration_s > (int32_t)UINT16_MAX)
 			duration_s = (int32_t)UINT16_MAX;
+
+		/*
+		 * Drop a pass that is already over at the requested start.
+		 *
+		 * The engine keeps the pass in progress at the start date, but
+		 * compares its end with "<", so a pass ending exactly on that
+		 * date is still reported. A caller walking the passes by moving
+		 * its search to "pass end" would then be handed the same pass
+		 * again, forever. Comparing the rounded values published below
+		 * guarantees epoch + duration > start for every pass returned.
+		 */
+		if ((pass_epoch + (uint32_t)duration_s) <= start_sec70)
+			continue;
+
+		if (passes_per_sat[engine_idx] >= config->maxPasses)
+			continue;
+		++passes_per_sat[engine_idx];
+
+		sat = &aopTable[aop_index_map[engine_idx]];
+
+		pass.epoch    = pass_epoch;
 		pass.duration = (uint16_t)duration_s;
 
 		elevation = (int32_t)res->pass_elev_max; /* truncation, as v3.4 */
