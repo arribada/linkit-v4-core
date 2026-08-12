@@ -245,12 +245,20 @@ unsigned int ArgosTxScheduler::schedule_prepass(ArgosConfig& config, BasePassPre
 		static_cast<float>(config.prepass_min_duration) / 60.0f,
 		config.prepass_max_passes,
 		static_cast<float>(config.prepass_linear_margin) / 60.0f,
-		config.prepass_comp_step
+		config.prepass_comp_step,
+		0, // minCulmination  // TODO : ADD DTE PARAMETER
+		0, // position error, // TODO : ADD DTE PARAMETER
+		true // includeCurrentPass
 	};
 	SatelliteNextPassPrediction_t next_pass;
 
-	while (PREVIPASS_compute_next_pass(&pp_config, pass_predict.records,
-	                                    pass_predict.num_records, &next_pass)) {
+	while (PREVIPASS_compute_next_pass_with_status(&pp_config,
+		pass_predict.records,
+		pass_predict.num_records,
+		SAT_DNLK_OFF,
+		SAT_UPLK_ON_KINEIS_V1, // TODO : Manage all satellites for LDA2 on legacy RF band
+		&next_pass))
+		{
 		uint64_t schedule = 0;
 
 		// Ensure at least TR_NOM from last TX
