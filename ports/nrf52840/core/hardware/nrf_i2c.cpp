@@ -138,17 +138,9 @@ bool NrfI2C::reinit_bus(uint8_t bus) {
 	return true;
 }
 
-bool NrfI2C::full_bus_reset(uint8_t bus) {
-	if (bus >= BSP::I2C_TOTAL_NUMBER) return false;
-
-	DEBUG_WARN("I2C bus %u full reset", bus);
-
-	uint32_t scl, sda;
-	get_bus_pins(bus, scl, sda);
-
-	nrfx_twim_disable(&BSP::I2C_Inits[bus].twim);
-	nrfx_twim_uninit(&BSP::I2C_Inits[bus].twim);
-
+/// @brief Pin-level bus reset — drive lines high, START, clock out stuck bits, STOP.
+/// Bit-bang only: safe to call before the TWIM instance is initialised (boot path).
+static void bitbang_bus_reset(uint32_t scl, uint32_t sda) {
 	// Drive both lines high, then generate START
 	nrf_gpio_cfg_output(scl);
 	nrf_gpio_cfg_output(sda);
@@ -172,6 +164,20 @@ bool NrfI2C::full_bus_reset(uint8_t bus) {
 	// STOP condition
 	bitbang_stop(scl, sda);
 	PMU::delay_ms(1);
+}
+
+bool NrfI2C::full_bus_reset(uint8_t bus) {
+	if (bus >= BSP::I2C_TOTAL_NUMBER) return false;
+
+	DEBUG_WARN("I2C bus %u full reset", bus);
+
+	uint32_t scl, sda;
+	get_bus_pins(bus, scl, sda);
+
+	nrfx_twim_disable(&BSP::I2C_Inits[bus].twim);
+	nrfx_twim_uninit(&BSP::I2C_Inits[bus].twim);
+
+	bitbang_bus_reset(scl, sda);
 
 	// Verify bus is free
 	nrf_gpio_cfg_input(scl, NRF_GPIO_PIN_PULLUP);
@@ -228,8 +234,32 @@ void NrfI2C::init(void) {
 
 		if (is_bus_stuck(i)) {
 			DEBUG_WARN("I2C bus %u stuck at init | attempting recovery", i);
-			if (!clock_stretch_recovery(i)) {
-				DEBUG_ERROR("I2C bus %u recovery failed | skipping", i);
+			// Match the runtime recover_bus() strength: several clock-stretch
+			// attempts instead of the single one this path used to get.
+			bool freed = false;
+			for (unsigned int attempt = 0; attempt < I2C_RECOVERY_MAX_ATTEMPTS && !freed; attempt++) {
+				freed = clock_stretch_recovery(i);
+				if (!freed)
+					PMU::delay_ms(5);
+			}
+			if (!freed) {
+				// Last chance before booting degraded: pin-level full reset
+				// (START + clock-out + STOP). Runtime recovery escalates to
+				// full_bus_reset(), but that needs an initialised TWIM — this
+				// boot path never had one, so a slave that only resyncs on a
+				// START (e.g. an STC3117 on VBAT left armed mid-transfer by a
+				// power cut) was previously never offered one at boot.
+				uint32_t scl, sda;
+				get_bus_pins(i, scl, sda);
+				bitbang_bus_reset(scl, sda);
+				freed = !is_bus_stuck(i);
+			}
+			if (!freed) {
+				// Unrecoverable (e.g. STC3117 on VBAT holding SCL low — only a full
+				// board power cycle clears that). Disable the bus and boot degraded
+				// rather than freezing: consumers fast-fail and the gauge falls back
+				// to its conservative defaults.
+				DEBUG_ERROR("I2C bus %u recovery failed | booting degraded (bus disabled)", i);
 				m_is_enabled[i] = false;
 				continue;
 			}
