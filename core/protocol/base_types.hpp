@@ -833,6 +833,39 @@ inline bool operator==(const BasePassPredict& lhs, const BasePassPredict& rhs)
     return true;
 }
 
+/**
+ * @brief Tracks which Constellation Status messages of the current set have
+ *        been received.
+ *
+ * CS messages carry a 6-bit counter identifying the status set, the index of
+ * the message inside that set and the total number of messages of the set
+ * (KINEIS-NT-20-0368, Figure 22). All operational satellites are declared
+ * across those messages, so this is the only reliable way of telling a
+ * complete constellation picture from a partial one. Hold one instance next to
+ * the decoder's two maps and pass it to PassPredictCodec::decode().
+ */
+struct AllcastStatusTracking {
+	uint8_t counter;	/**< current set, 1..64, 0 when nothing received */
+	uint8_t total;		/**< number of messages in the set, 1..8         */
+	uint8_t index_mask;	/**< received indexes, bit 0 is index 1          */
+
+	AllcastStatusTracking() : counter(0), total(0), index_mask(0) {}
+
+	void reset() {
+		counter = 0;
+		total = 0;
+		index_mask = 0;
+	}
+
+	/// @brief True once every message of the announced set has been received.
+	bool is_complete() const {
+		if (counter == 0 || total == 0)
+			return false;
+		uint8_t expected = static_cast<uint8_t>((1u << total) - 1u);
+		return (index_mask & expected) == expected;
+	}
+};
+
 struct BaseRawData {
 	// Use of a pointer and length field is permitted for encoding base64
 	void *ptr;
