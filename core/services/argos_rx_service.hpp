@@ -33,6 +33,13 @@ public:
 	ArgosRxScheduler();
 
 	/// @brief Find next downlink RX window using PREVIPASS.
+	///
+	/// Candidate passes whose remaining duration is below
+	/// ARGOS_RX_MIN_WINDOW_SECS are skipped: a pass already under way when the
+	/// window opens only leaves its tail, and powering the receiver for a few
+	/// seconds cannot yield anything — a complete allcast cycle is 16 messages
+	/// broadcast at roughly one per second.
+	///
 	/// @param config          Argos configuration (prepass params, AOP update period).
 	/// @param pass_predict    AOP satellite database.
 	/// @param now             Current RTC time.
@@ -76,8 +83,29 @@ private:
 	ArgosRxScheduler m_sched;
 	unsigned int m_timeout = 0;
 	KineisModulation m_mode = KineisModulation::LDK;
+
+	/// @name Allcast decoder state, carried across packets and across RX windows
+	///
+	/// A campaign may need several passes to complete, so these are NOT reset
+	/// when a window opens: what was decoded during the previous windows is
+	/// exactly what makes the next one able to finish the job. They are only
+	/// cleared once a complete table has been committed.
+	/// @{
 	std::map<uint8_t, AopSatelliteEntry_t> m_orbit_params_map;
 	std::map<uint8_t, AopSatelliteEntry_t> m_constellation_status_map;
+	/// @brief Tracks the Constellation Status message set (counter, index,
+	///        total): is_complete() is what says the constellation picture is
+	///        whole, and gates the commit to flash.
+	AllcastStatusTracking m_constellation_status_tracking;
+	/// @}
+
+	/// @brief Acceptance window: opened by service_initiate(), closed on commit,
+	///        on cancel and on KineisEventRxStopped. The module keeps delivering
+	///        decoded messages for a few seconds after AT+DL=0; those late frames
+	///        would otherwise re-seed the maps just after they were cleared and
+	///        leak a partial picture into the next campaign.
+	bool m_rx_window_open = false;
+
 	unsigned int m_cumulative_rx_time = 0;
 
 	void react(KineisEventRxPacket const&) override;
@@ -86,6 +114,12 @@ private:
 	void react(KineisEventRxStopped const&) override;
 
 	/// @brief Merge new AOP records into existing pass predict database and persist.
+	///
+	/// Commits only when the whole Constellation Status set has been received
+	/// and every satellite it declares has been matched with an orbit bulletin,
+	/// so the database is never written with holes — and never written at all
+	/// while the decoder still has an empty picture.
+	///
 	/// @param new_pass_predict  Decoded AOP records from downlink packet.
 	void update_pass_predict(BasePassPredict& new_pass_predict);
 };
