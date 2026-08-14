@@ -40,6 +40,9 @@ enum ATCmd {
 	AT_SET_KMAC_BASIC,
 	AT_SET_KMAC_BLIND,
 	AT_TX,
+	AT_GET_FW,      ///< AT+FW=? — firmware build string, gates RX (kim2_rx.hpp)
+	AT_DL_START,    ///< AT+DL=1[,<window_s>] — start reception (runtime mode)
+	AT_DL_STOP,     ///< AT+DL=0 — stop reception
 	AT_UNKNOWN
 };
 
@@ -49,7 +52,8 @@ enum RespType {
 	RESP_ERROR,
 	RESP_CONFIG,
 	RESP_TX_STATUS,
-	RESP_MODULE_BANNER,   ///< +FW= non sollicitee: le module vient de demarrer
+	RESP_ALLCAST,     ///< +DL_ALLCAST= — decoded allcast message (AOP / constellation status)
+	RESP_RX_END,      ///< empty +RX= / +DL= — the RX window actually ended
 	RESP_UNKNOWN
 };
 
@@ -76,6 +80,20 @@ static constexpr const char *HDLR_RESPONSE = "+HDLR=";   // new-stack AT+TX imme
 ///        retransmission et reimprime cette ligne, sans que le firmware puisse le
 ///        voir. On la reconnait pour pouvoir en tirer les consequences.
 static constexpr const char *FW_RESPONSE   = "+FW=";
+/// @name RX-side unsolicited lines (firmware built with USE_RX_STACK)
+/// The driver drives reception in RUNTIME mode (AT+DL), where the module only
+/// reports decoded downlink messages. The test-mode lines (raw +RX= frames and
+/// the detection diagnostics) are still recognised so a manual AT+RX=1 issued
+/// through the bridge does not flood the log with unknown lines.
+/// @{
+static constexpr const char *DL_ALLCAST_RESPONSE = "+DL_ALLCAST=";  ///< decoded allcast frame
+static constexpr const char *DL_USERBC_RESPONSE  = "+DL_USERBC=";   ///< decoded beacon command
+static constexpr const char *DL_RESPONSE         = "+DL=";          ///< empty = window end (runtime mode)
+static constexpr const char *RX_RESPONSE         = "+RX=";          ///< raw frame, or empty = window end (test mode)
+static constexpr const char *SATDET_RESPONSE     = "+SATDET=";      ///< satellite detected (test mode)
+static constexpr const char *SATLOST_RESPONSE    = "+SATLOST=";     ///< satellite lost (test mode)
+static constexpr const char *N0_RESPONSE         = "+N0=";          ///< noise density report (test mode)
+/// @}
 /// @}
 
 static constexpr uint8_t ID_SIZE   = 6;   ///< Decimal ID string length
@@ -103,6 +121,17 @@ RConfDecoded parse_rconf_info(const std::string& info);
 /// @name KIM2 communication events
 /// @{
 struct KIM2CommEventTxDone {};
+/// @brief A +DL_ALLCAST= line was received. @c hex is the raw payload as printed
+///        by the module: the KIM2 emits ceil(size_bits/4) nibbles, so the length
+///        may be ODD (75 nibbles for a 297-bit message). Converting it to bytes
+///        without completing the last nibble drops the final FCS bit and the
+///        frame is then rejected downstream — see KIM2Device::state_receive().
+struct KIM2CommEventAllcast {
+	std::string hex;
+};
+/// @brief The RX window actually ended (explicit stop or window expiry), as
+///        opposed to the solicited +OK acknowledging the stop command itself.
+struct KIM2CommEventRxWindowEnd {};
 struct KIM2CommEventRespOk {};
 struct KIM2CommEventRespError {};
 struct KIM2CommEventUartError {
@@ -115,6 +144,8 @@ class KIM2CommEventListener {
 public:
 	virtual ~KIM2CommEventListener() = default;
 	virtual void react(const KIM2CommEventTxDone&) {}
+	virtual void react(const KIM2CommEventAllcast&) {}
+	virtual void react(const KIM2CommEventRxWindowEnd&) {}
 	virtual void react(const KIM2CommEventRespOk&) {}
 	virtual void react(const KIM2CommEventRespError&) {}
 	virtual void react(const KIM2CommEventUartError&) {}
@@ -148,10 +179,6 @@ public:
 	std::string m_rconf_info;          ///< Last +RCONF=? response payload (diag)
 	/// @brief Version annoncee par la derniere banniere +FW= recue.
 	std::string m_module_banner;
-	/// @brief Positionne des qu'une banniere +FW= arrive. L'appelant le consulte
-	///        puis le remet a faux: en dehors du demarrage, il signale un
-	///        REDEMARRAGE inopine du module.
-	bool m_module_rebooted = false;
 
 	/// @param libuarte_async_instance  BSP UART instance index (default 1).
 	KIM2Comm(unsigned int libuarte_async_instance = 1);

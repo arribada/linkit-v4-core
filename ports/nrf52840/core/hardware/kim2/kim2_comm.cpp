@@ -106,6 +106,9 @@ static constexpr ATCmdEntry cmd_table[] = {
 	{ AT_SET_KMAC_BASIC, "AT+KMAC=1\r\n",     false },
 	{ AT_SET_KMAC_BLIND, "AT+KMAC=2,",         true  },
 	{ AT_TX,             "AT+TX=",              true },
+	{ AT_GET_FW,         "AT+FW=?\r\n",         false },
+	{ AT_DL_START,       "AT+DL=",              true  },
+	{ AT_DL_STOP,        "AT+DL=0\r\n",         false },
 };
 
 bool KIM2Comm::send_at_cmd(ATCmd cmd, const std::optional<std::string>& params)
@@ -186,6 +189,13 @@ void KIM2Comm::on_rx_line(std::string& line)
 		notify<KIM2CommEventRespOk>({});
 	} else if (msg == RESP_TX_STATUS) {
 		notify<KIM2CommEventTxDone>({});
+	} else if (msg == RESP_ALLCAST) {
+		// Payload carried by the event: several allcast lines can arrive inside
+		// a single process_rx() burst, so a shared member would be clobbered
+		// before the listener had a chance to copy it.
+		notify(KIM2CommEventAllcast{ line.substr(strlen(DL_ALLCAST_RESPONSE)) });
+	} else if (msg == RESP_RX_END) {
+		notify<KIM2CommEventRxWindowEnd>({});
 	} else if (msg == RESP_ERROR) {
 		DEBUG_INFO("KIM2: error response: %s", line.c_str());
 		notify<KIM2CommEventRespError>({});
@@ -247,18 +257,50 @@ KIM2::RespType KIM2Comm::parse_rx_line_protocol(const std::string& line)
 		return RESP_CONFIG;
 	}
 
+	// +FW=<build string>
+	if (line.compare(0, strlen(FW_RESPONSE), FW_RESPONSE) == 0) {
+		m_module_banner = line.substr(line.find(FW_RESPONSE) + strlen(FW_RESPONSE));
+		return RESP_CONFIG;
+	}
+
+	// ---- RX-side unsolicited lines (AT+DL runtime mode) ---------------------
+	// Order matters: "+DL_ALLCAST=" and "+DL_USERBC=" must be tested before the
+	// bare "+DL=" end-of-window marker.
+
+	// +DL_ALLCAST=<hex data> — the only line we act on: allcast AOP / CS update.
+	if (line.compare(0, strlen(DL_ALLCAST_RESPONSE), DL_ALLCAST_RESPONSE) == 0)
+		return RESP_ALLCAST;
+
+	// +DL_USERBC=<hex data>,<bc_mc> — decoded beacon command, not handled here.
+	if (line.compare(0, strlen(DL_USERBC_RESPONSE), DL_USERBC_RESPONSE) == 0) {
+		DEBUG_TRACE("KIM2: user beacon command ignored: %s", line.c_str());
+		return RESP_CONFIG;
+	}
+
+	// +DL= with an EMPTY payload: the reception window actually ended (explicit
+	// AT+DL=0 or window expiry), as opposed to the solicited +OK acknowledging
+	// the stop command itself.
+	if (line.compare(0, strlen(DL_RESPONSE), DL_RESPONSE) == 0)
+		return (line.size() == strlen(DL_RESPONSE)) ? RESP_RX_END : RESP_CONFIG;
+
+	// Test-mode lines, never emitted in runtime mode: an empty +RX= closes a
+	// window started by a manual AT+RX=1, a populated one is a raw frame we
+	// deliberately ignore — the decoded +DL_ALLCAST= carries the same content
+	// already framed.
+	if (line.compare(0, strlen(RX_RESPONSE), RX_RESPONSE) == 0)
+		return (line.size() == strlen(RX_RESPONSE)) ? RESP_RX_END : RESP_CONFIG;
+
+	// Detection diagnostics (test mode): traced, never acted upon.
+	if (line.compare(0, strlen(SATDET_RESPONSE), SATDET_RESPONSE) == 0 ||
+	    line.compare(0, strlen(SATLOST_RESPONSE), SATLOST_RESPONSE) == 0 ||
+	    line.compare(0, strlen(N0_RESPONSE), N0_RESPONSE) == 0) {
+		DEBUG_TRACE("KIM2 RX diag: %s", line.c_str());
+		return RESP_CONFIG;
+	}
+
 	// +ERROR=...
 	if (line.compare(0, err_len, ERR_RESPONSE) == 0)
 		return RESP_ERROR;
-
-	// +FW=<version> non sollicitee = le module a (re)demarre. On cherche la
-	// sous-chaine plutot que le prefixe: la ligne arrive parfois precedee d'un
-	// octet parasite, la liaison se stabilisant au demarrage du module.
-	if (line.find(FW_RESPONSE) != std::string::npos) {
-		m_module_banner = line.substr(line.find(FW_RESPONSE) + strlen(FW_RESPONSE));
-		m_module_rebooted = true;
-		return RESP_MODULE_BANNER;
-	}
 
 	// +HDLR=<TX handler id> — new-stack immediate ack, sent just before +OK.
 	// Informational: we advance on +OK, so recognise and ignore it (a benign
