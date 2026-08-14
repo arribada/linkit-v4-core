@@ -1100,6 +1100,7 @@ static void init_communication(LFSFileSystem& lfs_file_system)
 		kineis_device_instance = &kim2;
 		kim2_device_instance = &kim2;
 		static ArgosTxService argos_tx_service(kim2);
+		static ArgosRxService argos_rx_service(kim2);
 	} catch (...) {
 		DEBUG_INFO("KIM2 not detected");
 		kineis_device_instance = nullptr;

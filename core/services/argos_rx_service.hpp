@@ -75,7 +75,7 @@ private:
 	KineisDevice& m_kineis;
 	ArgosRxScheduler m_sched;
 	unsigned int m_timeout = 0;
-	KineisModulation m_mode = KineisModulation::LDA2;
+	KineisModulation m_mode = KineisModulation::LDK;
 	std::map<uint8_t, AopSatelliteEntry_t> m_orbit_params_map;
 	std::map<uint8_t, AopSatelliteEntry_t> m_constellation_status_map;
 	unsigned int m_cumulative_rx_time = 0;

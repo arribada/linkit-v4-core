@@ -250,7 +250,10 @@ unsigned int ArgosRxScheduler::schedule(ArgosConfig& argos_config, BasePassPredi
 		(float)argos_config.prepass_min_duration / 60.0f,  //< Minimum duration (minutes)
 		argos_config.prepass_max_passes,                  //< Maximum number of passes per satellite (#)
 		(float)argos_config.prepass_linear_margin / 60.0f, //< Linear time margin (in minutes/6months)
-		argos_config.prepass_comp_step                    //< Computation step (seconds)
+		argos_config.prepass_comp_step,                    //< Computation step (seconds)
+		20, // minCulmination  // TODO : ADD DTE PARAMETER
+		0, // position error, // TODO : ADD DTE PARAMETER
+		true // includeCurrentPass
 	};
 	SatelliteNextPassPrediction_t next_pass;
 
@@ -258,8 +261,8 @@ unsigned int ArgosRxScheduler::schedule(ArgosConfig& argos_config, BasePassPredi
     	&pp_config,
 		pass_predict.records,
 		pass_predict.num_records,
-		SAT_DNLK_ON_WITH_A3,
-		SAT_UPLK_OFF,
+		SAT_DNLK_ON,
+		SAT_UPLK_ON_KINEIS_V1,
 		&next_pass)) {
 
 		// Set initial start/end points based on this discovered window
@@ -280,7 +283,7 @@ unsigned int ArgosRxScheduler::schedule(ArgosConfig& argos_config, BasePassPredi
 		// Check we don't schedule off the end of the computed window
 		if ((start + ARGOS_RX_MARGIN_MSECS) < end) {
 			// We're good to go for this schedule, compute relative delay until the epoch arrives
-			mode = KineisModulation::LDA2;
+			mode = KineisModulation::LDK;
 			DEBUG_INFO("ArgosRxScheduler::schedule_prepass: scheduled for %llu secs from now | timeout %u secs", start - now, end - start);
 			timeout = (end - start) * MSECS_PER_SECOND;
 			return (start - now) * MSECS_PER_SECOND;
