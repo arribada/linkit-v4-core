@@ -481,9 +481,18 @@ private:
 			const std::map<uint8_t, AopSatelliteEntry_t>& constellation_status,
 			BasePassPredict& pass_predict) {
 		unsigned int num_records = 0;
+		unsigned int with_aop = 0;
+		unsigned int not_operational = 0;
 
 		pass_predict.num_records = 0;
 
+		/* No per-satellite tracing here on purpose: merge() runs on EVERY
+		 * received packet, so one line per satellite means ~25 log lines per
+		 * second during a pass. On a flash-backed logger that blocks the main
+		 * loop for several seconds, the UART RX buffer overflows, allcast lines
+		 * get truncated and merged, and the module's answers are lost. One
+		 * summary line at the end instead.
+		 */
 		for (const auto& it : constellation_status) {
 			if (num_records >= MAX_AOP_SATELLITE_ENTRIES) {
 				DEBUG_WARN("PassPredictCodec::merge: discard entry hex_id=%02x as full",
@@ -499,16 +508,14 @@ private:
 					orbit_params.find(it.first);
 
 				if (aop != orbit_params.end()) {
-					DEBUG_INFO("PassPredictCodec::merge: AOP exists: hex_id=%02x",
-								aop->second.satHexId);
 					pass_predict.records[num_records] = aop->second;
+					with_aop++;
 				} else {
-					DEBUG_INFO("PassPredictCodec::merge: AOP missing: hex_id=%02x", it.first);
 					pass_predict.records[num_records].bulletin.year = 0;
 				}
 			} else {
-				DEBUG_INFO("PassPredictCodec::merge: not operational: hex_id=%02x", it.first);
 				pass_predict.records[num_records].bulletin.year = 0;
+				not_operational++;
 			}
 
 			pass_predict.records[num_records].satHexId = it.second.satHexId;
@@ -518,6 +525,9 @@ private:
 		}
 
 		pass_predict.num_records = num_records;
+
+		DEBUG_TRACE("PassPredictCodec::merge: %u declared, %u with AOP, %u out of service",
+					num_records, with_aop, not_operational);
 	}
 
 public:
