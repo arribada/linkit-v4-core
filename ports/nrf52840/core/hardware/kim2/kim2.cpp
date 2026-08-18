@@ -1226,6 +1226,8 @@ void KIM2Device::state_transmit_enter()
     unsigned int tx_timeout_ms = KIM2_TX_TIMEOUT_MS;
     unsigned int rn = 0, period = 0;
     if (kim2_blind_active(rn, period)) {
+        m_is_blind = true;
+        m_blind_inactivity_counter = 0;
         // uint64 intermediate: rn(<=127) * period(<=65535) * 1000 overflows uint32.
         // Cap at 2 h so an extreme config can't park the service indefinitely.
         uint64_t burst_ms = (uint64_t)rn * (uint64_t)period * 1000ULL;
@@ -1260,6 +1262,9 @@ void KIM2Device::state_transmit()
         if (m_cmd_is_ok)
         {
             // Command accepted → now wait for the async emission completion.
+            // The LED completion event is emitted immediately after the +OK ACK so
+            // the user sees the TX indicator clear as soon as the module accepts the command.
+            LEDState::dispatch<SetLEDArgosTXComplete>({});
             m_tx_phase = TxPhase::AWAIT_TX;
             // fall through into phase-2 polling this same tick
         }
@@ -1281,6 +1286,11 @@ void KIM2Device::state_transmit()
     // ---- Phase 2: await +TX=<status> emission completion (existing logic) ----
     if(m_tx_done)
     {
+        if (m_is_blind)
+        {
+            DEBUG_TRACE("KIM2Device::state_transmit: TX DONE - EXT WAKEUP high");
+            GPIOPins::set(SAT_EXTWAKEUP);
+        }
         m_tx_done = false;
         DEBUG_TRACE("KIM2Device::state_transmit: TX status %d", m_kim2_comm.m_tx_status);
         if (m_tx_buffer.size()) {
@@ -1298,15 +1308,34 @@ void KIM2Device::state_transmit()
     }
     else if(m_is_error)
     {
+        if (m_is_blind)
+        {
+            DEBUG_TRACE("KIM2Device::state_transmit: TX DONE ERROR - EXT WAKEUP high");
+            GPIOPins::set(SAT_EXTWAKEUP);
+        }
         DEBUG_ERROR("KIM2Device::state_transmit: error during TX");
         m_tx_buffer.clear();
         KIM2_STATE_CHANGE(transmit, error);
     }
     else
     {
+        if(m_is_blind)
+        {
+            if(++m_blind_inactivity_counter == 5) //500 ms
+            {
+                DEBUG_TRACE("KIM2Device::state_transmit: EXT WAKEUP low");
+                GPIOPins::clear(SAT_EXTWAKEUP);
+                // m_kim2_comm.unsubscribe(*this);
+                // m_kim2_comm.deinit();
+
+            }
+        }
+
         if (--m_tx_poll_counter == 0) {
             DEBUG_ERROR("KIM2Device::state_transmit: TX poll timeout");
             m_tx_buffer.clear();
+            DEBUG_TRACE("KIM2Device::state_transmit: TX TIMEOUT - EXT WAKEUP high");
+            GPIOPins::set(SAT_EXTWAKEUP);
             KIM2_STATE_CHANGE(transmit, error);
         } else {
             run_state_machine(KIM2_DELAY_POLL_MS);

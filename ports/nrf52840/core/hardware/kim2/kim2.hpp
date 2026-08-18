@@ -104,6 +104,8 @@ private:
 	KineisModulation m_current_rconf_mode;   ///< Last RCONF modulation written
 	std::atomic<bool> m_tx_done;             ///< Set by ISR on +TX= response
 	unsigned int m_tx_poll_counter;          ///< Remaining TX poll ticks before timeout
+	bool m_is_blind = false;
+	uint16_t m_blind_inactivity_counter = 0;
 
 	/// @brief Two-phase async AT+TX progress (replaces the old 5 s busy-wait for +OK).
 	///        AWAIT_ACK: AT+TX sent, state_transmit() polls for the +OK ACK
