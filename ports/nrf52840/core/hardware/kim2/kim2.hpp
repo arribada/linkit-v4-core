@@ -195,6 +195,10 @@ private:
 	/// @brief Close an RX session: notify KineisEventRxStopped with the elapsed
 	///        RX-on time and clear the RX flags. Idempotent.
 	void finish_rx_session();
+	/// @brief Take the module out of DL mode and leave the receive state.
+	///        Callable outside the state machine so a stop requested by the
+	///        service takes effect before the caller blocks on flash writes.
+	void perform_rx_stop();
 	/// @}
 
 	/// @name Runtime modulation switching (KineisDevice interface)

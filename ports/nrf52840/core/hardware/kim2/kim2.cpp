@@ -85,15 +85,14 @@ static constexpr uint16_t KIM2_RX_START_TIMEOUT_MS  = 3000;
 /// @brief Per-attempt timeout of AT+DL=0, and number of attempts. While
 ///        receiving, the module has far less CPU left for the AT parser and a
 ///        single command can simply be missed, so a short timeout with retries
-///        beats one long wait. Leaving the module in DL mode is not an option:
-///        it answers +ERROR=1203 (unknown AT command) to the AT+TX that
-///        follows, which costs a transmission and a backoff.
+///        beats one long wait.
 static constexpr uint16_t KIM2_RX_STOP_TIMEOUT_MS   = 1500;
 static constexpr uint8_t  KIM2_RX_STOP_ATTEMPTS     = 5;
 /// @brief Settle time before re-sending a stop the module did not accept. A
 ///        silent attempt has already burnt its timeout; a rejected one comes
 ///        back immediately and would otherwise hammer the parser.
 static constexpr uint16_t KIM2_RX_STOP_RETRY_GAP_MS = 300;
+/// @}
 /// @brief Safety window passed to AT+DL=1,<window_s>. Reception is normally
 ///        bounded by the service, which calls stop_receive(); this second
 ///        barrier makes the MODULE stop by itself should the host never issue
@@ -406,10 +405,14 @@ bool KIM2Device::stop_receive()
     m_rx_requested = false;
     m_rx_stop_requested = true;
 
-    // Let the state machine send AT+DL=0 on its next tick: stop_receive() is
-    // called from the service context and send_AT() busy-waits on the UART.
+    // Stop the radio NOW rather than on the next state machine tick. The
+    // caller is typically the RX service committing its AOP table: it goes on
+    // to write the database and the parameters to flash, then a full pass
+    // prediction is recomputed on service_complete(). That is seconds during
+    // which the state machine never runs while the module keeps streaming
+    // about one message per second into a buffer nobody drains.
     if (KIM2_STATE_EQUAL(receive))
-        run_state_machine(0);
+        perform_rx_stop();
     else
         finish_rx_session();   // never actually started, close the books now
 
@@ -1626,71 +1629,7 @@ void KIM2Device::state_receive()
     }
 
     if (m_rx_stop_requested) {
-        bool stopped = false;
-
-        m_rx_stop_requested = false;
-        DEBUG_TRACE("KIM2Device::state_receive: stopping reception");
-
-        for (uint8_t attempt = 1; attempt <= KIM2_RX_STOP_ATTEMPTS; attempt++) {
-            if (send_AT(AT_DL_STOP, std::nullopt, KIM2_RX_STOP_TIMEOUT_MS)) {
-                stopped = true;
-                break;
-            }
-
-            const bool rejected = m_is_error;
-
-            // Neither +OK nor an expired window: the stop did not take effect,
-            // whether the module stayed silent (command swallowed) or answered
-            // +ERROR (it did not parse what reached it). Drain, check the
-            // safety window, let the parser settle, and send it again.
-            m_kim2_comm.process_rx();
-            dispatch_allcast_queue();
-            if (m_rx_window_ended) {
-                stopped = true;
-                break;
-            }
-
-            DEBUG_WARN("KIM2Device::state_receive: AT+DL=0 %s (attempt %u/%u), retrying",
-                       rejected ? "rejected" : "unanswered",
-                       static_cast<unsigned int>(attempt),
-                       static_cast<unsigned int>(KIM2_RX_STOP_ATTEMPTS));
-
-            if (rejected)
-                PMU::delay_ms(KIM2_RX_STOP_RETRY_GAP_MS);
-        }
-
-        m_kim2_comm.process_rx();
-        dispatch_allcast_queue();
-        m_rx_window_ended = false;
-
-        if (!stopped) {
-            // The module never confirmed it left DL mode: it would reject the
-            // next AT+TX. Cut the rail instead — the next transmission powers it
-            // back on and reconfigures it from scratch.
-            //
-            // state_power_off_enter() clears m_packet_buffer, so a transmission
-            // queued while we were receiving would be silently dropped here.
-            // Carry it across the power cycle and re-arm the module for it.
-            const std::string pending_tx = m_packet_buffer;
-            const KineisModulation pending_mode = m_tx_mode;
-
-            DEBUG_ERROR("KIM2Device::state_receive: reception could not be stopped, "
-                        "powering the module off to clear DL mode");
-            m_rx_requested = false;
-            KIM2_STATE_CHANGE(receive, power_off);
-
-            if (pending_tx.length()) {
-                DEBUG_INFO("KIM2Device::state_receive: re-arming the TX queued during "
-                           "reception (%u bytes) across the power cycle",
-                           static_cast<unsigned int>(pending_tx.length() / 2));
-                m_packet_buffer = pending_tx;
-                m_tx_mode = pending_mode;
-                start_device();
-            }
-            return;
-        }
-
-        KIM2_STATE_CHANGE(receive, idle);
+        perform_rx_stop();
         return;
     }
 
@@ -1703,6 +1642,96 @@ void KIM2Device::state_receive()
     }
 
     run_state_machine(KIM2_RX_TICK_MS);
+}
+
+/**
+ * @brief Take the module out of DL mode, right now, in the caller's context.
+ *
+ * Called both from the receive state and directly from stop_receive(). The
+ * direct path matters: the RX service asks for the stop while committing its
+ * AOP table, then spends seconds writing flash and recomputing a pass
+ * prediction before the state machine gets a chance to run. Deferring the
+ * command to the next tick left the module streaming into a UART buffer nobody
+ * was draining — measured at 4 s in the field, ending in an RX overflow and a
+ * rejected command.
+ *
+ * Safe to call from outside the state machine: allcast lines arriving while we
+ * wait are only queued by react(), never dispatched, so no listener runs from
+ * inside this call.
+ */
+void KIM2Device::perform_rx_stop()
+{
+    bool stopped = false;
+
+    m_rx_stop_requested = false;
+    DEBUG_TRACE("KIM2Device::state_receive: stopping reception");
+
+    // send_AT() drains the UART every millisecond while it waits, so the
+    // backlog the module is still streaming keeps being parsed and the
+    // allcast messages queued behind the reply are not lost — they are
+    // dispatched right after the loop.
+    for (uint8_t attempt = 1; attempt <= KIM2_RX_STOP_ATTEMPTS; attempt++) {
+        if (send_AT(AT_DL_STOP, std::nullopt, KIM2_RX_STOP_TIMEOUT_MS)) {
+            stopped = true;
+            break;
+        }
+
+        const bool rejected = m_is_error;
+
+        // Neither +OK nor an expired window: the stop did not take effect,
+        // whether the module stayed silent (command swallowed) or answered
+        // +ERROR (it did not parse what reached it). Drain, check the
+        // safety window, let the parser settle, and send it again.
+        m_kim2_comm.process_rx();
+        dispatch_allcast_queue();
+        if (m_rx_window_ended) {
+            stopped = true;
+            break;
+        }
+
+        DEBUG_WARN("KIM2Device::state_receive: AT+DL=0 %s (attempt %u/%u), retrying",
+                   rejected ? "rejected" : "unanswered",
+                   static_cast<unsigned int>(attempt),
+                   static_cast<unsigned int>(KIM2_RX_STOP_ATTEMPTS));
+
+        if (rejected)
+            PMU::delay_ms(KIM2_RX_STOP_RETRY_GAP_MS);
+    }
+
+    m_kim2_comm.process_rx();
+    dispatch_allcast_queue();
+    m_rx_window_ended = false;
+
+    if (!stopped) {
+        // The module never confirmed it left DL mode: it would reject the
+        // next AT+TX. Cut the rail instead — the next transmission powers it
+        // back on and reconfigures it from scratch.
+        //
+        // state_power_off_enter() clears m_packet_buffer, so a transmission
+        // queued while we were receiving would be silently dropped here.
+        // Carry it across the power cycle and re-arm the module for it.
+        const std::string pending_tx = m_packet_buffer;
+        const KineisModulation pending_mode = m_tx_mode;
+
+        DEBUG_ERROR("KIM2Device::state_receive: reception could not be stopped, "
+                    "powering the module off to clear DL mode");
+        m_rx_requested = false;
+        KIM2_STATE_CHANGE(receive, power_off);
+
+        if (pending_tx.length()) {
+            DEBUG_INFO("KIM2Device::state_receive: re-arming the TX queued during "
+                       "reception (%u bytes) across the power cycle",
+                       static_cast<unsigned int>(pending_tx.length() / 2));
+            m_packet_buffer = pending_tx;
+            m_tx_mode = pending_mode;
+            start_device();
+        }
+        return;
+    }
+
+    KIM2_STATE_CHANGE(receive, idle);
+    return;
+
 }
 
 void KIM2Device::state_receive_exit()
@@ -1764,12 +1793,10 @@ void KIM2Device::dispatch_allcast_queue()
         unsigned int size_bits = 0;
         const std::string packet = KIM2::allcast_to_bytes(hex, size_bits);
         if (packet.empty()) {
-            DEBUG_TRACE("KIM2Device: malformed allcast payload: %s", hex.c_str());
+            DEBUG_WARN("KIM2Device: malformed allcast payload: %s", hex.c_str());
             continue;
         }
 
-        DEBUG_TRACE("KIM2Device: allcast received (%u bits, %u bytes)",
-                    size_bits, static_cast<unsigned int>(packet.size()));
         notify(KineisEventRxPacket({ packet, size_bits }));
     }
 }

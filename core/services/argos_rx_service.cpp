@@ -18,6 +18,18 @@ static constexpr unsigned int ARGOS_RX_MIN_WINDOW_SECS = 60;
 /// @brief Bound on the number of candidate passes examined per scheduling call.
 static constexpr unsigned int ARGOS_RX_MAX_PASS_CANDIDATES = 16;
 
+/// @brief Age beyond which a campaign that never completed is committed with
+///        whatever it has.
+///
+///        The commit normally waits for every satellite declared by the
+///        constellation status to have an orbit bulletin. That is the right
+///        rule, but it assumes the two always agree. If a satellite is listed
+///        as operational while its AOP is never broadcast, the campaign waits
+///        for a message that will never come and no update is ever written.
+///        Past this age the satellites we do have are committed and the others
+///        keep their previous bulletin.
+static constexpr unsigned int ARGOS_RX_CAMPAIGN_MAX_SECS = 2 * 24 * 3600;
+
 /// @brief Construct Argos RX service with a KineisDevice backend.
 /// @param device  KineisDevice for RX operations (SMD/KIM2).
 ArgosRxService::ArgosRxService(KineisDevice& device) : Service(ServiceIdentifier::ARGOS_RX, "ARGOSRX"), m_kineis(device) {
@@ -227,12 +239,81 @@ void ArgosRxService::update_pass_predict(BasePassPredict& new_pass_predict) {
 			num_updated_records, new_pass_predict.num_records,
 			m_constellation_status_tracking.is_complete() ? "complete" : "partial");
 
-	// Only commit once the whole constellation status set has been received and
-	// every satellite it declares has been matched with an orbit bulletin,
-	// otherwise the database would be written with holes.
-	if (m_constellation_status_tracking.is_complete() &&
-		new_pass_predict.num_records &&
-		num_updated_records == new_pass_predict.num_records) {
+	// Normal case: commit once the whole constellation status set has been
+	// received and every satellite it declares has been matched with an orbit
+	// bulletin, so the database is never written with holes.
+	const bool campaign_complete = m_constellation_status_tracking.is_complete() &&
+			new_pass_predict.num_records &&
+			num_updated_records == new_pass_predict.num_records;
+
+	// Safety valve: a campaign that drags on is committed with what it has.
+	// Waiting forever for one satellite would keep the whole database frozen,
+	// including the bulletins that were correctly received and are ageing.
+	const std::time_t now = service_current_time();
+	bool campaign_expired = false;
+
+	if (m_campaign_started == 0)
+		m_campaign_started = now;
+	else if (!campaign_complete && num_updated_records &&
+			 (now - m_campaign_started) > (std::time_t)ARGOS_RX_CAMPAIGN_MAX_SECS) {
+		campaign_expired = true;
+		DEBUG_WARN("ArgosRxService::update_pass_predict: campaign running for %llu s "
+				"with %u/%u satellites, committing what we have",
+				(unsigned long long)(now - m_campaign_started),
+				num_updated_records, new_pass_predict.num_records);
+	}
+
+	if (campaign_complete || campaign_expired) {
+		// A complete status set is authoritative: the NT states that a
+		// satellite previously operational and absent from the current CS
+		// messages is to be considered decommissioned. Drop it from the
+		// database, otherwise it lingers with an operational status and an
+		// ageing bulletin, and the scheduler keeps booking windows on a
+		// satellite that is no longer there. Only on a complete set — on the
+		// expiry path the picture may be partial, and only when the merge did
+		// not truncate, otherwise "absent" would just mean "did not fit".
+		if (campaign_complete && new_pass_predict.num_records < MAX_AOP_SATELLITE_ENTRIES) {
+			unsigned int kept = 0;
+
+			for (unsigned int i = 0; i < existing_pass_predict.num_records; i++) {
+				bool declared = false;
+
+				for (unsigned int j = 0; j < new_pass_predict.num_records; j++) {
+					if (existing_pass_predict.records[i].satHexId ==
+							new_pass_predict.records[j].satHexId) {
+						declared = true;
+						break;
+					}
+				}
+				if (!declared) {
+					DEBUG_WARN("ArgosRxService::update_pass_predict: hexid=%02x no longer "
+							"declared by the constellation, removed from the database",
+							(unsigned int)existing_pass_predict.records[i].satHexId);
+					continue;
+				}
+				if (kept != i)
+					existing_pass_predict.records[kept] = existing_pass_predict.records[i];
+				kept++;
+			}
+			existing_pass_predict.num_records = static_cast<uint8_t>(kept);
+		}
+
+		// Silence the radio FIRST, before touching flash. What follows — writing
+		// the database, then the parameters, then the pass prediction recomputed
+		// by service_complete() — takes seconds during which the main loop never
+		// returns to the UART. Leaving the module in DL mode through that means
+		// about one allcast message per second piling up in a buffer nobody
+		// drains: the RX overflows, lines are truncated and merged, and the
+		// AT+DL=0 that eventually goes out lands on a saturated link. Measured at
+		// four seconds in the field.
+		//
+		// Order matters within these two lines too: stop_receive() is synchronous
+		// and dispatches the frames still queued in the driver, which would call
+		// back into react() and re-enter this very function. Closing the
+		// acceptance window first makes those late frames a no-op.
+		m_rx_window_open = false;
+		service_cancel();
+
 		DEBUG_INFO("ArgosRxService::update_pass_predict: committing %u AOP records", num_updated_records);
 		configuration_store->write_pass_predict(existing_pass_predict);
 		std::time_t new_aop_time = service_current_time();
@@ -241,8 +322,7 @@ void ArgosRxService::update_pass_predict(BasePassPredict& new_pass_predict) {
 		m_orbit_params_map.clear();
 		m_constellation_status_map.clear();
 		m_constellation_status_tracking.reset();
-		m_rx_window_open = false;
-		service_cancel();
+		m_campaign_started = 0;
 		service_complete();
 	}
 }

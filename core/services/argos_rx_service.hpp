@@ -108,6 +108,11 @@ private:
 
 	unsigned int m_cumulative_rx_time = 0;
 
+	/// @brief When the current campaign started, i.e. when the first packet was
+	///        decoded after the last commit. Bounds how long the database can
+	///        stay frozen waiting for a satellite that never reports.
+	std::time_t m_campaign_started = 0;
+
 	void react(KineisEventRxPacket const&) override;
 	void react(KineisEventDeviceError const&) override;
 	void react(KineisEventPowerOff const&) override;
