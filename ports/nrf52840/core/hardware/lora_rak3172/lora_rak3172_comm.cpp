@@ -286,8 +286,8 @@ LoRa::RespType LoRaComm::parse_rx_line_protocol(std::string& line)
     // don't pollute m_last_value and race with the next AT query.
     // Typical boot output: "Current Work Mode: LoRaWAN.", "RAKwireless...",
     // "Welcome...", "LoRaWAN stack has been initialized".
-    if (line.compare(0, 5, "Curren") == 0 ||    // "Current Work Mode: ..."
-        line.compare(0, 10, "RAKwireless") == 0 ||
+    if (line.compare(0, 6, "Curren") == 0 ||    // "Current Work Mode: ..."
+        line.compare(0, 11, "RAKwireless") == 0 ||
         line.compare(0, 7, "Welcome") == 0 ||
         line.compare(0, 7, "LoRaWAN") == 0 ||
         line.compare(0, 6, "Region") == 0) {

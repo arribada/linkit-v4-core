@@ -158,6 +158,33 @@ private:
     std::string m_packet_buffer;    // Hex-encoded payload waiting to be sent
     bool m_join_attempted;          // A join was already tried for the packet currently buffered
 
+    // Join window sizing. The module runs the whole retry cycle itself once
+    // AT+JOIN is accepted, so the firmware timeout must OUTLAST that cycle or it
+    // pre-empts the very procedure it supervises.
+    //
+    // Per attempt the module spends: JoinRequest airtime (~0.4 s at DR3, up to
+    // ~1.5 s at DR0) + RX1 at JOIN_ACCEPT_DELAY1 = 5 s + RX2 at
+    // JOIN_ACCEPT_DELAY2 = 6 s. So an attempt is not free until ~7 s, and
+    // JOIN_INTERVAL_S is the gap BETWEEN attempts, not the attempt budget.
+    // Cycle = attempts * 7 s + (attempts - 1) * interval.
+    // With 8 and 10 that is 56 + 70 = ~126 s, which the old flat 90 ms timeout
+    // could not cover: it fired mid-cycle, the FSM re-entered joining, and the
+    // module answered the second AT+JOIN with AT_ERROR because it was still
+    // busy. That is the "error response type=1" seen in the field.
+    static constexpr unsigned int JOIN_ATTEMPTS        = 8;
+    static constexpr unsigned int JOIN_INTERVAL_S      = 10;
+    static constexpr unsigned int JOIN_ATTEMPT_COST_S  = 7;   ///< airtime + RX1 + RX2
+    static constexpr unsigned int JOIN_TIMEOUT_MARGIN_S = 20; ///< module bookkeeping + UART latency
+    static constexpr unsigned int JOIN_WINDOW_MS =
+        ((JOIN_ATTEMPTS * JOIN_ATTEMPT_COST_S) +
+         ((JOIN_ATTEMPTS - 1) * JOIN_INTERVAL_S) +
+         JOIN_TIMEOUT_MARGIN_S) * 1000;
+
+    // How often, while waiting, to ask the module for the truth with AT+NJS=?
+    // instead of trusting the single +EVT:JOINED we may never see.
+    static constexpr unsigned int JOIN_NJS_POLL_TICKS = 20;  ///< 20 * 500 ms = 10 s
+    unsigned int m_join_wait_ticks;
+
     // Configuration tracking
     unsigned int m_config_step;
     bool m_is_configured;               // true after first successful full configuration
@@ -189,6 +216,15 @@ private:
     void state_configure_enter();
     void state_configure();
     void state_configure_exit();
+
+    /// @brief True when this build is OTAA but the join credentials are unset.
+    /// Always false for ABP (njm == 0), which activates from DEVADDR + session
+    /// keys and never touches APPEUI/APPKEY.
+    bool otaa_credentials_missing() const;
+
+    /// @brief Ask the module whether it is joined (AT+NJS=?). Local UART query,
+    /// no RF and no duty-cycle cost.
+    bool query_join_state();
 
     void state_joining_enter();
     void state_joining();

@@ -331,10 +331,16 @@ unsigned int LoRaTxService::service_next_timeout() {
 	// backing it up. Worst-case chain for a single service_initiate():
 	//   power_on  ~6 s   (1 s boot wait + up to 8 AT ping retries)
 	//   configure ~5 s   (16 steps, plus a 3 s reboot when AT+NWM changes)
-	//   joining    90 s  (state_joining_enter; OTAA only, and capped at one
-	//                     window per packet by m_join_attempted)
+	//   joining   146 s  (JOIN_WINDOW_MS, derived from JOIN_ATTEMPTS/INTERVAL in
+	//                     lora_rak3172.hpp; OTAA only, and capped at one window
+	//                     per packet by m_join_attempted)
 	//   transmit  150 s  (lora_rak3172.cpp tx_timeout_ms[DR0])
-	// ≈ 251 s at DR0, ≈ 126 s at the DR3 default. 300 s clears both.
+	// ≈ 307 s at DR0, ≈ 182 s at the DR3 default. 360 s clears both.
+	//
+	// Was 300 s, sized against the old flat 90 s join timeout. That timeout was
+	// shorter than the module's own 8-attempt cycle and has been corrected to
+	// cover it, which pushed the worst-case chain past 300 s — so this net had
+	// to move with it or it would start pre-empting the join it supervises.
 	//
 	// The previous 60 s was shorter than the DR0 and DR1 TX windows on their
 	// own. What that costs, precisely: firing mid-TX runs service_cancel() →
@@ -350,7 +356,7 @@ unsigned int LoRaTxService::service_next_timeout() {
 	// bounded by send_AT's own 2 s command timeout if the module withholds OK,
 	// or by initiate_timeout(tx_timeout_ms[dr]) if it accepts and defers. This
 	// net never arbitrates that.
-	return 300000;
+	return 360000;
 }
 
 bool LoRaTxService::service_is_triggered_on_surfaced(bool& immediate) {

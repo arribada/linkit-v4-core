@@ -118,6 +118,7 @@ LoRaDevice::LoRaDevice()
 {
     m_packet_buffer.clear();
     m_join_attempted = false;
+    m_join_wait_ticks = 0;
     m_state = State::power_off;
     m_joined = false;
     m_join_failed = false;
@@ -644,25 +645,43 @@ void LoRaDevice::state_configure()
 
         case 4:
             // Set Application EUI (OTAA only)
-            if (m_config.njm == 1 && !m_config.appeui.empty()) {
+            if (m_config.njm == 1) {
+                if (m_config.appeui.empty()) {
+                    // Was a silent skip: the module then joined with whatever
+                    // APPEUI sat in its own flash. Say so, loudly.
+                    DEBUG_ERROR("LoRaDevice: LORA_APPEUI (LRP02) is UNSET — module keeps its stored JoinEUI");
+                    break;
+                }
                 if (m_config.appeui.size() != 16) {
                     DEBUG_ERROR("LoRaDevice: invalid APPEUI length %u (expected 16 hex chars)", static_cast<unsigned>(m_config.appeui.size()));
                     at_error = true;
                     break;
                 }
                 at_error = !send_AT(AT_SET_APPEUI, m_config.appeui);
+                if (!at_error)
+                    DEBUG_INFO("LoRaDevice: APPEUI written to module (%s)", m_config.appeui.c_str());
             }
             break;
 
         case 5:
             // Set Application Key (OTAA) or session keys (ABP)
-            if (m_config.njm == 1 && !m_config.appkey.empty()) {
+            if (m_config.njm == 1) {
+                if (m_config.appkey.empty()) {
+                    // Same silent-skip trap as APPEUI, and the more damaging of
+                    // the two: a wrong AppKey fails the server-side MIC check,
+                    // so the JoinRequest is discarded without any reply at all.
+                    DEBUG_ERROR("LoRaDevice: LORA_APPKEY (LRP03) is UNSET — module keeps its stored AppKey; "
+                                "the server will drop the JoinRequest on MIC");
+                    break;
+                }
                 if (m_config.appkey.size() != 32) {
                     DEBUG_ERROR("LoRaDevice: invalid APPKEY length %u (expected 32 hex chars)", static_cast<unsigned>(m_config.appkey.size()));
                     at_error = true;
                     break;
                 }
                 at_error = !send_AT(AT_SET_APPKEY, m_config.appkey);
+                if (!at_error)
+                    DEBUG_INFO("LoRaDevice: APPKEY written to module (32 hex chars, not logged)");
             } else if (m_config.njm == 0) {
                 if (!m_config.devaddr.empty()) {
                     if (m_config.devaddr.size() != 8) {
@@ -869,6 +888,21 @@ void LoRaDevice::state_configure_exit() {
 //   - Timeout after 90 seconds
 // ========================================================================
 
+bool LoRaDevice::otaa_credentials_missing() const
+{
+    // ABP activates from DEVADDR + NWKSKEY + APPSKEY and never uses these two,
+    // so it can never be "missing credentials" by this definition.
+    return m_config.njm == 1 && (m_config.appeui.empty() || m_config.appkey.empty());
+}
+
+bool LoRaDevice::query_join_state()
+{
+    // AT+NJS=? is a local UART query: no RF, no duty-cycle cost, safe to poll.
+    if (!send_AT(AT_GET_NJS))
+        return false;
+    return m_lora_comm.m_last_value == "1";
+}
+
 void LoRaDevice::state_joining_enter()
 {
     DEBUG_INFO("LoRaDevice::state_joining_enter: NJM=%u", m_config.njm);
@@ -880,25 +914,53 @@ void LoRaDevice::state_joining_enter()
         return;
     }
 
+    // Refuse to burn a join window with credentials the server cannot possibly
+    // accept. With LORA_NJM defaulting to 1 (OTAA) and LORA_APPEUI/LORA_APPKEY
+    // both defaulting to "", an unprovisioned unit used to reach here, skip the
+    // AT+APPEUI/AT+APPKEY writes silently in configure, and join with whatever
+    // keys were left in the module's own flash. The server drops those on MIC
+    // and the only symptom is a join that never completes.
+    if (otaa_credentials_missing()) {
+        DEBUG_ERROR("LoRaDevice: OTAA join refused — LORA_APPEUI(LRP02)=%s LORA_APPKEY(LRP03)=%s; "
+                    "provision them (PARMW) then force a write (SATVF force=1)",
+                    m_config.appeui.empty() ? "UNSET" : "set",
+                    m_config.appkey.empty() ? "UNSET" : "set");
+        m_is_error = true;
+        return;
+    }
+
     m_joined = false;
     m_join_failed = false;
     m_is_error = false;
+    m_join_wait_ticks = 0;
     // Consume this packet's single join allowance, whoever initiated the join
     // (configure case 101 on a cold dispatch, or the state_idle guard).
     m_join_attempted = true;
 
     // AT+JOIN=<start>:<auto_join>:<interval>:<attempts>
-    // start=1, auto_join=0, interval=10s, attempts=8
-    // - auto_join=0: no persistent rejoin on failure (saves battery)
-    // - attempts=8: ~80s max join window, suitable for surfacing duration
-    if (!send_AT(AT_JOIN, "1:0:10:8")) {
-        DEBUG_ERROR("LoRaDevice: AT+JOIN command failed");
-        m_is_error = true;
+    // start=1, auto_join=0 (no persistent rejoin on failure — saves battery).
+    // Attempt count and interval are unchanged from the previous behaviour, so
+    // the RF footprint is identical; only the supervising timeout is corrected.
+    const std::string join_args = "1:0:" + std::to_string(JOIN_INTERVAL_S) +
+                                  ":" + std::to_string(JOIN_ATTEMPTS);
+    if (!send_AT(AT_JOIN, join_args)) {
+        // A module still running its previous join cycle answers AT_ERROR /
+        // AT_BUSY_ERROR here. That is not a device fault and must not cost an
+        // error strike: ask it directly whether it is already joined, and
+        // otherwise just keep supervising the cycle it is still running.
+        if (query_join_state()) {
+            DEBUG_INFO("LoRaDevice: AT+JOIN refused but module reports joined (NJS=1)");
+            m_joined = true;
+            return;
+        }
+        DEBUG_WARN("LoRaDevice: AT+JOIN refused (module busy in a previous cycle) — supervising it");
+        initiate_timeout(JOIN_WINDOW_MS);
         return;
     }
 
-    // Timeout for join procedure (90 seconds = 8 attempts * 10s + margin)
-    initiate_timeout(90000);
+    DEBUG_INFO("LoRaDevice: join started (%u attempts, %u s apart, window %u s)",
+               JOIN_ATTEMPTS, JOIN_INTERVAL_S, JOIN_WINDOW_MS / 1000);
+    initiate_timeout(JOIN_WINDOW_MS);
 }
 
 void LoRaDevice::state_joining()
@@ -912,12 +974,36 @@ void LoRaDevice::state_joining()
     }
     else if (m_join_failed || m_is_error)
     {
+        // Before declaring failure, ask the module directly. +EVT:JOINED is a
+        // single asynchronous line: if the cooperative scheduler was starved
+        // while the GNSS receiver streamed (observed: 3.5 min with no LoRa
+        // tick), process_rx() was not pumping and the event can be dropped on
+        // ISR-buffer overflow — after which the join has actually SUCCEEDED and
+        // the firmware would never know. AT+NJS=? is the module's own state and
+        // costs no RF, so it is the safer source of truth on this edge.
+        if (query_join_state()) {
+            DEBUG_WARN("LoRaDevice: join event missed (timeout/error) but module reports joined (NJS=1) — recovering");
+            m_joined = true;
+            LORA_STATE_CHANGE(joining, idle);
+            return;
+        }
         DEBUG_ERROR("LoRaDevice: join failed");
         LORA_STATE_CHANGE(joining, error);
     }
     else
     {
-        // Still waiting for join event
+        // Still waiting. Poll NJS periodically for the same reason as above:
+        // it turns a missed event into at most JOIN_NJS_POLL_TICKS * 500 ms of
+        // extra waiting instead of a whole wasted window.
+        if (++m_join_wait_ticks >= JOIN_NJS_POLL_TICKS) {
+            m_join_wait_ticks = 0;
+            if (query_join_state()) {
+                DEBUG_INFO("LoRaDevice: joined (detected by NJS poll)");
+                m_joined = true;
+                LORA_STATE_CHANGE(joining, idle);
+                return;
+            }
+        }
         run_state_machine(500);
     }
 }
@@ -1463,30 +1549,38 @@ bool LoRaDevice::write_credentials_from_config()
     }
 
     if (m_config.njm == 1) {
-        // OTAA: APPEUI + APPKEY
-        if (!m_config.appeui.empty()) {
+        // OTAA: APPEUI + APPKEY. This is the SATVF force=1 path, i.e. an
+        // operator explicitly asking "push my credentials to the module". It
+        // used to skip an unset key silently and still report success, so the
+        // operator had no way to tell a real write from a no-op. Report both
+        // outcomes at a level that survives DEBUG_LEVEL=3.
+        if (m_config.appeui.empty()) {
+            DEBUG_ERROR("write_credentials: LORA_APPEUI (LRP02) UNSET — NOT written, module keeps its stored JoinEUI");
+        } else {
             if (m_config.appeui.size() != 16) {
                 DEBUG_ERROR("write_credentials: invalid APPEUI length %u",
                             static_cast<unsigned>(m_config.appeui.size()));
                 return false;
             }
-            DEBUG_TRACE("write_credentials: step APPEUI");
             if (!send_AT(AT_SET_APPEUI, m_config.appeui)) {
                 DEBUG_ERROR("write_credentials: AT_SET_APPEUI failed");
                 return false;
             }
+            DEBUG_INFO("write_credentials: APPEUI written (%s)", m_config.appeui.c_str());
         }
-        if (!m_config.appkey.empty()) {
+        if (m_config.appkey.empty()) {
+            DEBUG_ERROR("write_credentials: LORA_APPKEY (LRP03) UNSET — NOT written, module keeps its stored AppKey");
+        } else {
             if (m_config.appkey.size() != 32) {
                 DEBUG_ERROR("write_credentials: invalid APPKEY length %u",
                             static_cast<unsigned>(m_config.appkey.size()));
                 return false;
             }
-            DEBUG_TRACE("write_credentials: step APPKEY");
             if (!send_AT(AT_SET_APPKEY, m_config.appkey)) {
                 DEBUG_ERROR("write_credentials: AT_SET_APPKEY failed");
                 return false;
             }
+            DEBUG_INFO("write_credentials: APPKEY written (32 hex chars, not logged)");
         }
     } else {
         // ABP: DEVADDR + NWKSKEY + APPSKEY all required for a functional session.
