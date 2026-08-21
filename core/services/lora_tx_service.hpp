@@ -48,6 +48,21 @@ private:
 	static constexpr unsigned int DEVICE_ERROR_MAX_CONSECUTIVE = 3;
 	static constexpr unsigned int DEVICE_ERROR_BACKOFF_BASE_MS = 60000;   ///< 1 min
 	static constexpr unsigned int DEVICE_ERROR_BACKOFF_MAX_MS  = 600000;  ///< 10 min
+
+	/// @brief How long TX stays suspended after DEVICE_ERROR_MAX_CONSECUTIVE
+	/// strikes, before one probe dispatch is allowed through.
+	///
+	/// This used to be forever: service_complete(no reschedule) plus a counter
+	/// that only cleared on a successful TX, which could never happen because
+	/// no TX was attempted. One bad patch of coverage killed the rest of the
+	/// session, recoverable only by reboot — observed in the field as 18 h of
+	/// "skipping TX" while GNSS kept taking fixes normally.
+	///
+	/// A periodic tracker (boat) has no surfacing events at all, so the probe is
+	/// its only way back. One probe/h worst case is roughly one join window,
+	/// which is negligible next to the GNSS duty cycle it runs alongside.
+	static constexpr unsigned int DEVICE_ERROR_PROBE_PERIOD_S = 3600;  ///< 1 h
+	std::time_t m_device_error_suspend_until = 0;
 	bool m_last_tx_had_gps = false;
 	bool m_is_surfacing_burst = false;
 	bool m_awaiting_surfacing = false;  ///< Burst ended, waiting for next surface event

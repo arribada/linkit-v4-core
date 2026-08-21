@@ -261,10 +261,23 @@ void LoRaTxService::service_initiate() {
 	DEBUG_TRACE("LoRaTxService::service_initiate");
 
 	if (m_consecutive_device_errors >= DEVICE_ERROR_MAX_CONSECUTIVE) {
-		DEBUG_WARN("LoRaTxService::service_initiate: skipping TX — %u consecutive errors, suspending",
-		           m_consecutive_device_errors);
-		service_complete(nullptr, nullptr, false);
-		return;
+		// Time-bounded, not permanent. Once the deadline passes, let exactly one
+		// dispatch through as a probe by stepping the counter back below the
+		// threshold: if it succeeds, TxComplete clears the counter outright; if
+		// it fails, react() puts it back at MAX and arms a fresh deadline. That
+		// keeps the battery guard (no free-running retry storm) while making the
+		// suspension recoverable without a reboot.
+		std::time_t now = service_current_time();
+		if (now < m_device_error_suspend_until) {
+			DEBUG_WARN("LoRaTxService::service_initiate: skipping TX — %u consecutive errors, "
+			           "suspended for another %llu s",
+			           m_consecutive_device_errors,
+			           (unsigned long long)(m_device_error_suspend_until - now));
+			service_complete(nullptr, nullptr, false);
+			return;
+		}
+		DEBUG_INFO("LoRaTxService::service_initiate: suspension elapsed — probing with one TX");
+		m_consecutive_device_errors = DEVICE_ERROR_MAX_CONSECUTIVE - 1;
 	}
 
 	m_is_first_tx = false;
@@ -479,7 +492,21 @@ void LoRaTxService::notify_peer_event(ServiceEvent& e) {
 				m_device.warm_up_for_tx();
 			}
 		} else {
-			// Surface. Any pending "cooldown-end warm-up" task from a prior
+			// Surface: a genuinely new transmission opportunity — the tag may
+			// now be under a gateway it was not under during the last dive. Clear
+			// the device-error suspension so a dive that burned all three strikes
+			// does not carry its penalty into this surface. Without this the
+			// counter only ever cleared on service_init or a successful TX, so a
+			// latched turtle stayed silent for the whole session even though it
+			// kept surfacing.
+			if (m_consecutive_device_errors) {
+				DEBUG_INFO("LoRaTxService: surface — clearing %u device error(s), TX re-armed",
+				           m_consecutive_device_errors);
+				m_consecutive_device_errors = 0;
+				m_device_error_suspend_until = 0;
+			}
+
+			// Any pending "cooldown-end warm-up" task from a prior
 			// dive is left armed — if the cooldown expires while the user is
 			// passively surfacing (no TX allowed yet), the task will warm up
 			// the module exactly when the cooldown ends so that the moment a
@@ -1096,8 +1123,10 @@ void LoRaTxService::react(KineisEventDeviceError const&) {
 	           m_consecutive_device_errors, DEVICE_ERROR_MAX_CONSECUTIVE);
 	{
 		if (m_consecutive_device_errors >= DEVICE_ERROR_MAX_CONSECUTIVE) {
-			DEBUG_ERROR("LoRaTxService: %u consecutive device errors — suspending TX for this session",
-			            m_consecutive_device_errors);
+			m_device_error_suspend_until = service_current_time() + DEVICE_ERROR_PROBE_PERIOD_S;
+			DEBUG_ERROR("LoRaTxService: %u consecutive device errors — suspending TX for %u s, "
+			            "then one probe (a surface event clears it sooner)",
+			            m_consecutive_device_errors, DEVICE_ERROR_PROBE_PERIOD_S);
 			service_complete(nullptr, nullptr, false);  // no reschedule
 		} else {
 			unsigned int backoff_ms = DEVICE_ERROR_BACKOFF_BASE_MS << (m_consecutive_device_errors - 1);
