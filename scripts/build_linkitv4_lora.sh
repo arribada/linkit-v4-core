@@ -165,7 +165,18 @@ ENABLE_AXL_SENSOR=${ENABLE_AXL_SENSOR:-OFF}
 # 10 min). Production default is 3600 (one probe per hour). Set via
 # LORA_TX_ERROR_SUSPEND_S=0 or the --no-tx-suspend flag.
 LORA_TX_ERROR_SUSPEND_S=${LORA_TX_ERROR_SUSPEND_S:-3600}
-LORA_DCS_ENABLE=${LORA_DCS_ENABLE:-ON}
+# Default stays OFF, which is what every LoRa build has actually shipped so far
+# (the old DISABLE_LORA_DCS inversion forced it). Keeping it here means existing
+# LoRa turtles are byte-identical to before the naming fix: enforcing the duty
+# cycle would newly expose them to channel refusals on aggressive
+# SURFACING_BURST schedules, and that needs a bench run on a turtle profile
+# before it ships. Deployments that want the ETSI behaviour opt in explicitly --
+# see build_linkitv4_lora_cyprus.sh, which sets ON.
+#
+# Note this is NOT the CMake default: ports/nrf52840/CMakeLists.txt:70 declares
+# the option ON, and this script overrides it. That divergence is deliberate and
+# temporary; close it once the turtle bench run is done.
+LORA_DCS_ENABLE=${LORA_DCS_ENABLE:-OFF}
 if [ -n "${DISABLE_LORA_DCS+x}" ]; then
     if [ "$DISABLE_LORA_DCS" = "ON" ]; then
         LORA_DCS_ENABLE=OFF
