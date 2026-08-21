@@ -1053,9 +1053,29 @@ void SmdSat::state_transmit_pending() {
 		GPIOPins::release_to_highz(SMD_VPA_PIN);
 		DEBUG_TRACE("SmdSat::%s: VPA released for TX", __func__);
 #endif
-		// Keep every repeat of the same message on one Argos MC (RSPB).
-		apply_message_counter_hold();
-		if (!m_cmd.initiate_tx(m_tx_buffer)) {
+		bool tx_started = false;
+		try {
+			// Keep every repeat of the same message on one Argos MC (RSPB).
+			apply_message_counter_hold();
+			tx_started = m_cmd.initiate_tx(m_tx_buffer);
+		} catch (...) {
+			// Both calls reach send_command_aplus, which throws
+			// ErrorCode::SPI_COMMS_ERROR on a transient SPIM fault: initiate_tx
+			// directly, apply_message_counter_hold via read/set_message_counter
+			// (send_command_auto / send_command_2phase both funnel into aplus).
+			// Absorb it here, like every other SPI call in this driver, so it
+			// routes to the SMD error state + cooldown + autofallback
+			// accounting. Letting it unwind instead reaches a global ErrorEvent
+			// that bypasses SMD recovery entirely and leaves m_tx_buffer stale.
+			//
+			// Aborting the TX when only the MC hold threw is deliberate: a throw
+			// there means the SPI link is already faulting, so initiate_tx would
+			// almost certainly follow, and the error state is what drives
+			// recovery.
+			DEBUG_ERROR("SmdSat::%s: TX setup threw (SPI) — aborting TX", __func__);
+			tx_started = false;
+		}
+		if (!tx_started) {
 			DEBUG_ERROR("SmdSat::%s: initiate_tx failed, aborting TX", __func__);
 			m_tx_buffer.clear();
 			SMD_STATE_CHANGE(transmit_pending, error);
