@@ -20,7 +20,7 @@
 # because they are load-bearing for this deployment and must not change silently
 # if someone edits the defaults in build_linkitv4_lora.sh:
 #
-#   DISABLE_LORA_DCS=OFF     -> LORA_DCS_ENABLE=ON. ETSI EN 300 220 duty-cycle
+#   LORA_DCS_ENABLE=ON       -> ETSI EN 300 220 duty-cycle
 #                               enforcement. Cyprus is in the EU; shipping with
 #                               DCS off is not legal.
 #   GNSS_HAS_BACKUP_BATTERY  -> OFF. The Cyprus boards have no V_BCKP coin cell,
@@ -56,7 +56,7 @@ echo ""
 export LORA_BUILD_SUBDIR=LINKIT_CYPRUS
 
 export BATTERY_CHEMISTRY=BATT_CHEM_NCR18650_3100_3400
-export DISABLE_LORA_DCS=OFF
+export LORA_DCS_ENABLE=ON
 export GNSS_HAS_BACKUP_BATTERY=OFF
 export ENABLE_AXL_SENSOR=OFF
 

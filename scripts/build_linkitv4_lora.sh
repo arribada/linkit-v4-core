@@ -146,7 +146,30 @@ echo "Build tag: $(cat TAG_NAME)"
 # - LORA_RAK3172=ON: Use RAK3172-SiP LoRa module
 # - ENABLE_AXL_SENSOR=ON: Enable BMA400 accelerometer
 ENABLE_AXL_SENSOR=${ENABLE_AXL_SENSOR:-OFF}
-DISABLE_LORA_DCS=${DISABLE_LORA_DCS:-OFF}
+# Duty cycle. The switch is POSITIVE and matches the CMake option name exactly:
+# LORA_DCS_ENABLE=ON means the RAK3172 enforces the ETSI EN 300 220 limits
+# (AT+DCS=1); OFF means it does not (AT+DCS=0), which is bench/private-network
+# only.
+#
+# It used to be the negative DISABLE_LORA_DCS, defaulting to OFF and passed
+# STRAIGHT THROUGH to -DLORA_DCS_ENABLE. The two names mean opposite things, so
+# "disable = OFF" silently became "enable = OFF": every LoRa build ever produced
+# by this script shipped AT+DCS=0 and overrode the CMake default of ON. Verified
+# in build/LINKIT_LORA/CMakeCache.txt before this fix.
+#
+# DISABLE_LORA_DCS is still honoured, inverted, so existing callers and CI keep
+# working — but it warns, because it is the name that caused the bug.
+LORA_DCS_ENABLE=${LORA_DCS_ENABLE:-ON}
+if [ -n "${DISABLE_LORA_DCS+x}" ]; then
+    if [ "$DISABLE_LORA_DCS" = "ON" ]; then
+        LORA_DCS_ENABLE=OFF
+    else
+        LORA_DCS_ENABLE=ON
+    fi
+    echo "WARNING: DISABLE_LORA_DCS is deprecated (its inversion was the bug)."
+    echo "         Use LORA_DCS_ENABLE=ON|OFF. Interpreting DISABLE_LORA_DCS=${DISABLE_LORA_DCS}"
+    echo "         as LORA_DCS_ENABLE=${LORA_DCS_ENABLE}."
+fi
 ENABLE_SWS_LOG=${ENABLE_SWS_LOG:-OFF}
 # BATTERY_CHEMISTRY: discharge LUT (default BATT_CHEM_LS17500_2P — 2x Saft LiSOCl2 @ 3.6V parallel)
 # Options: BATT_CHEM_{S18650_2600|CGR18650_2250|NCR18650_3100_3400|LS17500_2P}
@@ -159,7 +182,7 @@ echo "Building LinkIt V4 LoRa RAK3172 with configuration:"
 echo "  LORA_RAK3172=ON"
 echo "  ENABLE_AXL_SENSOR=${ENABLE_AXL_SENSOR}"
 echo "  ENABLE_SWS_LOG=${ENABLE_SWS_LOG}"
-echo "  DISABLE_LORA_DCS=${DISABLE_LORA_DCS}"
+echo "  LORA_DCS_ENABLE=${LORA_DCS_ENABLE}   (ON = ETSI duty cycle enforced, AT+DCS=1)"
 echo "  BATTERY_CHEMISTRY=${BATTERY_CHEMISTRY}"
 echo "  GNSS_HAS_BACKUP_BATTERY=${GNSS_HAS_BACKUP_BATTERY}"
 echo ""
@@ -172,7 +195,7 @@ cmake -DCMAKE_TOOLCHAIN_FILE=../../toolchain_arm_gcc_nrf52.cmake \
       -DENABLE_AXL_SENSOR=${ENABLE_AXL_SENSOR} \
       -DENABLE_SWS_LOG=${ENABLE_SWS_LOG} \
       -DGNSS_HAS_BACKUP_BATTERY=${GNSS_HAS_BACKUP_BATTERY} \
-      -DLORA_DCS_ENABLE=${DISABLE_LORA_DCS} \
+      -DLORA_DCS_ENABLE=${LORA_DCS_ENABLE} \
       -DBATTERY_CHEMISTRY=${BATTERY_CHEMISTRY} \
       -DMETRIC_LATENCY_LOG_ENABLE=$([ "$METRICS" = "ON" ] && echo 1 || echo 0) \
       -DVALIDATION_LOG_ENABLE=$([ "$VALIDATION" = "ON" ] && echo 1 || echo 0) \
