@@ -69,10 +69,29 @@ private:
 	// Persisted state (restored from FsLog on boot)
 	MortalityInfo m_state;
 
+	// H4: after this many consecutive sessions with a GPS attempt but no valid
+	// fix, evaluate mortality on activity+temperature alone (gps_score=0). A
+	// dead bird under dense canopy / in a burrow / with a blocked antenna never
+	// produces a fix, so a strictly GPS-gated evaluation would never confirm it
+	// — the exact scenario the feature exists to catch. 0 would disable the
+	// fallback (kept as a named constant for now; promote to a param if needed).
+	static constexpr uint8_t MORTALITY_NO_FIX_FALLBACK_SESSIONS = 3;
+
+	// H4: partial stationarity credit awarded in the no-GPS fallback path. A
+	// sustained inability to fix is treated as WEAK stationarity evidence (a
+	// sheltered / motionless / dead bird often can't see the sky). Half the full
+	// stationarity score (30) so activity+temperature+this can exceed the 80%
+	// day-increment threshold and still reach CONFIRMED without a fix, while a
+	// real fix still carries more weight.
+	static constexpr unsigned int MORTALITY_NO_FIX_GPS_SCORE = 15;
+
 	// Session-local sensor data (collected from peer events)
 	bool m_has_activity = false;
 	bool m_has_temperature = false;
 	bool m_has_gps = false;
+	bool m_gps_attempted = false;     ///< H4: a GNSS log event arrived this session (valid or not)
+	bool m_no_fix_counted = false;    ///< H4: no-fix streak already incremented this session
+	bool m_fallback_evaluated = false;///< H4: fallback (no-GPS) evaluation already ran this session
 	uint8_t  m_session_activity = 0;
 	double   m_session_body_temp = 0.0;
 	double   m_session_lat = 0.0;
@@ -83,5 +102,5 @@ private:
 	void evaluate_mortality();
 	void persist_state();
 	bool all_inputs_collected() const;
-	unsigned int day_of_year(std::time_t epoch) const;
+	unsigned int eval_day_index(std::time_t epoch) const;
 };
