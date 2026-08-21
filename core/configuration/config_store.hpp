@@ -880,6 +880,36 @@ public:
 		}
 	}
 
+	/// @brief Device-unique seed for the TX-jitter RNGs.
+	///
+	/// Single source of truth for every scheduler that jitters its TX times
+	/// (ArgosTxScheduler, LoRaTxScheduler), so two services on the same unit
+	/// stay aligned and two units never share a sequence.
+	///
+	/// The fallback chain is load-bearing, not defensive padding. argos_id is
+	/// the natural seed on Argos builds — SMD has ARGOS_DECID provisioned (it
+	/// is the ID it transmits) and KIM2 writes DECID+HEXID together at init.
+	/// A LoRa-only build writes NEITHER: both params keep their 0 default, so
+	/// seeding straight from them gives every unit in the fleet mt19937(0),
+	/// the identical jitter sequence, and a TX spread that is a constant
+	/// offset instead of a per-unit one — the exact collisions the jitter
+	/// exists to prevent. PMU::device_identifier() (MCU FICR) is unique per
+	/// chip and always readable, so it closes that case without touching
+	/// provisioning.
+	///
+	/// Kept separate from ArgosConfig::argos_id on purpose: that field is also
+	/// logged as the human-facing "Argos ID", and must keep reporting the real
+	/// provisioned ID (0 included) rather than a synthesised fallback.
+	unsigned int get_tx_jitter_seed() {
+		unsigned int seed = read_param<unsigned int>(ParamID::ARGOS_DECID);
+		if (seed)
+			return seed;
+		seed = read_param<unsigned int>(ParamID::ARGOS_HEXID);
+		if (seed)
+			return seed;
+		return (unsigned int)PMU::device_identifier();
+	}
+
 	/// @brief Populate ArgosConfig struct from current params (handles NORMAL/LB/ZONE modes).
 	void get_argos_configuration(ArgosConfig& argos_config) {
 		auto lb_en = read_param<bool>(ParamID::LB_EN);

@@ -78,7 +78,11 @@ void ArgosTxService::service_init() {
 	}
 
 	DEBUG_INFO("ArgosTxService::service_init: Argos ID=%u", (unsigned int)argos_config.argos_id);
-	m_sched.reset(argos_config.argos_id); // TODO verify if already set at this moment
+	// Jitter seed: shared derivation with LoRaTxService (see
+	// ConfigurationStore::get_tx_jitter_seed) so both services jitter off the
+	// same per-unit value, and a build that provisions no Argos ID still gets
+	// a unique one instead of mt19937(0).
+	m_sched.reset(configuration_store->get_tx_jitter_seed());
 	m_depth_pile_manager.clear();
 	m_is_first_tx = true;
 	m_is_tx_pending = false;

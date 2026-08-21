@@ -33,8 +33,12 @@ void LoRaTxService::service_init() {
 		DEBUG_WARN("LoRaTxService: SURFACING_BURST mode requires UNDERWATER_EN=1 — burst will not trigger without SWS");
 	}
 
-	// Use argos_id as seed for scheduler jitter (or any unique device identifier)
-	m_sched.reset(argos_config.argos_id);
+	// Jitter seed: shared derivation with ArgosTxService (see
+	// ConfigurationStore::get_tx_jitter_seed). On a LoRa-only build neither
+	// Argos ID param is ever written, so this is the path that actually needs
+	// the MCU-id fallback — without it every unit seeds mt19937(0) and the
+	// anti-collision jitter degenerates to a fleet-wide constant offset.
+	m_sched.reset(configuration_store->get_tx_jitter_seed());
 	m_depth_pile_manager.clear();
 	m_is_first_tx = true;
 	m_is_tx_pending = false;

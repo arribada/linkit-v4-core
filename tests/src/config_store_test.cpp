@@ -1454,3 +1454,43 @@ TEST(ConfigStore, CooldownDefaultIs2700)
 	unsigned int interval = store->read_param<unsigned int>(ParamID::MIN_SURFACE_CYCLE_INTERVAL_S);
 	CHECK_EQUAL(2700U, interval);
 }
+
+// get_tx_jitter_seed() is the single seed source shared by ArgosTxService and
+// LoRaTxService. The third case is the one that matters in the field: a
+// LoRa-only build never writes either Argos ID param, so without the MCU-id
+// fallback every unit would seed mt19937(0) and jitter identically.
+TEST(ConfigStore, TxJitterSeedPrefersArgosDecId)
+{
+	store = new LFSConfigurationStore(*main_filesystem);
+	store->init();
+
+	store->write_param(ParamID::ARGOS_DECID, 1234U);
+	store->write_param(ParamID::ARGOS_HEXID, 0x0BADF00DU);
+
+	CHECK_EQUAL(1234U, store->get_tx_jitter_seed());
+}
+
+TEST(ConfigStore, TxJitterSeedFallsBackToArgosHexId)
+{
+	store = new LFSConfigurationStore(*main_filesystem);
+	store->init();
+
+	store->write_param(ParamID::ARGOS_DECID, 0U);
+	store->write_param(ParamID::ARGOS_HEXID, 0x0BADF00DU);
+
+	CHECK_EQUAL(0x0BADF00DU, store->get_tx_jitter_seed());
+}
+
+TEST(ConfigStore, TxJitterSeedFallsBackToDeviceIdWhenNoArgosId)
+{
+	store = new LFSConfigurationStore(*main_filesystem);
+	store->init();
+
+	// LoRa-only provisioning: neither Argos param is ever written.
+	store->write_param(ParamID::ARGOS_DECID, 0U);
+	store->write_param(ParamID::ARGOS_HEXID, 0U);
+
+	// Must be unique-per-chip, never 0.
+	CHECK_EQUAL((unsigned int)PMU::device_identifier(), store->get_tx_jitter_seed());
+	CHECK(store->get_tx_jitter_seed() != 0U);
+}
