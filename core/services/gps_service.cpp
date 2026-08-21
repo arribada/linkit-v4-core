@@ -23,6 +23,7 @@ extern Scheduler *system_scheduler;
 static constexpr unsigned int MS_PER_SEC              = 1000;
 static constexpr unsigned int FIRST_AQPERIOD_SEC      = 30;  ///< Accelerated first fix schedule
 static constexpr unsigned int SERVICE_SAFETY_MARGIN_S = 30;  ///< Extra margin on top of acquisition_timeout for Service watchdog
+static constexpr unsigned int DEEP_IDLE_HARD_CAP_S    = 24 * 3600;  ///< R5: ceiling on any single deep-idle window (see try_enter_deep_idle_or_poweroff)
 
 /// @brief Copy GNSSData fields into GPSLogEntry (avoids 30-line duplication).
 static void copy_gnss_to_log(const GNSSData& src, GPSLogEntry& dst) {
@@ -228,8 +229,8 @@ void GPSService::try_enter_deep_idle_or_poweroff() {
     unsigned int deep_idle_s = configuration_store->read_param<unsigned int>(ParamID::GNSS_DEEP_IDLE_AFTER_OFF_S);
 
     // Always cancel any previously-armed auto-off timer. We're starting a fresh
-    // disposition: either we re-arm (finite duration) or we don't need it
-    // (immediate poweroff / never-poweroff).
+    // disposition: either we re-arm (deep idle, any duration) or we don't need
+    // it (immediate poweroff).
     system_scheduler->cancel_task(m_deep_idle_auto_off_task);
 
     if (deep_idle_s == 0) {
@@ -255,36 +256,70 @@ void GPSService::try_enter_deep_idle_or_poweroff() {
 
     m_deep_idle_started_at_ms = PMU::get_timestamp_ms();   // R5 timestamp
 
-    if (deep_idle_s == 0xFFFFFFFFU) {
-        DEBUG_INFO("GPSService::try_enter_deep_idle_or_poweroff: never-poweroff (rail on indefinitely, M10Q in PMREQ-backup)");
-        VAL_GNSS("dispatch=never_off GNP52=sentinel");
-        return;
-    }
+    // The sentinel (0xFFFFFFFF = "never power the rail off") now arms this task
+    // too, because the scheduling gate in service_next_schedule_in_ms() returns
+    // SCHEDULE_DISABLED for as long as deep-idle is engaged, and
+    // Service::reschedule() arms no timer on SCHEDULE_DISABLED. With no
+    // auto-off task, nothing was left to re-enter that function, so on any
+    // configuration without a peer-event source (UNDERWATER_EN=0, i.e. a plain
+    // periodic tracker) GNSS acquisition stopped permanently — the old code
+    // assumed a surfacing event would always come back. The R5 hard cap lives
+    // inside that same function, so it could not rescue it either.
+    //
+    // But the sentinel task must NOT cut the rail (see the lambda): the M10Q
+    // holds its ephemeris in PMREQ-backup powered off VDD, and on a board with
+    // no V_BCKP coin cell that rail IS the only thing preserving a warm start.
+    // Cutting it would throw away precisely what the sentinel exists to keep.
+    m_deep_idle_is_sentinel = (deep_idle_s == 0xFFFFFFFFU);
 
-    DEBUG_INFO("GPSService::try_enter_deep_idle_or_poweroff: deep-idle for %u s (rail on, M10Q in PMREQ-backup, auto-off timer armed)",
-               deep_idle_s);
-    VAL_GNSS("dispatch=deep_idle_engaged duration_s=%u", deep_idle_s);
+    // Clamp keeps `* MS_PER_SEC` below inside unsigned int: GNP52 accepts up to
+    // 0xFFFFFFFF and anything above ~4.29e6 s would overflow the multiply.
+    unsigned int auto_off_s = (deep_idle_s > DEEP_IDLE_HARD_CAP_S) ? DEEP_IDLE_HARD_CAP_S : deep_idle_s;
+
+    if (m_deep_idle_is_sentinel) {
+        DEBUG_INFO("GPSService::try_enter_deep_idle_or_poweroff: never-poweroff (rail stays on, M10Q in PMREQ-backup, scheduler re-opens in %u s)",
+                   auto_off_s);
+        VAL_GNSS("dispatch=never_off GNP52=sentinel gate_reopen_s=%u", auto_off_s);
+    } else {
+        DEBUG_INFO("GPSService::try_enter_deep_idle_or_poweroff: deep-idle for %u s (rail on, M10Q in PMREQ-backup, auto-off timer armed)",
+                   auto_off_s);
+        VAL_GNSS("dispatch=deep_idle_engaged duration_s=%u", auto_off_s);
+    }
     m_deep_idle_auto_off_task = system_scheduler->post_task_prio([this]() {
-        DEBUG_INFO("GPSService: deep-idle auto-poweroff timer fired");
-        VAL_GNSS("auto_off_timer_fired");
-        // HIGH GNSS-AUDIT #2 follow-up: `power_off()` is a no-op when users==0
-        // (the deep-idle dispatch already decremented users). Use the dedicated
-        // `poweroff_from_deep_idle()` which unconditionally tears down the rail
-        // from the backupidle state. Without this, GNP52 duration was
-        // effectively infinite — rail stayed on forever after the dispatch.
-        m_device.poweroff_from_deep_idle();
-        m_deep_idle_started_at_ms = 0;
+        if (m_deep_idle_is_sentinel) {
+            // Rail stays up — the operator asked for exactly that, and on a
+            // board without a V_BCKP coin cell it is the only thing holding the
+            // ephemeris. Clearing the timestamp is enough to re-open the
+            // scheduling gate (it tests `started_at_ms > 0`); the next
+            // acquisition then wakes the M10Q in place with an EXTINT pulse
+            // rather than a rail cycle, keeping the warm start
+            // (m10qasync.cpp, power_on() backupidle branch). An M10Q that has
+            // genuinely wedged is already caught by WAKE_FAIL_FAST_FALLBACK.
+            DEBUG_INFO("GPSService: sentinel deep-idle — re-opening scheduler, rail left on");
+            VAL_GNSS("sentinel_gate_reopened");
+            m_deep_idle_started_at_ms = 0;
+        } else {
+            DEBUG_INFO("GPSService: deep-idle auto-poweroff timer fired");
+            VAL_GNSS("auto_off_timer_fired");
+            // HIGH GNSS-AUDIT #2 follow-up: `power_off()` is a no-op when users==0
+            // (the deep-idle dispatch already decremented users). Use the dedicated
+            // `poweroff_from_deep_idle()` which unconditionally tears down the rail
+            // from the backupidle state. Without this, GNP52 duration was
+            // effectively infinite — rail stayed on forever after the dispatch.
+            m_device.poweroff_from_deep_idle();
+            m_deep_idle_started_at_ms = 0;
+        }
 
         // 2026-05-25 deep-idle scheduling gate exit: the gate in
         // service_next_schedule_in_ms returned SCHEDULE_DISABLED for the whole
-        // GNP52 window, which left m_task_period unarmed. Now that deep-idle
-        // is finished (rail cut, m_deep_idle_started_at_ms cleared), explicitly
-        // call service_reschedule so the framework re-arms the next acquisition
+        // GNP52 window, which left m_task_period unarmed. Now that the window
+        // is over (m_deep_idle_started_at_ms cleared), explicitly call
+        // service_reschedule so the framework re-arms the next acquisition
         // through the normal path. Without this, the service would idle until
         // the next peer event (dive/surface) — fine for most flows but a
         // regression for time-based scheduling on a stationary device.
         service_reschedule(false);
-    }, "GPSDeepIdleAutoOff", Scheduler::DEFAULT_PRIORITY, deep_idle_s * MS_PER_SEC);
+    }, "GPSDeepIdleAutoOff", Scheduler::DEFAULT_PRIORITY, auto_off_s * MS_PER_SEC);
 }
 
 /// @brief Terminate GNSS service. UNCONDITIONAL power-off (R2 robustness from
@@ -388,7 +423,8 @@ unsigned int GPSService::service_next_schedule_in_ms() {
 	// then `power_on()` will cold-boot at the upcoming acquisition.
 	if (m_device.is_in_deep_idle() && m_deep_idle_started_at_ms > 0) {
 		uint64_t now_ms = PMU::get_timestamp_ms();
-		constexpr uint64_t DEEP_IDLE_HARD_CAP_MS = 24ULL * 3600ULL * 1000ULL;
+		constexpr uint64_t DEEP_IDLE_HARD_CAP_MS =
+			static_cast<uint64_t>(DEEP_IDLE_HARD_CAP_S) * MS_PER_SEC;
 		if (now_ms - m_deep_idle_started_at_ms > DEEP_IDLE_HARD_CAP_MS) {
 			DEBUG_WARN("GPSService: deep-idle exceeded 24 h hard-cap (%llu ms) — forcing M10Q rail-cycle",
 			           (unsigned long long)(now_ms - m_deep_idle_started_at_ms));
@@ -413,12 +449,16 @@ unsigned int GPSService::service_next_schedule_in_ms() {
 	// through reaches the normal scheduling path naturally.
 	//
 	// Exit paths from this gate:
-	//   - GNP52 finite: m_deep_idle_auto_off_task fires at end of window
-	//     and triggers a service_reschedule (see the lambda in
-	//     try_enter_deep_idle_or_poweroff) so normal scheduling resumes.
-	//   - GNP52 sentinel (never-poweroff): no auto-off — rail stays on
-	//     indefinitely; next acquisition comes from a peer event (surface)
-	//     which uses reschedule(immediate=true) and BYPASSES this gate
+	//   - Any GNP52 > 0: m_deep_idle_auto_off_task fires at the end of the
+	//     window (clamped to DEEP_IDLE_HARD_CAP_S) and triggers a
+	//     service_reschedule — see the lambda in
+	//     try_enter_deep_idle_or_poweroff — so normal scheduling resumes.
+	//     This includes the sentinel: it used to arm no timer at all, which
+	//     left this gate with no exit other than a peer event. Fine for a
+	//     surfacing tracker, fatal for anything running UNDERWATER_EN=0,
+	//     where no peer event ever comes and GNSS stopped for good.
+	//   - Peer events (surface, AXL) still pre-empt the window, via
+	//     reschedule(immediate=true) which BYPASSES this gate entirely
 	//     (Service::reschedule skips service_next_schedule_in_ms when
 	//     immediate is set).
 	//   - Underwater / cooldown: handled by separate gates further down.

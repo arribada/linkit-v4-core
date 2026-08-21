@@ -151,6 +151,12 @@ private:
 	// rail-cycle if the device has been in deep-idle > 24 h. 0 = not in deep-idle.
 	uint64_t m_deep_idle_started_at_ms = 0;
 
+	// True when the current deep-idle window came from the GNP52 sentinel
+	// ("never power the rail off"). The auto-off task keeps the rail up in that
+	// case and only re-opens the scheduling gate — see
+	// try_enter_deep_idle_or_poweroff.
+	bool m_deep_idle_is_sentinel = false;
+
 	// R4 robustness gate (deep-idle plan): if the last reset was a WDT, inhibit
 	// the deep-idle fast-path for the first GPS session post-boot. Cold-boot
 	// proves the cold path works before re-engaging the optimization. Cleared
