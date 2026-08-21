@@ -2483,7 +2483,8 @@ void M10QAsyncReceiver::setup_uart_port() {
     //DEBUG_TRACE("M10QAsyncReceiver::setup_uart_port: save %x", layers);
     //uint8_t layers = CFG::VALSET::LAYERS::RAM;
     // Create the VALSET message with dynamically sized parameters
-    CFG::VALSET::MSG_VALSET uart1_valset_msg(0x00, layers, uart1_config);
+    alignas(CFG::VALSET::MSG_VALSET) uint8_t uart1_valset_msg_storage[sizeof(CFG::VALSET::MSG_VALSET) + CFG::VALSET::MSG_VALSET_MAX_CFG];
+    auto& uart1_valset_msg = *new (uart1_valset_msg_storage) CFG::VALSET::MSG_VALSET(0x00, layers, uart1_config);
     size_t cfgDataSize = uart1_valset_msg.get_cfgData_size(uart1_config);
     initiate_timeout();
 
@@ -2522,7 +2523,8 @@ void M10QAsyncReceiver::setup_power_management() {
     };
 
     // Create the VALSET message with power management configuration
-    CFG::VALSET::MSG_VALSET pm_valset_msg(0x00, CFG::VALSET::LAYERS::BBR|CFG::VALSET::LAYERS::RAM, pm_config);
+    alignas(CFG::VALSET::MSG_VALSET) uint8_t pm_valset_msg_storage[sizeof(CFG::VALSET::MSG_VALSET) + CFG::VALSET::MSG_VALSET_MAX_CFG];
+    auto& pm_valset_msg = *new (pm_valset_msg_storage) CFG::VALSET::MSG_VALSET(0x00, CFG::VALSET::LAYERS::BBR|CFG::VALSET::LAYERS::RAM, pm_config);
     //CFG::VALSET::MSG_VALSET pm_valset_msg(0x00, CFG::VALSET::LAYERS::RAM, pm_config);
     size_t cfgDataSize = pm_valset_msg.get_cfgData_size(pm_config);
     initiate_timeout();
@@ -2543,7 +2545,8 @@ void M10QAsyncReceiver::setup_continuous_mode() {
     };
 
     // Create the VALSET message for power management configuration
-    CFG::VALSET::MSG_VALSET pm_valset_msg(0x00, CFG::VALSET::LAYERS::BBR|CFG::VALSET::LAYERS::RAM, pm_config);
+    alignas(CFG::VALSET::MSG_VALSET) uint8_t pm_valset_msg_storage[sizeof(CFG::VALSET::MSG_VALSET) + CFG::VALSET::MSG_VALSET_MAX_CFG];
+    auto& pm_valset_msg = *new (pm_valset_msg_storage) CFG::VALSET::MSG_VALSET(0x00, CFG::VALSET::LAYERS::BBR|CFG::VALSET::LAYERS::RAM, pm_config);
     //CFG::VALSET::MSG_VALSET pm_valset_msg(0x00, CFG::VALSET::LAYERS::RAM, pm_config);
     size_t cfgDataSize = pm_valset_msg.get_cfgData_size(pm_config);
     initiate_timeout();
@@ -2584,7 +2587,8 @@ void M10QAsyncReceiver::setup_simple_navigation_settings() {
     };
 
     // Create the VALSET message with the navigation parameters
-    CFG::VALSET::MSG_VALSET nav_valset_msg(0x00, CFG::VALSET::LAYERS::BBR | CFG::VALSET::LAYERS::RAM, navspg_config);
+    alignas(CFG::VALSET::MSG_VALSET) uint8_t nav_valset_msg_storage[sizeof(CFG::VALSET::MSG_VALSET) + CFG::VALSET::MSG_VALSET_MAX_CFG];
+    auto& nav_valset_msg = *new (nav_valset_msg_storage) CFG::VALSET::MSG_VALSET(0x00, CFG::VALSET::LAYERS::BBR | CFG::VALSET::LAYERS::RAM, navspg_config);
     size_t cfgDataSize = nav_valset_msg.get_cfgData_size(navspg_config);
     initiate_timeout();
 
@@ -2625,7 +2629,8 @@ void M10QAsyncReceiver::setup_expert_navigation_settings() {
 
     // Create and send VALSET message
     // CFG::VALSET::MSG_VALSET nav_ana_valset_msg(0x00, CFG::VALSET::LAYERS::BBR|CFG::VALSET::LAYERS::RAM, navspg_ana_config);
-    CFG::VALSET::MSG_VALSET nav_ana_valset_msg(0x00, CFG::VALSET::LAYERS::RAM, navspg_ana_config);
+    alignas(CFG::VALSET::MSG_VALSET) uint8_t nav_ana_valset_msg_storage[sizeof(CFG::VALSET::MSG_VALSET) + CFG::VALSET::MSG_VALSET_MAX_CFG];
+    auto& nav_ana_valset_msg = *new (nav_ana_valset_msg_storage) CFG::VALSET::MSG_VALSET(0x00, CFG::VALSET::LAYERS::RAM, navspg_ana_config);
     size_t cfgDataSize = nav_ana_valset_msg.get_cfgData_size(navspg_ana_config);
     initiate_timeout();
 
@@ -2719,7 +2724,8 @@ void M10QAsyncReceiver::disable_odometer() {
 
     // Create the VALSET message with the odometer parameters
     // CFG::VALSET::MSG_VALSET odo_valset_msg(0x00, CFG::VALSET::LAYERS::BBR | CFG::VALSET::LAYERS::RAM, odo_config);
-    CFG::VALSET::MSG_VALSET odo_valset_msg(0x00, CFG::VALSET::LAYERS::RAM, odo_config);
+    alignas(CFG::VALSET::MSG_VALSET) uint8_t odo_valset_msg_storage[sizeof(CFG::VALSET::MSG_VALSET) + CFG::VALSET::MSG_VALSET_MAX_CFG];
+    auto& odo_valset_msg = *new (odo_valset_msg_storage) CFG::VALSET::MSG_VALSET(0x00, CFG::VALSET::LAYERS::RAM, odo_config);
     size_t cfgDataSize = odo_valset_msg.get_cfgData_size(odo_config);
     initiate_timeout();
 
@@ -2750,7 +2756,8 @@ void M10QAsyncReceiver::disable_timepulse_output() {
 
     // Create the VALSET message with the timepulse parameters
     // CFG::VALSET::MSG_VALSET tp_valset_msg(0x00, CFG::VALSET::LAYERS::BBR | CFG::VALSET::LAYERS::RAM, tp_config);
-    CFG::VALSET::MSG_VALSET tp_valset_msg(0x00, CFG::VALSET::LAYERS::RAM, tp_config);
+    alignas(CFG::VALSET::MSG_VALSET) uint8_t tp_valset_msg_storage[sizeof(CFG::VALSET::MSG_VALSET) + CFG::VALSET::MSG_VALSET_MAX_CFG];
+    auto& tp_valset_msg = *new (tp_valset_msg_storage) CFG::VALSET::MSG_VALSET(0x00, CFG::VALSET::LAYERS::RAM, tp_config);
     size_t cfgDataSize = tp_valset_msg.get_cfgData_size(tp_config);
     initiate_timeout();
 
@@ -2771,7 +2778,8 @@ void M10QAsyncReceiver::enable_nav_pvt_message() {
     };
 
     // Create and send the VALSET message with the NAV PVT configuration
-    CFG::VALSET::MSG_VALSET nav_pvt_valset_msg(0x00, CFG::VALSET::LAYERS::RAM, nav_pvt_config);
+    alignas(CFG::VALSET::MSG_VALSET) uint8_t nav_pvt_valset_msg_storage[sizeof(CFG::VALSET::MSG_VALSET) + CFG::VALSET::MSG_VALSET_MAX_CFG];
+    auto& nav_pvt_valset_msg = *new (nav_pvt_valset_msg_storage) CFG::VALSET::MSG_VALSET(0x00, CFG::VALSET::LAYERS::RAM, nav_pvt_config);
     // CFG::VALSET::MSG_VALSET nav_pvt_valset_msg(0x00, CFG::VALSET::LAYERS::BBR | CFG::VALSET::LAYERS::RAM, nav_pvt_config);
     size_t cfgDataSize = nav_pvt_valset_msg.get_cfgData_size(nav_pvt_config);
     initiate_timeout();
@@ -2786,7 +2794,8 @@ void M10QAsyncReceiver::disable_nav_pvt_message() {
     CFG::MSGOUT::NAV_PVT_UART1.set_value(0); // Disable NAV-PVT message on UART1
 
     std::vector<CFG::UBXParameter> nav_pvt_config = {CFG::MSGOUT::NAV_PVT_UART1};
-    CFG::VALSET::MSG_VALSET nav_pvt_valset_msg(0x00, CFG::VALSET::LAYERS::RAM, nav_pvt_config);
+    alignas(CFG::VALSET::MSG_VALSET) uint8_t nav_pvt_valset_msg_storage[sizeof(CFG::VALSET::MSG_VALSET) + CFG::VALSET::MSG_VALSET_MAX_CFG];
+    auto& nav_pvt_valset_msg = *new (nav_pvt_valset_msg_storage) CFG::VALSET::MSG_VALSET(0x00, CFG::VALSET::LAYERS::RAM, nav_pvt_config);
     // CFG::VALSET::MSG_VALSET nav_pvt_valset_msg(0x00,CFG::VALSET::LAYERS::BBR | CFG::VALSET::LAYERS::RAM, nav_pvt_config);
     
     size_t cfgDataSize = nav_pvt_valset_msg.get_cfgData_size(nav_pvt_config);
@@ -2802,7 +2811,8 @@ void M10QAsyncReceiver::enable_nav_dop_message() {
     CFG::MSGOUT::NAV_DOP_UART1.set_value(1); // Enable NAV-DOP message on UART1
 
     std::vector<CFG::UBXParameter> nav_dop_config = {CFG::MSGOUT::NAV_DOP_UART1};
-    CFG::VALSET::MSG_VALSET nav_dop_valset_msg(0x00, CFG::VALSET::LAYERS::RAM, nav_dop_config);
+    alignas(CFG::VALSET::MSG_VALSET) uint8_t nav_dop_valset_msg_storage[sizeof(CFG::VALSET::MSG_VALSET) + CFG::VALSET::MSG_VALSET_MAX_CFG];
+    auto& nav_dop_valset_msg = *new (nav_dop_valset_msg_storage) CFG::VALSET::MSG_VALSET(0x00, CFG::VALSET::LAYERS::RAM, nav_dop_config);
     // CFG::VALSET::MSG_VALSET nav_dop_valset_msg(0x00, CFG::VALSET::LAYERS::BBR | CFG::VALSET::LAYERS::RAM, nav_dop_config);
     
     size_t cfgDataSize = nav_dop_valset_msg.get_cfgData_size(nav_dop_config);
@@ -2818,7 +2828,8 @@ void M10QAsyncReceiver::disable_nav_dop_message() {
     CFG::MSGOUT::NAV_DOP_UART1.set_value(0); // Disable NAV-DOP message on UART1
 
     std::vector<CFG::UBXParameter> nav_dop_config = {CFG::MSGOUT::NAV_DOP_UART1};
-    CFG::VALSET::MSG_VALSET nav_dop_valset_msg(0x00, CFG::VALSET::LAYERS::RAM, nav_dop_config);
+    alignas(CFG::VALSET::MSG_VALSET) uint8_t nav_dop_valset_msg_storage[sizeof(CFG::VALSET::MSG_VALSET) + CFG::VALSET::MSG_VALSET_MAX_CFG];
+    auto& nav_dop_valset_msg = *new (nav_dop_valset_msg_storage) CFG::VALSET::MSG_VALSET(0x00, CFG::VALSET::LAYERS::RAM, nav_dop_config);
     // CFG::VALSET::MSG_VALSET nav_dop_valset_msg(0x00, CFG::VALSET::LAYERS::BBR | CFG::VALSET::LAYERS::RAM, nav_dop_config);
 
     size_t cfgDataSize = nav_dop_valset_msg.get_cfgData_size(nav_dop_config);
@@ -2834,7 +2845,8 @@ void M10QAsyncReceiver::enable_nav_status_message() {
     CFG::MSGOUT::NAV_STATUS_UART1.set_value(1); // Enable NAV-STATUS message on UART1
 
     std::vector<CFG::UBXParameter> nav_status_config = {CFG::MSGOUT::NAV_STATUS_UART1};
-    CFG::VALSET::MSG_VALSET nav_status_valset_msg(0x00, CFG::VALSET::LAYERS::RAM, nav_status_config);
+    alignas(CFG::VALSET::MSG_VALSET) uint8_t nav_status_valset_msg_storage[sizeof(CFG::VALSET::MSG_VALSET) + CFG::VALSET::MSG_VALSET_MAX_CFG];
+    auto& nav_status_valset_msg = *new (nav_status_valset_msg_storage) CFG::VALSET::MSG_VALSET(0x00, CFG::VALSET::LAYERS::RAM, nav_status_config);
     // CFG::VALSET::MSG_VALSET nav_status_valset_msg(0x00, CFG::VALSET::LAYERS::BBR | CFG::VALSET::LAYERS::RAM, nav_status_config);
     
     size_t cfgDataSize = nav_status_valset_msg.get_cfgData_size(nav_status_config);
@@ -2851,7 +2863,8 @@ void M10QAsyncReceiver::disable_nav_status_message() {
 
     std::vector<CFG::UBXParameter> nav_status_config = {CFG::MSGOUT::NAV_STATUS_UART1};
     // CFG::VALSET::MSG_VALSET nav_status_valset_msg(0x00, CFG::VALSET::LAYERS::BBR|CFG::VALSET::LAYERS::RAM, nav_status_config);
-    CFG::VALSET::MSG_VALSET nav_status_valset_msg(0x00, CFG::VALSET::LAYERS::RAM, nav_status_config);
+    alignas(CFG::VALSET::MSG_VALSET) uint8_t nav_status_valset_msg_storage[sizeof(CFG::VALSET::MSG_VALSET) + CFG::VALSET::MSG_VALSET_MAX_CFG];
+    auto& nav_status_valset_msg = *new (nav_status_valset_msg_storage) CFG::VALSET::MSG_VALSET(0x00, CFG::VALSET::LAYERS::RAM, nav_status_config);
 
     size_t cfgDataSize = nav_status_valset_msg.get_cfgData_size(nav_status_config);
     initiate_timeout();
@@ -2867,7 +2880,8 @@ void M10QAsyncReceiver::enable_nav_sat_message() {
 
     std::vector<CFG::UBXParameter> nav_sat_config = {CFG::MSGOUT::NAV_SAT_UART1};
     // CFG::VALSET::MSG_VALSET nav_sat_valset_msg(0x00, CFG::VALSET::LAYERS::BBR | CFG::VALSET::LAYERS::RAM, nav_sat_config);
-    CFG::VALSET::MSG_VALSET nav_sat_valset_msg(0x00, CFG::VALSET::LAYERS::RAM, nav_sat_config);
+    alignas(CFG::VALSET::MSG_VALSET) uint8_t nav_sat_valset_msg_storage[sizeof(CFG::VALSET::MSG_VALSET) + CFG::VALSET::MSG_VALSET_MAX_CFG];
+    auto& nav_sat_valset_msg = *new (nav_sat_valset_msg_storage) CFG::VALSET::MSG_VALSET(0x00, CFG::VALSET::LAYERS::RAM, nav_sat_config);
 
     size_t cfgDataSize = nav_sat_valset_msg.get_cfgData_size(nav_sat_config);
     initiate_timeout();
@@ -2882,7 +2896,8 @@ void M10QAsyncReceiver::disable_nav_sat_message() {
     CFG::MSGOUT::NAV_SAT_UART1.set_value(0); // Disable NAV-SAT message on UART1
 
     std::vector<CFG::UBXParameter> nav_sat_config = {CFG::MSGOUT::NAV_SAT_UART1};
-    CFG::VALSET::MSG_VALSET nav_sat_valset_msg(0x00, CFG::VALSET::LAYERS::RAM, nav_sat_config);
+    alignas(CFG::VALSET::MSG_VALSET) uint8_t nav_sat_valset_msg_storage[sizeof(CFG::VALSET::MSG_VALSET) + CFG::VALSET::MSG_VALSET_MAX_CFG];
+    auto& nav_sat_valset_msg = *new (nav_sat_valset_msg_storage) CFG::VALSET::MSG_VALSET(0x00, CFG::VALSET::LAYERS::RAM, nav_sat_config);
     // CFG::VALSET::MSG_VALSET nav_sat_valset_msg(0x00, CFG::VALSET::LAYERS::BBR | CFG::VALSET::LAYERS::RAM, nav_sat_config);
 
     size_t cfgDataSize = nav_sat_valset_msg.get_cfgData_size(nav_sat_config);
@@ -2896,7 +2911,8 @@ void M10QAsyncReceiver::enable_rxm_measc12_message() {
     DEBUG_TRACE("M10QAsyncReceiver::enable_rxm_measc12_message");
     CFG::MSGOUT::RXM_MEASC12_UART1.set_value(1);
     std::vector<CFG::UBXParameter> config = {CFG::MSGOUT::RXM_MEASC12_UART1};
-    CFG::VALSET::MSG_VALSET valset_msg(0x00, CFG::VALSET::LAYERS::RAM, config);
+    alignas(CFG::VALSET::MSG_VALSET) uint8_t valset_msg_storage[sizeof(CFG::VALSET::MSG_VALSET) + CFG::VALSET::MSG_VALSET_MAX_CFG];
+    auto& valset_msg = *new (valset_msg_storage) CFG::VALSET::MSG_VALSET(0x00, CFG::VALSET::LAYERS::RAM, config);
     size_t cfgDataSize = valset_msg.get_cfgData_size(config);
     initiate_timeout();
     m_ubx_comms.send_packet_with_expect(MessageClass::MSG_CLASS_CFG, CFG::ID_VALSET, valset_msg,
@@ -2907,7 +2923,8 @@ void M10QAsyncReceiver::enable_rxm_meas20_message() {
     DEBUG_TRACE("M10QAsyncReceiver::enable_rxm_meas20_message");
     CFG::MSGOUT::RXM_MEAS20_UART1.set_value(1);
     std::vector<CFG::UBXParameter> config = {CFG::MSGOUT::RXM_MEAS20_UART1};
-    CFG::VALSET::MSG_VALSET valset_msg(0x00, CFG::VALSET::LAYERS::RAM, config);
+    alignas(CFG::VALSET::MSG_VALSET) uint8_t valset_msg_storage[sizeof(CFG::VALSET::MSG_VALSET) + CFG::VALSET::MSG_VALSET_MAX_CFG];
+    auto& valset_msg = *new (valset_msg_storage) CFG::VALSET::MSG_VALSET(0x00, CFG::VALSET::LAYERS::RAM, config);
     size_t cfgDataSize = valset_msg.get_cfgData_size(config);
     initiate_timeout();
     m_ubx_comms.send_packet_with_expect(MessageClass::MSG_CLASS_CFG, CFG::ID_VALSET, valset_msg,
@@ -2918,7 +2935,8 @@ void M10QAsyncReceiver::enable_rxm_meas50_message() {
     DEBUG_TRACE("M10QAsyncReceiver::enable_rxm_meas50_message");
     CFG::MSGOUT::RXM_MEAS50_UART1.set_value(1);
     std::vector<CFG::UBXParameter> config = {CFG::MSGOUT::RXM_MEAS50_UART1};
-    CFG::VALSET::MSG_VALSET valset_msg(0x00, CFG::VALSET::LAYERS::RAM, config);
+    alignas(CFG::VALSET::MSG_VALSET) uint8_t valset_msg_storage[sizeof(CFG::VALSET::MSG_VALSET) + CFG::VALSET::MSG_VALSET_MAX_CFG];
+    auto& valset_msg = *new (valset_msg_storage) CFG::VALSET::MSG_VALSET(0x00, CFG::VALSET::LAYERS::RAM, config);
     size_t cfgDataSize = valset_msg.get_cfgData_size(config);
     initiate_timeout();
     m_ubx_comms.send_packet_with_expect(MessageClass::MSG_CLASS_CFG, CFG::ID_VALSET, valset_msg,
@@ -2972,7 +2990,8 @@ void M10QAsyncReceiver::setup_gnss_channel_sharing() {
 
     // Create the VALSET message for GNSS signal configuration
     //CFG::VALSET::MSG_VALSET gnss_valset_msg(0x00, CFG::VALSET::LAYERS::BBR | CFG::VALSET::LAYERS::FLASH, gnss_signal_config);
-    CFG::VALSET::MSG_VALSET gnss_valset_msg(0x00,  CFG::VALSET::LAYERS::BBR | CFG::VALSET::LAYERS::RAM, gnss_signal_config);
+    alignas(CFG::VALSET::MSG_VALSET) uint8_t gnss_valset_msg_storage[sizeof(CFG::VALSET::MSG_VALSET) + CFG::VALSET::MSG_VALSET_MAX_CFG];
+    auto& gnss_valset_msg = *new (gnss_valset_msg_storage) CFG::VALSET::MSG_VALSET(0x00,  CFG::VALSET::LAYERS::BBR | CFG::VALSET::LAYERS::RAM, gnss_signal_config);
     size_t cfgDataSize = gnss_valset_msg.get_cfgData_size(gnss_signal_config);
     initiate_timeout();
 
