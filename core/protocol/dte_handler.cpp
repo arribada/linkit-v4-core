@@ -1476,6 +1476,34 @@ std::string DTEHandler::PWRON_REQ(int error_code, std::vector<BaseType>& arg_lis
 		if (gps_device) {
 			gps_device->power_off();
 		}
+		// Take the satellite rail down through the driver, the same way the GPS
+		// above already does. Clearing SAT_PWR_EN behind the driver's back cuts
+		// the rail but leaves its FSM in idle/standby/transmit, still believing
+		// the module is powered AND configured. The next service TX therefore
+		// skips the boot + configure walk and fires AT commands into a dead
+		// module: response timeouts, then error strikes — and on LoRa three of
+		// those latch LoRaTxService off for the entire session, so one bench
+		// PWRON can silence the device until the next reboot.
+		//
+		// power_off_immediate() cuts the same pins and lands the FSM in
+		// power_off, so the next TX cold-boots correctly. It is idempotent
+		// (no-op when already off) and cancels any in-flight TX, which is the
+		// intended behaviour for an explicit operator power-down.
+		//
+		// LoRa keeps its own global: main.cpp only assigns
+		// kineis_device_instance on the SMD and KIM2 branches.
+#if defined(LORA_RAK3172) && (LORA_RAK3172 == 1)
+		if (lora_device_instance) {
+			lora_device_instance->power_off_immediate();
+		}
+#else
+		if (kineis_device_instance) {
+			kineis_device_instance->power_off_immediate();
+		}
+#endif
+		// Raw clear retained as the fallback for a module that was never
+		// detected (instance null, driver never constructed): the rail must
+		// still come down. Redundant but harmless once the driver has run.
 #if defined(ARGOS_SMD) && (ARGOS_SMD == 1)
 		GPIOPins::clear(SAT_PWR_EN);
 #elif defined(LORA_RAK3172) && (LORA_RAK3172 == 1)
