@@ -72,6 +72,7 @@ for arg in "$@"; do
     case $arg in
         --clean) CLEAN=true ;;
         --recover) RECOVER=true ;;
+        --no-tx-suspend) LORA_TX_ERROR_SUSPEND_S=0 ;;
         --debug) BUILD_TYPE=Debug ;;
         --release) BUILD_TYPE=Release ;;
         --metrics) METRICS=ON ;;
@@ -159,6 +160,11 @@ ENABLE_AXL_SENSOR=${ENABLE_AXL_SENSOR:-OFF}
 #
 # DISABLE_LORA_DCS is still honoured, inverted, so existing callers and CI keep
 # working — but it warns, because it is the name that caused the bug.
+# Field-test escape hatch: 0 = never suspend TX after consecutive device
+# errors, leaving only the capped exponential backoff (retry at most every
+# 10 min). Production default is 3600 (one probe per hour). Set via
+# LORA_TX_ERROR_SUSPEND_S=0 or the --no-tx-suspend flag.
+LORA_TX_ERROR_SUSPEND_S=${LORA_TX_ERROR_SUSPEND_S:-3600}
 LORA_DCS_ENABLE=${LORA_DCS_ENABLE:-ON}
 if [ -n "${DISABLE_LORA_DCS+x}" ]; then
     if [ "$DISABLE_LORA_DCS" = "ON" ]; then
@@ -183,6 +189,7 @@ echo "  LORA_RAK3172=ON"
 echo "  ENABLE_AXL_SENSOR=${ENABLE_AXL_SENSOR}"
 echo "  ENABLE_SWS_LOG=${ENABLE_SWS_LOG}"
 echo "  LORA_DCS_ENABLE=${LORA_DCS_ENABLE}   (ON = ETSI duty cycle enforced, AT+DCS=1)"
+echo "  LORA_TX_ERROR_SUSPEND_S=${LORA_TX_ERROR_SUSPEND_S}   (0 = no TX suspension, backoff only)"
 echo "  BATTERY_CHEMISTRY=${BATTERY_CHEMISTRY}"
 echo "  GNSS_HAS_BACKUP_BATTERY=${GNSS_HAS_BACKUP_BATTERY}"
 echo ""
@@ -196,6 +203,7 @@ cmake -DCMAKE_TOOLCHAIN_FILE=../../toolchain_arm_gcc_nrf52.cmake \
       -DENABLE_SWS_LOG=${ENABLE_SWS_LOG} \
       -DGNSS_HAS_BACKUP_BATTERY=${GNSS_HAS_BACKUP_BATTERY} \
       -DLORA_DCS_ENABLE=${LORA_DCS_ENABLE} \
+      -DLORA_TX_ERROR_SUSPEND_S=${LORA_TX_ERROR_SUSPEND_S} \
       -DBATTERY_CHEMISTRY=${BATTERY_CHEMISTRY} \
       -DMETRIC_LATENCY_LOG_ENABLE=$([ "$METRICS" = "ON" ] && echo 1 || echo 0) \
       -DVALIDATION_LOG_ENABLE=$([ "$VALIDATION" = "ON" ] && echo 1 || echo 0) \

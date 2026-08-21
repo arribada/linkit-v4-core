@@ -68,6 +68,17 @@ message(STATUS "SMD timing profile: USE_SAFE_TIMINGS=${SMDSAT_USE_SAFE_TIMINGS_V
 #   legal airtime limits (1 %/0.1 %/10 % per sub-band). Default ON.
 #   OFF is for RF bench testing only — **illegal in EU production deployment**.
 option(LORA_DCS_ENABLE "Enforce LoRaWAN duty-cycle on RAK3172 (ETSI EN 300 220)" ON)
+
+# LORA_TX_ERROR_SUSPEND_S: how long LoRaTxService stops transmitting after
+# DEVICE_ERROR_MAX_CONSECUTIVE consecutive device errors, before letting one
+# probe TX through. 0 disables the suspension entirely, leaving only the capped
+# exponential backoff (max DEVICE_ERROR_BACKOFF_MAX_MS = 10 min between
+# attempts) — that is the bench/field-test setting, where waiting an hour to
+# retry makes iteration impossible. Production keeps 3600.
+if(NOT DEFINED LORA_TX_ERROR_SUSPEND_S)
+    set(LORA_TX_ERROR_SUSPEND_S 3600)
+endif()
+message(STATUS "LoRa TX error suspend: ${LORA_TX_ERROR_SUSPEND_S} s (0 = no suspension, backoff only)")
 #
 # LORA_POWER_OFF_UNDERWATER: when ON, the LoRa service cuts the module's power
 #   rail (SAT_PWR_EN → 0 V) on every dive event, going from ~1.7 µA (Stop2
@@ -695,6 +706,7 @@ target_compile_definitions(${TARGET_NAME} PRIVATE
     $<$<NOT:$<STREQUAL:${WAKEUP_PERIOD_DEFAULT},>>:WAKEUP_PERIOD_DEFAULT=${WAKEUP_PERIOD_DEFAULT}>
     $<$<BOOL:${LORA_RAK3172_ENABLED}>:LORA_RAK3172=1>
     $<$<BOOL:${LORA_RAK3172_ENABLED}>:LORA_DCS_ENABLE=${LORA_DCS_ENABLE_VAL}>
+    $<$<BOOL:${LORA_RAK3172_ENABLED}>:LORA_TX_ERROR_SUSPEND_S=${LORA_TX_ERROR_SUSPEND_S}>
     $<$<BOOL:${LORA_RAK3172_ENABLED}>:LORA_POWER_OFF_UNDERWATER=${LORA_POWER_OFF_UNDERWATER_VAL}>
     # Battery monitor type defines
     $<$<STREQUAL:${BATTERY_MONITOR_TYPE},ANALOG>:BATTERY_MONITOR_ANALOG>

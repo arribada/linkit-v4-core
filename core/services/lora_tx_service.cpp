@@ -268,7 +268,10 @@ void LoRaTxService::service_initiate() {
 		// keeps the battery guard (no free-running retry storm) while making the
 		// suspension recoverable without a reboot.
 		std::time_t now = service_current_time();
-		if (now < m_device_error_suspend_until) {
+		// DEVICE_ERROR_PROBE_PERIOD_S == 0 (bench builds): never hold a dispatch
+		// back. The capped exponential backoff already spaces retries to at most
+		// one per DEVICE_ERROR_BACKOFF_MAX_MS, which is the guard that matters.
+		if (DEVICE_ERROR_PROBE_PERIOD_S && now < m_device_error_suspend_until) {
 			DEBUG_WARN("LoRaTxService::service_initiate: skipping TX — %u consecutive errors, "
 			           "suspended for another %llu s",
 			           m_consecutive_device_errors,
@@ -1122,14 +1125,23 @@ void LoRaTxService::react(KineisEventDeviceError const&) {
 	DEBUG_WARN("LoRaTxService::react: KineisEventDeviceError (consecutive=%u/%u)",
 	           m_consecutive_device_errors, DEVICE_ERROR_MAX_CONSECUTIVE);
 	{
-		if (m_consecutive_device_errors >= DEVICE_ERROR_MAX_CONSECUTIVE) {
+		if (DEVICE_ERROR_PROBE_PERIOD_S &&
+		    m_consecutive_device_errors >= DEVICE_ERROR_MAX_CONSECUTIVE) {
 			m_device_error_suspend_until = service_current_time() + DEVICE_ERROR_PROBE_PERIOD_S;
 			DEBUG_ERROR("LoRaTxService: %u consecutive device errors — suspending TX for %u s, "
 			            "then one probe (a surface event clears it sooner)",
 			            m_consecutive_device_errors, DEVICE_ERROR_PROBE_PERIOD_S);
 			service_complete(nullptr, nullptr, false);  // no reschedule
 		} else {
-			unsigned int backoff_ms = DEVICE_ERROR_BACKOFF_BASE_MS << (m_consecutive_device_errors - 1);
+			// Clamp the SHIFT, not just the result. The cap below runs after the
+			// shift, so a large exponent would already have overflowed unsigned
+			// int and produced a small backoff — the opposite of the intent.
+			// Previously unreachable because the counter stopped at
+			// DEVICE_ERROR_MAX_CONSECUTIVE; with LORA_TX_ERROR_SUSPEND_S=0 it
+			// keeps climbing, so the shift has to be bounded explicitly.
+			unsigned int shift = m_consecutive_device_errors - 1;
+			if (shift > 16) shift = 16;   // 60 s << 16 is already far past the cap
+			unsigned int backoff_ms = DEVICE_ERROR_BACKOFF_BASE_MS << shift;
 			if (backoff_ms > DEVICE_ERROR_BACKOFF_MAX_MS) backoff_ms = DEVICE_ERROR_BACKOFF_MAX_MS;
 			DEBUG_WARN("LoRaTxService: backoff %u ms before next TX attempt", backoff_ms);
 			m_sched.set_earliest_schedule(service_current_time() + backoff_ms / 1000);

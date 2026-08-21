@@ -61,7 +61,14 @@ private:
 	/// A periodic tracker (boat) has no surfacing events at all, so the probe is
 	/// its only way back. One probe/h worst case is roughly one join window,
 	/// which is negligible next to the GNSS duty cycle it runs alongside.
-	static constexpr unsigned int DEVICE_ERROR_PROBE_PERIOD_S = 3600;  ///< 1 h
+	/// Build-time override: LORA_TX_ERROR_SUSPEND_S (ports/nrf52840/CMakeLists.txt).
+	/// 0 disables the suspension entirely, leaving only the capped exponential
+	/// backoff — the bench/field-test setting, where an hour between retries
+	/// makes iteration impossible. Host tests get the production default.
+#ifndef LORA_TX_ERROR_SUSPEND_S
+#define LORA_TX_ERROR_SUSPEND_S 3600
+#endif
+	static constexpr unsigned int DEVICE_ERROR_PROBE_PERIOD_S = LORA_TX_ERROR_SUSPEND_S;
 	std::time_t m_device_error_suspend_until = 0;
 	bool m_last_tx_had_gps = false;
 	bool m_is_surfacing_burst = false;
