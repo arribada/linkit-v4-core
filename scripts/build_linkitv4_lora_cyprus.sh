@@ -28,6 +28,9 @@
 #                               its baud probe every session and fall back to a
 #                               full configure anyway. Set ON only on a variant
 #                               that actually fits the backup supply.
+#   LORA_TX_ERROR_SUSPEND_S  -> 0 for commissioning (see the block below); the
+#                               boat has no surface events, so the probe is its
+#                               only recovery from a device-error suspension.
 #   ENABLE_AXL_SENSOR=OFF    -> Step 1 and step 2 do not use the BMA400, and
 #                               leaving it out keeps the largest sensor packet at
 #                               14 B so the driver's DR auto-bump never overrides
@@ -59,5 +62,23 @@ export BATTERY_CHEMISTRY=BATT_CHEM_NCR18650_3100_3400
 export LORA_DCS_ENABLE=ON
 export GNSS_HAS_BACKUP_BATTERY=OFF
 export ENABLE_AXL_SENSOR=OFF
+
+# TX suspension after DEVICE_ERROR_MAX_CONSECUTIVE consecutive device errors.
+#
+# 0 = no suspension: only the capped exponential backoff remains, so the tracker
+# keeps retrying at most once per DEVICE_ERROR_BACKOFF_MAX_MS (10 min) however
+# many errors accumulate. Nothing free-runs.
+#
+# Pinned to 0 for the commissioning phase, deliberately. This is a periodic
+# LEGACY-mode boat: it has no saltwater switch, therefore no surface events,
+# therefore none of the surface-triggered error clearing that a turtle relies
+# on. The probe is its only way back, and the production 3600 s value means a
+# failed join costs an hour of silence before the next attempt — which makes a
+# field test impractical to iterate on.
+#
+# BEFORE DEPLOYMENT: decide whether to keep 0 or restore the 3600 s default.
+# Keeping 0 is defensible on a solar-charged boat (one attempt / 10 min is
+# cheap); on a battery-only unit, restore 3600.
+export LORA_TX_ERROR_SUSPEND_S=0
 
 exec "$SCRIPT_DIR/build_linkitv4_lora.sh" "$@"
