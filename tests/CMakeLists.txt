@@ -451,3 +451,163 @@ set_source_files_properties(${ROOT_DIR}/libraries/prepass/prepass_package_code-P
     PROPERTIES COMPILE_FLAGS "-Wno-unused-parameter -Wno-switch-enum -Wno-switch")
 
 target_link_libraries(${TURTLE_SIM_NAME} PRIVATE CppUTest CppUTestExt ${CMAKE_THREAD_LIBS_INIT})
+
+# ============================================================================
+# RSPB SIMULATION - Long-term bird mortality mission (external-wakeup profile)
+# ============================================================================
+# Standalone executable, mirrors the TurtleSimulation target but:
+#   * defines EXTERNAL_WAKEUP (RSPB / TPL5111 board profile) so the
+#     MortalityService duty-cycle adaptation + BOOT_COUNTER_MODULO param exist,
+#   * compiles core/services/mortality_service.cpp (not linked by the turtle sim),
+#   * drives src/rspb_simulation.cpp via src/rspb_main.cpp.
+set(RSPB_SIM_NAME "RSPBSimulation")
+add_executable(${RSPB_SIM_NAME})
+
+set_property(TARGET ${RSPB_SIM_NAME} PROPERTY CXX_STANDARD 20)
+set_property(TARGET ${RSPB_SIM_NAME} PROPERTY CMAKE_CXX_STANDARD_REQUIRED ON)
+
+target_compile_definitions(${RSPB_SIM_NAME} PRIVATE
+    LFS_NO_DEBUG
+    DEBUG_ENABLE
+    CPPUTEST
+    EXTERNAL_WAKEUP
+    ENABLE_PH_SENSOR=1
+    ENABLE_SEA_TEMP_SENSOR=1
+    ENABLE_PRESSURE_SENSOR=1
+    ENABLE_ALS_SENSOR=1
+    ENABLE_CDT_SENSOR=1
+    ENABLE_AXL_SENSOR=1
+    ENABLE_THERMISTOR_SENSOR=1
+    ENABLE_MORTALITY_SENSOR=1
+    ENABLE_SWS_LOG=1
+    ENABLE_SWS_ANALOG=1
+    LORA_RAK3172=1
+    LORA_DCS_ENABLE=1
+    LORA_POWER_OFF_UNDERWATER=0
+)
+
+target_compile_options(${RSPB_SIM_NAME} PRIVATE
+    -g3
+    -Wall
+    -Wextra
+    -Werror
+    -Wduplicated-cond
+    -Wduplicated-branches
+    -Wlogical-op
+    -Wnull-dereference
+    -Wshadow
+    -Wpointer-arith
+    -Wdangling-else
+    -Wrestrict
+    -Wdouble-promotion
+    -Wvla
+    -Wswitch-enum
+    -Wswitch-default
+    -Winvalid-pch
+    -Wodr
+    $<$<COMPILE_LANGUAGE:C>:-Wjump-misses-init>
+    -Wno-expansion-to-defined
+    -Wno-maybe-uninitialized
+    -Wno-unused-function
+    -Wno-format
+    -DPREPAS_EMBEDDED
+    -DDEBUG_ENABLE
+    -DDEBUG_LEVEL=4
+    -DDEVICE_MODEL_NAME=std::string\("RSPB"\)
+    -DFW_APP_VERSION_STR=std::string\("V0.1"\)
+    -DFW_APP_VERSION_STR_C="V0.1"
+    "-DTEST_BUILD_GIT_SHORT=\"${GIT_COMMIT_SHORT}\""
+    "-DTEST_BUILD_GIT_FULL=\"${GIT_COMMIT_FULL}\""
+    "-DTEST_BUILD_GIT_BRANCH=\"${GIT_BRANCH}\""
+    "-DTEST_BUILD_GIT_DESCRIBE=\"${GIT_DESCRIBE}\""
+    "-DTEST_BUILD_TIMESTAMP=\"${BUILD_TIMESTAMP}\""
+    -DARGOS_USE_CRC8
+    -DINPLACE_FUNCTION_SIZE_SCHEDULER=1024
+    -DINPLACE_FUNCTION_SIZE_TIMER=1536
+    -fdiagnostics-color=always
+)
+
+target_include_directories(${RSPB_SIM_NAME} PRIVATE
+    "mocks"
+    "fakes"
+    "${ROOT_DIR}/libraries/etl-20.27.3/include"
+    "${ROOT_DIR}/libraries/inplace_function"
+    "${ROOT_DIR}/libraries/littlefs"
+    "${ROOT_DIR}/libraries/prepass/prepass_package_code-PREPAS_V3.4"
+    "${ROOT_DIR}/core/hardware"
+    "${ROOT_DIR}/core/sm"
+    "${ROOT_DIR}/core/ble_services"
+    "${ROOT_DIR}/core/configuration"
+    "${ROOT_DIR}/core/logging"
+    "${ROOT_DIR}/core/filesystem"
+    "${ROOT_DIR}/core/scheduling"
+    "${ROOT_DIR}/core/services"
+    "${ROOT_DIR}/ports/linux"
+    "${ROOT_DIR}/core/protocol"
+    "${ROOT_DIR}/core/util"
+    "${NRF_DIR}/core/hardware"
+    "${NRF_DIR}/core/hardware/m10qasync"
+    "${NRF_DIR}/core/hardware/lora_rak3172"
+    "${NRF_DIR}/core/hardware/ad5933"
+    "${NRF_DIR}/core/hardware/ms58xx"
+    "${NRF_DIR}/core/hardware/pressure_sensor"
+    "${NRF_DIR}/core/hardware/cdt"
+    "${NRF_DIR}/core/memmang"
+)
+
+target_sources(${RSPB_SIM_NAME} PRIVATE
+    "${ROOT_DIR}/libraries/littlefs/lfs_util.c"
+    "${ROOT_DIR}/libraries/littlefs/lfs.c"
+    "${ROOT_DIR}/libraries/prepass/prepass_package_code-PREPAS_V3.4/previpass.c"
+    "${ROOT_DIR}/libraries/prepass/prepass_package_code-PREPAS_V3.4/previpass_util.c"
+    "${ROOT_DIR}/core/util/haversine.cpp"
+
+    "${ROOT_DIR}/core/services/argos_rx_service.cpp"
+    "${ROOT_DIR}/core/services/argos_tx_service.cpp"
+    "${ROOT_DIR}/core/services/argos_packet_builder.cpp"
+    "${ROOT_DIR}/core/services/depth_pile.cpp"
+    "${ROOT_DIR}/core/services/rate_limiter.cpp"
+    "${ROOT_DIR}/core/services/hauled_mode_service.cpp"
+    "${ROOT_DIR}/core/services/mortality_service.cpp"
+    "${ROOT_DIR}/core/scheduling/argos_tx_scheduler.cpp"
+    "${ROOT_DIR}/core/services/gps_service.cpp"
+    "${ROOT_DIR}/core/services/service.cpp"
+    "${ROOT_DIR}/core/filesystem/ota_flash_file_updater.cpp"
+    "${ROOT_DIR}/core/services/uwdetector_service.cpp"
+    "${ROOT_DIR}/core/services/sws_analog_service.cpp"
+    "${ROOT_DIR}/core/services/sws_analog_calibration.cpp"
+    "${ROOT_DIR}/core/services/sws_analog_detection.cpp"
+    "${ROOT_DIR}/core/hardware/reed.cpp"
+    "${ROOT_DIR}/core/hardware/sensor.cpp"
+    "${ROOT_DIR}/core/protocol/dte_commands.cpp"
+    "${ROOT_DIR}/core/protocol/dte_params.cpp"
+    "${ROOT_DIR}/core/protocol/dte_handler.cpp"
+    "${ROOT_DIR}/core/configuration/calibration.cpp"
+    "${ROOT_DIR}/core/sm/buzzm.cpp"
+    "${ROOT_DIR}/core/sm/gentracker.cpp"
+    "${ROOT_DIR}/core/sm/ledsm.cpp"
+    "${ROOT_DIR}/core/logging/logger.cpp"
+    "${LINUX_DIR}/interrupt_lock.cpp"
+    "${NRF_DIR}/core/hardware/nrf_switch.cpp"
+    "${NRF_DIR}/core/hardware/m10qasync/m10qasync.cpp"
+    "${NRF_DIR}/core/hardware/m10qasync/ubx_comms.cpp"
+    "${NRF_DIR}/core/hardware/nrf_uart_async.cpp"
+    "${NRF_DIR}/core/hardware/lora_rak3172/lora_rak3172.cpp"
+    "${NRF_DIR}/core/hardware/lora_rak3172/lora_rak3172_comm.cpp"
+    "${NRF_DIR}/core/hardware/cdt/cdt.cpp"
+    "src/rspb_simulation.cpp"
+    "src/rspb_main.cpp"
+    "fakes/memmang.cpp"
+    "fakes/fake_bsp.cpp"
+    "fakes/nrfx_rtc.c"
+    "fakes/nrf_libuarte_async.cpp"
+    "fakes/nrf_uarte.c"
+    "mocks/mock_gpio.cpp"
+    "mocks/mock_pmu.cpp"
+    "mocks/mock_dfu.cpp"
+)
+
+set_source_files_properties(${ROOT_DIR}/libraries/prepass/prepass_package_code-PREPAS_V3.4/previpass.c
+    PROPERTIES COMPILE_FLAGS "-Wno-unused-parameter -Wno-switch-enum -Wno-switch")
+
+target_link_libraries(${RSPB_SIM_NAME} PRIVATE CppUTest CppUTestExt ${CMAKE_THREAD_LIBS_INIT})

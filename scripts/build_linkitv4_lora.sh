@@ -108,7 +108,12 @@ printf '\033[1;36m   Optional log flags:  METRIC_LATENCY=%s   VALIDATION=%s\033[
 echo ""
 
 cd "$PROJECT_ROOT"
-BUILD_DIR="ports/nrf52840/build/LINKIT_LORA"
+# Build subdirectory, overridable so a deployment-specific wrapper (see
+# build_linkitv4_lora_cyprus.sh) gets its own CMake cache. Sharing one cache
+# between two configurations means whichever script ran last silently decides
+# what a bare rebuild produces. Unset, this expands to the historical
+# LINKIT_LORA, so default builds are byte-for-byte unchanged.
+BUILD_DIR="ports/nrf52840/build/${LORA_BUILD_SUBDIR:-LINKIT_LORA}"
 if [ "$CLEAN" = true ]; then
     echo "Cleaning build directory..."
     rm -rf "$BUILD_DIR"
@@ -261,7 +266,7 @@ fi
 
 echo ""
 echo "Build complete!"
-echo "Output files in: ports/nrf52840/build/LINKIT_LORA/"
+echo "Output files in: ports/nrf52840/build/${LORA_BUILD_SUBDIR:-LINKIT_LORA}/"
 echo ""
 echo "Files generated:"
 ls -la ${TARGET_NAME}-* 2>/dev/null || true
@@ -276,7 +281,12 @@ fi
 
 # Show flash command
 TAG=$(cat TAG_NAME)
-BUILD_DIR="ports/nrf52840/build/LINKIT_LORA"
+# Build subdirectory, overridable so a deployment-specific wrapper (see
+# build_linkitv4_lora_cyprus.sh) gets its own CMake cache. Sharing one cache
+# between two configurations means whichever script ran last silently decides
+# what a bare rebuild produces. Unset, this expands to the historical
+# LINKIT_LORA, so default builds are byte-for-byte unchanged.
+BUILD_DIR="ports/nrf52840/build/${LORA_BUILD_SUBDIR:-LINKIT_LORA}"
 echo ""
 echo "Flash commands:"
 echo "  NOTE: If flashing fails with 'Access protection enabled', the device has"
