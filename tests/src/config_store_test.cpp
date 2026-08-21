@@ -1456,14 +1456,48 @@ TEST(ConfigStore, CooldownDefaultIs2700)
 }
 
 // get_tx_jitter_seed() is the single seed source shared by ArgosTxService and
-// LoRaTxService. The third case is the one that matters in the field: a
-// LoRa-only build never writes either Argos ID param, so without the MCU-id
-// fallback every unit would seed mt19937(0) and jitter identically.
-TEST(ConfigStore, TxJitterSeedPrefersArgosDecId)
+// LoRaTxService. The LoRa cases are the ones that bite in the field: a
+// LoRa-only build never writes either Argos ID param, so without a DevEUI-based
+// seed every unit would seed mt19937(0) and jitter identically.
+TEST(ConfigStore, TxJitterSeedPrefersLoraDevEui)
 {
 	store = new LFSConfigurationStore(*main_filesystem);
 	store->init();
 
+	// Argos IDs present but meaningless on a LoRa build — DevEUI must win.
+	store->write_param(ParamID::ARGOS_DECID, 1234U);
+	store->write_param(ParamID::ARGOS_HEXID, 0x0BADF00DU);
+	store->write_param(ParamID::LORA_DEVEUI, std::string("70B3D57ED0001234"));
+
+	unsigned int seed = store->get_tx_jitter_seed();
+	CHECK(seed != 0U);
+	CHECK(seed != 1234U);
+	CHECK(seed != 0x0BADF00DU);
+}
+
+// DevEUIs are normally allocated as a contiguous block behind a shared vendor
+// prefix, so the fold has to stay sensitive to the LOW-order digits. Two units
+// one apart must not collide.
+TEST(ConfigStore, TxJitterSeedSeparatesAdjacentDevEuisInABatch)
+{
+	store = new LFSConfigurationStore(*main_filesystem);
+	store->init();
+
+	store->write_param(ParamID::LORA_DEVEUI, std::string("70B3D57ED0001234"));
+	unsigned int a = store->get_tx_jitter_seed();
+
+	store->write_param(ParamID::LORA_DEVEUI, std::string("70B3D57ED0001235"));
+	unsigned int b = store->get_tx_jitter_seed();
+
+	CHECK(a != b);
+}
+
+TEST(ConfigStore, TxJitterSeedPrefersArgosDecIdWhenNoDevEui)
+{
+	store = new LFSConfigurationStore(*main_filesystem);
+	store->init();
+
+	store->write_param(ParamID::LORA_DEVEUI, std::string(""));
 	store->write_param(ParamID::ARGOS_DECID, 1234U);
 	store->write_param(ParamID::ARGOS_HEXID, 0x0BADF00DU);
 
@@ -1475,18 +1509,19 @@ TEST(ConfigStore, TxJitterSeedFallsBackToArgosHexId)
 	store = new LFSConfigurationStore(*main_filesystem);
 	store->init();
 
+	store->write_param(ParamID::LORA_DEVEUI, std::string(""));
 	store->write_param(ParamID::ARGOS_DECID, 0U);
 	store->write_param(ParamID::ARGOS_HEXID, 0x0BADF00DU);
 
 	CHECK_EQUAL(0x0BADF00DU, store->get_tx_jitter_seed());
 }
 
-TEST(ConfigStore, TxJitterSeedFallsBackToDeviceIdWhenNoArgosId)
+TEST(ConfigStore, TxJitterSeedFallsBackToDeviceIdWhenNothingProvisioned)
 {
 	store = new LFSConfigurationStore(*main_filesystem);
 	store->init();
 
-	// LoRa-only provisioning: neither Argos param is ever written.
+	store->write_param(ParamID::LORA_DEVEUI, std::string(""));
 	store->write_param(ParamID::ARGOS_DECID, 0U);
 	store->write_param(ParamID::ARGOS_HEXID, 0U);
 

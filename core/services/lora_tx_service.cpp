@@ -34,10 +34,11 @@ void LoRaTxService::service_init() {
 	}
 
 	// Jitter seed: shared derivation with ArgosTxService (see
-	// ConfigurationStore::get_tx_jitter_seed). On a LoRa-only build neither
-	// Argos ID param is ever written, so this is the path that actually needs
-	// the MCU-id fallback — without it every unit seeds mt19937(0) and the
-	// anti-collision jitter degenerates to a fleet-wide constant offset.
+	// ConfigurationStore::get_tx_jitter_seed). On a LoRa build that resolves to
+	// the DevEUI — neither Argos ID param is ever written here, and seeding
+	// from them would give every unit mt19937(0): identical jitter, and a
+	// fleet-wide constant offset instead of the per-unit spread that keeps
+	// units from transmitting on top of each other.
 	m_sched.reset(configuration_store->get_tx_jitter_seed());
 	m_depth_pile_manager.clear();
 	m_is_first_tx = true;

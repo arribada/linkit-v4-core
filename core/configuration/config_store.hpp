@@ -886,21 +886,40 @@ public:
 	/// (ArgosTxScheduler, LoRaTxScheduler), so two services on the same unit
 	/// stay aligned and two units never share a sequence.
 	///
-	/// The fallback chain is load-bearing, not defensive padding. argos_id is
-	/// the natural seed on Argos builds — SMD has ARGOS_DECID provisioned (it
-	/// is the ID it transmits) and KIM2 writes DECID+HEXID together at init.
-	/// A LoRa-only build writes NEITHER: both params keep their 0 default, so
-	/// seeding straight from them gives every unit in the fleet mt19937(0),
-	/// the identical jitter sequence, and a TX spread that is a constant
-	/// offset instead of a per-unit one — the exact collisions the jitter
-	/// exists to prevent. PMU::device_identifier() (MCU FICR) is unique per
-	/// chip and always readable, so it closes that case without touching
-	/// provisioning.
+	/// Each build variant is seeded from the identity it actually provisions:
+	///  - LoRa: LORA_DEVEUI. The Argos IDs are never written on a LoRa-only
+	///    build, so reaching for them first would hand every unit in the fleet
+	///    mt19937(0) -- identical jitter, and a +/-5 s anti-collision spread
+	///    that degenerates into a fleet-wide constant offset. DevEUI is the
+	///    identity the network already knows this device by, and it is
+	///    provisioned (or derived from FICR by the driver) on every unit.
+	///  - Argos: ARGOS_DECID, then ARGOS_HEXID. SMD provisions DECID (it is the
+	///    ID it transmits) and KIM2 writes DECID+HEXID together at init.
+	///  - Last resort: PMU::device_identifier() (MCU FICR), unique per chip and
+	///    always readable, so the seed is never 0 whatever the provisioning
+	///    state.
 	///
 	/// Kept separate from ArgosConfig::argos_id on purpose: that field is also
 	/// logged as the human-facing "Argos ID", and must keep reporting the real
 	/// provisioned ID (0 included) rather than a synthesised fallback.
 	unsigned int get_tx_jitter_seed() {
+#if defined(LORA_RAK3172) && (LORA_RAK3172 == 1)
+		// FNV-1a fold of the 16-hex-char DevEUI. Folding is required (64 bits ->
+		// 32) and must keep the LOW-order digits significant: DevEUIs in a batch
+		// are typically allocated as a contiguous block sharing a vendor prefix,
+		// so a naive "parse the first 8 hex chars" would collapse a whole fleet
+		// onto one seed -- the very failure this function exists to prevent.
+		const std::string& deveui = read_param<std::string>(ParamID::LORA_DEVEUI);
+		if (!deveui.empty()) {
+			unsigned int hash = 2166136261U;  // FNV offset basis
+			for (char c : deveui) {
+				hash ^= (unsigned char)c;
+				hash *= 16777619U;            // FNV prime
+			}
+			if (hash)
+				return hash;
+		}
+#endif
 		unsigned int seed = read_param<unsigned int>(ParamID::ARGOS_DECID);
 		if (seed)
 			return seed;
