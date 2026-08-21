@@ -117,6 +117,7 @@ extern ConfigurationStore *configuration_store;
 LoRaDevice::LoRaDevice()
 {
     m_packet_buffer.clear();
+    m_join_attempted = false;
     m_state = State::power_off;
     m_joined = false;
     m_join_failed = false;
@@ -216,6 +217,9 @@ void LoRaDevice::send(const KineisModulation mode, const KineisPacket& user_payl
 
     KineisPacket packet(user_payload.begin(), user_payload.begin() + payload_bytes);
     m_packet_buffer = Binascii::hexlify(packet);
+    // New packet, new join budget: state_idle may spend at most one join window
+    // on it (see the guard there).
+    m_join_attempted = false;
 
     DEBUG_TRACE("LoRaDevice::send: payload[%u bits]=%s", payload_length, m_packet_buffer.c_str());
 
@@ -238,6 +242,15 @@ void LoRaDevice::react(const LoRaCommEventRespOk&) {
 
 void LoRaDevice::react(const LoRaCommEventRespError& err) {
     DEBUG_INFO("LoRaDevice: error response type=%d", static_cast<int>(err.error_type));
+    // AT_NO_NETWORK_JOINED is the module telling us the OTAA session is gone —
+    // server-side re-registration, session expiry, or a module-side reset that
+    // dropped it. Nothing else in this driver ever clears m_joined (it is only
+    // set false on power-on, on entering joining, and on a credential change),
+    // so without this the flag stays stale-true for as long as the module stays
+    // powered, and the re-join guard in state_idle can never observe the very
+    // condition it exists for.
+    if (err.error_type == LoRa::RESP_NO_NETWORK)
+        m_joined = false;
     m_is_error = true;
 }
 
@@ -870,6 +883,9 @@ void LoRaDevice::state_joining_enter()
     m_joined = false;
     m_join_failed = false;
     m_is_error = false;
+    // Consume this packet's single join allowance, whoever initiated the join
+    // (configure case 101 on a cold dispatch, or the state_idle guard).
+    m_join_attempted = true;
 
     // AT+JOIN=<start>:<auto_join>:<interval>:<attempts>
     // start=1, auto_join=0, interval=10s, attempts=8
@@ -942,6 +958,36 @@ void LoRaDevice::state_idle()
     }
 
     if (m_packet_buffer.length()) {
+        // OTAA session guard, for the case the module was already up and lost
+        // its session: send() is dispatched by the service layer with no
+        // knowledge of join state, so the packet would go out as AT+SEND on an
+        // unjoined module, fail with AT_NO_NETWORK_JOINED, and burn an error
+        // strike for nothing. Re-joining here keeps the packet buffered —
+        // state_joining returns to idle on success and this branch transmits it.
+        //
+        // m_join_attempted caps this at ONE join window per buffered packet,
+        // and that bound is load-bearing. state_error sends the FSM back to
+        // idle for its first MAX_CONSECUTIVE_ERRORS strikes, and nothing on
+        // that path clears m_packet_buffer, so an unbounded guard would re-fire
+        // on every strike and turn each one into a fresh 90 s join. Out of
+        // gateway coverage — the normal state of a terrestrial tracker between
+        // passes — that trades a ~50 ms local rejection for ~270 s of join
+        // requests at LORA_TXP=0, every dispatch, for a gateway that isn't
+        // there. Battery is priority 2 in this firmware; the guard must not
+        // make the no-coverage case expensive to buy back the rare
+        // lost-session case.
+        //
+        // The flag is set by state_joining_enter (so a join already spent by
+        // the configure walk counts too) and cleared by send() for each new
+        // packet.
+        //
+        // ABP is unaffected twice over: njm == 0, and the configure walk has
+        // already set m_joined (case 15 / case 101).
+        if (m_config.njm == 1 && !m_joined && !m_join_attempted) {
+            DEBUG_INFO("LoRaDevice::state_idle: TX pending but not joined — re-joining first");
+            LORA_STATE_CHANGE(idle, joining);
+            return;
+        }
         LORA_STATE_CHANGE(idle, transmit);
     } else if (m_config.lp_mode == 1) {
         // Standby: module stays powered. Configured LPMLVL=1 → Stop1

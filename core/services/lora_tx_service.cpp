@@ -326,8 +326,31 @@ bool LoRaTxService::service_cancel() {
 }
 
 unsigned int LoRaTxService::service_next_timeout() {
-	// LoRa TX can take longer than Argos: join delay + on-air time at low DR
-	return 60000;
+	// Last-resort safety net. It must outlast every timeout the driver applies
+	// within one dispatch, or it pre-empts the driver's own recovery instead of
+	// backing it up. Worst-case chain for a single service_initiate():
+	//   power_on  ~6 s   (1 s boot wait + up to 8 AT ping retries)
+	//   configure ~5 s   (16 steps, plus a 3 s reboot when AT+NWM changes)
+	//   joining    90 s  (state_joining_enter; OTAA only, and capped at one
+	//                     window per packet by m_join_attempted)
+	//   transmit  150 s  (lora_rak3172.cpp tx_timeout_ms[DR0])
+	// ≈ 251 s at DR0, ≈ 126 s at the DR3 default. 300 s clears both.
+	//
+	// The previous 60 s was shorter than the DR0 and DR1 TX windows on their
+	// own. What that costs, precisely: firing mid-TX runs service_cancel() →
+	// stop_send(), which clears m_packet_buffer while the module is still
+	// transmitting and m_state stays `transmit`. TxComplete then lands on a
+	// de-initiated service ("completed without being initiated"), and — the
+	// part that actually loses data — the reschedule that follows calls send()
+	// again, which early-returns on `m_state == transmit` and drops the new
+	// packet with nothing but a DEBUG_WARN. The service is left with no
+	// completion at all for that cycle.
+	//
+	// Not a factor here: an AT+SEND deferred by ETSI duty-cycle enforcement is
+	// bounded by send_AT's own 2 s command timeout if the module withholds OK,
+	// or by initiate_timeout(tx_timeout_ms[dr]) if it accepts and defers. This
+	// net never arbitrates that.
+	return 300000;
 }
 
 bool LoRaTxService::service_is_triggered_on_surfaced(bool& immediate) {
