@@ -17,6 +17,9 @@
 #include "nrf_sdh_soc.h"
 #include "nrf_soc.h"
 #include "nrfx_twim.h"
+#include "nrf_twim.h"
+#include "nrf_gpio.h"
+#include "nrf_i2c.hpp"
 #include "cm_backtrace.h"
 #include "debug.hpp"
 #include "nrf_rgb_led.hpp"
@@ -267,6 +270,35 @@ void PMU::powerdown() {
 
 	// Shut down all peripherals before power-off (all boards)
 	NrfRGBLed::set_color_raw(BSP::GPIO::GPIO_LED_RED, BSP::GPIO::GPIO_LED_GREEN, BSP::GPIO::GPIO_LED_BLUE, RGBLedColor::BLACK);
+#if defined(BOARD_RSPB) && defined(ONBOARD_I2C_BUS)
+	// Park the I2C bus BEFORE cutting VSENSORS / pulsing MCU_DONE. The STC3117
+	// gauge stays powered on VBAT while the pull-ups (on VSENSORS) and the nRF
+	// die around it: the rail decay order is uncontrolled, and if SDA crosses the
+	// STC's input-low threshold while SCL still reads high, the STC sees a START
+	// and its I2C slave FSM stays armed through the whole TPL5111 off period —
+	// at the next boot it can NACK or hold a line, a wedge only a battery pull
+	// clears. This runs on EVERY TPL5111 wake (modulo powerdowns included), so
+	// left uncontrolled it is a per-wake dice roll. Stop the TWIM, then drive
+	// SCL low FIRST (SCL falling with SDA high is not a START), then SDA (SDA
+	// falling with SCL low is not a START either), and leave both driven low so
+	// the power cut produces no bus edges at all. The rise at the next boot is
+	// inherently safe (worst case the STC sees a STOP, which idles its FSM).
+	NrfI2C::uninit();
+	{
+		// Belt-and-braces: force the TWIM peripheral off at register level. An
+		// enabled TWIM owns SCL/SDA via PSEL and silently overrides the GPIO
+		// drive below — uninit() only releases buses its bookkeeping says are
+		// enabled, so this guarantee must not depend on driver-state flags.
+		nrf_twim_disable(BSP::I2C_Inits[ONBOARD_I2C_BUS].twim.p_twim);
+		const uint32_t scl = BSP::I2C_Inits[ONBOARD_I2C_BUS].twim_config.scl;
+		const uint32_t sda = BSP::I2C_Inits[ONBOARD_I2C_BUS].twim_config.sda;
+		nrf_gpio_cfg_output(scl);
+		nrf_gpio_pin_clear(scl);
+		nrf_delay_us(10);
+		nrf_gpio_cfg_output(sda);
+		nrf_gpio_pin_clear(sda);
+	}
+#endif
 #ifdef SENSORS_PWR_PIN
 	GPIOPins::clear(SENSORS_PWR_PIN);
 #endif

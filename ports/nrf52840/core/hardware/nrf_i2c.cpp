@@ -161,17 +161,9 @@ bool NrfI2C::reinit_bus(uint8_t bus) {
 	return true;
 }
 
-bool NrfI2C::full_bus_reset(uint8_t bus) {
-	if (bus >= BSP::I2C_TOTAL_NUMBER) return false;
-
-	DEBUG_TRACE("I2C bus %u full reset", bus);
-
-	uint32_t scl, sda;
-	get_bus_pins(bus, scl, sda);
-
-	nrfx_twim_disable(&BSP::I2C_Inits[bus].twim);
-	nrfx_twim_uninit(&BSP::I2C_Inits[bus].twim);
-
+/// @brief Pin-level bus reset — drive lines high, START, clock out stuck bits, STOP.
+/// Bit-bang only: safe to call before the TWIM instance is initialised (boot path).
+static void bitbang_bus_reset(uint32_t scl, uint32_t sda) {
 	// Drive both lines high, then generate START
 	nrf_gpio_cfg_output(scl);
 	nrf_gpio_cfg_output(sda);
@@ -195,6 +187,20 @@ bool NrfI2C::full_bus_reset(uint8_t bus) {
 	// STOP condition
 	bitbang_stop(scl, sda);
 	PMU::delay_ms(1);
+}
+
+bool NrfI2C::full_bus_reset(uint8_t bus) {
+	if (bus >= BSP::I2C_TOTAL_NUMBER) return false;
+
+	DEBUG_TRACE("I2C bus %u full reset", bus);
+
+	uint32_t scl, sda;
+	get_bus_pins(bus, scl, sda);
+
+	nrfx_twim_disable(&BSP::I2C_Inits[bus].twim);
+	nrfx_twim_uninit(&BSP::I2C_Inits[bus].twim);
+
+	bitbang_bus_reset(scl, sda);
 
 	// Verify bus is free
 	nrf_gpio_cfg_input(scl, NRF_GPIO_PIN_PULLUP);
@@ -274,7 +280,14 @@ void NrfI2C::init(void) {
 
 		if (is_bus_stuck(i)) {
 			DEBUG_TRACE("I2C bus %u stuck at init | attempting recovery", i);
-			bool freed = clock_stretch_recovery(i);
+			// Match the runtime recover_bus() strength: several clock-stretch
+			// attempts instead of the single one this path used to get.
+			bool freed = false;
+			for (unsigned int attempt = 0; attempt < I2C_RECOVERY_MAX_ATTEMPTS && !freed; attempt++) {
+				freed = clock_stretch_recovery(i);
+				if (!freed)
+					PMU::delay_ms(5);
+			}
 			// RSPB: VSENSORS power-cycle escalation DISABLED (pull-ups on VSENSORS —
 			// cutting it kills them; can't reset a VBAT STC anyway). See recover_bus().
 #if defined(SENSORS_PWR_PIN) && !defined(BOARD_RSPB)
@@ -291,6 +304,18 @@ void NrfI2C::init(void) {
 				freed = clock_stretch_recovery(i);
 			}
 #endif
+			if (!freed) {
+				// Last chance before booting degraded: pin-level full reset
+				// (START + clock-out + STOP). Runtime recovery escalates to
+				// full_bus_reset(), but that needs an initialised TWIM — this
+				// boot path never had one, so a slave that only resyncs on a
+				// START (e.g. an STC3117 on VBAT left armed mid-transfer by a
+				// power cut) was previously never offered one at boot.
+				uint32_t scl, sda;
+				get_bus_pins(i, scl, sda);
+				bitbang_bus_reset(scl, sda);
+				freed = !is_bus_stuck(i);
+			}
 			if (!freed) {
 				// Unrecoverable (e.g. STC3117 on VBAT holding SCL low — only a full
 				// board power cycle clears that). Disable the bus and boot degraded
@@ -453,7 +478,11 @@ bool NrfI2C::transfer_with_retry(uint8_t bus, uint8_t address,
 	// acquire_sensors_pwr re-probes it later; a stuck VBAT gauge needs a power-cycle.
 	if (is_bus_stuck(bus)) {
 		DEBUG_ERROR("I2C bus %u wedged — disabling (fast-fail) to unblock the scheduler", bus);
-		m_is_enabled[bus] = false;
+		// disable(), not a raw flag clear: the TWIM can still be hardware-enabled
+		// here (the last recover_bus() re-inited it), and an enabled TWIM owns
+		// SCL/SDA via PSEL — it would override GPIO writes, defeating the
+		// powerdown bus-park (uninit() skips flag-disabled buses).
+		disable(bus);
 	}
 #endif
 	return false;
