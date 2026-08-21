@@ -1200,11 +1200,11 @@ void KIM2Device::state_transmit_enter()
     m_tx_done    = false;
     m_is_error   = false;
     m_cmd_is_ok  = false;   // phase-1 +OK ACK flag (reset like send_AT would)
-    DEBUG_INFO("KIM2Device::state_transmit_enter: TX START — RCONF=[%s] mode=%d, payload=%u bytes (AT+TX=%s)",
+    DEBUG_INFO("KIM2Device::state_transmit_enter: TX START — RCONF=[%s] mode=%d, payload=%u bytes",
         m_kim2_comm.m_rconf_info.c_str(),
         static_cast<int>(m_tx_mode),
-        static_cast<unsigned>(m_tx_buffer.size() / 2),
-        m_tx_buffer.c_str());
+        static_cast<unsigned>(m_tx_buffer.size() / 2));
+    DEBUG_INFO("KIM2Device::state_transmit_enter: AT+TX=%s)", m_tx_buffer.c_str());
 
     // Fire AT+TX NON-BLOCKING, then poll the two AT+TX responses in state_transmit()
     // instead of busy-waiting up to 5 s for the +OK (which froze the scheduler):
