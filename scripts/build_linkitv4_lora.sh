@@ -68,11 +68,17 @@ RECOVER=false
 BUILD_TYPE=Release
 METRICS=OFF
 VALIDATION=OFF
+BENCH=OFF
 for arg in "$@"; do
     case $arg in
         --clean) CLEAN=true ;;
         --recover) RECOVER=true ;;
         --no-tx-suspend) LORA_TX_ERROR_SUSPEND_S=0 ;;
+        # Bench console over USB-CDC: %GPS/%GPSFL/%GPSCL/%NOFIX inject synthetic
+        # fixes with no antenna, %DIVE/%SURFACE drive the SWS funnel, %CFG/%OP
+        # move the FSM. Implies --debug: the console shares the USB-CDC link a
+        # release build does not bring up.
+        --bench) BENCH=ON; BUILD_TYPE=Debug ;;
         --debug) BUILD_TYPE=Debug ;;
         --release) BUILD_TYPE=Release ;;
         --metrics) METRICS=ON ;;
@@ -201,6 +207,7 @@ echo "  ENABLE_AXL_SENSOR=${ENABLE_AXL_SENSOR}"
 echo "  ENABLE_SWS_LOG=${ENABLE_SWS_LOG}"
 echo "  LORA_DCS_ENABLE=${LORA_DCS_ENABLE}   (ON = ETSI duty cycle enforced, AT+DCS=1)"
 echo "  LORA_TX_ERROR_SUSPEND_S=${LORA_TX_ERROR_SUSPEND_S}   (0 = no TX suspension, backoff only)"
+echo "  BENCH_TEST=${BENCH}   (ON = %GPS injection console over USB-CDC)"
 echo "  BATTERY_CHEMISTRY=${BATTERY_CHEMISTRY}"
 echo "  GNSS_HAS_BACKUP_BATTERY=${GNSS_HAS_BACKUP_BATTERY}"
 echo ""
@@ -215,6 +222,7 @@ cmake -DCMAKE_TOOLCHAIN_FILE=../../toolchain_arm_gcc_nrf52.cmake \
       -DGNSS_HAS_BACKUP_BATTERY=${GNSS_HAS_BACKUP_BATTERY} \
       -DLORA_DCS_ENABLE=${LORA_DCS_ENABLE} \
       -DLORA_TX_ERROR_SUSPEND_S=${LORA_TX_ERROR_SUSPEND_S} \
+      -DBENCH_TEST=${BENCH} \
       -DBATTERY_CHEMISTRY=${BATTERY_CHEMISTRY} \
       -DMETRIC_LATENCY_LOG_ENABLE=$([ "$METRICS" = "ON" ] && echo 1 || echo 0) \
       -DVALIDATION_LOG_ENABLE=$([ "$VALIDATION" = "ON" ] && echo 1 || echo 0) \
