@@ -162,6 +162,9 @@ void M10QAsyncReceiver::reset_session_state(const GPSNavSettings& nav_settings) 
 
     m_num_nav_samples = 0;
     m_num_sat_samples = 0;
+    // Sinon save_dbd_to_flash() et GPSEventPowerOff(fix_found) portent le
+    // resultat de la session precedente sur le chemin de reveil chaud.
+    m_fix_was_found = false;
 
     m_nav_settings = nav_settings;
     m_num_consecutive_fixes = m_nav_settings.num_consecutive_fixes;
@@ -1204,6 +1207,14 @@ void M10QAsyncReceiver::react(const UBXCommsEventError& e) {
             cancel_timeout();
             m_op_state = OpState::ERROR;
             run_state_machine();
+        } else {
+            // On tolere l'erreur — mais handle_error() a ARRETE le RX. Sans cette
+            // relance l'UART reste sourd: plus aucune erreur ne peut arriver (donc
+            // le seuil ci-dessus est inatteignable) et la reponse attendue ne
+            // remonte jamais. Depuis un contexte ISR: on differe au scheduler.
+            system_scheduler->post_task_prio([this]() {
+                m_ubx_comms.restart_rx();
+            }, "UBXRxRestart");
         }
     } else {
         system_scheduler->post_task_prio([this, e]() {
@@ -1281,6 +1292,12 @@ void M10QAsyncReceiver::state_poweron() {
 				            BOOT_BAUD_COUNT);
 				m_unrecoverable_error = true;
 				notify<GPSEventError>({});
+				// Couper le rail nous-memes: on ne peut pas dependre d'un abonne
+				// (GPSService ignore l'evenement hors session, et PWRON GNSS
+				// n'abonne personne) sinon la FSM se fige en poweron rail ON.
+				// Idempotent: si react() a deja lance la coupure, m_powering_off
+				// est vrai et l'appel sort immediatement.
+				check_for_power_off();
 				break;
 			}
 		} else if (m_op_state == OpState::SUCCESS) {
@@ -1348,6 +1365,14 @@ void M10QAsyncReceiver::state_poweroff() {
 	// route to `enterbackup` instead of cutting the rail. The M10Q stays
 	// powered with PMREQ-backup engaged so V_BCKP can charge naturally and
 	// next session uses the EXTINT wake fast-path (warm-start TTFF).
+	if (m_deep_idle_pending && m_unrecoverable_error) {
+		// Le deep-idle suppose un recepteur qui repond: y aller apres une erreur
+		// irrecuperable, c'est enchainer 12 sondes de 500 ms puis retomber ici
+		// de toute facon, rail allume pendant tout ce temps.
+		DEBUG_WARN("M10QAsyncReceiver: deep-idle annule (erreur irrecuperable) — coupure du rail");
+		VAL_GNSS("deep_idle_cancelled reason=unrecoverable_error");
+		m_deep_idle_pending = false;
+	}
 	if (m_deep_idle_pending) {
 		m_deep_idle_pending = false;
 		m_powering_off = false;          // not a true power-off anymore
@@ -1907,6 +1932,7 @@ void M10QAsyncReceiver::state_configure() {
 				DEBUG_ERROR("M10QAsyncReceiver::state_configure: failed");
 				m_unrecoverable_error = true;
 				notify<GPSEventError>({});
+				check_for_power_off();   // cf. state_poweron: ne pas dependre d'un abonne
 				break;
             } else if (m_op_state == OpState::ERROR) {
                 // Restart receiver on comms error
@@ -2005,6 +2031,7 @@ void M10QAsyncReceiver::state_startreceive() {
 				DEBUG_ERROR("M10QAsyncReceiver::state_start_receive: failed at step %u", m_step);
 				m_unrecoverable_error = true;
 				notify<GPSEventError>({});
+				check_for_power_off();   // cf. state_poweron: ne pas dependre d'un abonne
 				break;
             } else if (m_op_state == OpState::ERROR) {
                 // Restart receiver on comms error
@@ -2040,6 +2067,7 @@ void M10QAsyncReceiver::state_receive() {
             DEBUG_ERROR("M10Receiver: repeated comms errors");
             m_unrecoverable_error = true;
             notify<GPSEventError>({});
+            check_for_power_off();   // idem on_timeout(receive), deja fait ainsi
         }
     }
 }
@@ -3302,6 +3330,15 @@ bool M10QAsyncReceiver::start_bridge(PassthroughCallback rx_callback)
 	if (m_bridge_active)
 		return true;
 
+	// En deep-idle l'UART est deinit et ses canaux PPI sont liberes: la suite de
+	// cette fonction n'appelle exit_shutdown() que depuis `idle`, puis touche
+	// l'UART -> canal PPI libere -> APP_ERROR_CHECK_BOOL(false) -> reset du SoC.
+	if (STATE_EQUAL(backupidle) || STATE_EQUAL(enterbackup)) {
+		DEBUG_WARN("M10QAsyncReceiver::start_bridge: refuse — GNSS en deep-idle, "
+		           "sortir d'abord avec $GNSSBCKP#001;0");
+		return false;
+	}
+
 	// Cancel any pending state machine task
 	cancel_timeout();
 	system_scheduler->cancel_task(m_state_machine_handle);
@@ -3311,14 +3348,16 @@ bool M10QAsyncReceiver::start_bridge(PassthroughCallback rx_callback)
 		exit_shutdown();
 	}
 
-	// Reset to default 9600 baud for u-center/NMEA compatibility
-	m_ubx_comms.set_baudrate(DEFAULT_BAUDRATE);
+	// Se mettre au debit auquel le M10Q repond REELLEMENT. Forcer 9600 rendait
+	// l'outil de diagnostic muet exactement sur les cartes a BBR retenue (le
+	// recepteur y est a 460800, NMEA desactive) — indiscernable d'une carte morte.
+	m_ubx_comms.set_baudrate(m_synced_baud);
 
 	// Enable passthrough: raw UART RX goes to callback
 	m_ubx_comms.set_passthrough(true, rx_callback);
 	m_bridge_active = true;
 
-	DEBUG_INFO("M10QAsyncReceiver: bridge mode ACTIVE (9600 baud)");
+	DEBUG_INFO("M10QAsyncReceiver: bridge mode ACTIVE (%u baud)", m_synced_baud);
 	return true;
 }
 
@@ -3334,7 +3373,19 @@ void M10QAsyncReceiver::stop_bridge()
 
 	// Power off the GNSS and return to idle
 	enter_shutdown();
+	// Remettre la MEME base que power_off_immediate(): le bridge a prempte tous
+	// les clients (il annule les taches et coupe le rail sans passer par la FSM).
+	// Sans cela m_num_power_on restait a 1 apres un PWRON GNSS suivi d'un bridge,
+	// et plus AUCUNE session suivante ne pouvait couper le rail: ~25-30 mA en
+	// continu jusqu'au prochain reset.
 	m_state = State::idle;
+	m_num_power_on = 0;
+	m_powering_off = false;
+	m_op_state = OpState::IDLE;
+	m_step = 0;
+	m_unrecoverable_error = false;
+	m_pmreq_baud = DEFAULT_BAUDRATE;   // le rail vient d'etre coupe
+	m_bbr_retained = false;
 }
 
 bool M10QAsyncReceiver::bridge_send(const uint8_t* data, size_t len)

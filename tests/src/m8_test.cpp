@@ -253,9 +253,13 @@ TEST(M8, FailedToSyncCommsError)
     expect_power_on();
     m.power_on(settings);
     mock().expectOneCall("GPSEventError");
-    increment_time_ms(6000);
-    m.power_off();
+    // R4 (2026-08) : sur erreur irrecuperable le driver coupe desormais le rail
+    // lui-meme (check_for_power_off) au lieu d'attendre un power_off() du client —
+    // un abonne peut tres bien ignorer l'evenement (session deja terminee, PWRON
+    // GNSS qui n'abonne personne) et la FSM restait figee rail allume.
+    // L'attente doit donc etre declaree AVANT l'avance de temps qui declenche l'erreur.
     expect_power_off();
+    increment_time_ms(6000);
     increment_time_ms();
 }
 
@@ -366,9 +370,13 @@ TEST(M8, FailedToChangeBaudRate)
     increment_time_ms();
     ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
     mock().expectOneCall("GPSEventError");
-    increment_time_ms(3000);
-    m.power_off();
+    // R4 (2026-08) : sur erreur irrecuperable le driver coupe desormais le rail
+    // lui-meme (check_for_power_off) au lieu d'attendre un power_off() du client —
+    // un abonne peut tres bien ignorer l'evenement (session deja terminee, PWRON
+    // GNSS qui n'abonne personne) et la FSM restait figee rail allume.
+    // L'attente doit donc etre declaree AVANT l'avance de temps qui declenche l'erreur.
     expect_power_off();
+    increment_time_ms(3000);
     increment_time_ms();
 }
 
@@ -429,9 +437,13 @@ TEST(M8, FailedToReceivePVT)
 
     // Receive
     mock().expectOneCall("GPSEventError");
-    increment_time_ms(5000);
-    m.power_off();
+    // R4 (2026-08) : sur erreur irrecuperable le driver coupe desormais le rail
+    // lui-meme (check_for_power_off) au lieu d'attendre un power_off() du client —
+    // un abonne peut tres bien ignorer l'evenement (session deja terminee, PWRON
+    // GNSS qui n'abonne personne) et la FSM restait figee rail allume.
+    // L'attente doit donc etre declaree AVANT l'avance de temps qui declenche l'erreur.
     expect_power_off();
+    increment_time_ms(5000);
     increment_time_ms();
 }
 
@@ -977,12 +989,16 @@ TEST(M8, FailedToStartReceive)
     ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_GNSS);
     increment_time_ms();
     mock().expectOneCall("GPSEventError");
-    increment_time_ms(1000);
-    increment_time_ms(1000);
-    increment_time_ms(1000);
-    increment_time_ms(1000);
-    m.power_off();
+    // R4 (2026-08) : sur erreur irrecuperable le driver coupe desormais le rail
+    // lui-meme (check_for_power_off) au lieu d'attendre un power_off() du client —
+    // un abonne peut tres bien ignorer l'evenement (session deja terminee, PWRON
+    // GNSS qui n'abonne personne) et la FSM restait figee rail allume.
+    // L'attente doit donc etre declaree AVANT l'avance de temps qui declenche l'erreur.
     expect_power_off();
+    increment_time_ms(1000);
+    increment_time_ms(1000);
+    increment_time_ms(1000);
+    increment_time_ms(1000);
     increment_time_ms();
 }
 
@@ -1047,11 +1063,15 @@ TEST(M8, UartCommsErrorDuringReceive)
     increment_time_ms();
     inject_error(0x01);
     mock().expectOneCall("GPSEventError");
+    // R4 (2026-08) : sur erreur irrecuperable le driver coupe desormais le rail
+    // lui-meme (check_for_power_off) au lieu d'attendre un power_off() du client —
+    // un abonne peut tres bien ignorer l'evenement (session deja terminee, PWRON
+    // GNSS qui n'abonne personne) et la FSM restait figee rail allume.
+    // L'attente doit donc etre declaree AVANT l'avance de temps qui declenche l'erreur.
+    expect_power_off();
     increment_time_ms();
     inject_error(0x01);
     increment_time_ms();
-    m.power_off();
-    expect_power_off();
     increment_time_ms();
 }
 
@@ -1086,9 +1106,13 @@ TEST(M8, UartCommsErrorDuringConfig)
     increment_time_ms();
     inject_error(0x01);
     mock().expectOneCall("GPSEventError");
-    increment_time_ms();
-    m.power_off();
+    // R4 (2026-08) : sur erreur irrecuperable le driver coupe desormais le rail
+    // lui-meme (check_for_power_off) au lieu d'attendre un power_off() du client —
+    // un abonne peut tres bien ignorer l'evenement (session deja terminee, PWRON
+    // GNSS qui n'abonne personne) et la FSM restait figee rail allume.
+    // L'attente doit donc etre declaree AVANT l'avance de temps qui declenche l'erreur.
     expect_power_off();
+    increment_time_ms();
     increment_time_ms();
 }
 
