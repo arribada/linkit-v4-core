@@ -95,6 +95,49 @@ private:
 	/// Initial value DEFAULT (9600) is the safe boot default.
 	unsigned int m_pmreq_baud = 9600;
 
+	/// 2026-08 cold-boot baud probe order. After a rail cut the M10Q can come
+	/// back at EITHER baud:
+	///   - 9600   : true factory POR — BBR was lost (backup cell empty).
+	///   - 460800 : BBR RETAINED. `setup_uart_port()` writes CFG-UART1-BAUDRATE
+	///              with layers = BBR|RAM, so once the LinkIt V4 backup cell /
+	///              supercap on the GNSS rail holds BBR across the inter-session
+	///              gap, every subsequent "cold" boot comes up at MAX_BAUDRATE
+	///              and is SILENT at 9600 (NMEA off + nav messages off, both
+	///              also persisted in BBR) — not even a framing error to hint
+	///              at the mismatch.
+	/// Probing 9600 only was therefore a PERMANENT GNSS death: `state_poweron`
+	/// failed with "failed to sync comms" every session, and `state_configure` —
+	/// the only place that renegotiates the port, and the only place that can
+	/// issue the BBR-wiping CFG-RST — sits behind that sync. Field failure
+	/// 2026-08-22 on the KIM tag (24 h of good fixes, then nothing).
+	///
+	/// Index into BOOT_BAUD_TABLE of the baud to probe FIRST; updated on every
+	/// successful cold sync so a BBR-retaining board pays the failed probes
+	/// only once per boot. Seeded from GNSS_HAS_BACKUP_BATTERY: that build flag
+	/// is now only a HINT on the probe order (a wrong value costs ~3 s once per
+	/// boot, nothing more) — never a gate on behaviour.
+	unsigned int m_boot_baud_idx = 0;
+
+	/// 2026-08: runtime proof that the M10Q kept its BBR across the last power
+	/// transition. Set in `state_poweron` when the boot sync answered at
+	/// MAX_BAUDRATE (the port config lives in the BBR layer, so answering there
+	/// means the BBR survived), and unconditionally on the warm EXTINT wake
+	/// (the rail never dropped). Cleared when the sync answered at 9600, i.e.
+	/// the receiver came up on factory defaults.
+	///
+	/// This REPLACES `#if GNSS_HAS_BACKUP_BATTERY` as the gate for the
+	/// configure fast path: whether a backup cell is fitted, charged, or dead
+	/// is a per-session fact, not a build-time one — and the same firmware runs
+	/// on boards with and without the cell.
+	bool m_bbr_retained = false;
+
+	/// Baud at which the M10Q is currently known to answer. Updated by the boot
+	/// sync and by the warm-wake pre-sync. Used to put the UART back on a
+	/// working rate when an optimistic probe (fast-path validation) fails —
+	/// without it the driver kept talking at the probe's rate to a receiver
+	/// that never heard it.
+	unsigned int m_synced_baud = 9600;
+
 	// GNSS device info (cached from configure phase)
 	char m_gnss_sw_version[30];
 	char m_gnss_hw_version[10];
@@ -160,6 +203,8 @@ private:
 	void state_idle_exit();
 	void state_poweron_enter();
 	void state_poweron();
+	unsigned int boot_baud_for_step(unsigned int step) const;
+	void reset_session_state(const GPSNavSettings& nav_settings);
 	void state_poweron_exit();
 	void state_configure_enter();
 	void state_configure();

@@ -16,6 +16,63 @@ set(PROJ_DIR      .)
 set(CORE_DIR      ../../core)
 set(LIB_DIR       ../../libraries)
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Boolean build flags — normalisation stricte, une seule fois, pour toutes.
+#
+# Ces flags finissent dans le préprocesseur C sous la forme `#if FLAG`. Le
+# préprocesseur remplace un identifiant inconnu par 0 : `-DFLAG=ON` compile donc
+# SILENCIEUSEMENT le code gardé en dehors du binaire, pendant que CMake affiche
+# fièrement "FLAG=ON". C'est exactement comme ça que le fast-path BBR du GNSS
+# s'est retrouvé désactivé sur les builds SMD et LoRa (constaté 2026-08).
+# Le `if()` de CMake a le piège symétrique : `if(FLAG EQUAL 1)` est faux pour "ON".
+#
+# Règle : on accepte toutes les orthographes qu'un script de build peut employer,
+# on normalise en 1/0, et on ÉCHOUE brutalement sur ce qu'on ne comprend pas
+# plutôt que de deviner.
+function(normalise_bool_flag _name)
+    if(NOT DEFINED ${_name})
+        return()   # jamais posé — certains flags ne sont transmis que s'ils le sont
+    endif()
+    set(_val "${${_name}}")
+    if(_val STREQUAL "")
+        return()   # posé vide = équivalent à non posé (cf. RSPB_VSENSORS_FLOOR)
+    endif()
+    string(TOUPPER "${_val}" _up)
+    if(_up MATCHES "^(1|ON|TRUE|YES|Y)$")
+        set(${_name} 1 PARENT_SCOPE)
+    elseif(_up MATCHES "^(0|OFF|FALSE|NO|N)$" OR _up MATCHES "NOTFOUND$")
+        set(${_name} 0 PARENT_SCOPE)
+    else()
+        message(FATAL_ERROR
+            "Build flag ${_name}='${_val}' n'est pas un booléen. Utiliser "
+            "1/0, ON/OFF, TRUE/FALSE ou YES/NO — jamais un mot libre : il "
+            "arriverait tel quel au préprocesseur C et y vaudrait 0.")
+    endif()
+endfunction()
+
+# Liste unique des flags booléens du projet. Tout flag consommé par `#if` ou par
+# un `if(... EQUAL 1)` DOIT figurer ici. Les flags numériques (DEBUG_LEVEL,
+# WAKEUP_PERIOD, LORA_TX_ERROR_SUSPEND_S) et les chaînes (BOARD,
+# BATTERY_CHEMISTRY, BATTERY_MONITOR_TYPE, EXT_GPIO5_DEVICE) n'y sont pas.
+set(BOOL_BUILD_FLAGS
+    ENABLE_CAM_SENSOR ENABLE_BUZZER ENABLE_PH_SENSOR ENABLE_SEA_TEMP_SENSOR
+    ENABLE_PRESSURE_SENSOR ENABLE_ALS_SENSOR ENABLE_CDT_SENSOR ENABLE_AXL_SENSOR
+    ENABLE_THERMISTOR_SENSOR ENABLE_MORTALITY_SENSOR ENABLE_SWS_LOG ENABLE_SWS_ANALOG
+    GNSS_HAS_BACKUP_BATTERY GPS_FAKE_POSITION STC3117_MIXED_MODE
+    ARGOS_SMD LORA_RAK3172 LORA_DCS_ENABLE LORA_POWER_OFF_UNDERWATER
+    SMDSAT_USE_SAFE_TIMINGS SMDSAT_AUTOFALLBACK
+    BENCH_TEST BENCH_FORCE_LPM_NONE SMD_FLASH_HOLD
+    METRIC_LATENCY_LOG_ENABLE VALIDATION_LOG_ENABLE RSPB_VSENSORS_FLOOR)
+
+# Idempotent : appelé une première fois dès que les valeurs utilisateur sont
+# connues, puis une seconde fois juste avant target_compile_definitions pour
+# rattraper les flags posés entre-temps par la section spécifique à la carte.
+macro(normalise_bool_flags)
+    foreach(_bf ${BOOL_BUILD_FLAGS})
+        normalise_bool_flag(${_bf})
+    endforeach()
+endmacro()
+
 set(BOARD "LINKIT" CACHE STRING "Board to compile for")
 option(ARGOS_SMD "Use SMD satellite module" OFF)
 option(LORA_RAK3172 "Use RAK3172-SiP LoRa module instead of satellite" OFF)
@@ -125,6 +182,11 @@ if(NOT DEFINED GNSS_HAS_BACKUP_BATTERY)
     set(GNSS_HAS_BACKUP_BATTERY 0)
 endif()
 
+# Passage 1 : tout ce que l'utilisateur a pu passer en -D est maintenant connu.
+# Doit précéder les gardes `if(A AND NOT B)` et les tests `if(X EQUAL 1)`, qui
+# donnent tous un résultat faux sur une valeur "ON".
+normalise_bool_flags()
+
 # Guard: THERMISTOR and SEA_TEMP share the same depth pile slot in Argos TX.
 # Enabling both simultaneously would cause data corruption (last writer wins).
 if(ENABLE_THERMISTOR_SENSOR AND ENABLE_SEA_TEMP_SENSOR)
@@ -185,17 +247,6 @@ message(STATUS "Battery chemistry: ${BATTERY_CHEMISTRY}")
 message(STATUS "Sensors: AXL=${ENABLE_AXL_SENSOR} PRESSURE=${ENABLE_PRESSURE_SENSOR} THERMISTOR=${ENABLE_THERMISTOR_SENSOR} SEA_TEMP=${ENABLE_SEA_TEMP_SENSOR} ALS=${ENABLE_ALS_SENSOR} CDT=${ENABLE_CDT_SENSOR} PH=${ENABLE_PH_SENSOR} MORTALITY=${ENABLE_MORTALITY_SENSOR}")
 message(STATUS "GNSS: BBR=${GNSS_HAS_BACKUP_BATTERY} SWS_LOG=${ENABLE_SWS_LOG}")
 
-# Convert ON/OFF to 1/0 for C preprocessor compatibility
-if(ENABLE_PRESSURE_SENSOR)
-    set(ENABLE_PRESSURE_SENSOR 1)
-else()
-    set(ENABLE_PRESSURE_SENSOR 0)
-endif()
-if(ENABLE_AXL_SENSOR)
-    set(ENABLE_AXL_SENSOR 1)
-else()
-    set(ENABLE_AXL_SENSOR 0)
-endif()
 
 # Fake GPS position for indoor testing (simulates fix at Saint-Paul, Reunion)
 if(NOT DEFINED GPS_FAKE_POSITION)
@@ -657,20 +708,10 @@ if(ENABLE_MORTALITY_SENSOR EQUAL 1)
 endif()
 
 
-# Normalize all ENABLE_* flags to 0/1 for C++ compile definitions.
-# CMake booleans (ON/OFF/TRUE/FALSE) must be converted to integers
-# because target_compile_definitions passes them as-is to the preprocessor.
-foreach(_flag
-    ENABLE_CAM_SENSOR ENABLE_BUZZER ENABLE_PH_SENSOR
-    ENABLE_SEA_TEMP_SENSOR ENABLE_PRESSURE_SENSOR ENABLE_ALS_SENSOR
-    ENABLE_CDT_SENSOR ENABLE_AXL_SENSOR ENABLE_THERMISTOR_SENSOR
-    ENABLE_MORTALITY_SENSOR ENABLE_SWS_LOG ENABLE_SWS_ANALOG)
-    if(${_flag})
-        set(${_flag} 1)
-    else()
-        set(${_flag} 0)
-    endif()
-endforeach()
+# Passage 2 : rattrape les flags posés par la section spécifique à la carte
+# (ENABLE_CAM_SENSOR / ENABLE_BUZZER via EXT_GPIO5_DEVICE, ENABLE_SWS_ANALOG
+# forcé à 0 sur RSPB, ...). Idempotent sur ceux déjà normalisés au passage 1.
+normalise_bool_flags()
 
 target_compile_definitions(${TARGET_NAME} PRIVATE
     Release=0

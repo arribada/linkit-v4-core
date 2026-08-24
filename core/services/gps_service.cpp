@@ -804,7 +804,19 @@ unsigned int GPSService::service_next_timeout() {
 	// Must exceed the GNSS acquisition timeout to avoid premature termination
 	GNSSConfig gnss_config;
 	configuration_store->get_gnss_configuration(gnss_config);
-	unsigned int timeout_s = m_is_first_fix_found ? gnss_config.acquisition_timeout : gnss_config.acquisition_timeout_cold_start;
+	// 2026-08 : le filet doit couvrir le budget que service_initiate() va
+	// REELLEMENT donner au driver. Un cold start force (escalade
+	// GNSS_COLD_START_AFTER_NTRY ou GNSS_TRIGGER_COLD_START_ON_SURFACED) demande
+	// acquisition_timeout_cold_start meme quand un fix a deja ete obtenu ; sans
+	// ce test on armait le filet sur acquisition_timeout (+30 s) et on annulait
+	// la session a 150 s alors que le driver visait 530 s. Le recepteur qu'on
+	// vient d'effacer n'avait donc jamais le temps de retelecharger ses
+	// ephemerides : l'escalade de recuperation ne pouvait pas aboutir.
+	// m_force_cold_start est encore arme ici — Service::reschedule() calcule ce
+	// timeout AVANT d'appeler service_initiate(), qui seul le consomme.
+	bool cold_budget = !m_is_first_fix_found || m_force_cold_start;
+	unsigned int timeout_s = cold_budget ? gnss_config.acquisition_timeout_cold_start
+	                                     : gnss_config.acquisition_timeout;
 	return (timeout_s + SERVICE_SAFETY_MARGIN_S) * MS_PER_SEC;
 }
 
