@@ -259,6 +259,94 @@ TEST(M8, FailedToSyncCommsError)
     increment_time_ms();
 }
 
+// Regression 2026-08 — "M10QAsyncReceiver: failed to sync comms" definitif.
+//
+// setup_uart_port() ecrit CFG-UART1-BAUDRATE=460800 en couches BBR|RAM. Sur une
+// carte dont la pile / le supercap V_BCKP tient la BBR pendant la fenetre ou le
+// rail est coupe, le M10Q ne repart donc PAS aux defauts usine : il revient a
+// 460800, et il est totalement muet a 9600 (NMEA desactive, messages nav en
+// couche RAM donc eteints). Le driver ne sondait que 9600 : chaque session
+// mourait sur GPSEventError, et state_configure -- seul endroit qui renegocie le
+// port et seul endroit qui envoie le CFG-RST capable d'effacer la BBR -- etait
+// derriere ce sync. Aucun filet de securite ne rattrapait ce cas.
+TEST(M8, BootSyncFallsBackToSecondBaudWhenBbrRetained)
+{
+    M10QAsyncReceiver m;
+    TestGNSSListener listener(m);
+    GPSNavSettings settings;
+    settings.assistnow_autonomous_enable = false;
+    settings.assistnow_offline_enable = false;
+    settings.debug_enable = true;
+    settings.dyn_model = BaseGNSSDynModel::PORTABLE;
+    settings.fix_mode = BaseGNSSFixMode::AUTO;
+    settings.hacc_filter_en = false;
+    settings.hdop_filter_en = false;
+    settings.max_nav_samples = 30;
+
+    expect_power_on();
+    m.power_on(settings);
+    increment_time_ms();
+    // Premiere sonde: 9600 (defaut usine), le recepteur reste muet.
+    CHECK_EQUAL(NRF_UARTE_BAUDRATE_9600, g_fake_last_baudrate);
+
+    // 6 x 500 ms de timeouts sans reponse -> le driver doit passer au baud suivant
+    // au lieu d'abandonner la session. Marge au-dela des 3000 ms exacts: le
+    // moment ou tombe le 6e timeout depend de la phase du tick du scheduler.
+    increment_time_ms(3500);
+    CHECK_EQUAL(NRF_UARTE_BAUDRATE_460800, g_fake_last_baudrate);
+
+    // Le M10Q repond a 460800 (NACK sur le CFG-MSG invalide de la sonde) : la
+    // session doit continuer. Aucun GPSEventError n'est attendu -- le mock fait
+    // echouer le test s'il en arrive un.
+    ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+    increment_time_ms(100);
+
+    m.power_off();
+    expect_power_off();
+    increment_time_ms();
+}
+
+// Le baud qui a repondu est memorise: la session suivante le sonde en premier,
+// donc une carte a BBR retenue ne paie les sondes perdues qu'une fois par boot.
+TEST(M8, BootSyncCachesWorkingBaudForNextSession)
+{
+    M10QAsyncReceiver m;
+    TestGNSSListener listener(m);
+    GPSNavSettings settings;
+    settings.assistnow_autonomous_enable = false;
+    settings.assistnow_offline_enable = false;
+    settings.debug_enable = true;
+    settings.dyn_model = BaseGNSSDynModel::PORTABLE;
+    settings.fix_mode = BaseGNSSFixMode::AUTO;
+    settings.hacc_filter_en = false;
+    settings.hdop_filter_en = false;
+    settings.max_nav_samples = 30;
+
+    // Session 1: muet a 9600, repond a 460800.
+    expect_power_on();
+    m.power_on(settings);
+    increment_time_ms();
+    increment_time_ms(3500);
+    CHECK_EQUAL(NRF_UARTE_BAUDRATE_460800, g_fake_last_baudrate);
+    ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+    increment_time_ms(100);
+    m.power_off();
+    expect_power_off();
+    increment_time_ms();
+
+    // Session 2: la premiere sonde doit maintenant partir directement a 460800.
+    expect_power_on();
+    m.power_on(settings);
+    increment_time_ms();
+    CHECK_EQUAL(NRF_UARTE_BAUDRATE_460800, g_fake_last_baudrate);
+
+    ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+    increment_time_ms(100);
+    m.power_off();
+    expect_power_off();
+    increment_time_ms();
+}
+
 TEST(M8, FailedToChangeBaudRate)
 {
     M10QAsyncReceiver m;
