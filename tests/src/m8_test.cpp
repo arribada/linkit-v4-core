@@ -1116,6 +1116,59 @@ TEST(M8, UartCommsErrorDuringConfig)
     increment_time_ms();
 }
 
+// Regression R1 (2026-08) — le RX libuarte restait mort apres une erreur toleree.
+//
+// handle_error() (ubx_comms.cpp) ARRETE le RX pour ne pas boucler sur l'erreur.
+// Le seul endroit qui le relancait etait set_baudrate(). La branche qui TOLERE
+// les erreurs de framing du boot (sous MAX_FRAMING_ERRORS_BOOT) n'en faisait
+// aucun: l'UART restait sourd, plus un octet ne pouvait remonter — donc le
+// seuil de 10 etait structurellement inatteignable — et dans state_configure
+// au-dela du step 1 la suite n'etait qu'une cascade de TIMEOUT (jamais ERROR),
+// donc la branche de recuperation qui rappelle set_baudrate n'etait jamais
+// prise. La premiere erreur de framing en cours de configure tuait la session.
+TEST(M8, FramingErrorDuringConfigureRestartsRx)
+{
+    M10QAsyncReceiver m;
+    TestGNSSListener listener(m);
+    GPSNavSettings settings;
+    settings.assistnow_autonomous_enable = false;
+    settings.assistnow_offline_enable = false;
+    settings.debug_enable = true;
+    settings.dyn_model = BaseGNSSDynModel::PORTABLE;
+    settings.fix_mode = BaseGNSSFixMode::AUTO;
+    settings.hacc_filter_en = false;
+    settings.hdop_filter_en = false;
+    settings.max_nav_samples = 30;
+
+    expect_power_on();
+    m.power_on(settings);
+    increment_time_ms();
+    ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+    increment_time_ms();
+    // Entree dans configure: step 0 (VALSET port UART) puis attente de 1 s.
+    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_PRT);
+    increment_time_ms(500);
+    increment_time_ms();
+    CHECK_TRUE(m_is_rx_enabled);
+
+    // Erreur de framing 0x04 = transition NMEA->UBX, toleree pendant le boot.
+    inject_error(0x04);
+    increment_time_ms();
+    // handle_error a coupe le RX...
+    // ... et la reprise doit avoir ete postee au scheduler (elle ne peut pas
+    // s'executer en contexte ISR).
+    increment_time_ms(10);
+    CHECK_TRUE(m_is_rx_enabled);
+
+    // Le recepteur peut donc de nouveau etre entendu: la session continue.
+    ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+    increment_time_ms(100);
+
+    m.power_off();
+    expect_power_off();
+    increment_time_ms();
+}
+
 TEST(M8, UartCommsErrorDuringConfigAndRecover)
 {
     M10QAsyncReceiver m;

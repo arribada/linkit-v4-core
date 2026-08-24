@@ -1324,10 +1324,20 @@ void M10QAsyncReceiver::state_poweron() {
 			break;
 		} else if (m_op_state == OpState::ERROR) {
 			// Framing errors mean bytes ARE arriving, just at the wrong rate —
-			// move straight on to the next candidate baud.
+			// move straight on to the next candidate baud. Sur le DERNIER baud de
+			// la table en revanche, avancer sans borne terminait le power-on en
+			// "failed to sync comms" avec les 6 essais encore inutilises: une
+			// rafale de framing (frontiere NMEA->UBX, parasite) suffisait a tuer
+			// la session. On consomme alors le budget comme la branche timeout.
 			DEBUG_TRACE("M10QAsyncReceiver: baud rate framing error detected");
-			m_retries = BOOT_BAUD_SYNC_RETRIES;
-			m_step++;
+			m_uart_error_count = 0;   // nouveau baud (ou nouvel essai) = budget neuf
+			if (m_step + 1 < BOOT_BAUD_COUNT) {
+				m_retries = BOOT_BAUD_SYNC_RETRIES;
+				m_step++;
+			} else if (--m_retries == 0) {
+				m_retries = BOOT_BAUD_SYNC_RETRIES;
+				m_step++;
+			}
 			m_op_state = OpState::IDLE;
 			run_state_machine(100);
 			break;
@@ -1736,6 +1746,11 @@ void M10QAsyncReceiver::state_configure_enter() {
 	m_step = 0;
 	m_retries = DEFAULT_RETRIES;
 	m_op_state = OpState::IDLE;
+	// Comme state_poweron_enter/state_poweroff_enter/state_enterbackup_enter:
+	// le budget d'erreurs de framing tolerees appartient a l'etat, pas a la
+	// session. Sans ce reset, le chemin chaud backupidle -> configure heritait
+	// du compteur de la session precedente.
+	m_uart_error_count = 0;
 	// 2026-06 latch fix: clear any stale unrecoverable-error here too. The warm
 	// EXTINT-wake fast-path enters configure directly (backupidle -> configure),
 	// bypassing state_poweron_enter() which is the only other clear site — so a
