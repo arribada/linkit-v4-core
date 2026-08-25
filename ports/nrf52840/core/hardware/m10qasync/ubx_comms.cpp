@@ -174,6 +174,14 @@ void UBXComms::send_with_expect(uint8_t *buffer, unsigned int sz, UBX::MessageCl
 }
 
 void UBXComms::send(uint8_t *buffer, unsigned int sz, bool notify_sent, bool use_ext_buffer) {
+	// Meme garde que send_raw() et set_baudrate(): emettre sur une instance
+	// deinit (exit_shutdown dont le catch a avale l'echec libuarte) touche des
+	// ressources liberees — au mieux une cascade de timeouts, au pire un assert
+	// du SDK.
+	if (!m_is_init) {
+		DEBUG_WARN("UBXComms::send: UART non initialise — ignore");
+		return;
+	}
 	wait_tx_idle();
 
 	if (m_debug_enable) {

@@ -227,6 +227,15 @@ public:
     virtual bool start_bridge(PassthroughCallback) { return false; }
     virtual void stop_bridge() {}
     virtual bool is_bridge_active() const { return false; }
+
+    /// @brief Le recepteur est-il alimente / la machine a etats hors repos ?
+    ///
+    /// Sert a rattraper un `PWRON GNSS` DTE laisse en l'air: cette commande
+    /// incremente le compteur de clients sans aucune minuterie, et seul un
+    /// `PWRON OFF` le decremente. Oublie, il ne repasse jamais a zero — chaque
+    /// session de service fait alors +1/-1 AU-DESSUS du compte fuite et plus
+    /// rien ne coupe le rail (~25-30 mA en continu sur un appareil scelle).
+    virtual bool is_powered() const { return false; }
     virtual bool bridge_send(const uint8_t*, size_t) { return false; }
     virtual void bridge_process_rx() {}
 };

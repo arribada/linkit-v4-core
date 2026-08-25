@@ -341,6 +341,9 @@ TEST(M8, BootSyncCachesWorkingBaudForNextSession)
     increment_time_ms();
 
     // Session 2: la premiere sonde doit maintenant partir directement a 460800.
+    // Sentinelle: sans elle le CHECK ci-dessous passerait "a vide" si aucune
+    // sonde n'etait emise du tout (la variable garderait la valeur de la session 1).
+    g_fake_last_baudrate = NRF_UARTE_BAUDRATE_1000000;
     expect_power_on();
     m.power_on(settings);
     increment_time_ms();
@@ -380,6 +383,47 @@ TEST(M8, FailedToChangeBaudRate)
     expect_power_off();
     increment_time_ms(3000);
     increment_time_ms();
+}
+
+// Regression: a l'abandon du fast-path BBR, l'UART doit revenir sur le debit
+// auquel le recepteur repond REELLEMENT. Sans cela setup_uart_port() repartait
+// a 460800 vers un M10Q qui ecoutait a 9600 et la session mourait — une session
+// sur deux sur une carte sans pile de sauvegarde.
+TEST(M8, FastPathGiveUpRestoresSyncedBaud)
+{
+    M10QAsyncReceiver m;
+    TestGNSSListener listener(m);
+    GPSNavSettings settings;
+    settings.assistnow_autonomous_enable = false;
+    settings.assistnow_offline_enable = false;
+    settings.debug_enable = true;
+    settings.dyn_model = BaseGNSSDynModel::PORTABLE;
+    settings.fix_mode = BaseGNSSFixMode::AUTO;
+    settings.hacc_filter_en = false;
+    settings.hdop_filter_en = false;
+    settings.max_nav_samples = 30;
+
+    // --- Session 1: configure complete jusqu'a SEC-UNIQID, ce qui arme
+    // m_gnss_info_valid (prerequis du fast-path).
+    expect_power_on();
+    m.power_on(settings);
+    increment_time_ms();
+    ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);   // sync 9600
+    increment_time_ms();
+    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_PRT);    // step 0
+    // Le step 0 est "fire and forget": il repose une tache a +1000 ms avant que
+    // le step 1 n'emette la sonde. Attendre moins laisse l'injection suivante
+    // tomber dans le vide (le filtre d'attente n'est pas encore arme).
+    increment_time_ms(1100);
+    ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);   // step 1: sync MAX
+    increment_time_ms();
+    // A partir d'ici le recepteur est passe a 460800: le driver doit l'avoir
+    // enregistre, sinon un bridge ouvert dans le meme cycle parlerait a 9600.
+    CHECK_EQUAL(NRF_UARTE_BAUDRATE_460800, g_fake_last_baudrate);
+
+    m.power_off();
+    expect_power_off();
+    increment_time_ms(200);
 }
 
 TEST(M8, FailedToReceivePVT)
@@ -1155,8 +1199,11 @@ TEST(M8, FramingErrorDuringConfigureRestartsRx)
 
     // Erreur de framing 0x04 = transition NMEA->UBX, toleree pendant le boot.
     inject_error(0x04);
+    // handle_error a coupe le RX — on le verifie explicitement, sinon le test
+    // passerait meme si l'erreur n'avait jamais ete delivree.
+    CHECK_FALSE(m_is_rx_enabled);
     increment_time_ms();
-    // handle_error a coupe le RX...
+    // ...
     // ... et la reprise doit avoir ete postee au scheduler (elle ne peut pas
     // s'executer en contexte ISR).
     increment_time_ms(10);

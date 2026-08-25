@@ -138,6 +138,14 @@ private:
 	/// that never heard it.
 	unsigned int m_synced_baud = 9600;
 
+	/// Masque de constellations effectivement accepte par le recepteur et donc
+	/// present dans sa couche BBR. Compare au masque demande pour la session:
+	/// le fast-path saute le step 2 (`setup_gnss_channel_sharing`), or ce masque
+	/// varie par session (gps_service force |0x0F tant qu'aucun fix n'a ete
+	/// obtenu). Sentinelle = on ignore ce que contient le recepteur.
+	static constexpr unsigned int CONSTELLATION_MASK_UNKNOWN = 0xFFFFFFFFu;
+	unsigned int m_applied_constellation_mask = CONSTELLATION_MASK_UNKNOWN;
+
 	// GNSS device info (cached from configure phase)
 	char m_gnss_sw_version[30];
 	char m_gnss_hw_version[10];
@@ -221,6 +229,7 @@ private:
 	unsigned int boot_baud_for_step(unsigned int step) const;
 	static unsigned int boot_baud_retries(unsigned int step);
 	void reset_session_state(const GPSNavSettings& nav_settings);
+	void reset_session_counters(const GPSNavSettings& nav_settings);
 	void state_poweron_exit();
 	void state_configure_enter();
 	void state_configure();
@@ -370,6 +379,7 @@ public:
 	bool start_bridge(PassthroughCallback rx_callback) override;
 	void stop_bridge() override;
 	bool is_bridge_active() const override { return m_bridge_active; }
+	bool is_powered() const override { return m_num_power_on > 0 || m_state != State::idle; }
 	bool bridge_send(const uint8_t* data, size_t len) override;
 	void bridge_process_rx() override;
 
