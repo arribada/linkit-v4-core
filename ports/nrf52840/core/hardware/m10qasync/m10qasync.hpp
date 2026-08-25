@@ -146,6 +146,10 @@ private:
 	static constexpr unsigned int CONSTELLATION_MASK_UNKNOWN = 0xFFFFFFFFu;
 	unsigned int m_applied_constellation_mask = CONSTELLATION_MASK_UNKNOWN;
 
+	/// Effacement de la couche de config BBR deja tente pour CETTE configure
+	/// (qu'il ait ete acquitte ou non). Evite de reboucler sur l'etape 200.
+	bool m_bbr_config_cleared = false;
+
 	// GNSS device info (cached from configure phase)
 	char m_gnss_sw_version[30];
 	char m_gnss_hw_version[10];

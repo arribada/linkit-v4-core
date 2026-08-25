@@ -64,7 +64,21 @@ static constexpr unsigned int BOOT_BAUD_ALT_RETRIES  = 2;     ///< Budget par de
 // complete in a short surface window. The receiver itself discards the stale
 // ephemeris portion on load, so restoring an aged DBD is safe and preserves the
 // long-lived data that makes warm starts possible across multi-day deployments.
-static constexpr unsigned int DBD_MAX_AGE_S                 = 72 * 3600; ///< Max age (72h) of persisted DBD navigation database
+// 2026-08 — plafond d'age du DBD persiste, desormais fonction de la carte.
+//
+// Le DBD porte trois choses d'esperances de vie tres differentes: les ephemerides
+// diffusees (~4 h, que le recepteur ecarte LUI-MEME au chargement), les
+// predictions AssistNow Autonomous (3 a 6 jours) et l'almanach (des SEMAINES).
+// Un plafond unique de 72 h jetait donc l'almanach encore valide avec les
+// ephemerides perimees.
+//
+// Le bon plafond depend de ce que la carte sait conserver par ailleurs:
+//   - BBR retenue (pile/supercap V_BCKP qui tient): le recepteur garde sa propre
+//     copie vivante, le fichier n'est qu'une ceinture de secours. On reste serre.
+//   - BBR perdue a chaque coupure (pas de pile): le fichier est le SEUL vecteur
+//     de demarrage chaud persistant. On garde tout ce qui peut encore servir.
+static constexpr unsigned int DBD_MAX_AGE_BBR_S    = 72 * 3600;        ///< 3 j — carte a BBR retenue
+static constexpr unsigned int DBD_MAX_AGE_NO_BBR_S = 14 * 24 * 3600;   ///< 14 j — carte sans pile V_BCKP
 
 // State machine helper macros
 #ifndef VALIDATION_LOG_ENABLE
@@ -1822,6 +1836,7 @@ void M10QAsyncReceiver::state_configure_enter() {
 	// session. Sans ce reset, le chemin chaud backupidle -> configure heritait
 	// du compteur de la session precedente.
 	m_uart_error_count = 0;
+	m_bbr_config_cleared = false;
 	// 2026-06 latch fix: clear any stale unrecoverable-error here too. The warm
 	// EXTINT-wake fast-path enters configure directly (backupidle -> configure),
 	// bypassing state_poweron_enter() which is the only other clear site — so a
@@ -1908,6 +1923,20 @@ void M10QAsyncReceiver::state_configure() {
 				m_op_state = OpState::IDLE;
 				continue;
 			}
+			// Etape 200: effacement de la couche de config BBR, avec ACK attendu.
+			// SUCCESS amene a 201 (branche generique) qui revient au step 5.
+			if (m_step == 200) {
+				clear_config();
+				break;
+			}
+			if (m_step == 201) {
+				m_bbr_config_cleared = true;
+				DEBUG_INFO("M10QAsyncReceiver: effacement config BBR ACQUITTE par le recepteur");
+				VAL_GNSS("clear_bbr_config_acked");
+				m_step = 5;
+				m_op_state = OpState::IDLE;
+				continue;
+			}
 			// Fast path step 102: rattrapage du seul reglage saute qui varie par
 			// session. SUCCESS amene a 103 (branche generique), traitee ci-dessous.
 			if (m_step == 102) {
@@ -1947,14 +1976,17 @@ void M10QAsyncReceiver::state_configure() {
 				save_config();
 				break;
 			} else if (m_step == 5) {
-				m_step++;
-				m_op_state = OpState::IDLE;
 				// Un COLD START efface les donnees de navigation ET la config
 				// persistee: c'est la seule facon de sortir d'une couche BBR
-				// verrouillee (debit exotique, cle corrompue). Doit preceder
-				// soft_reset(), qui consomme le drapeau.
-				if (m_nav_settings.cold_start)
-					clear_config();
+				// verrouillee (debit exotique, cle corrompue). L'effacement passe
+				// par l'etape 200 (dediee, avec attente d'ACK) et revient ici.
+				if (m_nav_settings.cold_start && !m_bbr_config_cleared) {
+					m_step = 200;
+					m_op_state = OpState::IDLE;
+					continue;
+				}
+				m_step++;
+				m_op_state = OpState::IDLE;
 				soft_reset(); // This operation has no response
             } else if (m_step == 6) {
 				m_step++;
@@ -2035,6 +2067,25 @@ void M10QAsyncReceiver::state_configure() {
 			// sur une carte sans pile. Le commentaire d'origine affirmait que le
 			// baud retombait a 9600 : c'etait faux, cette selection n'existe que
 			// dans state_enterbackup.
+			if (m_step == 200 || m_step == 201) {
+				// Pas d'ACK: soit le recepteur tourne un firmware ou CFG-CFG
+				// n'existe plus (supprime du protocole 34.20 / SPG 5.20, remplace
+				// par UBX-CFG-OTP), soit il a refuse la commande. On poursuit le
+				// cold start — le CFG-RST, lui, reste valide et efface bien les
+				// donnees de navigation — mais l'echappatoire de la couche de
+				// CONFIGURATION n'est pas disponible sur ce module: si un debit
+				// exotique s'y trouve persiste, seule la sonde multi-debits le
+				// rattrapera. C'est une information de terrain, pas un detail.
+				DEBUG_ERROR("M10QAsyncReceiver: effacement config BBR NON ACQUITTE — "
+				            "CFG-CFG indisponible sur ce firmware recepteur (cf. SPG 5.20). "
+				            "Le cold start continue, mais la couche de config BBR n'est PAS effacee");
+				VAL_GNSS("clear_bbr_config_unsupported");
+				m_bbr_config_cleared = true;   // ne pas boucler
+				m_step = 5;
+				m_retries = DEFAULT_RETRIES;
+				m_op_state = OpState::IDLE;
+				continue;
+			}
 			if (m_step >= 100) {
 				constexpr unsigned int FASTPATH_MAX_ATTEMPTS = 3;
 				if (++m_fastpath_attempts >= FASTPATH_MAX_ATTEMPTS) {
@@ -2318,10 +2369,16 @@ bool M10QAsyncReceiver::load_dbd_from_flash() {
 				return false;
 			}
 			uint32_t age_s = now_t - save_time;
-			if (age_s > DBD_MAX_AGE_S) {
-				DEBUG_TRACE("M10QAsyncReceiver::load_dbd_from_flash: stale (%u s old)", age_s);
+			const uint32_t max_age = m_bbr_retained ? DBD_MAX_AGE_BBR_S
+			                                        : DBD_MAX_AGE_NO_BBR_S;
+			if (age_s > max_age) {
+				DEBUG_INFO("M10QAsyncReceiver::load_dbd_from_flash: perime (%u s > %u s, BBR %s)",
+				           age_s, max_age, m_bbr_retained ? "retenue" : "perdue");
 				return false;
 			}
+			DEBUG_INFO("M10QAsyncReceiver::load_dbd_from_flash: %u octets, age %u s (plafond %u s, BBR %s)",
+			           (unsigned int)(file.size() - sizeof(uint32_t)), age_s, max_age,
+			           m_bbr_retained ? "retenue" : "perdue");
 		}
 
 		unsigned int data_len = (unsigned int)(file.size() - sizeof(uint32_t));
@@ -2363,7 +2420,7 @@ void M10QAsyncReceiver::state_fetchdatabase() {
     }
     // 2026-08 (A2) — on ne saute PLUS la recuperation quand l'ANO a servi cette
     // session. C'etait la seule raison pour laquelle gnss_dbd.dat n'etait jamais
-    // rafraichi sur une unite ANO: passe DBD_MAX_AGE_S (72 h) la copie flash
+    // rafraichi sur une unite ANO: passe le plafond d'age la copie flash
     // etait rejetee et l'unite perdait ses DEUX sources d'assistance d'un coup,
     // sans pouvoir les reconstruire. C'est le scenario "carte sans pile V_BCKP",
     // ou le DBD est le seul vecteur de demarrage chaud persistant.
@@ -2722,11 +2779,19 @@ void M10QAsyncReceiver::clear_config() {
         .loadMask    = 0,   // pas de rechargement: la config RAM en cours reste active
         .deviceMask  = CFG::CFG::DEVMASK_BBR,
     };
-    // Emis sans attente d'ACK, comme soft_reset(): on ne veut pas ajouter une
-    // etape susceptible d'echouer sur le chemin de recuperation, et un echec
-    // eventuel est sans consequence (on retombe sur le comportement actuel).
-    m_ubx_comms.send_packet(MessageClass::MSG_CLASS_CFG, CFG::ID_CFG, cfg_msg_cfg_cfg);
-    m_ubx_comms.wait_send();
+    // ACQUITTEMENT ATTENDU. La regle generale de la classe UBX-CFG (interface
+    // description M10 SPG 5.10, §3.10) est "acquitte par ACK-ACK si traite,
+    // ACK-NAK sinon", et CFG-CFG ne porte AUCUNE clause derogatoire — contrairement
+    // a CFG-RST, dont la spec dit explicitement de ne pas attendre de reponse.
+    // Emettre sans attendre revenait donc a jeter la seule preuve que
+    // l'effacement a eu lieu.
+    //
+    // Enjeu concret: CFG-CFG a ete SUPPRIME du protocole 34.20 (SPG 5.20), ou il
+    // est remplace par UBX-CFG-OTP. Sur un module approvisionne avec ce firmware,
+    // l'effacement echouerait en silence et l'echappatoire BBR n'existerait plus.
+    // L'absence d'ACK est donc l'information a remonter, pas un detail.
+    initiate_timeout();
+    m_ubx_comms.send_packet_with_expect(MessageClass::MSG_CLASS_CFG, CFG::ID_CFG, cfg_msg_cfg_cfg);
 }
 
 void M10QAsyncReceiver::soft_reset() {
@@ -3525,20 +3590,32 @@ bool M10QAsyncReceiver::start_bridge(PassthroughCallback rx_callback)
 	system_scheduler->cancel_task(m_state_machine_handle);
 
 	// Power on GNSS module and init UART (if not already on)
-	if (m_state == State::idle) {
+	const bool was_idle = (m_state == State::idle);
+	if (was_idle) {
 		exit_shutdown();
 	}
 
-	// Se mettre au debit auquel le M10Q repond REELLEMENT. Forcer 9600 rendait
-	// l'outil de diagnostic muet exactement sur les cartes a BBR retenue (le
-	// recepteur y est a 460800, NMEA desactive) — indiscernable d'une carte morte.
-	m_ubx_comms.set_baudrate(m_synced_baud);
+	// Se mettre au debit auquel le M10Q repond REELLEMENT — mais lequel depend de
+	// ce qu'on vient de faire au recepteur:
+	//   - on arrivait de `idle`: exit_shutdown() ci-dessus a coupe puis reallume
+	//     le rail, donc le M10Q vient de faire un POR et repart au debit de BOOT
+	//     (9600 si la BBR est perdue, MAX si elle est retenue) — c'est l'indice
+	//     de sondage qui le sait, pas m_synced_baud;
+	//   - sinon le recepteur est deja alimente et configure: il parle a
+	//     m_synced_baud.
+	// Constate au banc: forcer m_synced_baud (460800, herite de la derniere
+	// session) sur un recepteur fraichement redemarre a 9600 rendait le bridge
+	// muet — le defaut meme que ce correctif etait cense supprimer, mais dans
+	// l'autre sens.
+	const unsigned int bridge_baud = was_idle ? boot_baud_for_step(0) : m_synced_baud;
+	m_ubx_comms.set_baudrate(bridge_baud);
 
 	// Enable passthrough: raw UART RX goes to callback
 	m_ubx_comms.set_passthrough(true, rx_callback);
 	m_bridge_active = true;
 
-	DEBUG_INFO("M10QAsyncReceiver: bridge mode ACTIVE (%u baud)", m_synced_baud);
+	DEBUG_INFO("M10QAsyncReceiver: bridge mode ACTIVE (%u baud, %s)", bridge_baud,
+	           was_idle ? "recepteur redemarre" : "recepteur deja configure");
 	return true;
 }
 
