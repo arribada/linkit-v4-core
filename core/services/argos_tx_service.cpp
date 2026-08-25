@@ -15,6 +15,7 @@
 #include "debug.hpp"
 #include "pmu.hpp"
 #include "rate_limiter.hpp"
+#include "rgb_led.hpp"
 
 // Pre-deploy validation channel — see hauled_mode_service.cpp header comment.
 // Enables grep-friendly [VAL-TX] tags on every TX completion with type + spacing
@@ -25,8 +26,10 @@
 extern ConfigurationStore *configuration_store;
 extern Scheduler *system_scheduler;
 extern GPSDevice *gps_device;
+extern RGBLed *status_led;
 #if defined(BOARD_RSPB) && ENABLE_MORTALITY_SENSOR
 #include "mortality_service.hpp"
+
 extern MortalityService *mortality_service;
 #endif
 
@@ -88,15 +91,27 @@ void ArgosTxService::service_init() {
 		DEBUG_WARN("ArgosTxService: SURFACING_BURST mode requires UNDERWATER_EN=1 — burst will not trigger without SWS");
 	}
 
-	// Position-less: LEGACY/DUTY_CYCLE/PASS_PREDICTION with GNSS_EN=0 — falls back
-	// to Doppler-only TX (no position on air unless REUSE_LAST has a cached fix).
+	// Position-less: LEGACY et DUTY_CYCLE avec GNSS_EN=0 se rabattent sur un TX
+	// Doppler seul (aucune position sur l'air, sauf fix en cache via REUSE_LAST).
 	if ((argos_config.mode == BaseArgosMode::LEGACY ||
-	     argos_config.mode == BaseArgosMode::DUTY_CYCLE ||
-	     argos_config.mode == BaseArgosMode::PASS_PREDICTION) &&
+	     argos_config.mode == BaseArgosMode::DUTY_CYCLE) &&
 	    !argos_config.gnss_en) {
 		DEBUG_WARN("ArgosTxService: %s with GNSS_EN=0 — TX will be Doppler-only without position",
-		           argos_config.mode == BaseArgosMode::LEGACY ? "LEGACY" :
-		           argos_config.mode == BaseArgosMode::DUTY_CYCLE ? "DUTY_CYCLE" : "PASS_PREDICTION");
+		           argos_config.mode == BaseArgosMode::LEGACY ? "LEGACY" : "DUTY_CYCLE");
+	}
+
+	// PASS_PREDICTION + GNSS_EN=0 est une combinaison INCOMPATIBLE, pas un mode
+	// degrade: la prevision de passage a besoin d'une position pour calculer, et
+	// service_next_schedule_in_ms() n'a aucune branche pour ce cas — il tombe sur
+	// un SCHEDULE_DISABLED qui etait muet. La balise restait donc silencieuse,
+	// sans la moindre trace. On le signale fort ici; le blocage se fait en amont,
+	// cote interface de configuration.
+	if (argos_config.mode == BaseArgosMode::PASS_PREDICTION && !argos_config.gnss_en) {
+		DEBUG_ERROR("ArgosTxService: CONFIGURATION INCOMPATIBLE — PASS_PREDICTION exige GNSS_EN=1 "
+		            "(la prevision de passage se calcule a partir d'une position). AUCUNE emission "
+		            "ne sera planifiee tant que cette combinaison est en place.");
+		if (status_led)
+			status_led->flash(RGBLedColor::RED, 200);
 	}
 
 	DEBUG_INFO("ArgosTxService::service_init: Argos ID=%u", (unsigned int)argos_config.argos_id);
@@ -468,6 +483,18 @@ unsigned int ArgosTxService::service_next_schedule_in_ms() {
 					m_scheduled_mode = argos_config.adaptive_modulation ? KineisModulation::VLDA4 : resolve_non_adaptive_modulation();
 					return m_sched.schedule_legacy(argos_config, now);
 				}
+				// Seuls DUTY_CYCLE et LEGACY savent se passer du GNSS. Tout autre
+				// mode arrivant ici — PASS_PREDICTION en pratique — n'a aucune
+				// branche d'ordonnancement et sort desactive. C'etait un `return`
+				// nu: aucune trace, balise muette, et rien pour le diagnostiquer
+				// sur le terrain. L'incompatibilite est signalee au demarrage dans
+				// service_init(); on la redit ici pour que le log dise POURQUOI
+				// plus aucune emission n'est planifiee.
+				DEBUG_ERROR("ArgosTxService: mode %d avec GNSS_EN=0 — aucun ordonnancement possible, "
+				            "TX desactive (configuration incompatible)",
+				            static_cast<int>(argos_config.mode));
+				if (status_led)
+					status_led->flash(RGBLedColor::RED, 200);
 				return Service::SCHEDULE_DISABLED;
 			} else if (!service_is_time_known()) {
 				DEBUG_INFO("ArgosTxService: RTC time not known yet — TX disabled until first time fix");
@@ -996,7 +1023,12 @@ void ArgosTxService::notify_peer_event(ServiceEvent& e) {
 				// failures on the 3rd TX
 				m_kineis.set_idle_timeout((argos_config.surfacing_burst_max_s + 10) * 1000);
 				m_scheduled_task = [this]() { process_doppler_burst(); };
-				m_scheduled_mode = argos_config.adaptive_modulation ? KineisModulation::VLDA4 : KineisModulation::LDA2;
+				// Hors mode adaptatif la modulation vient du RCONF maitre, comme
+				// sur le chemin d'ordonnancement du meme mode plus haut. Un LDA2
+				// code en dur ici annulait le reglage de l'operateur.
+				m_scheduled_mode = argos_config.adaptive_modulation
+					? KineisModulation::VLDA4
+					: resolve_non_adaptive_modulation();
 				// Demoted to TRACE: the canonical state-change marker is
 				// "UWDetectorService: state changed: state=0" emitted in the same
 				// broadcast cascade. This log added ~50-300 ms LFS commit on the
@@ -1289,6 +1321,16 @@ void ArgosTxService::process_sensor_burst() {
 						return;
 					}
 				}
+			} else {
+				// Non-adaptatif: 192 bits, seul LDA2 les porte. C'est la remontee
+				// de securite legitime — mais elle n'etait jamais APPLIQUEE ici,
+				// et on partait en LDA2 sur un module reste sur le RCONF maitre.
+				if (!ensure_modulation(KineisModulation::LDA2)) {
+					DEBUG_ERROR("ArgosTxService::process_sensor_burst: fastloc %u bits need LDA2, not provisioned — skipping TX",
+					            size_bits);
+					service_complete();
+					return;
+				}
 			}
 			// Demoted to TRACE: per-TX payload dump.
 			DEBUG_TRACE("ArgosTxService::process_sensor_burst: fastloc mode=%s data=%s sz=%u",
@@ -1368,6 +1410,26 @@ void ArgosTxService::process_sensor_burst() {
 				if (!size_fits_modulation(size_bits, m_scheduled_mode)) {
 					DEBUG_ERROR("ArgosTxService::process_sensor_burst: sensor payload %u bits doesn't fit fallback mod %d — skipping TX",
 					            size_bits, (int)m_scheduled_mode);
+					service_complete();
+					return;
+				}
+			}
+		} else {
+			// Ce processeur etait le seul du fichier sans branche non-adaptative:
+			// le LDA2 pose plus haut partait tel quel, sans qu'aucun
+			// ensure_modulation ne programme le module. Meme politique que
+			// process_time_sync_burst et process_gnss_burst — le RCONF maitre fait
+			// foi, et on ne remonte vers LDA2 que si le paquet ne tient pas dedans.
+			m_scheduled_mode = resolve_non_adaptive_modulation();
+			if (!size_fits_modulation(size_bits, m_scheduled_mode)) {
+				if (size_fits_modulation(size_bits, KineisModulation::LDA2) &&
+				    ensure_modulation(KineisModulation::LDA2)) {
+					DEBUG_WARN("ArgosTxService::process_sensor_burst: %u bits don't fit master mod %d — falling back to LDA2",
+					           size_bits, (int)m_scheduled_mode);
+					m_scheduled_mode = KineisModulation::LDA2;
+				} else {
+					DEBUG_ERROR("ArgosTxService::process_sensor_burst: %u bits fit no provisioned modulation — skipping TX",
+					            size_bits);
 					service_complete();
 					return;
 				}
@@ -1473,11 +1535,18 @@ void ArgosTxService::process_gnss_burst() {
 			return;
 		}
 
-		// Check if the latest entry is a fastloc (degraded fix) — always LDA2
+		// Une entree fastloc produit une trame LDA2 pleine (FASTLOC_PACKET_BITS
+		// vaut LDA2_FRAME_BITS = 192 bits). En adaptatif on vise donc LDA2
+		// d'emblee. En NON-adaptatif on ne touche pas a la modulation resolue a
+		// l'ordonnancement: c'est le RCONF maitre qui fait foi, et la garde de
+		// taille du bloc `else` plus bas fait la remontee vers LDA2 en appelant
+		// ensure_modulation() — donc en programmant reellement le module, ce que
+		// l'ecrasement direct ne faisait pas.
 		if (v.back()->info.event_type == GPSEventType::FASTLOC) {
 			packet = ArgosPacketBuilder::build_fastloc_packet(v.back(), argos_config.is_lb);
 			size_bits = ArgosPacketBuilder::FASTLOC_PACKET_BITS;
-			m_scheduled_mode = KineisModulation::LDA2;
+			if (argos_config.adaptive_modulation)
+				m_scheduled_mode = KineisModulation::LDA2;
 		} else {
 			// Filter out any CloudLocate/fastloc entries that may be mixed in
 			v.erase(std::remove_if(v.begin(), v.end(), [](const GPSLogEntry* e) {
@@ -1499,7 +1568,11 @@ void ArgosTxService::process_gnss_burst() {
 					size_bits);
 		}
 
-		// Adaptive modulation: short/fastloc packet (96 bits) fits LDK, long needs LDA2
+		// Adaptive modulation: un paquet SHORT (96 bits) tient dans LDK, un LONG
+		// (192) demande LDA2. Attention: le paquet FASTLOC fait 192 bits lui aussi
+		// (FASTLOC_PACKET_BITS = LDA2_FRAME_BITS), contrairement a ce que disait ce
+		// commentaire — c'est pourquoi la garde de taille ci-dessous ne le rattrapait
+		// pas quand la modulation etait ecrasee en LDA2 juste avant.
 		if (argos_config.adaptive_modulation) {
 			m_scheduled_mode = (size_bits <= 128) ? KineisModulation::LDK : KineisModulation::LDA2;
 			if (!ensure_modulation(m_scheduled_mode)) {
@@ -1868,6 +1941,17 @@ void ArgosTxService::process_doppler_burst() {
 					service_complete();
 					return;
 				}
+			}
+		} else {
+			// Non-adaptatif: meme remontee de securite que les trois branches
+			// soeurs de ce processeur (prewarm, CloudLocate, position en cache),
+			// qui elles l'appliquent bien. Sans cela le ping de surface partait en
+			// LDA2 sur un module reste sur le maitre.
+			if (!ensure_modulation(KineisModulation::LDA2)) {
+				DEBUG_ERROR("ArgosTxService::process_doppler_burst: fastloc %u bits need LDA2, not provisioned — skipping TX",
+				            size_bits);
+				service_complete();
+				return;
 			}
 		}
 
