@@ -95,6 +95,66 @@ private:
 	/// Initial value DEFAULT (9600) is the safe boot default.
 	unsigned int m_pmreq_baud = 9600;
 
+	/// 2026-08 cold-boot baud probe order. After a rail cut the M10Q can come
+	/// back at EITHER baud:
+	///   - 9600   : true factory POR — BBR was lost (backup cell empty).
+	///   - 460800 : BBR RETAINED. `setup_uart_port()` writes CFG-UART1-BAUDRATE
+	///              with layers = BBR|RAM, so once the LinkIt V4 backup cell /
+	///              supercap on the GNSS rail holds BBR across the inter-session
+	///              gap, every subsequent "cold" boot comes up at MAX_BAUDRATE
+	///              and is SILENT at 9600 (NMEA off + nav messages off, both
+	///              also persisted in BBR) — not even a framing error to hint
+	///              at the mismatch.
+	/// Probing 9600 only was therefore a PERMANENT GNSS death: `state_poweron`
+	/// failed with "failed to sync comms" every session, and `state_configure` —
+	/// the only place that renegotiates the port, and the only place that can
+	/// issue the BBR-wiping CFG-RST — sits behind that sync. Field failure
+	/// 2026-08-22 on the KIM tag (24 h of good fixes, then nothing).
+	///
+	/// Index into BOOT_BAUD_TABLE of the baud to probe FIRST; updated on every
+	/// successful cold sync so a BBR-retaining board pays the failed probes
+	/// only once per boot. Seeded from GNSS_HAS_BACKUP_BATTERY: that build flag
+	/// is now only a HINT on the probe order (a wrong value costs ~3 s once per
+	/// boot, nothing more) — never a gate on behaviour.
+	unsigned int m_boot_baud_idx = 0;
+
+	/// 2026-08: runtime proof that the M10Q kept its BBR across the last power
+	/// transition. Set in `state_poweron` when the boot sync answered at
+	/// MAX_BAUDRATE (the port config lives in the BBR layer, so answering there
+	/// means the BBR survived), and unconditionally on the warm EXTINT wake
+	/// (the rail never dropped). Cleared when the sync answered at 9600, i.e.
+	/// the receiver came up on factory defaults.
+	///
+	/// This REPLACES `#if GNSS_HAS_BACKUP_BATTERY` as the gate for the
+	/// configure fast path: whether a backup cell is fitted, charged, or dead
+	/// is a per-session fact, not a build-time one — and the same firmware runs
+	/// on boards with and without the cell.
+	bool m_bbr_retained = false;
+
+	/// Baud at which the M10Q is currently known to answer. Updated by the boot
+	/// sync and by the warm-wake pre-sync. Used to put the UART back on a
+	/// working rate when an optimistic probe (fast-path validation) fails —
+	/// without it the driver kept talking at the probe's rate to a receiver
+	/// that never heard it.
+	unsigned int m_synced_baud = 9600;
+
+	/// Masque de constellations effectivement accepte par le recepteur et donc
+	/// present dans sa couche BBR. Compare au masque demande pour la session:
+	/// le fast-path saute le step 2 (`setup_gnss_channel_sharing`), or ce masque
+	/// varie par session (gps_service force |0x0F tant qu'aucun fix n'a ete
+	/// obtenu). Sentinelle = on ignore ce que contient le recepteur.
+	static constexpr unsigned int CONSTELLATION_MASK_UNKNOWN = 0xFFFFFFFFu;
+	unsigned int m_applied_constellation_mask = CONSTELLATION_MASK_UNKNOWN;
+
+	/// L'heure synchronisee a-t-elle deja ete persistee pour CETTE session ?
+	/// La RTC est repositionnee a chaque PVT (1 Hz): sans ce verrou, on
+	/// ecrirait le parametre en flash une fois par seconde.
+	bool m_rtc_persisted_this_session = false;
+
+	/// Effacement de la couche de config BBR deja tente pour CETTE configure
+	/// (qu'il ait ete acquitte ou non). Evite de reboucler sur l'etape 200.
+	bool m_bbr_config_cleared = false;
+
 	// GNSS device info (cached from configure phase)
 	char m_gnss_sw_version[30];
 	char m_gnss_hw_version[10];
@@ -152,7 +212,22 @@ private:
 	};
 
 	State m_state = State::idle;
-	OpState m_op_state = OpState::IDLE;
+	/// 2026-08 (A1) — `volatile` obligatoire: ce champ est ecrit depuis le
+	/// contexte ISR (react(SendComplete/AckNack/CfgValget/Error), appeles par le
+	/// handler libuarte) et relu en boucle par les `state_*()` qui tournent en
+	/// contexte principal. Sans qualificatif, rien n'interdit au compilateur de
+	/// garder la valeur en registre d'une iteration de `while (true)` a l'autre:
+	/// la reponse posee par l'ISR ne serait jamais vue et l'etat partirait en
+	/// timeout alors que le recepteur a repondu.
+	///
+	/// Ce que cela ne resout PAS (documente sciemment): la sequence
+	/// lecture-decision-ecriture des `state_*()` n'est pas atomique vis-a-vis de
+	/// l'ISR. Une reponse tardive de l'operation precedente qui arriverait entre
+	/// le passage a PENDING et l'emission suivante serait comptee pour la
+	/// nouvelle operation. Le filtre d'attente (`m_expect`, desarme des qu'il a
+	/// matche) rend le cas tres improbable; le corriger proprement demande de
+	/// deporter les six handlers vers le scheduler comme NavReport/SatReport.
+	volatile OpState m_op_state = OpState::IDLE;
 
 	// State machine
 	void state_idle_enter();
@@ -160,6 +235,10 @@ private:
 	void state_idle_exit();
 	void state_poweron_enter();
 	void state_poweron();
+	unsigned int boot_baud_for_step(unsigned int step) const;
+	static unsigned int boot_baud_retries(unsigned int step);
+	void reset_session_state(const GPSNavSettings& nav_settings);
+	void reset_session_counters(const GPSNavSettings& nav_settings);
 	void state_poweron_exit();
 	void state_configure_enter();
 	void state_configure();
@@ -199,6 +278,22 @@ private:
 	void initiate_timeout(unsigned int timeout_ms = 1000);
 	void on_timeout();
 	void save_config();
+	/// @brief Efface la configuration sauvegardee en couche BBR du recepteur.
+	///
+	/// C'est la seule porte de sortie d'une couche BBR corrompue ou verrouillee.
+	/// Jusqu'ici le firmware n'avait AUCUN moyen de l'effacer: `setup_uart_port`
+	/// ecrit le debit en BBR|RAM, `save_config` recopie tout en BBR, `soft_reset`
+	/// ne touche que les donnees de navigation (navBbrMask), aucun CFG-VALDEL
+	/// n'etait instancie nulle part, et $FACTR n'agit pas sur le M10Q. Un debit
+	/// exotique ecrit en BBR (via le bridge u-center par exemple) devenait donc
+	/// un verrou definitif que la sonde de boot ne rattrape pas forcement.
+	///
+	/// Emis avec le CFG-RST d'un COLD START: on efface alors a la fois les
+	/// donnees de navigation (navBbrMask=0xFFFF) et la configuration persistee,
+	/// ce qui ramene le recepteur a un etat d'usine deterministe au prochain
+	/// demarrage. La configuration RAM en cours n'est pas touchee (loadMask=0),
+	/// la session continue donc normalement.
+	void clear_config();
 	void soft_reset();
 	void setup_uart_port();
 	void setup_gnss_channel_sharing();
@@ -293,6 +388,7 @@ public:
 	bool start_bridge(PassthroughCallback rx_callback) override;
 	void stop_bridge() override;
 	bool is_bridge_active() const override { return m_bridge_active; }
+	bool is_powered() const override { return m_num_power_on > 0 || m_state != State::idle; }
 	bool bridge_send(const uint8_t* data, size_t len) override;
 	void bridge_process_rx() override;
 

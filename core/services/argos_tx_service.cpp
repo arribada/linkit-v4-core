@@ -45,6 +45,28 @@ void ArgosTxService::service_init() {
 	m_kineis.subscribe(*this);
 	m_kineis.set_tcxo_warmup_time(argos_config.argos_tcxo_warmup_time);
 
+	// 2026-08 — amorcer la position de l'ordonnanceur avec le dernier fix
+	// PERSISTE, et non attendre le prochain.
+	//
+	// `m_location` de ArgosTxScheduler est un optional remis a vide a chaque
+	// construction, et il n'etait alimente que par notify_peer_event, donc
+	// uniquement par un fix obtenu APRES le demarrage. Consequence: apres un
+	// reset, schedule_prepass sortait sur « no known GPS location, cannot
+	// predict passes — TX disabled until next GPS fix » et la balise restait
+	// muette en PASS_PREDICTION, alors que sa derniere position connue etait
+	// disponible en flash tout ce temps. Une position de la veille reste
+	// largement exploitable pour predire une visibilite satellite.
+	{
+		const GPSLogEntry& last_gps = configuration_store->get_last_gps_entry();
+		if (last_gps.info.valid) {
+			m_sched.set_last_location(last_gps.info.lon, last_gps.info.lat);
+			DEBUG_INFO("ArgosTxService: position de prepass amorcee depuis le dernier fix persiste (lon=%f lat=%f)",
+			           last_gps.info.lon, last_gps.info.lat);
+		} else {
+			DEBUG_INFO("ArgosTxService: aucune position persistee — prepass indisponible jusqu'au premier fix");
+		}
+	}
+
 	// Set SMD LPM mode from configuration (written to SMD at every boot via SPI)
 	uint8_t lpm = static_cast<uint8_t>(configuration_store->read_param<unsigned int>(ParamID::SMD_LPM_MODE));
 	m_kineis.set_lpm_mode(lpm);
@@ -451,21 +473,31 @@ unsigned int ArgosTxService::service_next_schedule_in_ms() {
 				DEBUG_INFO("ArgosTxService: RTC time not known yet — TX disabled until first time fix");
 				return Service::SCHEDULE_DISABLED;
 			}
-#ifndef BOARD_RSPB
-			// First-message gate (non-RSPB): hold ALL TX — INCLUDING the time-sync
-			// burst — until the GNSS has updated the clock this session (a valid
-			// GPS fix). This matches v3, where "clock known" implied "GNSS set the
-			// clock" because the RTC was only ever set by GPS. On this firmware
-			// the RTC can also be set by DTE / pseudo-RTC, so we gate explicitly
-			// on a real GPS fix instead of on service_is_time_known(). RSPB is
-			// exempt — a boot-modulo session ending with no fix must still send
-			// an empty position + sensor packet.
-			if (!m_gps_fix_corrected_clock) {
-				DEBUG_INFO("ArgosTxService: GNSS has not updated the clock yet this session — TX held until first GPS fix");
-				return Service::SCHEDULE_DISABLED;
-			}
-#endif
-			if (m_is_first_tx && argos_config.time_sync_burst_en) {
+			// 2026-08 — LE VERROU DU PREMIER MESSAGE A ETE SUPPRIME.
+			//
+			// Il tenait TOUTE emission, heartbeat de presence compris, tant
+			// qu'aucun fix GPS valide n'etait tombe depuis la mise sous tension.
+			// Une balise qui redemarrait sans jamais retrouver de fix — recepteur
+			// en panne, ciel bouche — disparaissait donc definitivement des
+			// ecrans: ni position, ni signe de vie. C'est precisement ce qui
+			// serait arrive au tag terrain du 2026-08-22 si un WDT ou une OTA
+			// etait survenu pendant les trois jours de panne GNSS.
+			//
+			// Le motif d'origine (parite v3: « heure connue » impliquait « le GNSS
+			// a pose l'heure ») ne tient pas: en Doppler, LEGACY ou DUTY_CYCLE la
+			// balise emet a sa periode et c'est le segment sol qui reconstruit la
+			// position a partir des instants de reception — son horloge n'entre
+			// pas dans le calcul. Seule la prediction de passage a besoin d'une
+			// heure et d'une position justes, et elle a sa propre garde dans
+			// ArgosTxScheduler::schedule_prepass.
+			//
+			// RSPB etait deja exempte de ce verrou, exactement pour cette raison.
+			//
+			// Ce qui reste conditionne, en revanche, c'est la salve de synchro
+			// temporelle: elle TRANSPORTE l'heure, donc l'emettre sur une horloge
+			// que le GNSS n'a pas corrigee reviendrait a diffuser une date fausse.
+			if (m_is_first_tx && argos_config.time_sync_burst_en &&
+			    m_gps_fix_corrected_clock) {
 				// Modulation provisionnelle, comme LEGACY/DUTY_CYCLE plus bas :
 				// adaptive -> LDA2 (process_time_sync_burst rebascule en LDK selon
 				// la taille), non-adaptive -> RCONF maître. Avant 2026-06-25 c'était

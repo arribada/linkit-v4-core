@@ -873,6 +873,18 @@ void ConfigurationState::exit() {
 	// suppressed until next process_usb_data tick (which is cancelled above).
 	sync_bridge_log_silencing();
 #endif
+	// Filet contre un `PWRON GNSS`/`PWRON ALL` laisse en l'air: la commande DTE
+	// allume le recepteur sans minuterie et seul `PWRON OFF` le decremente. Sans
+	// ce rattrapage, le compteur de clients ne repasse jamais a zero: chaque
+	// session de service fait ensuite +1/-1 au-dessus du compte fuite, le driver
+	// reste en reception en permanence (~25-30 mA) et le verrou VSYS maintient
+	// le rail commun a 3,3 V — batterie videe en quelques jours sur un appareil
+	// scelle, sans aucun moyen de s'en apercevoir. On ne coupe que si quelque
+	// chose est reellement allume, pour ne pas relacher VSENSORS sans l'avoir pris.
+	if (gps_device && gps_device->is_powered()) {
+		DEBUG_WARN("exit: ConfigurationState — GNSS encore alimente (PWRON non annule) | coupure du rail");
+		gps_device->power_off_immediate();
+	}
 	ble_service->stop();
 	led_handle::dispatch<SetLEDOff>({});
 }

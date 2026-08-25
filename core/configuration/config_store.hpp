@@ -21,6 +21,16 @@
 #include "service_scheduler.hpp"
 #include "hauled_mode_service.hpp"
 
+#if VALIDATION_LOG_ENABLE
+// Les traces [VAL-*] de ce header horodatent avec la RTC globale. Sans cette
+// declaration, une compilation avec -DVALIDATION_LOG_ENABLE=1 echoue sur
+// "'rtc' was not declared in this scope" — et comme les scripts de build ne
+// verifiaient pas le code de retour de make, l'echec produisait quand meme des
+// commandes de flash pointant sur un binaire perime.
+#include "rtc.hpp"
+extern RTC *rtc;
+#endif
+
 // Default TPL5111 external-wakeup period (seconds) — MUST match the board's
 // TPL5111 timing resistor. Overridable at build time (build_rspb.sh: WAKEUP_PERIOD).
 // Still runtime-editable via DTE param WAKEUP_PERIOD (key PWP04, is_writable=true).

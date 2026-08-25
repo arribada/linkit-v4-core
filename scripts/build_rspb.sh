@@ -216,6 +216,17 @@ cmake -DCMAKE_TOOLCHAIN_FILE=../../toolchain_arm_gcc_nrf52.cmake \
 
 make -j 20
 
+# GARDE-FOU (2026-08): sans ce controle, un echec de compilation laissait le
+# script continuer, re-fusionner le HEX de la build PRECEDENTE et afficher des
+# commandes de flash parfaitement valides pointant sur un binaire perime. C'est
+# exactement ce qui s'est produit au banc (firmware sans console %BENCH flashe
+# sans que rien ne le signale).
+if [ $? -ne 0 ]; then
+    echo ""
+    echo "  *** COMPILATION ECHOUEE — aucun binaire produit, rien a flasher ***"
+    echo ""
+    exit 1
+fi
 # Check if build succeeded (check elf, not hex - hex might not exist if build was up-to-date)
 if [ ! -f "LinkIt_RSPB_board.elf" ]; then
     echo "ERROR: Build failed - LinkIt_RSPB_board.elf not found"

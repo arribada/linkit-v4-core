@@ -12,6 +12,7 @@
 #include "binascii.hpp"
 #include "interrupt_lock.hpp"
 #include "pmu.hpp"
+#include "gpio.hpp"
 
 using namespace UBX;
 
@@ -72,13 +73,21 @@ void UBXComms::init() {
     m_nav_report.pvt.iTow = -1;
     m_nav_report.dop.iTow = -1;
     m_nav_report.status.iTow = -1;
+    m_rx_stopped = false;
+    // Interdit la bascule VSYS 3,3 V -> 2,3 V tant que cette liaison est en
+    // service (cf. GPIOPins::set_gnss_uart_active).
+    GPIOPins::set_gnss_uart_active(true);
 }
 
 void UBXComms::deinit() {
     if (m_is_init) {
         nrf_libuarte_async_uninit(BSP::UARTAsync_Inits[m_instance].uart);
         m_is_init = false;
+        m_rx_stopped = false;
     }
+    // Toujours relacher, meme si l'UART n'etait pas initialise: deinit() est
+    // idempotent et appele sur tous les chemins de teardown.
+    GPIOPins::set_gnss_uart_active(false);
 }
 
 bool UBXComms::send_raw(const uint8_t* data, size_t len)
@@ -165,6 +174,14 @@ void UBXComms::send_with_expect(uint8_t *buffer, unsigned int sz, UBX::MessageCl
 }
 
 void UBXComms::send(uint8_t *buffer, unsigned int sz, bool notify_sent, bool use_ext_buffer) {
+	// Meme garde que send_raw() et set_baudrate(): emettre sur une instance
+	// deinit (exit_shutdown dont le catch a avale l'echec libuarte) touche des
+	// ressources liberees — au mieux une cascade de timeouts, au pire un assert
+	// du SDK.
+	if (!m_is_init) {
+		DEBUG_WARN("UBXComms::send: UART non initialise — ignore");
+		return;
+	}
 	wait_tx_idle();
 
 	if (m_debug_enable) {
@@ -194,6 +211,13 @@ void UBXComms::send(uint8_t *buffer, unsigned int sz, bool notify_sent, bool use
 }
 
 void UBXComms::set_baudrate(unsigned int baud) {
+	// Garde alignee sur send_raw(): sans elle, un appel depuis un etat ou l'UART
+	// a ete deinit (bridge ouvert depuis backupidle, exit_shutdown qui a throw)
+	// touche des canaux PPI liberes -> APP_ERROR_CHECK_BOOL(false) -> reset SoC.
+	if (!m_is_init) {
+		DEBUG_WARN("UBXComms::set_baudrate: UART non initialise — ignore");
+		return;
+	}
 	nrf_uarte_baudrate_t baudrate;
 	unsigned int timeout_us;
 
@@ -232,6 +256,7 @@ void UBXComms::set_baudrate(unsigned int baud) {
 
 	// Restart receiver
 	nrf_libuarte_async_start_rx(BSP::UARTAsync_Inits[m_instance].uart);
+	m_rx_stopped = false;
 }
 
 void UBXComms::start_dbd_filter() {
@@ -311,7 +336,17 @@ void UBXComms::filter_buffer(uint8_t * buffer, unsigned int length) {
 
 void UBXComms::handle_error(unsigned int error_type) {
 	nrf_libuarte_async_stop_rx(BSP::UARTAsync_Inits[m_instance].uart);
+	m_rx_stopped = true;
 	notify(UBXCommsEventError(error_type));
+}
+
+void UBXComms::restart_rx() {
+	if (!m_is_init || !m_rx_stopped)
+		return;
+	DEBUG_TRACE("UBXComms::restart_rx: reprise de la reception apres erreur UART");
+	m_rx_buffer_offset = 0;
+	nrf_libuarte_async_start_rx(BSP::UARTAsync_Inits[m_instance].uart);
+	m_rx_stopped = false;
 }
 
 HeaderAndPayloadCRC *UBXComms::parse_message(uint8_t **buffer, unsigned int *length) {

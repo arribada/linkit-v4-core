@@ -42,6 +42,19 @@ static constexpr unsigned int NAV_REPORT_WATCHDOG_MS        = 5000;  ///< Inter-
 static constexpr unsigned int RECEIVE_TIMEOUT_FLOOR_MS      = 10000; ///< Minimum initial receive timeout (cold start floor)
 static constexpr unsigned int RECEIVE_TIMEOUT_MARGIN_S      = 5;     ///< Margin added to max_nav_samples for initial receive timeout
 static constexpr unsigned int MAX_FRAMING_ERRORS_BOOT       = 10;    ///< Tolerance for NMEA→UBX framing errors during boot
+// Cold-boot baud probe list. A rail-cycled M10Q answers at 9600 only when BBR
+// was actually lost; when the backup cell / supercap on the GNSS rail holds BBR
+// across the off window it comes back at the baud `setup_uart_port()` persisted
+// there (MAX_BAUDRATE) and stays SILENT at 9600 — no NMEA, no nav messages, so
+// not even a framing error to hint at the mismatch. Probe both, in cached order.
+// Les quatre debits que `UBXComms::set_baudrate` sait produire sont couverts, et
+// pas seulement les deux que le firmware programme lui-meme: le bridge u-center
+// donne un acces brut au recepteur, donc un VALSET operateur peut persister
+// n'importe lequel en couche BBR. Budget degressif (6 essais sur le debit mis en
+// cache, 2 sur les suivants) pour que le pire cas reste ~6 s, inchange.
+static constexpr unsigned int BOOT_BAUD_TABLE[]      = { DEFAULT_BAUDRATE, MAX_BAUDRATE, 38400, 921600 };
+static constexpr unsigned int BOOT_BAUD_COUNT        = sizeof(BOOT_BAUD_TABLE) / sizeof(BOOT_BAUD_TABLE[0]);
+static constexpr unsigned int BOOT_BAUD_ALT_RETRIES  = 2;     ///< Budget par debit au-dela du premier
 // Max age of the persisted DBD navigation database before we refuse to reload
 // it on a cold power-on. Raised 12h -> 72h (2026-06): per u-blox MAX-M10S
 // Integration Manual the DBD carries almanac (valid WEEKS) and AssistNow
@@ -51,7 +64,21 @@ static constexpr unsigned int MAX_FRAMING_ERRORS_BOOT       = 10;    ///< Tolera
 // complete in a short surface window. The receiver itself discards the stale
 // ephemeris portion on load, so restoring an aged DBD is safe and preserves the
 // long-lived data that makes warm starts possible across multi-day deployments.
-static constexpr unsigned int DBD_MAX_AGE_S                 = 72 * 3600; ///< Max age (72h) of persisted DBD navigation database
+// 2026-08 — plafond d'age du DBD persiste, desormais fonction de la carte.
+//
+// Le DBD porte trois choses d'esperances de vie tres differentes: les ephemerides
+// diffusees (~4 h, que le recepteur ecarte LUI-MEME au chargement), les
+// predictions AssistNow Autonomous (3 a 6 jours) et l'almanach (des SEMAINES).
+// Un plafond unique de 72 h jetait donc l'almanach encore valide avec les
+// ephemerides perimees.
+//
+// Le bon plafond depend de ce que la carte sait conserver par ailleurs:
+//   - BBR retenue (pile/supercap V_BCKP qui tient): le recepteur garde sa propre
+//     copie vivante, le fichier n'est qu'une ceinture de secours. On reste serre.
+//   - BBR perdue a chaque coupure (pas de pile): le fichier est le SEUL vecteur
+//     de demarrage chaud persistant. On garde tout ce qui peut encore servir.
+static constexpr unsigned int DBD_MAX_AGE_BBR_S    = 72 * 3600;        ///< 3 j — carte a BBR retenue
+static constexpr unsigned int DBD_MAX_AGE_NO_BBR_S = 14 * 24 * 3600;   ///< 14 j — carte sans pile V_BCKP
 
 // State machine helper macros
 #ifndef VALIDATION_LOG_ENABLE
@@ -109,12 +136,77 @@ M10QAsyncReceiver::M10QAsyncReceiver() {
 	m_step = 0;
 	m_retries = 0;
 	m_gnss_info_valid = false;
+#if GNSS_HAS_BACKUP_BATTERY
+	// Le flag de build n'est plus qu'un INDICE sur l'ordre de sondage du baud au
+	// boot : une carte equipee d'une pile de sauvegarde repart en general a
+	// MAX_BAUDRATE, on la sonde donc en premier. Un indice faux coute ~3 s une
+	// fois par boot, rien de plus — plus aucun comportement n'en depend.
+	m_boot_baud_idx = 1;   // index de MAX_BAUDRATE dans BOOT_BAUD_TABLE
+#endif
 	std::memset(m_gnss_sw_version, 0, sizeof(m_gnss_sw_version));
 	std::memset(m_gnss_hw_version, 0, sizeof(m_gnss_hw_version));
 	std::memset(m_gnss_unique_id, 0, sizeof(m_gnss_unique_id));
 }
 
 M10QAsyncReceiver::~M10QAsyncReceiver() {
+}
+
+/// @brief Remet a zero TOUT l'etat propre a une session et applique les
+/// nouveaux reglages de navigation.
+///
+/// 2026-08 : ce bloc ne vivait que dans le chemin froid de `power_on()`. Le
+/// reveil chaud depuis `backupidle` (deep-idle, GNP52 != 0) sortait par un
+/// `return` anticipe et ne le traversait jamais, donc :
+///   - `m_nav_settings` restait celui de la session precedente (cold_start,
+///     cloudlocate_enable, masque de constellations, filtres hAcc/hDOP,
+///     timeouts : tout fige, et une demande de cold start perdue... ou au
+///     contraire rejouee a l'infini) ;
+///   - `m_num_nav_samples` / `m_num_sat_samples` cumulaient d'une session a
+///     l'autre, donc le budget d'acquisition et la fenetre de grace de
+///     l'abort "aucun satellite" fondaient jusqu'a zero ;
+///   - `m_raw_measurement` / `m_degraded_pvt` n'etaient pas purges, si bien
+///     qu'une mesure CloudLocate de la session PRECEDENTE pouvait etre
+///     re-emise comme si elle etait fraiche.
+/// Ce qui doit survivre entre sessions (m_pmreq_baud, m_gnss_info_valid,
+/// m_boot_baud_idx, m_bbr_retained, m_consecutive_wake_failures) n'est
+/// deliberement pas touche ici.
+/// @brief Remet a zero les compteurs et les resultats d'une session, et applique
+/// les seules limites d'observation. N'ecrase PAS m_nav_settings.
+///
+/// Separe de `reset_session_state()` pour le cas d'un `power_on()` supplementaire
+/// sur une session deja en cours (2e client: PWRON GNSS ou GNSSI depuis le mode
+/// configuration). Y remplacer l'integralite des reglages changerait filtres,
+/// masque de constellations et mode CloudLocate au milieu d'une acquisition, et
+/// ces appelants passent un GPSNavSettings partiellement initialise. On garde
+/// donc la semantique d'origine: les compteurs et les limites suivent le nouvel
+/// appelant, la configuration de navigation reste celle de la session.
+void M10QAsyncReceiver::reset_session_counters(const GPSNavSettings& nav_settings) {
+    m_powering_off = false;
+    m_deep_idle_pending = false;
+
+    m_has_degraded_pvt = false;
+    std::memset(&m_degraded_pvt, 0, sizeof(m_degraded_pvt));
+
+    m_has_raw_measurement = false;
+    m_raw_measurement = GNSSRawMeasurement();
+    m_cloudlocate_ready_notified = false;
+
+    m_num_nav_samples = 0;
+    m_num_sat_samples = 0;
+    m_fix_was_found = false;
+    m_rtc_persisted_this_session = false;
+
+    m_nav_settings.max_nav_samples = nav_settings.max_nav_samples;
+    m_nav_settings.max_sat_samples = nav_settings.max_sat_samples;
+    m_num_consecutive_fixes = m_nav_settings.num_consecutive_fixes;
+}
+
+void M10QAsyncReceiver::reset_session_state(const GPSNavSettings& nav_settings) {
+    reset_session_counters(nav_settings);
+    // Et, contrairement au cas du client supplementaire, on applique bien
+    // l'integralite des reglages demandes pour cette session.
+    m_nav_settings = nav_settings;
+    m_num_consecutive_fixes = m_nav_settings.num_consecutive_fixes;
 }
 
 void M10QAsyncReceiver::power_on(const GPSNavSettings& nav_settings) {
@@ -219,6 +311,12 @@ void M10QAsyncReceiver::power_on(const GPSNavSettings& nav_settings) {
                 m_consecutive_wake_failures = WAKE_FAIL_FAST_FALLBACK;
                 m_unrecoverable_error = true;
                 notify(GPSEventError{});
+                // Meme motif que les quatre autres sites: on est en backupidle,
+                // rail ALLUME et users=0. Sans coupure autonome, si aucun abonne
+                // n'agit (PWRON pendant une charge DTE, GNSS_EN=0) le rail reste
+                // alimente indefiniment. m_unrecoverable_error force la
+                // transition backupidle -> poweroff via le switch de dispatch.
+                check_for_power_off();
                 return;
             }
             // HIGH GNSS-AUDIT #3 follow-up (revised): pre-sync our UART to
@@ -241,7 +339,18 @@ void M10QAsyncReceiver::power_on(const GPSNavSettings& nav_settings) {
             pulse_extint_wake();
             PMU::delay_ms(50);   // give M10Q time to come out of backup (datasheet ~30 ms)
             m_num_power_on = 1;  // single user (this acquisition)
-            m_powering_off = false;
+            // 2026-08 : le rail n'est jamais tombe, donc la BBR est intacte par
+            // construction. On ne revendique la retention QUE si le M10Q dormait
+            // deja a MAX_BAUDRATE : c'est la preuve qu'il avait bien recu notre
+            // configuration complete. S'il dormait a 9600 (PMREQ envoye pendant
+            // un boot, avant setup_uart_port) le rail a beau etre reste allume,
+            // le recepteur n'est PAS configure -> config complete obligatoire.
+            m_synced_baud  = m_pmreq_baud;
+            m_bbr_retained = (m_pmreq_baud == MAX_BAUDRATE);
+            // 2026-08 : appliquer les reglages de CETTE session et repartir de
+            // compteurs propres. Sans cet appel le reveil chaud heritait de tout
+            // l'etat de la session precedente (cf. reset_session_state).
+            reset_session_state(nav_settings);
             // Skip the normal poweron-state baud-sync loop (state_poweron tries
             // 9600 first which would fail since M10Q is at MAX after BBR-warm
             // wake). Jump straight to configure where the fast-path tries MAX.
@@ -277,35 +386,16 @@ void M10QAsyncReceiver::power_on(const GPSNavSettings& nav_settings) {
     // Track number of power on requests
     m_num_power_on++;
 
-    // Cancel any ongoing poweroff request
-    m_powering_off = false;
-
-    // Reset degraded PVT tracking
-    m_has_degraded_pvt = false;
-    std::memset(&m_degraded_pvt, 0, sizeof(m_degraded_pvt));
-
-    // Reset CloudLocate raw measurement tracking
-    m_has_raw_measurement = false;
-    m_raw_measurement = GNSSRawMeasurement();
-    // Reset the one-shot guard for the CloudLocate-ready notification.
-    m_cloudlocate_ready_notified = false;
-
-    // Always reset observation counters and apply new limits — defensive.
-    // Passing 0 explicitly disables the corresponding limit-check (acquisition
-    // then runs until fix or scheduler safety net). Previously these blocks
-    // were guarded by `if (nav_settings.max_X)` which preserved stale state
-    // when 0 was passed and could lead to silent counter mismatches.
-    m_num_nav_samples = 0;
-    m_nav_settings.max_nav_samples = nav_settings.max_nav_samples;
-    m_num_consecutive_fixes = m_nav_settings.num_consecutive_fixes;
-
-    m_num_sat_samples = 0;
-    m_nav_settings.max_sat_samples = nav_settings.max_sat_samples;
+    // Depuis `idle`, c'est une vraie nouvelle session: compteurs remis a zero ET
+    // reglages de navigation appliques. Hors `idle` (2e client sur une session en
+    // cours), on ne touche qu'aux compteurs et aux limites — voir
+    // reset_session_counters().
+    if (STATE_EQUAL(idle))
+        reset_session_state(nav_settings);
+    else
+        reset_session_counters(nav_settings);
 
     if (STATE_EQUAL(idle)) {
-        // Copy navigation settings to be used for this session
-        m_nav_settings = nav_settings;
-        m_num_consecutive_fixes = m_nav_settings.num_consecutive_fixes;
 #ifdef GPS_FAKE_POSITION
         // Fake GPS mode: simulate a fix after 2s delay
         DEBUG_WARN("M10QAsyncReceiver: FAKE GPS MODE - will simulate fix at Saint-Paul Reunion");
@@ -349,6 +439,11 @@ void M10QAsyncReceiver::check_for_power_off() {
 	// cancel_timeout(), fetchdatabase's stop_dbd_filter(), etc.
 	switch (m_state) {
 		case idle:
+			// Une intention de deep-idle armee alors qu'il n'y a rien a eteindre
+			// ne doit pas survivre: elle rerouterait un power_off ULTERIEUR vers
+			// enterbackup sans que personne l'ait demande — rail rallume, et sans
+			// minuterie puisque le hard-cap exige m_deep_idle_started_at_ms > 0.
+			m_deep_idle_pending = false;
 			return;  // already idle, nothing to clean up
 		case receive:
 			STATE_CHANGE(receive, stopreceive);
@@ -504,6 +599,10 @@ void M10QAsyncReceiver::power_off_immediate() {
     m_consecutive_wake_failures = 0;
     m_pmreq_verify_retries = 0;
     m_backupidle_entered_ms = 0;
+    // Le rail vient d'etre coupe: la BBR n'est plus garantie et le M10Q ne dort
+    // plus au debit du dernier PMREQ.
+    m_pmreq_baud = DEFAULT_BAUDRATE;
+    m_bbr_retained = false;
     // 2026-06 latch fix: clear the unrecoverable-error flag on a hard rail-cut
     // so the next session starts clean. Otherwise a latched error (set on a
     // receive/configure failure and never cleared on the warm backupidle->
@@ -742,13 +841,31 @@ void M10QAsyncReceiver::react(const UBXCommsEventAckNack& ack) {
 void M10QAsyncReceiver::react(const UBXCommsEventCfgValget& valget) {
 
     unsigned int length = valget.length;
-    DEBUG_TRACE("UBXCommsEventCfgValget received: length %u", length);
 
-    // Use vector for automatic memory management (RAII)
-    std::vector<uint8_t> msg_buffer(length);
-    uint8_t* msg = msg_buffer.data();
-    std::memcpy(msg, valget.msg, length);
+    // 2026-08 (A1) — CETTE FONCTION S'EXECUTE EN CONTEXTE ISR (handler libuarte).
+    // Elle allouait auparavant un std::vector dimensionne par la longueur du
+    // message recu, c'est-a-dire un malloc newlib NON REENTRANT depuis une
+    // interruption, puis emettait une dizaine de DEBUG_TRACE (qui peuvent
+    // descendre jusqu'a l'ecriture LFS / USB) avant meme de traiter l'etat.
+    // Le decodage cle par cle n'etait que du diagnostic: il est desormais borne
+    // a un tampon de pile et n'a lieu que si les traces GNSS sont demandees.
+    uint8_t stack_buf[64];
+    const unsigned int copy_len = (length < sizeof(stack_buf)) ? length : (unsigned int)sizeof(stack_buf);
+    uint8_t* msg = stack_buf;
+    std::memcpy(msg, valget.msg, copy_len);
+    length = copy_len;
     
+    // Le decodage ci-dessous est purement diagnostique — on le saute quand les
+    // traces GNSS ne sont pas demandees, pour ne rien faire de couteux en ISR.
+    if (!m_nav_settings.debug_enable || length < 4) {
+        if (m_op_state == OpState::PENDING) {
+            m_op_state = OpState::SUCCESS;
+            cancel_timeout();
+            run_state_machine();
+        }
+        return;
+    }
+
     // Parse the fixed header fields
     [[maybe_unused]] uint8_t version = msg[0];
     [[maybe_unused]] uint8_t layer = msg[1];
@@ -804,8 +921,6 @@ void M10QAsyncReceiver::react(const UBXCommsEventCfgValget& valget) {
         // Print the decoded configuration key-value pair
         DEBUG_TRACE("Config Key: 0x%08X | Value: %lld (0x%X)", key, paramValue, paramValue);
     }
-
-    // msg_buffer automatically freed when function exits (RAII)
 
     // Handle state
     if (m_op_state == OpState::PENDING) {
@@ -908,6 +1023,28 @@ void M10QAsyncReceiver::react(const UBXCommsEventNavReport& n) {
                                                     nav.pvt.day, nav.pvt.hour,
                                                     nav.pvt.min, nav.pvt.sec);
                 rtc->settime(now);
+                // Mesure de la derive du quartz: `prev` (croyance de la RTC) et
+                // `now` (verite satellite) sont deja tous les deux sous la main.
+                // Aucune sonde a ajouter, une soustraction sur un chemin deja
+                // emprunte a chaque fix.
+                rtc->note_gnss_sync(prev, now);
+
+                // Persister l'heure juste SYNCHRONISEE, une seule fois par
+                // session. Sans cela, LAST_KNOWN_RTC n'etait rafraichi qu'au
+                // flush periodique: un reset tombant dans cet intervalle
+                // restaurait une heure ANTERIEURE a la correction GPS. Mesure au
+                // banc le 2026-08-25 — l'horloge est repartie 52 jours en
+                // arriere et l'assistance sauvegardee trois minutes plus tot a
+                // ete jetee par la garde anti-recul, pour un cold start complet.
+                if (!m_rtc_persisted_this_session && now >= RTC_MIN_REAL &&
+                    configuration_store) {
+                    m_rtc_persisted_this_session = true;
+                    configuration_store->write_param(ParamID::LAST_KNOWN_RTC,
+                                                     static_cast<unsigned int>(now));
+                    DEBUG_INFO("M10QAsyncReceiver: heure GNSS persistee (%u), derive mesuree %d ppm",
+                               (unsigned int)now, (int)rtc->drift_ppm());
+                }
+
                 if (prev < RTC_MIN_REAL && now >= RTC_MIN_REAL) {
                     DEBUG_INFO("RTC: virtual→real sync detected (prev=%u → now=%u), re-anchoring noinit timekeepers",
                                (unsigned int)prev, (unsigned int)now);
@@ -1164,6 +1301,14 @@ void M10QAsyncReceiver::react(const UBXCommsEventError& e) {
             cancel_timeout();
             m_op_state = OpState::ERROR;
             run_state_machine();
+        } else {
+            // On tolere l'erreur — mais handle_error() a ARRETE le RX. Sans cette
+            // relance l'UART reste sourd: plus aucune erreur ne peut arriver (donc
+            // le seuil ci-dessus est inatteignable) et la reponse attendue ne
+            // remonte jamais. Depuis un contexte ISR: on differe au scheduler.
+            system_scheduler->post_task_prio([this]() {
+                m_ubx_comms.restart_rx();
+            }, "UBXRxRestart");
         }
     } else {
         system_scheduler->post_task_prio([this, e]() {
@@ -1215,35 +1360,102 @@ void M10QAsyncReceiver::state_poweron_enter() {
     notify<GPSEventPowerOn>({});
 }
 
+/// @brief Baud to probe at boot-sync step `step`, starting from the cached hint.
+/// Wraps so every entry of BOOT_BAUD_TABLE is tried exactly once per power-on.
+unsigned int M10QAsyncReceiver::boot_baud_for_step(unsigned int step) const {
+	return BOOT_BAUD_TABLE[(m_boot_baud_idx + step) % BOOT_BAUD_COUNT];
+}
+
+/// @brief Budget d'essais pour le debit sonde a l'etape `step`.
+/// Plein sur le premier (celui mis en cache, statistiquement le bon), reduit
+/// ensuite: sans cela, couvrir quatre debits quadruplerait le temps d'echec.
+unsigned int M10QAsyncReceiver::boot_baud_retries(unsigned int step) {
+	return (step == 0) ? BOOT_BAUD_SYNC_RETRIES : BOOT_BAUD_ALT_RETRIES;
+}
+
 void M10QAsyncReceiver::state_poweron() {
 	while (true) {
 		if (m_op_state == OpState::IDLE) {
 			m_op_state = OpState::PENDING;
-			if (m_step == 0) {
-				sync_baud_rate(9600);
+			if (m_step < BOOT_BAUD_COUNT) {
+				// 2026-08 fix: probe EVERY baud the M10Q can boot at, not just
+				// 9600. With BBR retained by the backup cell on the GNSS rail
+				// the receiver comes back at MAX_BAUDRATE and is silent at
+				// 9600 — probing 9600 alone killed GNSS permanently, because
+				// state_configure (the only place that renegotiates the port
+				// or wipes BBR) is only reachable through this sync.
+				DEBUG_TRACE("M10QAsyncReceiver: boot sync attempt %u/%u at %u baud",
+				            m_step + 1, BOOT_BAUD_COUNT, boot_baud_for_step(m_step));
+				sync_baud_rate(boot_baud_for_step(m_step));
 				break;
 			} else {
-				DEBUG_ERROR("M10QAsyncReceiver: failed to sync comms");
+				DEBUG_ERROR("M10QAsyncReceiver: failed to sync comms (tried %u bauds)",
+				            BOOT_BAUD_COUNT);
 				m_unrecoverable_error = true;
 				notify<GPSEventError>({});
+				// Couper le rail nous-memes: on ne peut pas dependre d'un abonne
+				// (GPSService ignore l'evenement hors session, et PWRON GNSS
+				// n'abonne personne) sinon la FSM se fige en poweron rail ON.
+				// Idempotent: si react() a deja lance la coupure, m_powering_off
+				// est vrai et l'appel sort immediatement.
+				check_for_power_off();
 				break;
 			}
 		} else if (m_op_state == OpState::SUCCESS) {
+			// Remember which baud answered: on a board whose BBR survives the
+			// off window every later boot lands on the same one, so the next
+			// session skips the failed probes (3 s each).
+			unsigned int synced = boot_baud_for_step(m_step);
+			m_synced_baud = synced;
+			// PREUVE DE RETENTION BBR, a l'execution: la config du port vit dans
+			// la couche BBR. Repondre a MAX_BAUDRATE apres une coupure de rail
+			// signifie donc que la BBR a survecu (pile presente et chargee).
+			// Repondre a 9600 = defauts usine = BBR perdue. C'est ce fait, et
+			// non un flag de build, qui pilote le fast-path de state_configure.
+			m_bbr_retained = (synced == MAX_BAUDRATE);
+			if (!m_bbr_retained) {
+				// Defauts usine: le recepteur n'a plus aucun de nos reglages, la
+				// configuration complete va tout reecrire. On oublie ce qu'on
+				// croyait applique pour que le prochain fast-path ne se fie pas
+				// a une valeur qui n'existe plus cote recepteur.
+				m_applied_constellation_mask = CONSTELLATION_MASK_UNKNOWN;
+			}
+			DEBUG_INFO("M10QAsyncReceiver: boot sync at %u baud — BBR %s",
+			           synced, m_bbr_retained ? "RETAINED" : "lost");
+			if (m_step != 0) {
+				m_boot_baud_idx = (m_boot_baud_idx + m_step) % BOOT_BAUD_COUNT;
+			}
+			VAL_GNSS("boot_sync_ok baud=%u step=%u bbr=%u", synced, m_step, (unsigned)m_bbr_retained);
 			STATE_CHANGE(poweron, configure);
 			break;
 		} else if (m_op_state == OpState::PENDING) {
 			break;
 		} else if (m_op_state == OpState::ERROR) {
+			// Framing errors mean bytes ARE arriving, just at the wrong rate —
+			// move straight on to the next candidate baud. Sur le DERNIER baud de
+			// la table en revanche, avancer sans borne terminait le power-on en
+			// "failed to sync comms" avec les 6 essais encore inutilises: une
+			// rafale de framing (frontiere NMEA->UBX, parasite) suffisait a tuer
+			// la session. On consomme alors le budget comme la branche timeout.
 			DEBUG_TRACE("M10QAsyncReceiver: baud rate framing error detected");
-			m_retries = DEFAULT_RETRIES;
-			m_step++;
+			m_uart_error_count = 0;   // nouveau baud (ou nouvel essai) = budget neuf
+			if (m_step + 1 < BOOT_BAUD_COUNT) {
+				m_step++;
+				m_retries = boot_baud_retries(m_step);
+			} else if (--m_retries == 0) {
+				m_step++;
+				m_retries = boot_baud_retries(m_step);
+			}
 			m_op_state = OpState::IDLE;
 			run_state_machine(100);
 			break;
 		} else {
 			if (--m_retries == 0) {
-				// m_retries = DEFAULT_RETRIES;
+				// Re-arm the retry budget for the next baud in the list.
+				// Without this the counter underflows to UINT_MAX on the next
+				// timeout and the probe loop never terminates.
 				m_step++;
+				m_retries = boot_baud_retries(m_step);
 			}
 			m_op_state = OpState::IDLE;
 		}
@@ -1271,6 +1483,14 @@ void M10QAsyncReceiver::state_poweroff() {
 	// route to `enterbackup` instead of cutting the rail. The M10Q stays
 	// powered with PMREQ-backup engaged so V_BCKP can charge naturally and
 	// next session uses the EXTINT wake fast-path (warm-start TTFF).
+	if (m_deep_idle_pending && m_unrecoverable_error) {
+		// Le deep-idle suppose un recepteur qui repond: y aller apres une erreur
+		// irrecuperable, c'est enchainer 12 sondes de 500 ms puis retomber ici
+		// de toute facon, rail allume pendant tout ce temps.
+		DEBUG_WARN("M10QAsyncReceiver: deep-idle annule (erreur irrecuperable) — coupure du rail");
+		VAL_GNSS("deep_idle_cancelled reason=unrecoverable_error");
+		m_deep_idle_pending = false;
+	}
 	if (m_deep_idle_pending) {
 		m_deep_idle_pending = false;
 		m_powering_off = false;          // not a true power-off anymore
@@ -1634,6 +1854,12 @@ void M10QAsyncReceiver::state_configure_enter() {
 	m_step = 0;
 	m_retries = DEFAULT_RETRIES;
 	m_op_state = OpState::IDLE;
+	// Comme state_poweron_enter/state_poweroff_enter/state_enterbackup_enter:
+	// le budget d'erreurs de framing tolerees appartient a l'etat, pas a la
+	// session. Sans ce reset, le chemin chaud backupidle -> configure heritait
+	// du compteur de la session precedente.
+	m_uart_error_count = 0;
+	m_bbr_config_cleared = false;
 	// 2026-06 latch fix: clear any stale unrecoverable-error here too. The warm
 	// EXTINT-wake fast-path enters configure directly (backupidle -> configure),
 	// bypassing state_poweron_enter() which is the only other clear site — so a
@@ -1648,21 +1874,36 @@ void M10QAsyncReceiver::state_configure() {
 		if (m_op_state == OpState::IDLE) {
             DEBUG_TRACE("M10QAsyncReceiver:state_configure: step:%u", m_step);
 			m_op_state = OpState::PENDING;
-#if GNSS_HAS_BACKUP_BATTERY
-			// Fast path: when BBR backup battery is present and GNSS was previously
-			// configured, attempt to skip full reconfiguration (UART/GNSS/PM/NAV
-			// settings already persisted in BBR). We validate by syncing at MAX_BAUDRATE
-			// first — if BBR was lost (dead coin cell), the M10Q resets to 9600 baud
-			// and the sync will fail, falling back to full configuration.
-			if (m_gnss_info_valid && m_step == 0) {
-				DEBUG_INFO("M10QAsyncReceiver: attempting fast path (BBR backup battery)");
+			// ── Fast path "BBR retenue" ────────────────────────────────────────
+			// 2026-08 : la decision est prise a l'EXECUTION (m_bbr_retained,
+			// etabli par le baud qui a repondu au boot), plus par le flag de build
+			// GNSS_HAS_BACKUP_BATTERY. Motif : le meme firmware tourne sur des
+			// cartes avec et sans pile de sauvegarde, et une pile peut etre
+			// absente, vide ou morte — c'est un fait par session, pas un fait de
+			// compilation. L'ancienne garde faisait sonder MAX_BAUDRATE a un
+			// recepteur reparti a 9600, ce qui empoisonnait le baud de l'UART et
+			// tuait une session sur deux sur une carte sans pile.
+			//
+			// Une demande de COLD START court-circuite le fast-path : le CFG-RST
+			// navBbrMask=0xFFFF vit au step 5, donc sauter les steps 0-6 revenait
+			// a annuler silencieusement la demande — precisement quand elle est
+			// necessaire (BBR retenue, donc potentiellement perimee ou corrompue).
+			if (m_bbr_retained && m_gnss_info_valid && !m_nav_settings.cold_start && m_step == 0) {
+				DEBUG_INFO("M10QAsyncReceiver: BBR retenue (M10Q a %u baud) — fast path config",
+				           m_synced_baud);
 				m_step = 100; // Fast path: validate BBR
 				m_op_state = OpState::IDLE;
 				continue;
 			}
-			// Fast path step 100: try sync at MAX_BAUDRATE to validate BBR is intact
+			if (m_nav_settings.cold_start && m_step == 0) {
+				DEBUG_INFO("M10QAsyncReceiver: COLD START demande — fast path desactive, config complete + CFG-RST");
+				VAL_GNSS("fastpath_bypassed reason=cold_start");
+			}
+			// Fast path step 100: on revalide au baud auquel le M10Q a REELLEMENT
+			// repondu (et non a une valeur en dur), de sorte qu'un echec ne laisse
+			// jamais l'UART sur un debit que le recepteur n'ecoute pas.
 			if (m_step == 100) {
-				sync_baud_rate(MAX_BAUDRATE);
+				sync_baud_rate(m_synced_baud);
 				break;
 			}
 			// Fast path step 101: BBR validated, skip to assistance data
@@ -1679,11 +1920,57 @@ void M10QAsyncReceiver::state_configure() {
 					m_consecutive_wake_failures = 0;
 				}
 				m_fastpath_attempts = 0;  // fast path validated → reset failure counter
-				m_step = 10; // Skip to continuous mode + nav settings
+				// 2026-08 : on reprend au step 7, pas au step 10. Les steps 7 et 8
+				// (disable_odometer / disable_timepulse_output) ecrivent en couche
+				// RAM uniquement : elle est TOUJOURS perdue a la mise sous tension,
+				// meme quand la BBR survit. Les sauter laissait la sortie timepulse
+				// (1 PPS, active par defaut) et l'odometre allumes a chaque session
+				// sur BBR retenue. Les steps 0-6 (port UART, constellations,
+				// save_config, soft_reset) restent sautes : ils sont persistes en
+				// BBR ou sans objet ici — c'est la ou est le gain de temps (~2,5 s).
+				// Le masque de constellations varie PAR SESSION (gps_service force
+				// |0x0F tant qu'aucun fix n'a ete obtenu, puis revient au masque
+				// configure). Il est ecrit au step 2, que le fast-path saute: sans
+				// ce rattrapage le retrecissement post-fix ne s'appliquerait jamais
+				// tant que la BBR survit, et un changement de GNSS_CONSTELLATION_MASK
+				// par BLE serait ignore en silence. On ne repart PAS au step 2
+				// (cela enchainerait save_config + soft_reset, ~1,5 s inutiles):
+				// step 102 = le seul VALSET qui manque.
+				if (m_nav_settings.constellation_mask != m_applied_constellation_mask) {
+					DEBUG_INFO("M10QAsyncReceiver: fast path — masque constellations 0x%02x -> 0x%02x, reapplication",
+					           m_applied_constellation_mask, m_nav_settings.constellation_mask);
+					m_step = 102;
+				} else {
+					m_step = 7;
+				}
 				m_op_state = OpState::IDLE;
 				continue;
 			}
-#endif
+			// Etape 200: effacement de la couche de config BBR, avec ACK attendu.
+			// SUCCESS amene a 201 (branche generique) qui revient au step 5.
+			if (m_step == 200) {
+				clear_config();
+				break;
+			}
+			if (m_step == 201) {
+				m_bbr_config_cleared = true;
+				DEBUG_INFO("M10QAsyncReceiver: effacement config BBR ACQUITTE par le recepteur");
+				VAL_GNSS("clear_bbr_config_acked");
+				m_step = 5;
+				m_op_state = OpState::IDLE;
+				continue;
+			}
+			// Fast path step 102: rattrapage du seul reglage saute qui varie par
+			// session. SUCCESS amene a 103 (branche generique), traitee ci-dessous.
+			if (m_step == 102) {
+				setup_gnss_channel_sharing();
+				break;
+			}
+			if (m_step == 103) {
+				m_step = 7;
+				m_op_state = OpState::IDLE;
+				continue;
+			}
 			if (m_step == 0) {
 				setup_uart_port();
 				m_step++;
@@ -1691,6 +1978,11 @@ void M10QAsyncReceiver::state_configure() {
 				run_state_machine(1000); // Wait for UART config to apply
 				break;
 			} else if (m_step == 1) {
+				// A partir d'ici le M10Q parle a MAX_BAUDRATE: c'est le step 0 qui
+				// vient de le reprogrammer. m_synced_baud est mis a jour dans la
+				// branche SUCCESS ci-dessous, sans quoi il restait fige sur le baud
+				// de boot (9600 sur carte sans pile) et le bridge u-center ouvert
+				// dans le meme cycle parlait a 9600 a un recepteur passe a 460800.
 				sync_baud_rate(MAX_BAUDRATE);
 				break;
 			} else if (m_step == 2) {
@@ -1707,6 +1999,15 @@ void M10QAsyncReceiver::state_configure() {
 				save_config();
 				break;
 			} else if (m_step == 5) {
+				// Un COLD START efface les donnees de navigation ET la config
+				// persistee: c'est la seule facon de sortir d'une couche BBR
+				// verrouillee (debit exotique, cle corrompue). L'effacement passe
+				// par l'etape 200 (dediee, avec attente d'ACK) et revient ici.
+				if (m_nav_settings.cold_start && !m_bbr_config_cleared) {
+					m_step = 200;
+					m_op_state = OpState::IDLE;
+					continue;
+				}
 				m_step++;
 				m_op_state = OpState::IDLE;
 				soft_reset(); // This operation has no response
@@ -1764,41 +2065,77 @@ void M10QAsyncReceiver::state_configure() {
 				break;
 			}
 		} else if (m_op_state == OpState::SUCCESS) {
+			// Memoriser ce que le recepteur a reellement accepte: c'est ce que la
+			// couche BBR contient desormais, et donc ce que le fast-path peut se
+			// permettre de ne pas reecrire.
+			if (m_step == 1 || m_step == 100)
+				m_synced_baud = MAX_BAUDRATE;   // le port vient d'etre valide a MAX
+			if (m_step == 2 || m_step == 102)
+				m_applied_constellation_mask = m_nav_settings.constellation_mask;
 			m_step++;
 			m_retries = DEFAULT_RETRIES;
 			m_op_state = OpState::IDLE;
 		} else if (m_op_state == OpState::PENDING) {
 			break;
 		} else {
-#if GNSS_HAS_BACKUP_BATTERY
-			// Fast path (BBR validation) failed. Retry a few times in case it was a
-			// transient sync glitch; after FASTPATH_MAX_ATTEMPTS conclude the BBR did
-			// NOT retain state (dead/uncharged coin cell) and fall back to a full cold
-			// configure. Clearing m_gnss_info_valid is what BREAKS the retry loop
-			// (step 0 no longer re-enters the fast path at line ~1657) AND drops the
-			// initial sync back to DEFAULT_BAUDRATE (9600) — see the baud selection
-			// that keys off m_gnss_info_valid.
+			// La validation du fast-path a echoue. On retente quelques fois (glitch
+			// de sync possible) puis on conclut que la BBR n'a pas ete conservee et
+			// on repart sur une configuration complete.
+			//
+			// 2026-08 CORRECTIF : on remet explicitement l'UART sur m_synced_baud
+			// avant de repartir au step 0. Auparavant l'UART restait au debit de la
+			// sonde (MAX en dur) : setup_uart_port() partait alors a 460800 vers un
+			// M10Q qui ecoutait a 9600, le step 1 echouait a son tour et la session
+			// entiere mourait sur "state_configure: failed" — une session sur deux
+			// sur une carte sans pile. Le commentaire d'origine affirmait que le
+			// baud retombait a 9600 : c'etait faux, cette selection n'existe que
+			// dans state_enterbackup.
+			if (m_step == 200 || m_step == 201) {
+				// Pas d'ACK: soit le recepteur tourne un firmware ou CFG-CFG
+				// n'existe plus (supprime du protocole 34.20 / SPG 5.20, remplace
+				// par UBX-CFG-OTP), soit il a refuse la commande. On poursuit le
+				// cold start — le CFG-RST, lui, reste valide et efface bien les
+				// donnees de navigation — mais l'echappatoire de la couche de
+				// CONFIGURATION n'est pas disponible sur ce module: si un debit
+				// exotique s'y trouve persiste, seule la sonde multi-debits le
+				// rattrapera. C'est une information de terrain, pas un detail.
+				DEBUG_ERROR("M10QAsyncReceiver: effacement config BBR NON ACQUITTE — "
+				            "CFG-CFG indisponible sur ce firmware recepteur (cf. SPG 5.20). "
+				            "Le cold start continue, mais la couche de config BBR n'est PAS effacee");
+				VAL_GNSS("clear_bbr_config_unsupported");
+				m_bbr_config_cleared = true;   // ne pas boucler
+				m_step = 5;
+				m_retries = DEFAULT_RETRIES;
+				m_op_state = OpState::IDLE;
+				continue;
+			}
 			if (m_step >= 100) {
 				constexpr unsigned int FASTPATH_MAX_ATTEMPTS = 3;
 				if (++m_fastpath_attempts >= FASTPATH_MAX_ATTEMPTS) {
-					DEBUG_WARN("M10QAsyncReceiver: fast path failed %u/%u — BBR not retained, full configure at 9600",
-					           m_fastpath_attempts, FASTPATH_MAX_ATTEMPTS);
-					m_gnss_info_valid = false;   // no valid BBR state → full cold configure @ 9600
+					DEBUG_WARN("M10QAsyncReceiver: fast path failed %u/%u — BBR non conservee, config complete a %u baud",
+					           m_fastpath_attempts, FASTPATH_MAX_ATTEMPTS, m_synced_baud);
+					// Seul m_bbr_retained casse la boucle de retry (c'est lui qui
+					// garde le fast-path). m_gnss_info_valid n'est PAS efface : il
+					// signifie "on connait le SW/HW/UID du recepteur" et sert au
+					// cache de la commande DTE GNSSI ainsi qu'au choix du baud de
+					// state_enterbackup — l'invalider n'avait aucun rapport.
+					m_bbr_retained = false;
 					m_fastpath_attempts = 0;
 				} else {
 					DEBUG_WARN("M10QAsyncReceiver: fast path failed (attempt %u/%u) — retry",
 					           m_fastpath_attempts, FASTPATH_MAX_ATTEMPTS);
 				}
+				m_ubx_comms.set_baudrate(m_synced_baud);
 				m_step = 0;
 				m_retries = DEFAULT_RETRIES;
 				m_op_state = OpState::IDLE;
 				continue;
 			}
-#endif
 			if (--m_retries == 0) {
 				DEBUG_ERROR("M10QAsyncReceiver::state_configure: failed");
 				m_unrecoverable_error = true;
 				notify<GPSEventError>({});
+				check_for_power_off();   // cf. state_poweron: ne pas dependre d'un abonne
 				break;
             } else if (m_op_state == OpState::ERROR) {
                 // Restart receiver on comms error
@@ -1897,6 +2234,7 @@ void M10QAsyncReceiver::state_startreceive() {
 				DEBUG_ERROR("M10QAsyncReceiver::state_start_receive: failed at step %u", m_step);
 				m_unrecoverable_error = true;
 				notify<GPSEventError>({});
+				check_for_power_off();   // cf. state_poweron: ne pas dependre d'un abonne
 				break;
             } else if (m_op_state == OpState::ERROR) {
                 // Restart receiver on comms error
@@ -1932,6 +2270,7 @@ void M10QAsyncReceiver::state_receive() {
             DEBUG_ERROR("M10Receiver: repeated comms errors");
             m_unrecoverable_error = true;
             notify<GPSEventError>({});
+            check_for_power_off();   // idem on_timeout(receive), deja fait ainsi
         }
     }
 }
@@ -2049,14 +2388,26 @@ bool M10QAsyncReceiver::load_dbd_from_flash() {
 		if (rtc->is_set() && save_time > 0) {
 			uint32_t now_t = (uint32_t)rtc->gettime();
 			if (now_t < save_time) {
-				DEBUG_TRACE("M10QAsyncReceiver::load_dbd_from_flash: RTC went backward — discarding");
+				// INFO et non TRACE: cette ligne signale la perte TOTALE de
+				// l'assistance persistee. Elle se declenche des qu'un reset
+				// restaure un LAST_KNOWN_RTC anterieur a la derniere synchro
+				// GPS — constate au banc, l'horloge etait repartie 53 jours en
+				// arriere et le DBD du jour a ete jete sans un mot.
+				DEBUG_INFO("M10QAsyncReceiver::load_dbd_from_flash: RTC revenue en arriere (%u < %u) — assistance ecartee",
+				           now_t, save_time);
 				return false;
 			}
 			uint32_t age_s = now_t - save_time;
-			if (age_s > DBD_MAX_AGE_S) {
-				DEBUG_TRACE("M10QAsyncReceiver::load_dbd_from_flash: stale (%u s old)", age_s);
+			const uint32_t max_age = m_bbr_retained ? DBD_MAX_AGE_BBR_S
+			                                        : DBD_MAX_AGE_NO_BBR_S;
+			if (age_s > max_age) {
+				DEBUG_INFO("M10QAsyncReceiver::load_dbd_from_flash: perime (%u s > %u s, BBR %s)",
+				           age_s, max_age, m_bbr_retained ? "retenue" : "perdue");
 				return false;
 			}
+			DEBUG_INFO("M10QAsyncReceiver::load_dbd_from_flash: %u octets, age %u s (plafond %u s, BBR %s)",
+			           (unsigned int)(file.size() - sizeof(uint32_t)), age_s, max_age,
+			           m_bbr_retained ? "retenue" : "perdue");
 		}
 
 		unsigned int data_len = (unsigned int)(file.size() - sizeof(uint32_t));
@@ -2096,11 +2447,22 @@ void M10QAsyncReceiver::state_fetchdatabase() {
         STATE_CHANGE(fetchdatabase, poweroff);
         return;
     }
-    if (m_ano_database_len) {
-        DEBUG_TRACE("M10QAsyncReceiver: fetchdatabase: ANO in use | not fetching");
-        STATE_CHANGE(fetchdatabase, poweroff);
-        return;
-    }
+    // 2026-08 (A2) — on ne saute PLUS la recuperation quand l'ANO a servi cette
+    // session. C'etait la seule raison pour laquelle gnss_dbd.dat n'etait jamais
+    // rafraichi sur une unite ANO: passe le plafond d'age la copie flash
+    // etait rejetee et l'unite perdait ses DEUX sources d'assistance d'un coup,
+    // sans pouvoir les reconstruire. C'est le scenario "carte sans pile V_BCKP",
+    // ou le DBD est le seul vecteur de demarrage chaud persistant.
+    //
+    // NOTE (correction de la passe precedente): on avait ajoute ici un garde
+    // "pas de fix -> on ne recupere pas", au motif que save_dbd_to_flash() est
+    // conditionne a m_fix_was_found. C'ETAIT FAUX: le resultat n'etait pas jete.
+    // La recuperation remplit m_ana_database_len, et state_senddatabase_enter
+    // rejoue ce tampon RAM a la session SUIVANTE sans relire le flash. Le garde
+    // supprimait donc l'assistance precisement dans le regime qu'on cherche a
+    // proteger — les series de sessions sans fix sur carte sans pile V_BCKP.
+    // Seule la persistance flash reste conditionnee au fix (la fraicheur du
+    // fichier ne doit pas etre blanchie par une session sterile).
 	while (true) {
 		if (m_op_state == OpState::IDLE) {
 			m_op_state = OpState::PENDING;
@@ -2184,7 +2546,11 @@ void M10QAsyncReceiver::state_senddatabase_enter() {
 	}
 
 	m_ubx_comms.start_dbd_filter();
-	DEBUG_TRACE("M10QAsyncReceiver::state_senddatabase: sending length %u bytes", m_ana_database_len);
+	// INFO et non TRACE: c'est la SEULE trace qui dit si une assistance a
+	// reellement ete injectee au recepteur. Sans elle, il faut deduire la
+	// reponse du temps passe dans l'etat — ce qu'on a du faire au banc le
+	// 2026-08-25 faute de mieux.
+	DEBUG_INFO("M10QAsyncReceiver::state_senddatabase: injection de %u octets d'assistance", m_ana_database_len);
 }
 
 void M10QAsyncReceiver::state_senddatabase() {
@@ -2233,6 +2599,13 @@ void M10QAsyncReceiver::state_senddatabase() {
 
 void M10QAsyncReceiver::state_senddatabase_exit() {
 	m_ubx_comms.stop_dbd_filter();
+	// 2026-08 (A2) — react(UBXCommsEventMgaDBD) recopie les MGA-ACK dans
+	// m_navigation_database a l'offset 0 pendant l'emission: le contenu ne vaut
+	// plus rien apres coup. Sans cette remise a zero, une session qui n'atteint
+	// pas fetchdatabase (le seul autre site de reset) laissait un tampon sali
+	// avec une longueur non nulle, et toutes les sessions suivantes injectaient
+	// ces octets sans jamais recharger la copie flash valide.
+	m_ana_database_len = 0;
 }
 
 void M10QAsyncReceiver::state_sendofflinedatabase_enter() {
@@ -2253,6 +2626,18 @@ void M10QAsyncReceiver::state_sendofflinedatabase_enter() {
         VAL_GNSS("ano_skip reason=no_rtc");  // ANO needs a valid date to pick the day's records
         return;
     }
+
+    // 2026-08 (A2) — m_navigation_database a TROIS producteurs: le DBD recu, la
+    // capture des MGA-ACK, et le tampon ANO ci-dessous. copy_mga_ano_to_buffer
+    // ecrit dans ce tampon au fil de son balayage MEME quand elle finit par tout
+    // rejeter (fichier perime -> 0 octet retenu). On sortait alors avec
+    // m_ano_database_len == 0 mais un tampon dont la tete etait de l'ANO, et
+    // m_ana_database_len valant encore la longueur du DBD de la session
+    // precedente: state_senddatabase_enter voyait donc "j'ai deja un DBD en RAM",
+    // ne rechargeait PAS la copie flash valide, et emettait vers le recepteur des
+    // octets corrompus. Le DBD en RAM est mort des l'instant ou l'on touche au
+    // tampon: on le declare tel quel ici.
+    m_ana_database_len = 0;
 
     try {
         LFSFile file(main_filesystem, "gps_config.dat", LFS_O_RDONLY);
@@ -2349,6 +2734,11 @@ void M10QAsyncReceiver::state_sendofflinedatabase() {
 		} else if (m_op_state == OpState::PENDING) {
 			break;
 		} else if (m_op_state == OpState::ERROR) {
+			// handle_error() a arrete le RX. Dans startreceive, seuls les
+			// op-states ERROR refont un set_baudrate (qui le relance): une
+			// cascade de TIMEOUT y mene a l'echec de session sans jamais
+			// ressusciter la reception. Meme classe que R1.
+			m_ubx_comms.restart_rx();
 			STATE_CHANGE(sendofflinedatabase, startreceive);
 			break;
 		}
@@ -2412,6 +2802,31 @@ void M10QAsyncReceiver::save_config() {
     m_ubx_comms.send_packet_with_expect(MessageClass::MSG_CLASS_CFG, CFG::ID_CFG, cfg_msg_cfg_cfg);
 }
 
+void M10QAsyncReceiver::clear_config() {
+    DEBUG_INFO("M10QAsyncReceiver::clear_config: effacement de la config BBR du recepteur (CFG-CFG clear)");
+    VAL_GNSS("clear_bbr_config");
+    CFG::CFG::MSG_CFG cfg_msg_cfg_cfg =
+    {
+        .clearMask   = 0xFFFFFFFF,
+        .saveMask    = 0,
+        .loadMask    = 0,   // pas de rechargement: la config RAM en cours reste active
+        .deviceMask  = CFG::CFG::DEVMASK_BBR,
+    };
+    // ACQUITTEMENT ATTENDU. La regle generale de la classe UBX-CFG (interface
+    // description M10 SPG 5.10, §3.10) est "acquitte par ACK-ACK si traite,
+    // ACK-NAK sinon", et CFG-CFG ne porte AUCUNE clause derogatoire — contrairement
+    // a CFG-RST, dont la spec dit explicitement de ne pas attendre de reponse.
+    // Emettre sans attendre revenait donc a jeter la seule preuve que
+    // l'effacement a eu lieu.
+    //
+    // Enjeu concret: CFG-CFG a ete SUPPRIME du protocole 34.20 (SPG 5.20), ou il
+    // est remplace par UBX-CFG-OTP. Sur un module approvisionne avec ce firmware,
+    // l'effacement echouerait en silence et l'echappatoire BBR n'existerait plus.
+    // L'absence d'ACK est donc l'information a remonter, pas un detail.
+    initiate_timeout();
+    m_ubx_comms.send_packet_with_expect(MessageClass::MSG_CLASS_CFG, CFG::ID_CFG, cfg_msg_cfg_cfg);
+}
+
 void M10QAsyncReceiver::soft_reset() {
     // navBbrMask selects what survives the GNSS-only software reset:
     //   0x0000 = hot start  (keep ephemeris+almanac+pos+time+clock+aiding)
@@ -2435,6 +2850,15 @@ void M10QAsyncReceiver::soft_reset() {
     };
     m_ubx_comms.send_packet(MessageClass::MSG_CLASS_CFG, CFG::ID_RST, cfg_msg_cfg_rst);
 	m_ubx_comms.wait_send();
+    // 2026-08 : la demande de cold start est consommee ICI, une fois le CFG-RST
+    // reellement emis. Sans cela le drapeau restait colle dans m_nav_settings et,
+    // sur le chemin de reveil chaud (qui ne rafraichissait pas les reglages),
+    // chaque session suivante re-effacait la BBR — l'exact inverse du but du
+    // deep-idle. Le log ci-dessus est la trace terrain que le wipe a bien eu lieu.
+    if (m_nav_settings.cold_start) {
+        DEBUG_INFO("M10QAsyncReceiver: COLD START applique (BBR effacee) — demande consommee");
+        m_nav_settings.cold_start = false;
+    }
 }
 
 void M10QAsyncReceiver::setup_uart_port() {
@@ -2639,7 +3063,34 @@ void M10QAsyncReceiver::setup_expert_navigation_settings() {
 }
 
 void M10QAsyncReceiver::supply_time_assistance() {
-    DEBUG_TRACE("M10QAsyncReceiver::supply_time_assistance: GPS MGA-INI-TIME-UTC ->");
+    // Le recepteur qui a garde sa BBR a sa propre base de temps GNSS, forcement
+    // meilleure que la notre. On ne lui apprend rien, on ne risque que de le
+    // contraindre a tort.
+    if (m_bbr_retained) {
+        DEBUG_INFO("M10QAsyncReceiver::supply_time_assistance: BBR retenue — le recepteur a sa propre heure, injection inutile");
+        m_step++;
+        m_op_state = OpState::IDLE;
+        run_state_machine();
+        return;
+    }
+
+    // Incertitude REELLE sur notre heure. Zero = provenance non bornable
+    // (heure restauree du flash, ou horloge virtuelle): dans ce cas le champ
+    // tAccS ne peut pas etre rempli honnetement, et une heure fausse annoncee
+    // comme sure est pire que pas d'heure du tout — elle restreint la fenetre
+    // de recherche du recepteur autour d'une valeur erronee.
+    const unsigned int tacc = rtc->time_accuracy_s();
+    if (tacc == 0) {
+        DEBUG_INFO("M10QAsyncReceiver::supply_time_assistance: heure de provenance non bornable (%s) — pas d'injection",
+                   rtc->source() == RtcSource::RESTORED ? "restauree du flash" : "jamais synchronisee");
+        m_step++;
+        m_op_state = OpState::IDLE;
+        run_state_machine();
+        return;
+    }
+
+    DEBUG_INFO("M10QAsyncReceiver::supply_time_assistance: MGA-INI-TIME tAccS=%u s (age %u s, derive %d ppm)",
+               tacc, rtc->age_s(), (int)rtc->drift_ppm());
     uint16_t year;
     uint8_t month, day, hour, min, sec;
 
@@ -2659,7 +3110,7 @@ void M10QAsyncReceiver::supply_time_assistance() {
         .second = sec,
         .reserved1 = 0,
         .ns = 0,
-        .tAccS = 2, // Accurate to within 2 seconds, perhaps this can be improved?
+        .tAccS = (uint16_t)tacc, // incertitude mesuree, plus une constante optimiste
         .reserved2 = {0},
         .tAccNs = 0
     };
@@ -2676,8 +3127,46 @@ void M10QAsyncReceiver::supply_position_assistance() {
         return;
     }
 
-    DEBUG_TRACE("M10QAsyncReceiver::supply_position_assistance: MGA-INI-POS_LLH lat=%f lon=%f ->",
-                last_gps.info.lat, last_gps.info.lon);
+    // L'age de la position ne se calcule que si l'heure courante est fiable.
+    // Avec une heure restauree du flash, l'ecart peut valoir des semaines et
+    // l'age serait une fiction — on prefere ne rien injecter.
+    if (rtc->time_accuracy_s() == 0) {
+        DEBUG_INFO("M10QAsyncReceiver::supply_position_assistance: heure non fiable — age de la position incalculable, pas d'injection");
+        return;
+    }
+
+    // Age de la derniere position connue.
+    const std::time_t fix_t = convert_epochtime(last_gps.info.year, last_gps.info.month,
+                                                last_gps.info.day, last_gps.info.hour,
+                                                last_gps.info.min, last_gps.info.sec);
+    const std::time_t now_t = rtc->gettime();
+    const unsigned long age_s = (now_t > fix_t) ? (unsigned long)(now_t - fix_t) : 0UL;
+
+    // Vitesse de reference: celle MESUREE au dernier fix (gSpeed, mm/s), bornee.
+    // Le plancher couvre l'animal immobile au moment du fix mais parti depuis;
+    // le plafond evite qu'une valeur aberrante fasse exploser le rayon.
+    static constexpr unsigned long POS_SPEED_FLOOR_CM_S =     50;  // 0,5 m/s
+    static constexpr unsigned long POS_SPEED_CEIL_CM_S  =    500;  // 5 m/s
+    static constexpr unsigned long POS_ACC_MAX_CM = 30000000UL;    // 300 km
+    unsigned long speed_cm_s = (last_gps.info.gSpeed > 0)
+                             ? (unsigned long)last_gps.info.gSpeed / 10UL : 0UL;
+    if (speed_cm_s < POS_SPEED_FLOOR_CM_S) speed_cm_s = POS_SPEED_FLOOR_CM_S;
+    if (speed_cm_s > POS_SPEED_CEIL_CM_S)  speed_cm_s = POS_SPEED_CEIL_CM_S;
+
+    // Rayon d'incertitude honnete: precision du fix + marge + ce que la bete a
+    // pu parcourir depuis. Sans ce terme, on annoncait au recepteur une position
+    // vieille de plusieurs jours avec la precision qu'elle avait a l'instant du
+    // fix — une contrainte fausse qu'il utilise pour restreindre sa recherche.
+    const unsigned long acc_cm = (unsigned long)last_gps.info.hAcc / 10UL + 100UL
+                               + age_s * speed_cm_s;
+    if (acc_cm > POS_ACC_MAX_CM) {
+        DEBUG_INFO("M10QAsyncReceiver::supply_position_assistance: position trop vieille (age %lu s, rayon %lu km) — pas d'injection",
+                   age_s, acc_cm / 100000UL);
+        return;
+    }
+
+    DEBUG_INFO("M10QAsyncReceiver::supply_position_assistance: MGA-INI-POS lat=%f lon=%f rayon=%lu m (age %lu s, %lu cm/s)",
+               last_gps.info.lat, last_gps.info.lon, acc_cm / 100UL, age_s, speed_cm_s);
 
     MGA::MSG_INI_POS_LLH msg = {
         .type      = 0x01,
@@ -2686,7 +3175,7 @@ void M10QAsyncReceiver::supply_position_assistance() {
         .lat       = static_cast<int32_t>(last_gps.info.lat * 1e7),
         .lon       = static_cast<int32_t>(last_gps.info.lon * 1e7),
         .alt       = last_gps.info.height / 10,   // mm -> cm
-        .posAcc    = last_gps.info.hAcc / 10 + 100, // mm -> cm, add margin
+        .posAcc    = (uint32_t)acc_cm,
     };
 
     initiate_timeout();
@@ -3185,23 +3674,46 @@ bool M10QAsyncReceiver::start_bridge(PassthroughCallback rx_callback)
 	if (m_bridge_active)
 		return true;
 
+	// En deep-idle l'UART est deinit et ses canaux PPI sont liberes: la suite de
+	// cette fonction n'appelle exit_shutdown() que depuis `idle`, puis touche
+	// l'UART -> canal PPI libere -> APP_ERROR_CHECK_BOOL(false) -> reset du SoC.
+	if (STATE_EQUAL(backupidle) || STATE_EQUAL(enterbackup)) {
+		DEBUG_WARN("M10QAsyncReceiver::start_bridge: refuse — GNSS en deep-idle, "
+		           "sortir d'abord avec $GNSSBCKP#001;0");
+		return false;
+	}
+
 	// Cancel any pending state machine task
 	cancel_timeout();
 	system_scheduler->cancel_task(m_state_machine_handle);
 
 	// Power on GNSS module and init UART (if not already on)
-	if (m_state == State::idle) {
+	const bool was_idle = (m_state == State::idle);
+	if (was_idle) {
 		exit_shutdown();
 	}
 
-	// Reset to default 9600 baud for u-center/NMEA compatibility
-	m_ubx_comms.set_baudrate(DEFAULT_BAUDRATE);
+	// Se mettre au debit auquel le M10Q repond REELLEMENT — mais lequel depend de
+	// ce qu'on vient de faire au recepteur:
+	//   - on arrivait de `idle`: exit_shutdown() ci-dessus a coupe puis reallume
+	//     le rail, donc le M10Q vient de faire un POR et repart au debit de BOOT
+	//     (9600 si la BBR est perdue, MAX si elle est retenue) — c'est l'indice
+	//     de sondage qui le sait, pas m_synced_baud;
+	//   - sinon le recepteur est deja alimente et configure: il parle a
+	//     m_synced_baud.
+	// Constate au banc: forcer m_synced_baud (460800, herite de la derniere
+	// session) sur un recepteur fraichement redemarre a 9600 rendait le bridge
+	// muet — le defaut meme que ce correctif etait cense supprimer, mais dans
+	// l'autre sens.
+	const unsigned int bridge_baud = was_idle ? boot_baud_for_step(0) : m_synced_baud;
+	m_ubx_comms.set_baudrate(bridge_baud);
 
 	// Enable passthrough: raw UART RX goes to callback
 	m_ubx_comms.set_passthrough(true, rx_callback);
 	m_bridge_active = true;
 
-	DEBUG_INFO("M10QAsyncReceiver: bridge mode ACTIVE (9600 baud)");
+	DEBUG_INFO("M10QAsyncReceiver: bridge mode ACTIVE (%u baud, %s)", bridge_baud,
+	           was_idle ? "recepteur redemarre" : "recepteur deja configure");
 	return true;
 }
 
@@ -3217,7 +3729,27 @@ void M10QAsyncReceiver::stop_bridge()
 
 	// Power off the GNSS and return to idle
 	enter_shutdown();
+	// Remettre la MEME base que power_off_immediate(): le bridge a prempte tous
+	// les clients (il annule les taches et coupe le rail sans passer par la FSM).
+	// Sans cela m_num_power_on restait a 1 apres un PWRON GNSS suivi d'un bridge,
+	// et plus AUCUNE session suivante ne pouvait couper le rail: ~25-30 mA en
+	// continu jusqu'au prochain reset.
 	m_state = State::idle;
+	m_num_power_on = 0;
+	m_powering_off = false;
+	m_op_state = OpState::IDLE;
+	m_step = 0;
+	m_unrecoverable_error = false;
+	m_pmreq_baud = DEFAULT_BAUDRATE;   // le rail vient d'etre coupe
+	m_bbr_retained = false;
+	// La liste doit rester alignee sur power_off_immediate(): ces cinq-la
+	// manquaient, et un drapeau de deep-idle ou un compteur de reveil herite du
+	// bridge se serait applique a la premiere session suivante.
+	m_deep_idle_pending = false;
+	m_enterbackup_warm = false;
+	m_consecutive_wake_failures = 0;
+	m_pmreq_verify_retries = 0;
+	m_backupidle_entered_ms = 0;
 }
 
 bool M10QAsyncReceiver::bridge_send(const uint8_t* data, size_t len)

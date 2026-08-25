@@ -164,6 +164,17 @@ echo "  METRIC_LATENCY=${METRICS}  VALIDATION=${VALIDATION}"
 
 cmake -DCMAKE_TOOLCHAIN_FILE=../../toolchain_arm_gcc_nrf52.cmake -DDEBUG_LEVEL=3 -DBOARD=LINKIT -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DCAM_ENABLE=${CAM_ENABLE} -DBUZZER_ENABLE=${BUZZER_ENABLE} -DGNSS_HAS_BACKUP_BATTERY=${GNSS_HAS_BACKUP_BATTERY} -DBATTERY_CHEMISTRY=${BATTERY_CHEMISTRY} -DENABLE_SWS_ANALOG=${ENABLE_SWS_ANALOG} -DMETRIC_LATENCY_LOG_ENABLE=$([ "$METRICS" = "ON" ] && echo 1 || echo 0) -DVALIDATION_LOG_ENABLE=$([ "$VALIDATION" = "ON" ] && echo 1 || echo 0) -DBENCH_TEST=${BENCH} ../..
 make -j 20
+# GARDE-FOU (2026-08): sans ce controle, un echec de compilation laissait le
+# script continuer, re-fusionner le HEX de la build PRECEDENTE et afficher des
+# commandes de flash parfaitement valides pointant sur un binaire perime. C'est
+# exactement ce qui s'est produit au banc (firmware sans console %BENCH flashe
+# sans que rien ne le signale).
+if [ $? -ne 0 ]; then
+    echo ""
+    echo "  *** COMPILATION ECHOUEE — aucun binaire produit, rien a flasher ***"
+    echo ""
+    exit 1
+fi
 nrfutil settings generate --family NRF52840 --application LinkIt_board.hex --application-version 0 --bootloader-version 1 --bl-settings-version 2 --app-boot-validation VALIDATE_ECDSA_P256_SHA256 --sd-boot-validation VALIDATE_ECDSA_P256_SHA256 --softdevice ../../drivers/nRF5_SDK_17.0.2/components/softdevice/s140/hex/s140_nrf52_7.2.0_softdevice.hex --key-file ../../nrfutil_pkg_key.pem settings.hex
 mergehex -m ../../bootloader/secure_bootloader/linkitv4_v1.0/armgcc/_build/cls_bootloader_v1_linkit_merged.hex LinkIt_board.hex -o m1.hex
 mergehex -m m1.hex settings.hex -o LinkIt_board_merged.hex

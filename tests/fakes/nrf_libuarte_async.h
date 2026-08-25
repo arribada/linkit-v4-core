@@ -163,6 +163,8 @@ void nrf_libuarte_async_rx_free(const nrf_libuarte_async_t * const p_libuarte,
                                 uint8_t * p_data, size_t length);
 
 // Test injection
+extern bool m_is_rx_enabled;   /* etat RX du fake, lu par les tests */
+
 void nrf_libuarte_inject_event(nrf_libuarte_async_evt_t *evt);
 
 /** @} */

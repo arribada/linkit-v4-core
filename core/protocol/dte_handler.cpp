@@ -1872,6 +1872,8 @@ std::string DTEHandler::RTCW_REQ(int error_code, std::vector<BaseType>& arg_list
 
 	// Set the RTC to the provided unix timestamp
 	rtc->settime(static_cast<std::time_t>(timestamp));
+	// Heure posee a la main: juste au moment de la saisie, puis elle derive.
+	rtc->note_source(RtcSource::OPERATOR);
 	DEBUG_INFO("DTEHandler::RTCW_REQ: RTC set to %u", timestamp);
 
 	// Also update LAST_KNOWN_RTC so the pseudo RTC chain continues from this value

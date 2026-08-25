@@ -3,6 +3,7 @@
 #include "CppUTestExt/MockSupport.h"
 
 uint8_t GPIOPins::m_sensors_pwr_refcount = 0;
+bool GPIOPins::m_gnss_uart_active = false;
 
 void GPIOPins::initialise() {
 	mock().actualCall("initialise");
@@ -48,6 +49,17 @@ void GPIOPins::release_sensors_pwr() {
 
 bool GPIOPins::get_sensors_pwr_state() {
 	return m_sensors_pwr_refcount > 0;
+}
+
+// Verrou "UART GNSS en service" (2026-08): pas de mock().actualCall ici, il
+// serait pose/retire a chaque init/deinit d'UBXComms et ferait echouer tous les
+// tests existants qui ne l'attendent pas. Simple etat lisible par les tests.
+void GPIOPins::set_gnss_uart_active(bool active) {
+	m_gnss_uart_active = active;
+}
+
+bool GPIOPins::is_gnss_uart_active() {
+	return m_gnss_uart_active;
 }
 
 uint8_t GPIOPins::get_sensors_pwr_refcount() {

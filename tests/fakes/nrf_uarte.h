@@ -33,6 +33,8 @@ typedef struct {
     NRF_UARTE_Type *uarte;
 } nrf_uarte_t;
 
+extern nrf_uarte_baudrate_t g_fake_last_baudrate;
+
 void nrf_uarte_baudrate_set(NRF_UARTE_Type   * p_reg, nrf_uarte_baudrate_t baudrate);
 
 #ifdef __cplusplus

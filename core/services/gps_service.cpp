@@ -421,7 +421,11 @@ unsigned int GPSService::service_next_schedule_in_ms() {
 	// cycle happens transparently — `power_off()` here, the next iteration
 	// of this function will see state == poweroff and proceed normally,
 	// then `power_on()` will cold-boot at the upcoming acquisition.
-	if (m_device.is_in_deep_idle() && m_deep_idle_started_at_ms > 0) {
+	// !m_deep_idle_is_sentinel : le lambda auto-off (voir plus bas) possede deja
+	// cette garde. Sans elle ici, le cycle prophylactique de 24 h coupe le rail
+	// sur une configuration "ne jamais couper" — et sur une carte sans pile
+	// V_BCKP c'est ce rail qui EST le seul support de l'ephemeride.
+	if (m_device.is_in_deep_idle() && m_deep_idle_started_at_ms > 0 && !m_deep_idle_is_sentinel) {
 		uint64_t now_ms = PMU::get_timestamp_ms();
 		constexpr uint64_t DEEP_IDLE_HARD_CAP_MS =
 			static_cast<uint64_t>(DEEP_IDLE_HARD_CAP_S) * MS_PER_SEC;
@@ -804,7 +808,19 @@ unsigned int GPSService::service_next_timeout() {
 	// Must exceed the GNSS acquisition timeout to avoid premature termination
 	GNSSConfig gnss_config;
 	configuration_store->get_gnss_configuration(gnss_config);
-	unsigned int timeout_s = m_is_first_fix_found ? gnss_config.acquisition_timeout : gnss_config.acquisition_timeout_cold_start;
+	// 2026-08 : le filet doit couvrir le budget que service_initiate() va
+	// REELLEMENT donner au driver. Un cold start force (escalade
+	// GNSS_COLD_START_AFTER_NTRY ou GNSS_TRIGGER_COLD_START_ON_SURFACED) demande
+	// acquisition_timeout_cold_start meme quand un fix a deja ete obtenu ; sans
+	// ce test on armait le filet sur acquisition_timeout (+30 s) et on annulait
+	// la session a 150 s alors que le driver visait 530 s. Le recepteur qu'on
+	// vient d'effacer n'avait donc jamais le temps de retelecharger ses
+	// ephemerides : l'escalade de recuperation ne pouvait pas aboutir.
+	// m_force_cold_start est encore arme ici — Service::reschedule() calcule ce
+	// timeout AVANT d'appeler service_initiate(), qui seul le consomme.
+	bool cold_budget = !m_is_first_fix_found || m_force_cold_start;
+	unsigned int timeout_s = cold_budget ? gnss_config.acquisition_timeout_cold_start
+	                                     : gnss_config.acquisition_timeout;
 	return (timeout_s + SERVICE_SAFETY_MARGIN_S) * MS_PER_SEC;
 }
 
@@ -1342,6 +1358,10 @@ void GPSService::bench_inject_fix(double lat, double lon, uint32_t hAcc_mm, uint
     // Short-circuit any real acquisition still in flight so a later real PVT
     // doesn't double-log on top of the injected one.
     m_is_active = false;
+    // R20: terminer la session comme les vrais chemins (react(GPSEventPVT)),
+    // sinon le recepteur reste en `receive` rail allume et le power_on suivant
+    // porte m_num_power_on a 2 — plus aucun power_off ne coupe.
+    try_enter_deep_idle_or_poweroff();
     // Mark the GNSS service initiated so gnss_data_callback → task_process_gnss_data
     // → service_complete() runs its FULL path instead of bailing on
     // "!m_is_initiated". That full path calls service_log() → notify_log_updated()
@@ -1385,6 +1405,7 @@ void GPSService::bench_inject_fastloc(double lat, double lon, uint32_t hAcc_mm, 
     DEBUG_WARN("GPSService::bench_inject_fastloc: lat=%f lon=%f hAcc=%umm numSV=%u",
                lat, lon, (unsigned)d.hAcc, (unsigned)d.numSV);
     m_is_active = false;
+    try_enter_deep_idle_or_poweroff();   // R20: cf. bench_inject_fix
     bench_force_initiated();
     gnss_degraded_callback(d);
 }
@@ -1398,6 +1419,7 @@ void GPSService::bench_inject_cloudlocate() {
         raw.capture_time = (uint32_t)rtc->gettime();
     DEBUG_WARN("GPSService::bench_inject_cloudlocate: MEASC12 raw measurement injected");
     m_is_active = false;
+    try_enter_deep_idle_or_poweroff();   // R20: cf. bench_inject_fix
     bench_force_initiated();
     gnss_cloudlocate_callback(raw);
 }
@@ -1405,6 +1427,7 @@ void GPSService::bench_inject_cloudlocate() {
 void GPSService::bench_inject_nofix() {
     DEBUG_WARN("GPSService::bench_inject_nofix: forcing NO_FIX end-of-session");
     m_is_active = false;
+    try_enter_deep_idle_or_poweroff();   // R20: cf. bench_inject_fix
     bench_force_initiated();
     GPSLogEntry log_entry = invalid_log_entry();
     ServiceEventData event_data = log_entry;

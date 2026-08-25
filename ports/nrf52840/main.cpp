@@ -775,11 +775,40 @@ static LFSFileSystem& init_storage(NrfSwitch& nrf_reed_switch, Is25Flash& is25_f
 #ifdef EXTERNAL_WAKEUP
 		// Pseudo RTC: advance the last known RTC by WAKEUP_PERIOD at each boot.
 		unsigned int wakeup_period = configuration_store->read_param<unsigned int>(ParamID::WAKEUP_PERIOD);
-		if (last_rtc > 0 && wakeup_period > 0) {
+
+		// 2026-08 — n'avancer la chaine QUE si ce demarrage vient reellement
+		// d'un cycle du TPL5111, c'est-a-dire d'une coupure franche de
+		// l'alimentation. Auparavant l'avance etait inconditionnelle: un reset
+		// WDT survenu quelques secondes apres le boot precedent ajoutait malgre
+		// tout une periode de reveil ENTIERE a l'horloge, et l'erreur
+		// s'accumulait a chaque reset. Un reveil manuel (aimant) ou un reset
+		// logiciel posent le meme probleme — dans ces cas la chaine est rompue
+		// et l'heure redevient simplement « restauree », donc non bornable.
+		const ResetCause boot_cause = PMU::reset_cause();
+		const bool tpl_cycle = (boot_cause == ResetCause::POWER_ON);
+
+		// Tolerance du minuteur RC du TPL5111. Volontairement conservatrice:
+		// c'est elle qui borne l'incertitude annoncee au recepteur GNSS.
+		constexpr unsigned int TPL_TOLERANCE_PCT = 5;
+
+		if (last_rtc > 0 && wakeup_period > 0 && tpl_cycle) {
 			unsigned int pseudo_rtc = last_rtc + wakeup_period;
 			configuration_store->write_param(ParamID::LAST_KNOWN_RTC, pseudo_rtc);
 			rtc->settime(static_cast<std::time_t>(pseudo_rtc));
-			DEBUG_INFO("EXTERNAL_WAKEUP: Pseudo RTC set to %u (last=%u + period=%u)", pseudo_rtc, last_rtc, wakeup_period);
+			// Extrapolation, mais BORNEE: le temps hors tension vaut la periode
+			// de reveil, a la tolerance du minuteur pres.
+			rtc->note_source(RtcSource::PSEUDO);
+			rtc->set_pseudo_uncertainty_s((wakeup_period * TPL_TOLERANCE_PCT) / 100 + 1);
+			DEBUG_INFO("EXTERNAL_WAKEUP: Pseudo RTC set to %u (last=%u + period=%u, incertitude +/-%u s)",
+			           pseudo_rtc, last_rtc, wakeup_period,
+			           (wakeup_period * TPL_TOLERANCE_PCT) / 100 + 1);
+		} else if (last_rtc > 0) {
+			// Chaine rompue: on repose l'heure connue SANS l'avancer, et on la
+			// declare non bornable.
+			rtc->settime(static_cast<std::time_t>(last_rtc));
+			rtc->note_source(RtcSource::RESTORED);
+			DEBUG_WARN("EXTERNAL_WAKEUP: reveil hors TPL (cause=%d) — chaine pseudo-RTC rompue, heure restauree sans avance (%u)",
+			           (int)boot_cause, last_rtc);
 		} else {
 			DEBUG_INFO("EXTERNAL_WAKEUP: No pseudo RTC available (last_rtc=%u, wakeup_period=%u)", last_rtc, wakeup_period);
 		}
@@ -812,7 +841,13 @@ static LFSFileSystem& init_storage(NrfSwitch& nrf_reed_switch, Is25Flash& is25_f
 		// Non-TPL5111 boards: restore last known RTC directly
 		if (last_rtc > 0) {
 			rtc->settime(static_cast<std::time_t>(last_rtc));
-			DEBUG_INFO("Restored LAST_KNOWN_RTC = %u", last_rtc);
+			// RESTORED et non GNSS: le temps passe hors tension est inconnu, donc
+			// l'erreur de cette heure ne se borne pas. Sans cette distinction,
+			// is_set() renvoyait « oui » et le firmware annoncait cette valeur au
+			// recepteur a +/- 2 s — mesure au banc le 2026-08-25 avec 52 jours
+			// d'ecart.
+			rtc->note_source(RtcSource::RESTORED);
+			DEBUG_INFO("Restored LAST_KNOWN_RTC = %u (provenance: restauree)", last_rtc);
 		}
 #endif
 
