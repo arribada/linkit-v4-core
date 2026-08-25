@@ -51,7 +51,15 @@ void GPIOPins::initialise()
 	init_pin(SAT_RESET);
 	clear(SAT_RESET);
 	clear(SAT_PWR_EN);
+#if (defined(ARGOS_SMD) && (ARGOS_SMD == 1)) || (defined(LORA_RAK3172) && (LORA_RAK3172 == 1))
 	release_to_highz(SAT_RESET);  // Disconnect (ext pull-up, SMD off)
+#else
+	// KIM2: pas de tirage externe sur nRESET-SAT (le net ne va qu'a USR_NRST, au
+	// connecteur de debug J15 et a notre P0.31 en drain ouvert). Relacher la
+	// broche ici la laisserait FLOTTER sur un module eteint. On la garde tenue
+	// BASSE — reset asserte, module inerte — et c'est le driver qui la relachera
+	// vers le tirage interne une fois le module alimente.
+#endif
 #ifdef SMD_VPA_PIN
 	// Drive VPA LOW at boot to prevent floating regulator enable
 	drive_low(SMD_VPA_PIN);
@@ -351,4 +359,9 @@ void GPIOPins::drive_low(uint32_t pin)
 void GPIOPins::release_to_highz(uint32_t pin)
 {
 	nrf_gpio_cfg_default(BSP::GPIO_Inits[pin].pin_number);
+}
+
+void GPIOPins::release_to_pullup(uint32_t pin)
+{
+	nrf_gpio_cfg_input(BSP::GPIO_Inits[pin].pin_number, NRF_GPIO_PIN_PULLUP);
 }

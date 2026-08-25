@@ -28,6 +28,20 @@
 #define SAT_PWR_EN     BSP::GPIO::GPIO_SAT_EN
 #define SAT_RESET      BSP::GPIO::GPIO_SAT_RESET
 #define SAT_EXTWAKEUP  BSP::GPIO::GPIO_SAT_WKUP
+/// @brief Broche 5 du KIM2, KIM_INT (USR_IO1) — "Output — KIM2 Interrupt pin —
+///        Allows module to wake up host micro-controller" (datasheet v0.4 §4.2).
+///        C'est une SORTIE du module, donc une ENTREE pour nous. Elle etait
+///        absente du BSP: jamais configuree, donc laissee dans son etat de reset.
+///        On la definit ici pour qu'elle ait un niveau franc quand le module est
+///        eteint; le firmware ne l'exploite pas encore.
+#define SAT_INT        BSP::GPIO::GPIO_SAT_INT
+// GPIO_KIM_PWR_ON (P0.05) n'a VOLONTAIREMENT pas d'alias et n'est pilote nulle
+// part: sur linkit-v4 ce net N'EST PAS ROUTE jusqu'au module. La broche 15 du
+// KIM2, EXT_PWR_ON ("Module active: High", datasheet v0.4 §4.2), est cablee sur
+// VSAT_EN — donc sur SAT_PWR_EN (P1.15), qui commande AUSSI le LDO 3,6 V du
+// module. Alimenter le module et le declarer actif sont ainsi un seul et meme
+// geste. Ne pas "corriger" en pilotant P0.05: verifie le 2026-08-25, c'est un
+// net mort.
 // Camera pins (optional, conflicts with buzzer on GPIO5)
 // Configure via CMake option: -DEXT_GPIO5_DEVICE=CAM or -DEXT_GPIO5_DEVICE=BUZZER
 #if ENABLE_CAM_SENSOR
@@ -112,6 +126,7 @@ namespace BSP
 	    GPIO_SAT_EN,
 	    GPIO_SAT_WKUP,
 	    GPIO_KIM_PWR_ON,
+	    GPIO_SAT_INT,
 	    GPIO_GPS_PWR_EN,
 	    GPIO_GPS_RST,
 	    GPIO_GPS_EXT_INT,
