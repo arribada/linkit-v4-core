@@ -1888,7 +1888,15 @@ std::string DTEHandler::RTCW_REQ(int error_code, std::vector<BaseType>& arg_list
 #pragma GCC diagnostic ignored "-Wswitch-enum"
 
 DTEAction DTEHandler::handle_dte_message(const std::string& req, std::string& resp) {
-	DTECommand command;
+	// Sentinelle OBLIGATOIRE. Cette variable etait non initialisee, et le
+	// decodeur leve DTE_PROTOCOL_UNKNOWN_COMMAND *avant* de l'affecter: le
+	// switch plus bas s'executait alors sur une valeur indeterminee. Mesure au
+	// banc le 2026-08-26: sur douze commandes inconnues, ONZE reponses portaient
+	// le nom d'une AUTRE commande — un hote pouvait les prendre pour la reponse a
+	// une requete differente. Les actions destructrices (redemarrage,
+	// reinitialisation d'usine) etaient heureusement gardees par `if
+	// (!error_code)`, donc l'aiguillage errone ne pouvait pas faire de degat.
+	DTECommand command = DTECommand::__NUM_REQ;
 	std::vector<ParamID> params;
 	std::vector<ParamValue> param_values;
 	std::vector<BaseType> arg_list;
@@ -1936,6 +1944,13 @@ DTEAction DTEHandler::handle_dte_message(const std::string& req, std::string& re
 			error_code = (unsigned int)DTEError::BAD_FORMAT;
 			break;
 		}
+	}
+
+	// Commande jamais identifiee: on ne peut pas nommer la reponse, et surtout on
+	// ne doit pas aiguiller vers un gestionnaire arbitraire.
+	if (command >= DTECommand::__NUM_REQ) {
+		DEBUG_WARN("DTEHandler: commande non identifiee, aucun aiguillage");
+		return action;
 	}
 
 	try {
