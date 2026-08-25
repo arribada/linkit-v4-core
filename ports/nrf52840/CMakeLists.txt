@@ -61,7 +61,7 @@ set(BOOL_BUILD_FLAGS
     GNSS_HAS_BACKUP_BATTERY GPS_FAKE_POSITION STC3117_MIXED_MODE
     ARGOS_SMD LORA_RAK3172 LORA_DCS_ENABLE LORA_POWER_OFF_UNDERWATER
     SMDSAT_USE_SAFE_TIMINGS SMDSAT_AUTOFALLBACK
-    BENCH_TEST BENCH_FORCE_LPM_NONE SMD_FLASH_HOLD SMD_UART
+    BENCH_TEST BENCH_FORCE_LPM_NONE SMD_FLASH_HOLD SMD_UART KIM2_BLIND_WKUP_RELEASE
     CAM_ENABLE BUZZER_ENABLE
     METRIC_LATENCY_LOG_ENABLE VALIDATION_LOG_ENABLE RSPB_VSENSORS_FLOOR)
 
@@ -84,6 +84,12 @@ option(BENCH_TEST "Enable bench-test serial console + GPS injection hook" OFF)
 # Bench diagnostic (RSPB/SMD): force the SMD LPM bitmap to NONE (always-on) so a
 # satellite-TX SPI failure can be attributed to STOP-mode wake vs the SPI itself.
 option(BENCH_FORCE_LPM_NONE "Bench: force SMD LPM=NONE (isolate SPI from STOP-mode wake)" OFF)
+# KIM2 + profil MAC BLIND: une fois AT+TX acquitté, le module cadence lui-même
+# ses retransmissions et n'attend plus aucune commande AT jusqu'au +TX= final.
+# Maintenir SAT_EXTWAKEUP haute le garde alors éveillé pour rien — mesuré au banc,
+# 122,6 s d'éveil pour trois émissions espacées de 60 s. Ce flag relâche la pin
+# pendant la salve. Défaut OFF : comportement inchangé.
+option(KIM2_BLIND_WKUP_RELEASE "KIM2: release SAT_EXTWAKEUP during a module-paced BLIND burst" OFF)
 
 # SMD timing safety knobs.
 #
@@ -738,6 +744,11 @@ target_compile_definitions(${TARGET_NAME} PRIVATE
     # TEST: power SMD at boot and park the nRF so the STM32WL can be flashed
     # without the board resetting. Enable with -DSMD_FLASH_HOLD=ON. See main.cpp.
     $<$<BOOL:${SMD_FLASH_HOLD}>:SMD_FLASH_HOLD=1>
+    # KIM2 + BLIND: relâcher SAT_EXTWAKEUP pendant la salve pilotée par le module,
+    # pour qu'il descende en basse consommation entre ses retransmissions au lieu
+    # de rester éveillé toute la séquence. Défaut OFF = pin maintenue haute, le
+    # comportement d'avant. Voir KIM2Device::release_wkup_for_burst().
+    $<$<BOOL:${KIM2_BLIND_WKUP_RELEASE}>:KIM2_BLIND_WKUP_RELEASE=1>
     # RSPB: keep VSENSORS always on (I2C pull-ups live on it). 1=floor (default),
     # 0=allow cut (test). Only forwarded when set (build_rspb.sh); other boards
     # fall back to the #ifndef default in nrf_gpio.cpp.

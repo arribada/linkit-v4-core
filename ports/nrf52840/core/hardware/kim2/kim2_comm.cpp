@@ -251,6 +251,15 @@ KIM2::RespType KIM2Comm::parse_rx_line_protocol(const std::string& line)
 	if (line.compare(0, err_len, ERR_RESPONSE) == 0)
 		return RESP_ERROR;
 
+	// +FW=<version> non sollicitee = le module a (re)demarre. On cherche la
+	// sous-chaine plutot que le prefixe: la ligne arrive parfois precedee d'un
+	// octet parasite, la liaison se stabilisant au demarrage du module.
+	if (line.find(FW_RESPONSE) != std::string::npos) {
+		m_module_banner = line.substr(line.find(FW_RESPONSE) + strlen(FW_RESPONSE));
+		m_module_rebooted = true;
+		return RESP_MODULE_BANNER;
+	}
+
 	// +HDLR=<TX handler id> — new-stack immediate ack, sent just before +OK.
 	// Informational: we advance on +OK, so recognise and ignore it (a benign
 	// type avoids "unknown line" noise on the new stack). Its PRESENCE flags that

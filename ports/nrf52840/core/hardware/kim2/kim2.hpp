@@ -113,6 +113,14 @@ private:
 	enum class TxPhase { AWAIT_ACK, AWAIT_TX };
 	TxPhase  m_tx_phase = TxPhase::AWAIT_ACK;  ///< Current AT+TX poll phase
 	uint64_t m_tx_ack_deadline_ms = 0;         ///< Wall-clock deadline (ms) for the +OK ACK
+
+	/// @brief True while SAT_EXTWAKEUP has been released for the duration of a
+	///        BLIND burst, so the resume path knows it is the one holding the
+	///        pin down and no other path raises it behind our back.
+	bool m_tx_wkup_lowered = false;
+	uint64_t m_tx_started_ms = 0;  ///< horodatage de l'AT+TX
+	void release_wkup_for_burst();
+	void resume_wkup_after_burst(bool wait_for_wake, const char *reason);
 	/// @}
 
 	/// @name State machine
