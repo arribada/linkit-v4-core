@@ -261,6 +261,22 @@ void NrfUartAsync::process_rx()
         m_isr_error = false;
         m_rx_buffer.clear();
         m_isr_buf_len = 0;
+
+        // isr_handle_error() a coupe la reception. Elle n'etait relancee que par
+        // send_raw()/send_string(), donc UNIQUEMENT a la prochaine emission — on
+        // restait sourd jusque-la. Mesure au banc le 2026-08-25 sur une salve
+        // Argos BLIND: le module cadence lui-meme ses retransmissions et on ne lui
+        // envoie plus rien pendant toute la salve; une erreur de trame survenue a
+        // son reveil nous rendait sourds pour de bon, et le +TX= de cloture etait
+        // perdu — fenetre expiree, TX compte en echec, rail du module coupe.
+        // Aucun des on_rx_error() (KIM2, SMD-AT, LoRa) ne relancait la reception,
+        // donc personne ne dependait de cet etat: on restaure l'invariant "port
+        // ouvert => reception armee" ici, avant de remonter l'erreur.
+        if (!m_is_rx_started) {
+            nrf_libuarte_async_start_rx(BSP::UARTAsync_Inits[m_uart_instance].uart);
+            m_is_rx_started = true;
+        }
+
         on_rx_error(err_type);
         return;
     }
