@@ -19,6 +19,7 @@
 enum class RtcSource : uint8_t {
 	NONE = 0,   ///< jamais posee, ou horloge virtuelle de repli
 	RESTORED,   ///< relue du flash au demarrage — erreur NON bornable
+	PSEUDO,     ///< chaine pseudo-RTC TPL5111 — erreur BORNEE par la periode
 	OPERATOR,   ///< posee a la main en configuration ($RTCW)
 	GNSS,       ///< synchronisee sur un PVT valide
 };
@@ -49,6 +50,18 @@ public:
 
 	RtcSource source() const { return m_source; }
 	int32_t drift_ppm() const { return m_drift_ppm; }
+
+	/// @brief Incertitude d'un bond de la chaine pseudo-RTC (RSPB / TPL5111).
+	///
+	/// Sur une carte a TPL5111, le temps hors tension N'EST PAS inconnu: il vaut
+	/// la periode de reveil, fixee par une resistance et exposee en parametre.
+	/// L'erreur se borne donc a la tolerance du minuteur, et il serait dommage
+	/// de se priver d'assistance temporelle sur ce seul motif.
+	///
+	/// ATTENTION: cette borne ne vaut que si le reveil vient bien du TPL. Un
+	/// reveil manuel (aimant), un WDT ou un reset logiciel cassent la chaine —
+	/// l'appelant doit alors declarer RESTORED et non PSEUDO.
+	void set_pseudo_uncertainty_s(unsigned int u) { m_pseudo_unc_s = u; }
 
 	/// @brief Age, en secondes, de la derniere pose d'heure.
 	unsigned int age_s() {
@@ -112,6 +125,12 @@ public:
 			base = 2;
 		} else if (m_source == RtcSource::OPERATOR) {
 			base = 60;
+		} else if (m_source == RtcSource::PSEUDO) {
+			// Borne d'UN bond de la chaine. Elle sous-estime apres plusieurs
+			// cycles TPL sans le moindre fix, faute d'un ancrage persiste du
+			// dernier point de synchro — documente, et sans consequence sur une
+			// carte a BBR ou l'injection est de toute facon sautee.
+			base = (m_pseudo_unc_s > 0) ? m_pseudo_unc_s : 60;
 		} else {
 			// NONE ou RESTORED: le temps passe hors tension est inconnu, donc
 			// l'erreur ne se borne pas. Mieux vaut ne rien affirmer au recepteur.
@@ -130,4 +149,5 @@ protected:
 	std::time_t m_set_at         = 0;   ///< heure a laquelle la pose a eu lieu
 	std::time_t m_last_gnss_sync = 0;   ///< derniere synchro GNSS (pour la derive)
 	int32_t     m_drift_ppm      = 0;   ///< derive MESUREE, 0 tant qu'inconnue
+	unsigned int m_pseudo_unc_s  = 0;   ///< incertitude d'un bond pseudo-RTC
 };
