@@ -2365,7 +2365,13 @@ bool M10QAsyncReceiver::load_dbd_from_flash() {
 		if (rtc->is_set() && save_time > 0) {
 			uint32_t now_t = (uint32_t)rtc->gettime();
 			if (now_t < save_time) {
-				DEBUG_TRACE("M10QAsyncReceiver::load_dbd_from_flash: RTC went backward — discarding");
+				// INFO et non TRACE: cette ligne signale la perte TOTALE de
+				// l'assistance persistee. Elle se declenche des qu'un reset
+				// restaure un LAST_KNOWN_RTC anterieur a la derniere synchro
+				// GPS — constate au banc, l'horloge etait repartie 53 jours en
+				// arriere et le DBD du jour a ete jete sans un mot.
+				DEBUG_INFO("M10QAsyncReceiver::load_dbd_from_flash: RTC revenue en arriere (%u < %u) — assistance ecartee",
+				           now_t, save_time);
 				return false;
 			}
 			uint32_t age_s = now_t - save_time;
@@ -2517,7 +2523,11 @@ void M10QAsyncReceiver::state_senddatabase_enter() {
 	}
 
 	m_ubx_comms.start_dbd_filter();
-	DEBUG_TRACE("M10QAsyncReceiver::state_senddatabase: sending length %u bytes", m_ana_database_len);
+	// INFO et non TRACE: c'est la SEULE trace qui dit si une assistance a
+	// reellement ete injectee au recepteur. Sans elle, il faut deduire la
+	// reponse du temps passe dans l'etat — ce qu'on a du faire au banc le
+	// 2026-08-25 faute de mieux.
+	DEBUG_INFO("M10QAsyncReceiver::state_senddatabase: injection de %u octets d'assistance", m_ana_database_len);
 }
 
 void M10QAsyncReceiver::state_senddatabase() {
