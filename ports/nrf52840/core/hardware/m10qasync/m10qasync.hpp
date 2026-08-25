@@ -146,6 +146,11 @@ private:
 	static constexpr unsigned int CONSTELLATION_MASK_UNKNOWN = 0xFFFFFFFFu;
 	unsigned int m_applied_constellation_mask = CONSTELLATION_MASK_UNKNOWN;
 
+	/// L'heure synchronisee a-t-elle deja ete persistee pour CETTE session ?
+	/// La RTC est repositionnee a chaque PVT (1 Hz): sans ce verrou, on
+	/// ecrirait le parametre en flash une fois par seconde.
+	bool m_rtc_persisted_this_session = false;
+
 	/// Effacement de la couche de config BBR deja tente pour CETTE configure
 	/// (qu'il ait ete acquitte ou non). Evite de reboucler sur l'etape 200.
 	bool m_bbr_config_cleared = false;

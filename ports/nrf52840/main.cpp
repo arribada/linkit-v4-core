@@ -779,6 +779,8 @@ static LFSFileSystem& init_storage(NrfSwitch& nrf_reed_switch, Is25Flash& is25_f
 			unsigned int pseudo_rtc = last_rtc + wakeup_period;
 			configuration_store->write_param(ParamID::LAST_KNOWN_RTC, pseudo_rtc);
 			rtc->settime(static_cast<std::time_t>(pseudo_rtc));
+			// Chaine pseudo-RTC: c'est une extrapolation, pas une synchro.
+			rtc->note_source(RtcSource::RESTORED);
 			DEBUG_INFO("EXTERNAL_WAKEUP: Pseudo RTC set to %u (last=%u + period=%u)", pseudo_rtc, last_rtc, wakeup_period);
 		} else {
 			DEBUG_INFO("EXTERNAL_WAKEUP: No pseudo RTC available (last_rtc=%u, wakeup_period=%u)", last_rtc, wakeup_period);
@@ -812,7 +814,13 @@ static LFSFileSystem& init_storage(NrfSwitch& nrf_reed_switch, Is25Flash& is25_f
 		// Non-TPL5111 boards: restore last known RTC directly
 		if (last_rtc > 0) {
 			rtc->settime(static_cast<std::time_t>(last_rtc));
-			DEBUG_INFO("Restored LAST_KNOWN_RTC = %u", last_rtc);
+			// RESTORED et non GNSS: le temps passe hors tension est inconnu, donc
+			// l'erreur de cette heure ne se borne pas. Sans cette distinction,
+			// is_set() renvoyait « oui » et le firmware annoncait cette valeur au
+			// recepteur a +/- 2 s — mesure au banc le 2026-08-25 avec 52 jours
+			// d'ecart.
+			rtc->note_source(RtcSource::RESTORED);
+			DEBUG_INFO("Restored LAST_KNOWN_RTC = %u (provenance: restauree)", last_rtc);
 		}
 #endif
 

@@ -194,6 +194,7 @@ void M10QAsyncReceiver::reset_session_counters(const GPSNavSettings& nav_setting
     m_num_nav_samples = 0;
     m_num_sat_samples = 0;
     m_fix_was_found = false;
+    m_rtc_persisted_this_session = false;
 
     m_nav_settings.max_nav_samples = nav_settings.max_nav_samples;
     m_nav_settings.max_sat_samples = nav_settings.max_sat_samples;
@@ -1022,6 +1023,28 @@ void M10QAsyncReceiver::react(const UBXCommsEventNavReport& n) {
                                                     nav.pvt.day, nav.pvt.hour,
                                                     nav.pvt.min, nav.pvt.sec);
                 rtc->settime(now);
+                // Mesure de la derive du quartz: `prev` (croyance de la RTC) et
+                // `now` (verite satellite) sont deja tous les deux sous la main.
+                // Aucune sonde a ajouter, une soustraction sur un chemin deja
+                // emprunte a chaque fix.
+                rtc->note_gnss_sync(prev, now);
+
+                // Persister l'heure juste SYNCHRONISEE, une seule fois par
+                // session. Sans cela, LAST_KNOWN_RTC n'etait rafraichi qu'au
+                // flush periodique: un reset tombant dans cet intervalle
+                // restaurait une heure ANTERIEURE a la correction GPS. Mesure au
+                // banc le 2026-08-25 — l'horloge est repartie 52 jours en
+                // arriere et l'assistance sauvegardee trois minutes plus tot a
+                // ete jetee par la garde anti-recul, pour un cold start complet.
+                if (!m_rtc_persisted_this_session && now >= RTC_MIN_REAL &&
+                    configuration_store) {
+                    m_rtc_persisted_this_session = true;
+                    configuration_store->write_param(ParamID::LAST_KNOWN_RTC,
+                                                     static_cast<unsigned int>(now));
+                    DEBUG_INFO("M10QAsyncReceiver: heure GNSS persistee (%u), derive mesuree %d ppm",
+                               (unsigned int)now, (int)rtc->drift_ppm());
+                }
+
                 if (prev < RTC_MIN_REAL && now >= RTC_MIN_REAL) {
                     DEBUG_INFO("RTC: virtual→real sync detected (prev=%u → now=%u), re-anchoring noinit timekeepers",
                                (unsigned int)prev, (unsigned int)now);
@@ -3040,7 +3063,34 @@ void M10QAsyncReceiver::setup_expert_navigation_settings() {
 }
 
 void M10QAsyncReceiver::supply_time_assistance() {
-    DEBUG_TRACE("M10QAsyncReceiver::supply_time_assistance: GPS MGA-INI-TIME-UTC ->");
+    // Le recepteur qui a garde sa BBR a sa propre base de temps GNSS, forcement
+    // meilleure que la notre. On ne lui apprend rien, on ne risque que de le
+    // contraindre a tort.
+    if (m_bbr_retained) {
+        DEBUG_INFO("M10QAsyncReceiver::supply_time_assistance: BBR retenue — le recepteur a sa propre heure, injection inutile");
+        m_step++;
+        m_op_state = OpState::IDLE;
+        run_state_machine();
+        return;
+    }
+
+    // Incertitude REELLE sur notre heure. Zero = provenance non bornable
+    // (heure restauree du flash, ou horloge virtuelle): dans ce cas le champ
+    // tAccS ne peut pas etre rempli honnetement, et une heure fausse annoncee
+    // comme sure est pire que pas d'heure du tout — elle restreint la fenetre
+    // de recherche du recepteur autour d'une valeur erronee.
+    const unsigned int tacc = rtc->time_accuracy_s();
+    if (tacc == 0) {
+        DEBUG_INFO("M10QAsyncReceiver::supply_time_assistance: heure de provenance non bornable (%s) — pas d'injection",
+                   rtc->source() == RtcSource::RESTORED ? "restauree du flash" : "jamais synchronisee");
+        m_step++;
+        m_op_state = OpState::IDLE;
+        run_state_machine();
+        return;
+    }
+
+    DEBUG_INFO("M10QAsyncReceiver::supply_time_assistance: MGA-INI-TIME tAccS=%u s (age %u s, derive %d ppm)",
+               tacc, rtc->age_s(), (int)rtc->drift_ppm());
     uint16_t year;
     uint8_t month, day, hour, min, sec;
 
@@ -3060,7 +3110,7 @@ void M10QAsyncReceiver::supply_time_assistance() {
         .second = sec,
         .reserved1 = 0,
         .ns = 0,
-        .tAccS = 2, // Accurate to within 2 seconds, perhaps this can be improved?
+        .tAccS = (uint16_t)tacc, // incertitude mesuree, plus une constante optimiste
         .reserved2 = {0},
         .tAccNs = 0
     };
@@ -3077,8 +3127,46 @@ void M10QAsyncReceiver::supply_position_assistance() {
         return;
     }
 
-    DEBUG_TRACE("M10QAsyncReceiver::supply_position_assistance: MGA-INI-POS_LLH lat=%f lon=%f ->",
-                last_gps.info.lat, last_gps.info.lon);
+    // L'age de la position ne se calcule que si l'heure courante est fiable.
+    // Avec une heure restauree du flash, l'ecart peut valoir des semaines et
+    // l'age serait une fiction — on prefere ne rien injecter.
+    if (rtc->time_accuracy_s() == 0) {
+        DEBUG_INFO("M10QAsyncReceiver::supply_position_assistance: heure non fiable — age de la position incalculable, pas d'injection");
+        return;
+    }
+
+    // Age de la derniere position connue.
+    const std::time_t fix_t = convert_epochtime(last_gps.info.year, last_gps.info.month,
+                                                last_gps.info.day, last_gps.info.hour,
+                                                last_gps.info.min, last_gps.info.sec);
+    const std::time_t now_t = rtc->gettime();
+    const unsigned long age_s = (now_t > fix_t) ? (unsigned long)(now_t - fix_t) : 0UL;
+
+    // Vitesse de reference: celle MESUREE au dernier fix (gSpeed, mm/s), bornee.
+    // Le plancher couvre l'animal immobile au moment du fix mais parti depuis;
+    // le plafond evite qu'une valeur aberrante fasse exploser le rayon.
+    static constexpr unsigned long POS_SPEED_FLOOR_CM_S =     50;  // 0,5 m/s
+    static constexpr unsigned long POS_SPEED_CEIL_CM_S  =    500;  // 5 m/s
+    static constexpr unsigned long POS_ACC_MAX_CM = 30000000UL;    // 300 km
+    unsigned long speed_cm_s = (last_gps.info.gSpeed > 0)
+                             ? (unsigned long)last_gps.info.gSpeed / 10UL : 0UL;
+    if (speed_cm_s < POS_SPEED_FLOOR_CM_S) speed_cm_s = POS_SPEED_FLOOR_CM_S;
+    if (speed_cm_s > POS_SPEED_CEIL_CM_S)  speed_cm_s = POS_SPEED_CEIL_CM_S;
+
+    // Rayon d'incertitude honnete: precision du fix + marge + ce que la bete a
+    // pu parcourir depuis. Sans ce terme, on annoncait au recepteur une position
+    // vieille de plusieurs jours avec la precision qu'elle avait a l'instant du
+    // fix — une contrainte fausse qu'il utilise pour restreindre sa recherche.
+    const unsigned long acc_cm = (unsigned long)last_gps.info.hAcc / 10UL + 100UL
+                               + age_s * speed_cm_s;
+    if (acc_cm > POS_ACC_MAX_CM) {
+        DEBUG_INFO("M10QAsyncReceiver::supply_position_assistance: position trop vieille (age %lu s, rayon %lu km) — pas d'injection",
+                   age_s, acc_cm / 100000UL);
+        return;
+    }
+
+    DEBUG_INFO("M10QAsyncReceiver::supply_position_assistance: MGA-INI-POS lat=%f lon=%f rayon=%lu m (age %lu s, %lu cm/s)",
+               last_gps.info.lat, last_gps.info.lon, acc_cm / 100UL, age_s, speed_cm_s);
 
     MGA::MSG_INI_POS_LLH msg = {
         .type      = 0x01,
@@ -3087,7 +3175,7 @@ void M10QAsyncReceiver::supply_position_assistance() {
         .lat       = static_cast<int32_t>(last_gps.info.lat * 1e7),
         .lon       = static_cast<int32_t>(last_gps.info.lon * 1e7),
         .alt       = last_gps.info.height / 10,   // mm -> cm
-        .posAcc    = last_gps.info.hAcc / 10 + 100, // mm -> cm, add margin
+        .posAcc    = (uint32_t)acc_cm,
     };
 
     initiate_timeout();
