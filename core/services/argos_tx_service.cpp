@@ -561,7 +561,9 @@ unsigned int ArgosTxService::service_next_schedule_in_ms() {
 					m_scheduled_task = [this]() { process_gnss_burst(); };
 				}
 				BasePassPredict& pass_predict = configuration_store->read_pass_predict();
-				unsigned int schedule = m_sched.schedule_prepass(argos_config, pass_predict, m_scheduled_mode, now);
+				// m_scheduled_mode est resolu juste au-dessus et n'est plus
+				// touche par l'ordonnanceur.
+				unsigned int schedule = m_sched.schedule_prepass(argos_config, pass_predict, now);
 				if (schedule == ArgosTxScheduler::INVALID_SCHEDULE) {
 					// v3 behavior: no pass found (or no known location) -> no TX.
 					// The service is re-armed by the next GPS entry (notify_peer_event

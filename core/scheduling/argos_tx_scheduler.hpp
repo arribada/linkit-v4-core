@@ -57,11 +57,17 @@ public:
 	/// @brief Schedule next TX using satellite pass prediction (PREVIPASS).
 	/// @param config         Argos configuration (prepass params, tx_interval, jitter).
 	/// @param pass_predict   AOP satellite pass prediction database.
-	/// @param[out] scheduled_mode  Modulation for the scheduled pass.
 	/// @param now            Current RTC time.
 	/// @return Delay in ms until next TX, or INVALID_SCHEDULE.
+	///
+	/// 2026-08 — le parametre de sortie `scheduled_mode` a ete SUPPRIME. Il
+	/// n'etait jamais relu par l'ordonnanceur, seulement ecrit, et il ecrasait
+	/// sans condition la modulation que le service venait de resoudre a partir
+	/// de la configuration utilisateur. Choisir la modulation est une decision
+	/// de politique: elle appartient au service, comme pour LEGACY, DUTY_CYCLE
+	/// et SURFACING_BURST.
 	unsigned int schedule_prepass(ArgosConfig& config, BasePassPredict& pass_predict,
-	                              KineisModulation& scheduled_mode, std::time_t now);
+	                              std::time_t now);
 
 	/// @brief Set earliest allowed TX time (e.g., after SWS dry_time_before_tx).
 	void set_earliest_schedule(std::time_t t);

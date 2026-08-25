@@ -2139,6 +2139,67 @@ TEST(ArgosTxService, BuildDopplerPacket) {
 	CHECK_FALSE(x.empty());
 }
 
+// Regression 2026-08 — PASS_PREDICTION ignorait la modulation configuree.
+//
+// Le service resout pourtant correctement `adaptive ? LDA2 :
+// resolve_non_adaptive_modulation()` juste avant d'appeler l'ordonnanceur — le
+// correctif de modulation du 2026-05-25 l'affirme meme dans son commentaire.
+// Mais schedule_prepass recevait m_scheduled_mode par REFERENCE et l'ecrasait
+// sans condition avec LDA2 une poignee de lignes plus loin. Resultat: une
+// configuration LDK + adaptatif desactive partait en LDA2, la trame etait
+// dimensionnee pour la mauvaise modulation, et ensure_modulation reecrivait le
+// RCONF maitre a chaque emission (usure flash + configuration utilisateur
+// silencieusement annulee).
+//
+// Le parametre de sortie a ete supprime: choisir la modulation est une decision
+// de politique, elle appartient au service.
+TEST(ArgosTxService, PassPredictHonoursConfiguredModulation)
+{
+	fake_config_store->write_param(ParamID::ARGOS_MODE, BaseArgosMode::PASS_PREDICTION);
+	fake_config_store->write_param(ParamID::ARGOS_DEPTH_PILE, BaseDepthPile::DEPTH_PILE_1);
+	fake_config_store->write_param(ParamID::ARGOS_HEXID, (unsigned int)0x01234567U);
+	fake_config_store->write_param(ParamID::ARGOS_ADAPTIVE_MODULATION, false);
+	fake_config_store->write_param(ParamID::LB_EN, false);
+	fake_config_store->write_param(ParamID::TR_NOM, (unsigned int)10);
+	fake_config_store->write_param(ParamID::ARGOS_TIME_SYNC_BURST_EN, false);
+
+	// Le module porte LDK dans son RCONF maitre — c'est ce que
+	// resolve_non_adaptive_modulation() doit renvoyer.
+	mock_kineis->test_set_current_modulation(KineisModulation::LDK);
+
+	// Un passage satellite tres large, pour que la fenetre soit forcement trouvee.
+	BasePassPredict pass_predict = {
+		/* version_code */ 0,
+		1,
+		{
+			{ 0xA, 5, SAT_DNLK_ON_WITH_A3, SAT_UPLK_ON_WITH_A3,
+			  { 2020, 1, 26, 22, 59, 44 }, 7195.550f, 98.5444f, 327.835f,
+			  -25.341f, 101.3587f, 0.00f }
+		}
+	};
+	fake_config_store->write_pass_predict(pass_predict);
+
+	ArgosTxService serv(*mock_kineis);
+	std::time_t t = 1580083200000;  // ms
+	fake_rtc->settime(t/1000);
+	fake_timer->set_counter(t);
+
+	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
+	serv.start();
+
+	inject_gps_location(1, 11.8768, -33.8232, t/1000);
+
+	// LDK et non LDA2: c'est tout l'objet de la regression.
+	mock().expectOneCall("send").onObject(mock_kineis)
+		.withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDK)
+		.ignoreOtherParameters();
+	t += serv.get_last_schedule();
+	fake_rtc->settime(t/1000);
+	fake_timer->set_counter(t);
+	system_scheduler->run();
+	mock().checkExpectations();
+}
+
 IGNORE_TEST(ArgosTxService, PassPredictWithSensorDataPayload)
 {
 	double frequency = 900.22;
