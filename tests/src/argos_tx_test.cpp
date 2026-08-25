@@ -481,9 +481,17 @@ TEST(ArgosTxService, BuildLongGNSSPacketUniformKeepsLegacyLayout)
 }
 
 // First-message gate (non-RSPB): without a valid GPS fix yet this session, the
-// clock is not GPS-corrected, so NO message is sent — not even a NO_FIX
-// heartbeat. (RSPB is exempt at compile time and would send the empty position.)
-TEST(ArgosTxService, LegacyNoTxBeforeFirstFix)
+// 2026-08 — INTENTION INVERSEE. Le verrou du premier message tenait TOUTE
+// emission tant qu'aucun fix GPS n'etait tombe depuis la mise sous tension,
+// heartbeat de presence compris. Une balise qui redemarrait sans jamais
+// retrouver de fix (recepteur en panne, ciel bouche) disparaissait donc
+// definitivement des ecrans. En LEGACY la balise emet a sa periode et c'est le
+// segment sol qui reconstruit la position: son horloge n'entre pas dans le
+// calcul, rien ne justifie de la faire taire. RSPB en etait deja exempte.
+//
+// Ce test verifie desormais le contraire de son ancetre: le heartbeat 0xFF
+// DOIT partir meme si aucun fix n'est jamais tombe.
+TEST(ArgosTxService, LegacyNoFixHeartbeatSentWithoutAnyFix)
 {
 	fake_config_store->write_param(ParamID::ARGOS_MODE, BaseArgosMode::LEGACY);
 	fake_config_store->write_param(ParamID::ARGOS_DEPTH_PILE, BaseDepthPile::DEPTH_PILE_1);
@@ -500,18 +508,17 @@ TEST(ArgosTxService, LegacyNoTxBeforeFirstFix)
 	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
 	serv.start();
 
-	// Only NO_FIX results — no real fix to unlock TX -> strict mock asserts silence
+	// Uniquement des NO_FIX, aucun fix reel: le heartbeat doit tout de meme
+	// etre emis (SHORT, 96 bits) — la balise signale sa presence.
 	inject_gps_nofix(t/1000);
-	t += 10000;
+	mock().expectOneCall("send").onObject(mock_kineis).withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2).
+			withUnsignedIntParameter("size_bits", 96);
+	t += serv.get_last_schedule();
 	fake_rtc->settime(t/1000);
 	fake_timer->set_counter(t);
 	system_scheduler->run();
-	inject_gps_nofix(t/1000);
-	t += 10000;
-	fake_rtc->settime(t/1000);
-	fake_timer->set_counter(t);
-	system_scheduler->run();
-	mock().checkExpectations();  // no "send" expected
+	mock_kineis->notify(KineisEventTxComplete({}));
+	mock().checkExpectations();
 }
 
 // After a real GPS fix corrects the clock (unlocks TX), a subsequent no-fix
@@ -575,14 +582,18 @@ TEST(ArgosTxService, LegacyNoFixFillerKeptAfterRealFix)
 	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
 	serv.start();
 
-	// GPS cycle 1: no fix -> heartbeat cached, but the first-message gate holds
-	// TX (no real fix yet) -> silence
+	// Cycle GPS 1: pas de fix -> le heartbeat est mis en cache ET emis (SHORT,
+	// 96 bits). Avant 2026-08 le verrou du premier message imposait le silence
+	// ici; il a ete supprime, une balise sans fix doit continuer a se signaler.
 	inject_gps_nofix(t/1000);
-	t += 10000;
+	mock().expectOneCall("send").onObject(mock_kineis).withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2).
+			withUnsignedIntParameter("size_bits", 96);
+	t += serv.get_last_schedule();
 	fake_rtc->settime(t/1000);
 	fake_timer->set_counter(t);
 	system_scheduler->run();
-	mock().checkExpectations();  // gate: no send yet
+	mock_kineis->notify(KineisEventTxComplete({}));
+	mock().checkExpectations();
 
 	// GPS cycle 2: real fix -> unlocks TX; the FIX purge keeps the NO_FIX filler
 	// (include_no_fix=false in planned modes) -> pile = [NO_FIX, FIX] ->
