@@ -76,6 +76,7 @@ BUILD_TYPE=Release
 METRICS=OFF
 VALIDATION=OFF
 BENCH=OFF
+WKUP_RELEASE=OFF
 for arg in "$@"; do
     case $arg in
         --clean) CLEAN=true ;;
@@ -89,6 +90,10 @@ for arg in "$@"; do
         # Bench-test harness: '%' USB-CDC console (%CFG/%OP/%GPS) + GPS injection
         # for autonomous HIL validation. Implies --debug (needs logs + no WDT).
         --bench) BENCH=ON; BUILD_TYPE=Debug ;;
+        # KIM2 + BLIND : relâcher SAT_EXTWAKEUP pendant la salve pilotée par le
+        # module, pour qu'il descende en basse consommation entre ses
+        # retransmissions. Défaut OFF = pin maintenue haute (comportement d'avant).
+        --wkup-release) WKUP_RELEASE=ON ;;
     esac
 done
 
@@ -162,7 +167,7 @@ echo "  GNSS_HAS_BACKUP_BATTERY=${GNSS_HAS_BACKUP_BATTERY}"
 echo "  ENABLE_SWS_ANALOG=${ENABLE_SWS_ANALOG}"
 echo "  METRIC_LATENCY=${METRICS}  VALIDATION=${VALIDATION}"
 
-cmake -DCMAKE_TOOLCHAIN_FILE=../../toolchain_arm_gcc_nrf52.cmake -DDEBUG_LEVEL=3 -DBOARD=LINKIT -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DCAM_ENABLE=${CAM_ENABLE} -DBUZZER_ENABLE=${BUZZER_ENABLE} -DGNSS_HAS_BACKUP_BATTERY=${GNSS_HAS_BACKUP_BATTERY} -DBATTERY_CHEMISTRY=${BATTERY_CHEMISTRY} -DENABLE_SWS_ANALOG=${ENABLE_SWS_ANALOG} -DMETRIC_LATENCY_LOG_ENABLE=$([ "$METRICS" = "ON" ] && echo 1 || echo 0) -DVALIDATION_LOG_ENABLE=$([ "$VALIDATION" = "ON" ] && echo 1 || echo 0) -DBENCH_TEST=${BENCH} ../..
+cmake -DCMAKE_TOOLCHAIN_FILE=../../toolchain_arm_gcc_nrf52.cmake -DDEBUG_LEVEL=3 -DBOARD=LINKIT -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DCAM_ENABLE=${CAM_ENABLE} -DBUZZER_ENABLE=${BUZZER_ENABLE} -DGNSS_HAS_BACKUP_BATTERY=${GNSS_HAS_BACKUP_BATTERY} -DBATTERY_CHEMISTRY=${BATTERY_CHEMISTRY} -DENABLE_SWS_ANALOG=${ENABLE_SWS_ANALOG} -DMETRIC_LATENCY_LOG_ENABLE=$([ "$METRICS" = "ON" ] && echo 1 || echo 0) -DVALIDATION_LOG_ENABLE=$([ "$VALIDATION" = "ON" ] && echo 1 || echo 0) -DBENCH_TEST=${BENCH} -DKIM2_BLIND_WKUP_RELEASE=${WKUP_RELEASE} ../..
 make -j 20
 # GARDE-FOU (2026-08): sans ce controle, un echec de compilation laissait le
 # script continuer, re-fusionner le HEX de la build PRECEDENTE et afficher des

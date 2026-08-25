@@ -22,9 +22,15 @@ namespace KIM2 {
 
 /// @brief AT command types supported by the KIM2 module.
 /// @note  Per KIM2 Integration Manual v0.8: RCONF is kept in RAM and
-///        reapplied on every power-on, so SAVE_RCONF is not used. LPM is
-///        not a supported AT command. KMAC=1 (basic MAC profile) must be
-///        called after RCONF and before any AT+TX.
+///        reapplied on every power-on, so SAVE_RCONF is not used. KMAC=1
+///        (basic MAC profile) must be called after RCONF and before any AT+TX.
+/// @note  CORRECTION 2026-08-25: ce commentaire affirmait que LPM n'etait pas
+///        une commande supportee. C'est FAUX — AT+LPM figure dans le tableau
+///        officiel des commandes AT (KnsStack_AtCmds_APIs) de la v0.4 a la V1.0,
+///        en lecture (AT+LPM=?) comme en ecriture (AT+LPM=0x<bitmap>), et le
+///        handler existe bien dans le binaire du module. Cette affirmation nous
+///        a masque le seul levier permettant de borner la profondeur du sommeil
+///        du module pendant une salve BLIND.
 enum ATCmd {
 	AT_PING = 0,
 	AT_GET_ID,
@@ -43,6 +49,7 @@ enum RespType {
 	RESP_ERROR,
 	RESP_CONFIG,
 	RESP_TX_STATUS,
+	RESP_MODULE_BANNER,   ///< +FW= non sollicitee: le module vient de demarrer
 	RESP_UNKNOWN
 };
 
@@ -59,6 +66,16 @@ static constexpr const char *RCONF_RESPONSE = "+RCONF=";
 static constexpr const char *TX_RESPONSE   = "+TX=";
 static constexpr const char *ERR_RESPONSE  = "+ERROR=";
 static constexpr const char *HDLR_RESPONSE = "+HDLR=";   // new-stack AT+TX immediate ack (before +OK)
+/// @brief Banniere de version que le module imprime SPONTANEMENT a chaque
+///        demarrage. Le manuel d'integration prevoit ce genre de ligne (§3.A:
+///        "Spontaneous notifications can also be sent from the module with the
+///        format +CMD=<parameter>"), mais nous ne la reconnaissions pas: elle
+///        tombait dans RESP_UNKNOWN et etait jetee. Or c'est le seul temoin d'un
+///        REDEMARRAGE du module — mesure du 2026-08-25: pin relachee pendant une
+///        salve BLIND, le module se reinitialise a sa propre echeance de
+///        retransmission et reimprime cette ligne, sans que le firmware puisse le
+///        voir. On la reconnait pour pouvoir en tirer les consequences.
+static constexpr const char *FW_RESPONSE   = "+FW=";
 /// @}
 
 static constexpr uint8_t ID_SIZE   = 6;   ///< Decimal ID string length
@@ -129,6 +146,12 @@ public:
 	bool m_hdlr_seen = false;
 	void set_blind_active(bool active) { m_blind_active = active; }
 	std::string m_rconf_info;          ///< Last +RCONF=? response payload (diag)
+	/// @brief Version annoncee par la derniere banniere +FW= recue.
+	std::string m_module_banner;
+	/// @brief Positionne des qu'une banniere +FW= arrive. L'appelant le consulte
+	///        puis le remet a faux: en dehors du demarrage, il signale un
+	///        REDEMARRAGE inopine du module.
+	bool m_module_rebooted = false;
 
 	/// @param libuarte_async_instance  BSP UART instance index (default 1).
 	KIM2Comm(unsigned int libuarte_async_instance = 1);

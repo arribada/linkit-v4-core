@@ -21,6 +21,10 @@ namespace BSP
 		/* GPIO_SAT_EN          */ {NRF_GPIO_PIN_MAP(1, 15), NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_PULLDOWN, NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE, {}},
         /* GPIO_SAT_WKUP        */ {NRF_GPIO_PIN_MAP(0, 30), NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE, {}},
         /* GPIO_KIM_PWR_ON      */ {NRF_GPIO_PIN_MAP(0,  5), NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE, {}},
+        // KIM_INT (broche 5 du module) — sortie du module vers nRF P0.29, donc
+        // ENTREE ici. Tirage BAS: le module la relache quand il est eteint, et une
+        // entree flottante consomme et bruite. Non exploitee pour l'instant.
+        /* GPIO_SAT_INT         */ {NRF_GPIO_PIN_MAP(0, 29), NRF_GPIO_PIN_DIR_INPUT, NRF_GPIO_PIN_INPUT_CONNECT, NRF_GPIO_PIN_PULLDOWN, NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE, {}},
 		/* GPIO_GPS_PWR_EN      */ {NRF_GPIO_PIN_MAP(1,  6), NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_PULLDOWN, NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE, {}},
 		/* GPIO_GPS_RST         */ {NRF_GPIO_PIN_MAP(1, 13), NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_S0D1, NRF_GPIO_PIN_NOSENSE, {}},
 		// GPIO_GPS_EXT_INT: nRF drives the M10Q EXTINT input pin to wake it from
@@ -391,7 +395,17 @@ namespace BSP
                 .hwfc = NRF_UARTE_HWFC_DISABLED,
                 .parity = NRF_UARTE_PARITY_EXCLUDED,
                 .baudrate = NRF_UARTE_BAUDRATE_9600,
-                .pullup_rx = false,
+                // Tirage au niveau haut sur la ligne de reception. Le module
+                // satellite relache sa broche TX des qu'il descend en basse
+                // consommation (KIM2 en STANDBY pendant une salve BLIND, SMD en
+                // STANDBY/SHUTDOWN): sans tirage la ligne FLOTTE, l'etat de repos
+                // de l'UART n'est plus garanti, et le recepteur nRF leve des
+                // erreurs de trame puis ne se resynchronise pas au reveil du
+                // module. Mesure au banc le 2026-08-25: erreur type=04 a chaque
+                // reveil, puis silence total — le +TX= de fin de salve n'arrivait
+                // jamais. Le tirage interne (~13 kOhm) maintient la ligne au repos
+                // pendant le sommeil du module. nrf_libuarte_drv.c:466.
+                .pullup_rx = true,
                 .int_prio = INTERRUPT_PRIORITY_UART_1,
             }
         }

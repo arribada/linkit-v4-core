@@ -163,7 +163,7 @@ void ArgosTxScheduler::schedule_periodic(unsigned int period_ms, bool jitter_en,
 /// @brief Schedule next TX using satellite pass prediction (PREVIPASS).
 /// @return Delay in ms until next TX, or INVALID_SCHEDULE if no pass found.
 unsigned int ArgosTxScheduler::schedule_prepass(ArgosConfig& config, BasePassPredict& pass_predict,
-                                                KineisModulation& scheduled_mode, std::time_t now) {
+                                                std::time_t now) {
 	DEBUG_TRACE("ArgosTxScheduler::schedule_prepass");
 
 	// We must have a previous GPS location to proceed
@@ -239,7 +239,17 @@ unsigned int ArgosTxScheduler::schedule_prepass(ArgosConfig& config, BasePassPre
 			           static_cast<unsigned>(next_pass.satHexId),
 			           static_cast<unsigned>(next_pass.uplinkStatus));
 			m_curr_schedule_abs = schedule;
-			scheduled_mode = KineisModulation::LDA2;
+			// 2026-08 — plus d'ecrasement de la modulation ici. Cette ligne
+			// forcait LDA2 sans condition, annulant le
+			// `adaptive ? LDA2 : resolve_non_adaptive_modulation()` que le
+			// service venait d'evaluer une poignee de lignes plus haut. Le
+			// correctif de modulation du 2026-05-25 avait bien traite le
+			// service pour PASS_PREDICTION — son propre commentaire l'affirme —
+			// mais personne n'avait vu que l'ordonnanceur ecrasait le resultat
+			// juste apres. Consequence: en mode prediction de passage, une
+			// configuration LDK + adaptatif desactive partait quand meme en
+			// LDA2, la trame etait dimensionnee pour la mauvaise modulation, et
+			// ensure_modulation reecrivait le RCONF maitre a chaque emission.
 			return static_cast<unsigned int>(schedule - now_ms);
 		}
 

@@ -88,6 +88,50 @@ static bool cert_tx_active() {
 	}
 }
 
+/// @name Signalisation LED d'une salve BLIND
+/// @{
+/// En BLIND, la salve est cadencee par le module lui-meme et dure des minutes
+/// (mesure: 123 s pour retx_nb=3, period=60). Un MAGENTA continu resterait donc
+/// allume tout du long — pour rien, et au detriment de l'autonomie qu'on cherche
+/// justement a gagner en laissant le module dormir. On marque les deux BORDS de
+/// la sequence a la place: deux impulsions courtes a l'ouverture, une impulsion
+/// longue a la fermeture, visuellement distinctes l'une de l'autre.
+static constexpr unsigned int BLIND_BLINK_ON_MS  = 120;  ///< duree d'une impulsion d'ouverture
+static constexpr unsigned int BLIND_BLINK_GAP_MS = 150;  ///< silence entre les deux
+static constexpr unsigned int BLIND_BLINK_END_MS = 700;  ///< impulsion de fermeture
+
+/// @brief Le profil MAC BLIND est-il celui qui va reellement emettre ?
+///
+/// On interroge la configuration EFFECTIVE et non le parametre brut: elle tient
+/// compte des regimes (basse batterie, hors zone, remorquage) et remet blind_en a
+/// faux pour SURFACING_BURST et DOPPLER, qui cadencent leur salve cote nRF. Sans
+/// cela la LED annoncerait une salve module la ou il n'y en a pas.
+static bool blind_tx_active() {
+	if (!configuration_store) return false;
+	try {
+		ArgosConfig cfg;
+		configuration_store->get_argos_configuration(cfg);
+		return cfg.blind_en;
+	} catch (...) {
+		return false;
+	}
+}
+
+/// @brief Deux impulsions courtes — la salve demarre, le module prend la main.
+static void blind_blink_sequence_start() {
+	status_led->set(RGBLedColor::MAGENTA);
+	system_timer->add_schedule([]() {
+		status_led->off();
+		system_timer->add_schedule([]() {
+			status_led->set(RGBLedColor::MAGENTA);
+			system_timer->add_schedule([]() {
+				status_led->off();
+			}, system_timer->get_counter() + BLIND_BLINK_ON_MS);
+		}, system_timer->get_counter() + BLIND_BLINK_GAP_MS);
+	}, system_timer->get_counter() + BLIND_BLINK_ON_MS);
+}
+/// @}
+
 /// @brief Returns true while we are still inside the 24-hour LED window.
 ///
 /// On regular boards (single boot, no hard power-cycle), `system_timer` uptime
@@ -417,7 +461,10 @@ void LEDArgosTX::entry() {
 	}
 	else {
 		LED_MODE_GUARD {
-			status_led->set(RGBLedColor::MAGENTA);
+			if (blind_tx_active())
+				blind_blink_sequence_start();
+			else
+				status_led->set(RGBLedColor::MAGENTA);
 		} else {
 			status_led->off();
 		}
@@ -430,8 +477,24 @@ void LEDArgosTXComplete::entry() {
 	if (m_is_magnet_engaged)
 		status_led->set(RGBLedColor::WHITE);
 	else {
-		status_led->off();
+		// En BLIND, marquer la fermeture par une impulsion longue avant de rendre
+		// la main — elle se distingue ainsi des deux impulsions courtes d'ouverture.
+		// Le delai de sortie couvre l'impulsion, sinon la transition d'etat
+		// l'eteindrait avant qu'elle soit visible.
+		unsigned int hold_ms = 50;  // marge anti-course sur le tick, cas nominal
+		bool blind = blind_tx_active();
+		if (blind) {
+			LED_MODE_GUARD {
+				status_led->set(RGBLedColor::MAGENTA);
+				hold_ms = BLIND_BLINK_END_MS;
+			} else {
+				status_led->off();
+			}
+		} else {
+			status_led->off();
+		}
 		system_timer->add_schedule([this]() {
+			status_led->off();
 			if (m_is_gnss_on)
 				transit<LEDGNSSOn>();
 			else {
@@ -440,7 +503,7 @@ void LEDArgosTXComplete::entry() {
 				else
 					transit<LEDOff>();
 			}
-		}, system_timer->get_counter() + 50); // Add 50ms to avoid race condition on timer tick
+		}, system_timer->get_counter() + hold_ms);
 	}
 }
 

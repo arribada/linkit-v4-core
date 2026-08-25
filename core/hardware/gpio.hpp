@@ -73,6 +73,18 @@ public:
 	/// @brief Release pin to high-impedance (input/disconnected).
 	static void release_to_highz(uint32_t pin);
 
+	/// @brief Relacher une sortie a drain ouvert en MAINTENANT un niveau haut
+	///        defini, via le tirage interne (~13 kOhm).
+	///
+	/// release_to_highz() passe par nrf_gpio_cfg_default(), qui remet la broche en
+	/// entree SANS tirage: la ligne flotte. C'est acceptable quand un tirage
+	/// externe existe, pas quand il n'y en a pas. Cas d'usage: la broche USR_NRST
+	/// du module KIM2, que sa datasheet declare "should not be left floating" et
+	/// pour laquelle la carte linkit-v4 ne prevoit aucun tirage externe. On garde
+	/// une entree (et non une sortie poussee) pour qu'une sonde SWD cablee sur le
+	/// meme net puisse toujours tirer le reset sans conflit.
+	static void release_to_pullup(uint32_t pin);
+
 private:
 	static uint8_t m_sensors_pwr_refcount;
 	static bool m_gnss_uart_active;
