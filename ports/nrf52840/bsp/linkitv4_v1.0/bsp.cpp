@@ -30,7 +30,14 @@ namespace BSP
 		// powered-off M10Q. Sense fields kept for legacy compat (ignored when
 		// configured as OUTPUT).
 		/* GPIO_GPS_EXT_INT     */ {NRF_GPIO_PIN_MAP(1, 11), NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE, {NRF_GPIOTE_POLARITY_HITOLO, NRF_GPIO_PIN_NOPULL, false, true, false}},
-        /* GPOI_GPS_PPS         */ {NRF_GPIO_PIN_MAP(1,  5), NRF_GPIO_PIN_DIR_INPUT,  NRF_GPIO_PIN_INPUT_CONNECT,    NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE, {}},
+        // GPOI_GPS_PPS: aucun consommateur dans tout le firmware (verifie 2026-08).
+        // Le buffer d'entree etait CONNECT sans pull, sur une broche que le M10Q
+        // ne pilote que lorsque son rail est allume — c'est-a-dire une entree
+        // flottante a buffer connecte le reste du temps, donc un courant de
+        // traversee permanent sur un appareil scelle. C'etait la seule broche GPS
+        // qui n'etait pas INPUT_DISCONNECT. Sans consommateur, la deconnecter est
+        // sans risque, que la piste soit routee ou non.
+        /* GPOI_GPS_PPS         */ {NRF_GPIO_PIN_MAP(1,  5), NRF_GPIO_PIN_DIR_INPUT,  NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE, {}},
 		/* GPIO_LED_GREEN       */ {NRF_GPIO_PIN_MAP(1, 10), NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE, {}},
 		/* GPIO_LED_RED         */ {NRF_GPIO_PIN_MAP(1,  7), NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE, {}},
 		/* GPIO_LED_BLUE        */ {NRF_GPIO_PIN_MAP(1,  4), NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE, {}},

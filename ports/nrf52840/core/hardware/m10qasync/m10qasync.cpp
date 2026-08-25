@@ -47,8 +47,14 @@ static constexpr unsigned int MAX_FRAMING_ERRORS_BOOT       = 10;    ///< Tolera
 // across the off window it comes back at the baud `setup_uart_port()` persisted
 // there (MAX_BAUDRATE) and stays SILENT at 9600 — no NMEA, no nav messages, so
 // not even a framing error to hint at the mismatch. Probe both, in cached order.
-static constexpr unsigned int BOOT_BAUD_TABLE[] = { DEFAULT_BAUDRATE, MAX_BAUDRATE };
-static constexpr unsigned int BOOT_BAUD_COUNT   = sizeof(BOOT_BAUD_TABLE) / sizeof(BOOT_BAUD_TABLE[0]);
+// Les quatre debits que `UBXComms::set_baudrate` sait produire sont couverts, et
+// pas seulement les deux que le firmware programme lui-meme: le bridge u-center
+// donne un acces brut au recepteur, donc un VALSET operateur peut persister
+// n'importe lequel en couche BBR. Budget degressif (6 essais sur le debit mis en
+// cache, 2 sur les suivants) pour que le pire cas reste ~6 s, inchange.
+static constexpr unsigned int BOOT_BAUD_TABLE[]      = { DEFAULT_BAUDRATE, MAX_BAUDRATE, 38400, 921600 };
+static constexpr unsigned int BOOT_BAUD_COUNT        = sizeof(BOOT_BAUD_TABLE) / sizeof(BOOT_BAUD_TABLE[0]);
+static constexpr unsigned int BOOT_BAUD_ALT_RETRIES  = 2;     ///< Budget par debit au-dela du premier
 // Max age of the persisted DBD navigation database before we refuse to reload
 // it on a cold power-on. Raised 12h -> 72h (2026-06): per u-blox MAX-M10S
 // Integration Manual the DBD carries almanac (valid WEEKS) and AssistNow
@@ -785,13 +791,31 @@ void M10QAsyncReceiver::react(const UBXCommsEventAckNack& ack) {
 void M10QAsyncReceiver::react(const UBXCommsEventCfgValget& valget) {
 
     unsigned int length = valget.length;
-    DEBUG_TRACE("UBXCommsEventCfgValget received: length %u", length);
 
-    // Use vector for automatic memory management (RAII)
-    std::vector<uint8_t> msg_buffer(length);
-    uint8_t* msg = msg_buffer.data();
-    std::memcpy(msg, valget.msg, length);
+    // 2026-08 (A1) — CETTE FONCTION S'EXECUTE EN CONTEXTE ISR (handler libuarte).
+    // Elle allouait auparavant un std::vector dimensionne par la longueur du
+    // message recu, c'est-a-dire un malloc newlib NON REENTRANT depuis une
+    // interruption, puis emettait une dizaine de DEBUG_TRACE (qui peuvent
+    // descendre jusqu'a l'ecriture LFS / USB) avant meme de traiter l'etat.
+    // Le decodage cle par cle n'etait que du diagnostic: il est desormais borne
+    // a un tampon de pile et n'a lieu que si les traces GNSS sont demandees.
+    uint8_t stack_buf[64];
+    const unsigned int copy_len = (length < sizeof(stack_buf)) ? length : (unsigned int)sizeof(stack_buf);
+    uint8_t* msg = stack_buf;
+    std::memcpy(msg, valget.msg, copy_len);
+    length = copy_len;
     
+    // Le decodage ci-dessous est purement diagnostique — on le saute quand les
+    // traces GNSS ne sont pas demandees, pour ne rien faire de couteux en ISR.
+    if (!m_nav_settings.debug_enable || length < 4) {
+        if (m_op_state == OpState::PENDING) {
+            m_op_state = OpState::SUCCESS;
+            cancel_timeout();
+            run_state_machine();
+        }
+        return;
+    }
+
     // Parse the fixed header fields
     [[maybe_unused]] uint8_t version = msg[0];
     [[maybe_unused]] uint8_t layer = msg[1];
@@ -847,8 +871,6 @@ void M10QAsyncReceiver::react(const UBXCommsEventCfgValget& valget) {
         // Print the decoded configuration key-value pair
         DEBUG_TRACE("Config Key: 0x%08X | Value: %lld (0x%X)", key, paramValue, paramValue);
     }
-
-    // msg_buffer automatically freed when function exits (RAII)
 
     // Handle state
     if (m_op_state == OpState::PENDING) {
@@ -1272,6 +1294,13 @@ unsigned int M10QAsyncReceiver::boot_baud_for_step(unsigned int step) const {
 	return BOOT_BAUD_TABLE[(m_boot_baud_idx + step) % BOOT_BAUD_COUNT];
 }
 
+/// @brief Budget d'essais pour le debit sonde a l'etape `step`.
+/// Plein sur le premier (celui mis en cache, statistiquement le bon), reduit
+/// ensuite: sans cela, couvrir quatre debits quadruplerait le temps d'echec.
+unsigned int M10QAsyncReceiver::boot_baud_retries(unsigned int step) {
+	return (step == 0) ? BOOT_BAUD_SYNC_RETRIES : BOOT_BAUD_ALT_RETRIES;
+}
+
 void M10QAsyncReceiver::state_poweron() {
 	while (true) {
 		if (m_op_state == OpState::IDLE) {
@@ -1332,11 +1361,11 @@ void M10QAsyncReceiver::state_poweron() {
 			DEBUG_TRACE("M10QAsyncReceiver: baud rate framing error detected");
 			m_uart_error_count = 0;   // nouveau baud (ou nouvel essai) = budget neuf
 			if (m_step + 1 < BOOT_BAUD_COUNT) {
-				m_retries = BOOT_BAUD_SYNC_RETRIES;
 				m_step++;
+				m_retries = boot_baud_retries(m_step);
 			} else if (--m_retries == 0) {
-				m_retries = BOOT_BAUD_SYNC_RETRIES;
 				m_step++;
+				m_retries = boot_baud_retries(m_step);
 			}
 			m_op_state = OpState::IDLE;
 			run_state_machine(100);
@@ -1346,8 +1375,8 @@ void M10QAsyncReceiver::state_poweron() {
 				// Re-arm the retry budget for the next baud in the list.
 				// Without this the counter underflows to UINT_MAX on the next
 				// timeout and the probe loop never terminates.
-				m_retries = BOOT_BAUD_SYNC_RETRIES;
 				m_step++;
+				m_retries = boot_baud_retries(m_step);
 			}
 			m_op_state = OpState::IDLE;
 		}
@@ -1848,6 +1877,12 @@ void M10QAsyncReceiver::state_configure() {
 			} else if (m_step == 5) {
 				m_step++;
 				m_op_state = OpState::IDLE;
+				// Un COLD START efface les donnees de navigation ET la config
+				// persistee: c'est la seule facon de sortir d'une couche BBR
+				// verrouillee (debit exotique, cle corrompue). Doit preceder
+				// soft_reset(), qui consomme le drapeau.
+				if (m_nav_settings.cold_start)
+					clear_config();
 				soft_reset(); // This operation has no response
             } else if (m_step == 6) {
 				m_step++;
@@ -2247,8 +2282,18 @@ void M10QAsyncReceiver::state_fetchdatabase() {
         STATE_CHANGE(fetchdatabase, poweroff);
         return;
     }
-    if (m_ano_database_len) {
-        DEBUG_TRACE("M10QAsyncReceiver: fetchdatabase: ANO in use | not fetching");
+    // 2026-08 (A2) — on ne saute PLUS la recuperation quand l'ANO a servi cette
+    // session. C'etait la seule raison pour laquelle gnss_dbd.dat n'etait jamais
+    // rafraichi sur une unite ANO: passe DBD_MAX_AGE_S (72 h) la copie flash
+    // etait rejetee et l'unite perdait ses DEUX sources d'assistance d'un coup,
+    // sans pouvoir les reconstruire. C'est le scenario "carte sans pile V_BCKP",
+    // ou le DBD est le seul vecteur de demarrage chaud persistant.
+    //
+    // En revanche on ne paie la recuperation que si elle sert a quelque chose:
+    // save_dbd_to_flash() est de toute facon conditionne a m_fix_was_found, donc
+    // sans fix on brulait ~0,5 s de rail pour jeter le resultat.
+    if (!m_fix_was_found) {
+        DEBUG_TRACE("M10QAsyncReceiver: fetchdatabase: aucun fix cette session | rien a persister");
         STATE_CHANGE(fetchdatabase, poweroff);
         return;
     }
@@ -2384,6 +2429,13 @@ void M10QAsyncReceiver::state_senddatabase() {
 
 void M10QAsyncReceiver::state_senddatabase_exit() {
 	m_ubx_comms.stop_dbd_filter();
+	// 2026-08 (A2) — react(UBXCommsEventMgaDBD) recopie les MGA-ACK dans
+	// m_navigation_database a l'offset 0 pendant l'emission: le contenu ne vaut
+	// plus rien apres coup. Sans cette remise a zero, une session qui n'atteint
+	// pas fetchdatabase (le seul autre site de reset) laissait un tampon sali
+	// avec une longueur non nulle, et toutes les sessions suivantes injectaient
+	// ces octets sans jamais recharger la copie flash valide.
+	m_ana_database_len = 0;
 }
 
 void M10QAsyncReceiver::state_sendofflinedatabase_enter() {
@@ -2404,6 +2456,18 @@ void M10QAsyncReceiver::state_sendofflinedatabase_enter() {
         VAL_GNSS("ano_skip reason=no_rtc");  // ANO needs a valid date to pick the day's records
         return;
     }
+
+    // 2026-08 (A2) — m_navigation_database a TROIS producteurs: le DBD recu, la
+    // capture des MGA-ACK, et le tampon ANO ci-dessous. copy_mga_ano_to_buffer
+    // ecrit dans ce tampon au fil de son balayage MEME quand elle finit par tout
+    // rejeter (fichier perime -> 0 octet retenu). On sortait alors avec
+    // m_ano_database_len == 0 mais un tampon dont la tete etait de l'ANO, et
+    // m_ana_database_len valant encore la longueur du DBD de la session
+    // precedente: state_senddatabase_enter voyait donc "j'ai deja un DBD en RAM",
+    // ne rechargeait PAS la copie flash valide, et emettait vers le recepteur des
+    // octets corrompus. Le DBD en RAM est mort des l'instant ou l'on touche au
+    // tampon: on le declare tel quel ici.
+    m_ana_database_len = 0;
 
     try {
         LFSFile file(main_filesystem, "gps_config.dat", LFS_O_RDONLY);
@@ -2561,6 +2625,23 @@ void M10QAsyncReceiver::save_config() {
 
     initiate_timeout();
     m_ubx_comms.send_packet_with_expect(MessageClass::MSG_CLASS_CFG, CFG::ID_CFG, cfg_msg_cfg_cfg);
+}
+
+void M10QAsyncReceiver::clear_config() {
+    DEBUG_INFO("M10QAsyncReceiver::clear_config: effacement de la config BBR du recepteur (CFG-CFG clear)");
+    VAL_GNSS("clear_bbr_config");
+    CFG::CFG::MSG_CFG cfg_msg_cfg_cfg =
+    {
+        .clearMask   = 0xFFFFFFFF,
+        .saveMask    = 0,
+        .loadMask    = 0,   // pas de rechargement: la config RAM en cours reste active
+        .deviceMask  = CFG::CFG::DEVMASK_BBR,
+    };
+    // Emis sans attente d'ACK, comme soft_reset(): on ne veut pas ajouter une
+    // etape susceptible d'echouer sur le chemin de recuperation, et un echec
+    // eventuel est sans consequence (on retombe sur le comportement actuel).
+    m_ubx_comms.send_packet(MessageClass::MSG_CLASS_CFG, CFG::ID_CFG, cfg_msg_cfg_cfg);
+    m_ubx_comms.wait_send();
 }
 
 void M10QAsyncReceiver::soft_reset() {

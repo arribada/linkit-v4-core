@@ -12,6 +12,7 @@
 #include "binascii.hpp"
 #include "interrupt_lock.hpp"
 #include "pmu.hpp"
+#include "gpio.hpp"
 
 using namespace UBX;
 
@@ -72,13 +73,21 @@ void UBXComms::init() {
     m_nav_report.pvt.iTow = -1;
     m_nav_report.dop.iTow = -1;
     m_nav_report.status.iTow = -1;
+    m_rx_stopped = false;
+    // Interdit la bascule VSYS 3,3 V -> 2,3 V tant que cette liaison est en
+    // service (cf. GPIOPins::set_gnss_uart_active).
+    GPIOPins::set_gnss_uart_active(true);
 }
 
 void UBXComms::deinit() {
     if (m_is_init) {
         nrf_libuarte_async_uninit(BSP::UARTAsync_Inits[m_instance].uart);
         m_is_init = false;
+        m_rx_stopped = false;
     }
+    // Toujours relacher, meme si l'UART n'etait pas initialise: deinit() est
+    // idempotent et appele sur tous les chemins de teardown.
+    GPIOPins::set_gnss_uart_active(false);
 }
 
 bool UBXComms::send_raw(const uint8_t* data, size_t len)

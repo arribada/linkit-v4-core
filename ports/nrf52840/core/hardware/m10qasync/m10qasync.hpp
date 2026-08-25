@@ -195,7 +195,22 @@ private:
 	};
 
 	State m_state = State::idle;
-	OpState m_op_state = OpState::IDLE;
+	/// 2026-08 (A1) — `volatile` obligatoire: ce champ est ecrit depuis le
+	/// contexte ISR (react(SendComplete/AckNack/CfgValget/Error), appeles par le
+	/// handler libuarte) et relu en boucle par les `state_*()` qui tournent en
+	/// contexte principal. Sans qualificatif, rien n'interdit au compilateur de
+	/// garder la valeur en registre d'une iteration de `while (true)` a l'autre:
+	/// la reponse posee par l'ISR ne serait jamais vue et l'etat partirait en
+	/// timeout alors que le recepteur a repondu.
+	///
+	/// Ce que cela ne resout PAS (documente sciemment): la sequence
+	/// lecture-decision-ecriture des `state_*()` n'est pas atomique vis-a-vis de
+	/// l'ISR. Une reponse tardive de l'operation precedente qui arriverait entre
+	/// le passage a PENDING et l'emission suivante serait comptee pour la
+	/// nouvelle operation. Le filtre d'attente (`m_expect`, desarme des qu'il a
+	/// matche) rend le cas tres improbable; le corriger proprement demande de
+	/// deporter les six handlers vers le scheduler comme NavReport/SatReport.
+	volatile OpState m_op_state = OpState::IDLE;
 
 	// State machine
 	void state_idle_enter();
@@ -204,6 +219,7 @@ private:
 	void state_poweron_enter();
 	void state_poweron();
 	unsigned int boot_baud_for_step(unsigned int step) const;
+	static unsigned int boot_baud_retries(unsigned int step);
 	void reset_session_state(const GPSNavSettings& nav_settings);
 	void state_poweron_exit();
 	void state_configure_enter();
@@ -244,6 +260,22 @@ private:
 	void initiate_timeout(unsigned int timeout_ms = 1000);
 	void on_timeout();
 	void save_config();
+	/// @brief Efface la configuration sauvegardee en couche BBR du recepteur.
+	///
+	/// C'est la seule porte de sortie d'une couche BBR corrompue ou verrouillee.
+	/// Jusqu'ici le firmware n'avait AUCUN moyen de l'effacer: `setup_uart_port`
+	/// ecrit le debit en BBR|RAM, `save_config` recopie tout en BBR, `soft_reset`
+	/// ne touche que les donnees de navigation (navBbrMask), aucun CFG-VALDEL
+	/// n'etait instancie nulle part, et $FACTR n'agit pas sur le M10Q. Un debit
+	/// exotique ecrit en BBR (via le bridge u-center par exemple) devenait donc
+	/// un verrou definitif que la sonde de boot ne rattrape pas forcement.
+	///
+	/// Emis avec le CFG-RST d'un COLD START: on efface alors a la fois les
+	/// donnees de navigation (navBbrMask=0xFFFF) et la configuration persistee,
+	/// ce qui ramene le recepteur a un etat d'usine deterministe au prochain
+	/// demarrage. La configuration RAM en cours n'est pas touchee (loadMask=0),
+	/// la session continue donc normalement.
+	void clear_config();
 	void soft_reset();
 	void setup_uart_port();
 	void setup_gnss_channel_sharing();

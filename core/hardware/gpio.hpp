@@ -37,6 +37,19 @@ public:
 	static void release_sensors_pwr();   ///< Decrement refcount, power off if reaches 0
 	static bool get_sensors_pwr_state();
 	static uint8_t get_sensors_pwr_refcount();
+	/// @brief Verrou "l'UART GNSS est en service" (2026-08).
+	///
+	/// PMU::reduce_power_rails() fait descendre VSYS a 2,3 V des que le
+	/// scheduler est libre plus de 250 ms. En etat `receive` la seule tache en
+	/// file est le chien de garde NAV de 5 s: la bascule tombe donc entre
+	/// chaque NAV-PVT, rail GNSS allume et UART a 460800. L'interverrouillage
+	/// existant (`!get_sensors_pwr_state()`) est du code MORT sur LinkIt, ou
+	/// SENSORS_PWR_PIN n'existe pas et le refcount reste a 0 a vie.
+	///
+	/// Pose/retire par UBXComms::init()/deinit(), c'est-a-dire exactement la
+	/// duree de vie de l'UART — un seul point, impossible a desynchroniser.
+	static void set_gnss_uart_active(bool active);
+	static bool is_gnss_uart_active();
 
 	/// @brief Force a VSENSORS off→on power-cycle to release a wedged I2C slave,
 	/// WITHOUT changing the reference count (the rail ends powered). Used by the
@@ -62,6 +75,7 @@ public:
 
 private:
 	static uint8_t m_sensors_pwr_refcount;
+	static bool m_gnss_uart_active;
 
 	/// @brief Disconnect sensor I2C/interrupt pins to prevent backfeed when VSENSORS off.
 	static void disconnect_sensor_pins();

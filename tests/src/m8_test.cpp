@@ -259,7 +259,9 @@ TEST(M8, FailedToSyncCommsError)
     // GNSS qui n'abonne personne) et la FSM restait figee rail allume.
     // L'attente doit donc etre declaree AVANT l'avance de temps qui declenche l'erreur.
     expect_power_off();
-    increment_time_ms(6000);
+    // 4 debits sondes: 6 essais sur le premier + 2 sur chacun des trois autres,
+    // a 500 ms => 6000 ms pile. Marge pour ne pas dependre de la phase du tick.
+    increment_time_ms(7000);
     increment_time_ms();
 }
 

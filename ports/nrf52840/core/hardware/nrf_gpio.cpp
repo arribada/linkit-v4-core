@@ -12,6 +12,7 @@
 #include "nrf_i2c.hpp"
 
 uint8_t GPIOPins::m_sensors_pwr_refcount = 0;
+bool GPIOPins::m_gnss_uart_active = false;
 
 // Build-time flag (build_rspb.sh: RSPB_VSENSORS_FLOOR, default 1).
 //   1 = keep the RSPB VSENSORS refcount floor: never cut VSENSORS, since the I2C
@@ -301,6 +302,16 @@ void GPIOPins::release_sensors_pwr()
 		DEBUG_TRACE("GPIOPins::release_sensors_pwr: refcount %u->%u (still in use)", m_sensors_pwr_refcount + 1, m_sensors_pwr_refcount);
 	}
 #endif
+}
+
+void GPIOPins::set_gnss_uart_active(bool active)
+{
+	m_gnss_uart_active = active;
+}
+
+bool GPIOPins::is_gnss_uart_active()
+{
+	return m_gnss_uart_active;
 }
 
 bool GPIOPins::get_sensors_pwr_state()

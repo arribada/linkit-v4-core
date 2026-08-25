@@ -111,7 +111,7 @@ void PMU::storage_off_check() {
 	}
 
 	// No magnet at boot. We're going to System OFF. First, drop VSYS_SEL
-	// so the TPS63901 buck-boost outputs 1.8 V instead of 3.3 V. Same trick
+	// so the TPS63901 buck-boost outputs 2.3 V instead of 3.3 V. Same trick
 	// as prepare_for_deep_idle (see this file ~L348) — saves ~8 µA of
 	// quiescent. Safe here because:
 	//   - All other peripheral rails (GPS / SAT / sensors) were cut by
@@ -119,7 +119,16 @@ void PMU::storage_off_check() {
 	//   - The nRF52840 operates from 1.7 V to 3.6 V on VDD (datasheet).
 	//   - LED is off in storage state, so the ~3 V Vf is not required.
 	GPIOPins::init_pin(BSP::GPIO_VSYS_SEL);     // apply BSP config (open-drain S0D1)
-	GPIOPins::clear(BSP::GPIO_VSYS_SEL);        // SEL low → VSYS = 1.8 V
+	// 2026-08 : abaisser le seuil POF AVANT de descendre le rail. POFCON est
+	// arme a 2,7 V (initialise():194) ; laisser 2,7 V face a un rail a 2,3 V
+	// asserte POFWARN en permanence, et si SYSTEMOFF est refuse (debugger
+	// attache, champ NFC) on tombe dans la boucle WFI ci-dessous avec une
+	// interruption POF qui se re-declenche sans fin.
+#ifdef SOFTDEVICE_PRESENT
+	if (nrf_sdh_is_enabled())
+		sd_power_pof_threshold_set(NRF_POWER_THRESHOLD_V20);
+#endif
+	GPIOPins::clear(BSP::GPIO_VSYS_SEL);        // SEL low → VSYS = 2.3 V
 
 	// Configure REED_SW as a SENSE wake source (PORT event on level match).
 	// init_pin set it to GPIOTE TOGGLE in the BSP — we override with SENSE
@@ -150,13 +159,13 @@ void PMU::storage_off_check() {
 	// IMPORTANT: do NOT precede this with __WFE() — WFE would put the CPU
 	// to sleep BEFORE the SYSTEMOFF write, which means the write never
 	// happens. The chip would just sit in System ON Idle (CPU off but
-	// peripherals on, ~10 µA at 1.8 V) instead of true System OFF (~0.5 µA).
+	// peripherals on, ~10 µA at 2.3 V) instead of true System OFF (~0.5 µA).
 	NRF_POWER->SYSTEMOFF = 1;
 	__DSB();  // make sure the write completes before the for-loop below
 
 	// Failsafe: if SYSTEMOFF was rejected by hardware (e.g. NFC field detect
 	// active, debug interface connected), drop into a tight WFI loop with
-	// VSYS at 1.8 V — minimises wasted current until the next reset or wake.
+	// VSYS at 2.3 V — minimises wasted current until the next reset or wake.
 	for (;;) { __WFI(); }
 #endif // PSEUDO_POWER_OFF
 }
@@ -514,7 +523,7 @@ bool PMU::was_firmware_updated() {
 	return m_firmware_was_updated;
 }
 
-/// @brief Cut peripheral power rails during idle (VSYS → 1.8V, POWER_CONTROL off).
+/// @brief Cut peripheral power rails during idle (VSYS → 2.3 V, POWER_CONTROL off).
 void PMU::reduce_power_rails() {
 	// FIXME (RSPB only): External I2C pull-ups R21/R24 (4.7K) are connected to
 	// DCDC_3V3 instead of VSENSORS. When VSENSORS is OFF, ~1.3mA backfeeds
@@ -538,10 +547,21 @@ void PMU::reduce_power_rails() {
 	// LinkIt V4: Switch VSYS to 2.3V during deep idle to reduce nRF52840 core
 	// and DCDC quiescent current. Only safe when all peripherals are powered off
 	// (GPS, SMD, sensors all use separate power rails at 3.3V and are not affected).
-	// The nRF52840 DCDC operates down to 1.8V with full functionality (CPU, RAM, BLE, RTC).
+	// The nRF52840 DCDC operates down to 1.8 V with full functionality (CPU, RAM,
+	// BLE, RTC), donc 2,3 V laisse une marge confortable cote nRF.
 #if defined(VSYS_SEL) && !defined(BOARD_RSPB)
-	// Only switch to 2.3V if LED is off — LED forward voltage (~3V) requires 3.3V rail
+	// Conditions pour descendre a 2,3 V :
+	//   - LED eteinte (Vf ~3 V, il lui faut le rail 3,3 V) ;
+	//   - VSENSORS relache (garde d'origine — inoperante sur LinkIt ou
+	//     SENSORS_PWR_PIN n'existe pas, mais correcte sur les cartes qui l'ont) ;
+	//   - 2026-08 : UART GNSS a l'arret. En etat `receive` la seule tache en
+	//     file est le chien de garde NAV de 5 s, donc sans ce verrou la bascule
+	//     tombait entre chaque NAV-PVT, liaison 460800 active et rail GNSS
+	//     asserte. On ne descend le rail commun que quand plus personne ne
+	//     parle au recepteur ; en deep-idle l'UART est deinit et le M10Q dort
+	//     en backup, donc l'economie est conservee la ou elle compte.
 	if (!GPIOPins::get_sensors_pwr_state() &&
+	    !GPIOPins::is_gnss_uart_active() &&
 	    status_led && status_led->get_state() == RGBLedColor::BLACK && !status_led->is_flashing()) {
 		// Lower the POF brownout threshold BELOW the idle rail BEFORE dropping VSYS:
 		// POFCON is armed at 2.7V, but the idle rail is 2.3V, so at 2.7V the comparator
