@@ -1359,6 +1359,14 @@ private:
 						}
 						case BaseEncoding::TEXT:
 						{
+							// Cette branche etait la seule du decodeur de parametres a
+							// ne PAS valider, alors qu'un validateur de chaine existe
+							// (il controle BASE_TEXT_MAX_LENGTH et la liste des valeurs
+							// permises). Mesure au banc le 2026-08-26: 128 caracteres
+							// passent et sont persistes, 129 tuent la balise — plus
+							// aucune reponse jusqu'au reset. Une seule trame DTE
+							// suffisait donc a la faire taire.
+							DTEEncoder::validate(param_ref, value);
 							key_value.value = value;
 							val.push_back(key_value);
 							break;
