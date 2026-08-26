@@ -227,7 +227,17 @@ unsigned int ArgosTxService::service_next_schedule_in_ms() {
 		if (RateLimiter::is_blocked(now, reschedule_s)) {
 			DEBUG_INFO("ArgosTxService: rate limit reached, reschedule in %u s", reschedule_s);
 			m_sched.schedule_at(now + (std::time_t)reschedule_s);
-			return reschedule_s * 1000;
+			// Bound the conversion: reschedule_s is 32-bit and RLP02
+			// (RATE_LIMIT_WINDOW_S) accepts up to 0xFFFFFFFF, so any value above
+			// 4294967 s (~49.7 days) wraps in `* 1000` and turns a very long
+			// wait into a near-immediate one -- the exact inversion of what the
+			// limiter is for. Clamp instead: SCHEDULE_DISABLED is 0xFFFFFFFF and
+			// must stay reachable only as the "nothing planned" sentinel.
+			constexpr unsigned int MAX_RESCHEDULE_MS = 0xFFFFFFFEu;
+			unsigned int reschedule_ms = (reschedule_s > MAX_RESCHEDULE_MS / 1000u)
+			                           ? MAX_RESCHEDULE_MS
+			                           : reschedule_s * 1000u;
+			return reschedule_ms;
 		}
 	}
 

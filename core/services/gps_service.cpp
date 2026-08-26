@@ -498,7 +498,17 @@ unsigned int GPSService::service_next_schedule_in_ms() {
 		if (rtc && rtc->is_set() && RateLimiter::is_blocked(service_current_time(), rl_reschedule_s)) {
 			DEBUG_INFO("GPSService::service_next_schedule_in_ms: rate-limited, reschedule in %u s",
 			           rl_reschedule_s);
-			return rl_reschedule_s * 1000;
+			// Bound the conversion: rl_reschedule_s is 32-bit and RLP02
+			// (RATE_LIMIT_WINDOW_S) accepts up to 0xFFFFFFFF, so any value above
+			// 4294967 s (~49.7 days) wraps in `* 1000` and turns a very long
+			// wait into a near-immediate one -- the exact inversion of what the
+			// limiter is for. Clamp instead: SCHEDULE_DISABLED is 0xFFFFFFFF and
+			// must stay reachable only as the "nothing planned" sentinel.
+			constexpr unsigned int MAX_RESCHEDULE_MS = 0xFFFFFFFEu;
+			unsigned int rl_reschedule_ms = (rl_reschedule_s > MAX_RESCHEDULE_MS / 1000u)
+			                           ? MAX_RESCHEDULE_MS
+			                           : rl_reschedule_s * 1000u;
+			return rl_reschedule_ms;
 		}
 	}
 

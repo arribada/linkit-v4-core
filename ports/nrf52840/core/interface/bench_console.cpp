@@ -296,6 +296,21 @@ bool bench::handle_line(const std::string& raw) {
                      (status & 0x40) ? 1 : 0, (status & 0x01) ? 1 : 0);
             reply(buf);
         }
+    } else if (cmd == "%ARGOSCFG") {
+        // Configuration Argos EFFECTIVE (apres cascade LB/OoZ/HAULED). Sert
+        // notamment a prouver que sensor_tx_enable prend bien le bit AXL: c est
+        // ce masque qui choisit process_sensor_burst() plutot que
+        // process_gnss_burst(), et il ne peut pas s observer autrement.
+        ArgosConfig ac;
+        configuration_store->get_argos_configuration(ac);
+        char buf[176];
+        snprintf(buf, sizeof(buf),
+                 "%%ARGOSCFG mode=%u sensor_tx=0x%08X depth=%u ntry=%u tr_nom=%u duty=0x%06X lb=%d prepass=%d",
+                 (unsigned)ac.mode, ac.sensor_tx_enable, (unsigned)ac.depth_pile,
+                 ac.ntry_per_message, ac.tx_interval_s,
+                 ac.duty_cycle & 0xFFFFFF, ac.is_lb ? 1 : 0,
+                 ac.prepass_en ? 1 : 0);
+        reply(buf);
     } else if (cmd == "%SCHEDQ") {
         // Occupation des files de l ordonnanceur. Sert a prouver qu une tache
         // auto-reprogrammee ne se duplique pas: un aller-retour

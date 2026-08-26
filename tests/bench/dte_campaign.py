@@ -1081,3 +1081,124 @@ CASES_V6 = [
          titre='Un aller-retour configuration ne fuit pas de tache differee',
          fn=c_fuite_taches_differees),
 ]
+
+def _argoscfg(b, timeout=15.0):
+    """Configuration Argos EFFECTIVE, apres la cascade LB / hors-zone / HAULED."""
+    mk = b.mark(); b._send('%ARGOSCFG\r')
+    m = b.expect(r'%ARGOSCFG mode=(\d+) sensor_tx=0x([0-9A-Fa-f]{8}) depth=(\d+) '
+                 r'ntry=(\d+) tr_nom=(\d+) duty=0x([0-9A-Fa-f]{6}) lb=(\d) prepass=(\d)',
+                 timeout, from_idx=mk)
+    if not m:
+        return None
+    return dict(mode=int(m.group(1)), sensor_tx=int(m.group(2), 16), depth=int(m.group(3)),
+                ntry=int(m.group(4)), tr_nom=int(m.group(5)), duty=int(m.group(6), 16),
+                lb=m.group(7) == '1', prepass=m.group(8) == '1')
+
+# ServiceIdentifier::AXL_SENSOR = 12 (core/scheduling/service_scheduler.hpp)
+BIT_AXL = 1 << 12
+
+def c_axl_transmissible(r, case):
+    """L accelerometre doit pouvoir etre emis quand l operateur l active.
+
+    sensor_tx_enable est le portillon qui choisit process_sensor_burst() plutot
+    que process_gnss_burst(). Il avait une branche pour ALS, PRESSURE, SEA_TEMP,
+    PH et THERMISTOR mais AUCUNE pour l AXL: sur un build ou l AXL est le seul
+    capteur compile, le masque valait 0 a la compilation et la voie capteur
+    n etait jamais prise. AXL_SENSOR_ENABLE_TX_MODE (AXP05) etait donc un
+    parametre visible par l operateur qui ne pouvait rien faire, alors que
+    ArgosPacketBuilder encode l AXL completement.
+    """
+    b = r.b
+    try:
+        b.enter_config()
+        b.write_params({'AXL_SENSOR_ENABLE': 0, 'AXL_SENSOR_ENABLE_TX_MODE': 0,
+                        'ARGOS_MODE': 2})
+        b.exit_config()
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}')
+    time.sleep(1.5)
+    off = _argoscfg(b)
+    if not off:
+        return r.record(case, 'ERROR', '%ARGOSCFG sans reponse (sonde absente du build ?)')
+
+    try:
+        b.enter_config()
+        b.write_params({'AXL_SENSOR_ENABLE': 1, 'AXL_SENSOR_ENABLE_TX_MODE': 1})
+        b.exit_config()
+    except Exception as e:
+        return r.record(case, 'ERROR', f'activation impossible: {type(e).__name__}')
+    time.sleep(1.5)
+    on = _argoscfg(b)
+
+    try:
+        b.enter_config()
+        b.write_params({'AXL_SENSOR_ENABLE': 0, 'AXL_SENSOR_ENABLE_TX_MODE': 0, 'ARGOS_MODE': 0})
+        b.exit_config()
+    except Exception:
+        pass
+
+    if not on:
+        return r.record(case, 'ERROR', '%ARGOSCFG sans reponse apres activation')
+    trace = f"desactive: sensor_tx=0x{off['sensor_tx']:08X} | active: sensor_tx=0x{on['sensor_tx']:08X} (bit AXL=0x{BIT_AXL:X})"
+    if off['sensor_tx'] & BIT_AXL:
+        r.record(case, 'FAIL', 'le bit AXL est pose alors que le capteur est desactive', trace)
+    elif not (on['sensor_tx'] & BIT_AXL):
+        r.record(case, 'FAIL', 'AXP01+AXP05 actives mais le bit AXL reste absent — capteur inemettable', trace)
+    else:
+        r.record(case, 'PASS', 'le bit AXL apparait quand et seulement quand l operateur l active', trace)
+
+def c_limiteur_fenetre_enorme(r, case):
+    """Une fenetre de limitation enorme ne doit pas se replier en delai minuscule.
+
+    reschedule_s est un entier 32 bits et RLP02 accepte jusqu a 0xFFFFFFFF: au
+    dela de 4294967 s (~49,7 jours) la conversion `* 1000` deborde et transforme
+    une attente tres longue en attente quasi immediate — l inverse exact de ce a
+    quoi sert le limiteur.
+    """
+    b = r.b
+    try:
+        b.enter_config()
+        b.write_params({'ARGOS_MODE': 2, 'GNSS_EN': 1, 'NTRY_PER_MESSAGE': 0,
+                        'TR_NOM': 60, 'RATE_LIMIT_EN': 1,
+                        'RATE_LIMIT_WINDOW_S': 4294967295, 'RATE_LIMIT_MAX_TX': 1,
+                        'UNDERWATER_EN': 0, 'DRY_TIME_BEFORE_TX': 0,
+                        'MIN_SURFACE_CYCLE_INTERVAL_S': 0, 'SAT_PREPASS_EN': 0})
+        b.exit_config()
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}')
+    time.sleep(2)
+    b._send('%GPS 43.6 3.9 5000 9\r')
+    time.sleep(20)
+    vus = []
+    for _ in range(6):
+        s = _sched_argos(r)
+        if s and s[0] is not None:
+            vus.append(s[0])
+        time.sleep(8)
+    try:
+        b.enter_config()
+        b.write_params({'RATE_LIMIT_EN': 0, 'RATE_LIMIT_WINDOW_S': 3600,
+                        'RATE_LIMIT_MAX_TX': 10, 'ARGOS_MODE': 0})
+        b.exit_config()
+    except Exception:
+        pass
+    if not vus:
+        return r.record(case, 'ERROR', 'aucune planification ARGOSTX observee')
+    mini = min(vus)
+    trace = f'delais observes: {vus} ms'
+    # Avec 1 TX autorise sur une fenetre de 49710 jours, une fois le quota
+    # consomme le replanning doit etre ENORME. Un debordement le ramenerait
+    # sous la minute.
+    if mini < 60000:
+        r.record(case, 'FAIL', f'replanning de {mini} ms — la conversion a debordé', trace)
+    else:
+        r.record(case, 'PASS', f'replanning borne ({mini} ms minimum), pas de debordement', trace)
+
+CASES_V7 = [
+    dict(id='AXL-01', risque='BLOQUANT',
+         titre='L accelerometre est emettable quand on l active',
+         fn=c_axl_transmissible),
+    dict(id='RL-01', risque='BLOQUANT',
+         titre='Fenetre de limitation enorme sans debordement 32 bits',
+         fn=c_limiteur_fenetre_enorme),
+]

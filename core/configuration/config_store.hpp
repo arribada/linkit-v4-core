@@ -1249,6 +1249,20 @@ public:
 			argos_config.sensor_tx_enable |=
 				(int)(read_param<bool>(ParamID::PH_SENSOR_ENABLE) && read_param<BaseSensorEnableTxMode>(ParamID::PH_SENSOR_ENABLE_TX_MODE) != BaseSensorEnableTxMode::OFF) << (int)ServiceIdentifier::PH_SENSOR;
 #endif
+#if ENABLE_AXL_SENSOR
+			// The accelerometer was missing from this mask while every other
+			// sensor had a branch. sensor_tx_enable is what selects
+			// process_sensor_burst() over process_gnss_burst(), so on a build
+			// where AXL is the only compiled sensor the mask was a compile-time
+			// 0 and the sensor path was never taken -- AXL_SENSOR_ENABLE_TX_MODE
+			// (AXP05) was an operator-visible parameter that could not do
+			// anything, even though ArgosPacketBuilder encodes AXL fully
+			// (SENSOR_PACKET_MASK_AXL, X/Y/Z, activity, temperature rules).
+			// Both AXP01 and AXP05 default to false/OFF, so this changes nothing
+			// until an operator asks for it explicitly.
+			argos_config.sensor_tx_enable |=
+				(int)(read_param<bool>(ParamID::AXL_SENSOR_ENABLE) && read_param<BaseSensorEnableTxMode>(ParamID::AXL_SENSOR_ENABLE_TX_MODE) != BaseSensorEnableTxMode::OFF) << (int)ServiceIdentifier::AXL_SENSOR;
+#endif
 #if ENABLE_THERMISTOR_SENSOR
 			argos_config.sensor_tx_enable |=
 				(int)(read_param<bool>(ParamID::THERMISTOR_SENSOR_ENABLE) && read_param<BaseSensorEnableTxMode>(ParamID::THERMISTOR_SENSOR_ENABLE_TX_MODE) != BaseSensorEnableTxMode::OFF) << (int)ServiceIdentifier::THERMISTOR_SENSOR;
