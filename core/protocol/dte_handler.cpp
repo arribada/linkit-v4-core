@@ -50,15 +50,15 @@ std::string DTEHandler::read_params_by_filter(int error_code, std::vector<ParamI
 		return DTEEncoder::encode(resp_cmd, error_code);
 	}
 
-	// Une liste de clefs VIDE veut dire "rends-moi tout" — c'est le comportement
-	// documente. Mais une liste dont TOUTES les clefs ont ete rejetees arrivait ici
-	// vide elle aussi, et la balise repondait alors sa configuration ENTIERE au lieu
-	// d'une erreur. Mesure au banc le 2026-08-26: $PARMR#005;ZZZ99 rend
-	// $O;PARMR#60C;... soit 163 parametres. Deux consequences: la moindre faute de
-	// frappe d'un operateur renvoie tout, et surtout une clef assez longue force la
-	// construction d'une reponse enorme — c'est par la qu'un payload de 4095 octets
-	// fige la carte. On distingue donc les deux cas: rien de demande, ou rien de
-	// reconnu.
+	// An EMPTY key list means "give me everything" — that is the documented
+	// behaviour. But a list whose keys had ALL been rejected also arrived here
+	// empty, and the device then answered with its ENTIRE configuration instead
+	// of an error. Bench measurement on 2026-08-26: $PARMR#005;ZZZ99 returns
+	// $O;PARMR#60C;... i.e. 163 parameters. Two consequences: the slightest typo
+	// from an operator returns everything, and above all a long enough key forces
+	// the construction of an enormous response — that is how a 4095-byte payload
+	// freezes the board. So we distinguish the two cases: nothing requested, or
+	// nothing recognised.
 	if (params.size() == 0 && !rejected_keys.empty()) {
 		DEBUG_WARN("DTEHandler::read_params_by_filter: %u clef(s) demandee(s), aucune reconnue",
 		           static_cast<unsigned>(rejected_keys.size()));
@@ -373,16 +373,16 @@ std::string DTEHandler::PASPW_REQ(int error_code, std::vector<BaseType>& arg_lis
 
 		if (argos_aop_date)
 		{
-			// NOTE (2026-08): une fusion "le plus frais gagne" par satHexId a ete
-			// implementee puis RETIREE apres essai. Le magasin contient un jeu
-			// d'AOP par DEFAUT USINE date d'octobre 2021: la fusion le laissait
-			// battre un bulletin reellement televerse par l'operateur s'il etait
-			// plus ancien — l'inverse du comportement voulu. Le test
-			// PASPW_REQ_DecodeDayOfYearWiderThan8Bits l'a mis en evidence.
-			// Tant qu'il n'existe qu'UNE source d'AOP (le televersement DTE), le
-			// remplacement integral est correct. La fusion redeviendra utile avec
-			// le downlink satellite, ou elle arbitrera entre deux sources reelles;
-			// elle devra alors distinguer le defaut usine d'une vraie base.
+			// NOTE (2026-08): a "freshest wins" merge per satHexId was implemented
+			// and then REMOVED after trying it. The store holds a FACTORY DEFAULT
+			// AOP set dated October 2021: the merge let it beat a bulletin really
+			// uploaded by the operator if that one was older — the opposite of the
+			// intended behaviour. The test PASPW_REQ_DecodeDayOfYearWiderThan8Bits
+			// brought it to light. As long as there is only ONE source of AOP (the
+			// DTE upload), full replacement is correct. The merge will become
+			// useful again with the satellite downlink, where it will arbitrate
+			// between two real sources; it will then have to distinguish the
+			// factory default from a genuine database.
 			// Update configuration store
 			configuration_store->write_pass_predict(pass_predict);
 
@@ -1903,7 +1903,7 @@ std::string DTEHandler::RTCW_REQ(int error_code, std::vector<BaseType>& arg_list
 
 	// Set the RTC to the provided unix timestamp
 	rtc->settime(static_cast<std::time_t>(timestamp));
-	// Heure posee a la main: juste au moment de la saisie, puis elle derive.
+	// Time set by hand: exact at the moment it was entered, then it drifts.
 	rtc->note_source(RtcSource::OPERATOR);
 	DEBUG_INFO("DTEHandler::RTCW_REQ: RTC set to %u", timestamp);
 
@@ -1919,14 +1919,14 @@ std::string DTEHandler::RTCW_REQ(int error_code, std::vector<BaseType>& arg_list
 #pragma GCC diagnostic ignored "-Wswitch-enum"
 
 DTEAction DTEHandler::handle_dte_message(const std::string& req, std::string& resp) {
-	// Sentinelle OBLIGATOIRE. Cette variable etait non initialisee, et le
-	// decodeur leve DTE_PROTOCOL_UNKNOWN_COMMAND *avant* de l'affecter: le
-	// switch plus bas s'executait alors sur une valeur indeterminee. Mesure au
-	// banc le 2026-08-26: sur douze commandes inconnues, ONZE reponses portaient
-	// le nom d'une AUTRE commande — un hote pouvait les prendre pour la reponse a
-	// une requete differente. Les actions destructrices (redemarrage,
-	// reinitialisation d'usine) etaient heureusement gardees par `if
-	// (!error_code)`, donc l'aiguillage errone ne pouvait pas faire de degat.
+	// MANDATORY sentinel. This variable was uninitialised, and the decoder
+	// raises DTE_PROTOCOL_UNKNOWN_COMMAND *before* assigning it: the switch
+	// below then ran on an indeterminate value. Bench measurement on
+	// 2026-08-26: out of twelve unknown commands, ELEVEN responses carried the
+	// name of ANOTHER command — a host could take them for the answer to a
+	// different request. The destructive actions (reboot, factory reset) were
+	// fortunately guarded by `if (!error_code)`, so the wrong dispatch could not
+	// do any damage.
 	DTECommand command = DTECommand::__NUM_REQ;
 	std::vector<ParamID> params;
 	std::vector<ParamValue> param_values;
@@ -1977,8 +1977,8 @@ DTEAction DTEHandler::handle_dte_message(const std::string& req, std::string& re
 		}
 	}
 
-	// Commande jamais identifiee: on ne peut pas nommer la reponse, et surtout on
-	// ne doit pas aiguiller vers un gestionnaire arbitraire.
+	// Command never identified: we cannot name the response, and above all we
+	// must not dispatch to an arbitrary handler.
 	if (command >= DTECommand::__NUM_REQ) {
 		DEBUG_WARN("DTEHandler: commande non identifiee, aucun aiguillage");
 		return action;

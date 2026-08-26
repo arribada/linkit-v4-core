@@ -438,13 +438,13 @@ enum class ParamID {
 	ARGOS_BLIND_EN                           = 243,  // bool: enable BLIND MAC profile (module-owned retx burst). Default false = BASIC (nRF-paced). SMD-UART + KIM2.
 	ARGOS_BLIND_RETX_NB                      = 244,  // uint 1..127: retransmissions the module sends per blind burst (KMAC retx_nb). NTRY_PER_MESSAGE stays the nRF-side count of blind sequences.
 	ARGOS_BLIND_RETX_PERIOD_S                = 245,  // uint 60..65535 s: interval between the module's blind retransmissions (KMAC retx_period_s). Distinct from TR_NOM (interval between blind sequences).
-	// === Prepass gating orthogonal au mode Argos (slots 246-248, 2026-08) ===
-	// Jusqu'ici le gating prepass n'existait QUE via ARGOS_MODE=PASS_PREDICTION,
-	// donc impossible de combiner "n'emettre qu'au passage d'un satellite" avec
-	// DUTY_CYCLE, DOPPLER ou SURFACING_BURST. Le mode et le gating sont pourtant
-	// deux dimensions independantes: le mode dit QUOI/QUAND emettre, le prepass
-	// dit SI le satellite ecoute. ARGOS_MODE=PASS_PREDICTION reste accepte et
-	// equivaut a LEGACY + SAT_PREPASS_EN=1 (compatibilite, aucune migration).
+	// === Prepass gating orthogonal to the Argos mode (slots 246-248, 2026-08) ===
+	// Until now prepass gating existed ONLY via ARGOS_MODE=PASS_PREDICTION, so it
+	// was impossible to combine "transmit only when a satellite passes over" with
+	// DUTY_CYCLE, DOPPLER or SURFACING_BURST. Yet the mode and the gating are two
+	// independent dimensions: the mode says WHAT/WHEN to transmit, the prepass
+	// says WHETHER the satellite is listening. ARGOS_MODE=PASS_PREDICTION is still
+	// accepted and equals LEGACY + SAT_PREPASS_EN=1 (compatibility, no migration).
 	SAT_PREPASS_EN                           = 246,  // bool: gating prepass sur TOUS les modes
 	SAT_AOP_MAX_AGE_DAYS                     = 247,  // uint: au-dela, AOP perime -> repli periodique
 	SAT_PREPASS_MAX_WAIT_S                   = 248,  // uint: attente max sans fenetre (0 = illimite) -> repli periodique

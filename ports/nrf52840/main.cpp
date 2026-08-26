@@ -875,35 +875,35 @@ static LFSFileSystem& init_storage(NrfSwitch& nrf_reed_switch, Is25Flash& is25_f
 		// Pseudo RTC: advance the last known RTC by WAKEUP_PERIOD at each boot.
 		unsigned int wakeup_period = configuration_store->read_param<unsigned int>(ParamID::WAKEUP_PERIOD);
 
-		// 2026-08 — n'avancer la chaine QUE si ce demarrage vient reellement
-		// d'un cycle du TPL5111, c'est-a-dire d'une coupure franche de
-		// l'alimentation. Auparavant l'avance etait inconditionnelle: un reset
-		// WDT survenu quelques secondes apres le boot precedent ajoutait malgre
-		// tout une periode de reveil ENTIERE a l'horloge, et l'erreur
-		// s'accumulait a chaque reset. Un reveil manuel (aimant) ou un reset
-		// logiciel posent le meme probleme — dans ces cas la chaine est rompue
-		// et l'heure redevient simplement « restauree », donc non bornable.
+		// 2026-08 — advance the chain ONLY if this boot really comes from
+		// a TPL5111 cycle, that is from a clean power cut. Previously the
+		// advance was unconditional: a WDT reset occurring a few seconds after
+		// the previous boot still added an ENTIRE wakeup period to the clock,
+		// and the error accumulated at every reset. A manual wake-up (magnet)
+		// or a software reset pose the same problem — in those cases the
+		// chain is broken and the time simply becomes "restored" again, hence
+		// not boundable.
 		const ResetCause boot_cause = PMU::reset_cause();
 		const bool tpl_cycle = (boot_cause == ResetCause::POWER_ON);
 
-		// Tolerance du minuteur RC du TPL5111. Volontairement conservatrice:
-		// c'est elle qui borne l'incertitude annoncee au recepteur GNSS.
+		// Tolerance of the TPL5111 RC timer. Deliberately conservative: it is
+		// what bounds the uncertainty announced to the GNSS receiver.
 		constexpr unsigned int TPL_TOLERANCE_PCT = 5;
 
 		if (last_rtc > 0 && wakeup_period > 0 && tpl_cycle) {
 			unsigned int pseudo_rtc = last_rtc + wakeup_period;
 			configuration_store->write_param(ParamID::LAST_KNOWN_RTC, pseudo_rtc);
 			rtc->settime(static_cast<std::time_t>(pseudo_rtc));
-			// Extrapolation, mais BORNEE: le temps hors tension vaut la periode
-			// de reveil, a la tolerance du minuteur pres.
+			// Extrapolation, but BOUNDED: the time spent unpowered equals the
+			// wakeup period, to within the timer tolerance.
 			rtc->note_source(RtcSource::PSEUDO);
 			rtc->set_pseudo_uncertainty_s((wakeup_period * TPL_TOLERANCE_PCT) / 100 + 1);
 			DEBUG_INFO("EXTERNAL_WAKEUP: Pseudo RTC set to %u (last=%u + period=%u, incertitude +/-%u s)",
 			           pseudo_rtc, last_rtc, wakeup_period,
 			           (wakeup_period * TPL_TOLERANCE_PCT) / 100 + 1);
 		} else if (last_rtc > 0) {
-			// Chaine rompue: on repose l'heure connue SANS l'avancer, et on la
-			// declare non bornable.
+			// Chain broken: put back the known time WITHOUT advancing it, and
+			// declare it not boundable.
 			rtc->settime(static_cast<std::time_t>(last_rtc));
 			rtc->note_source(RtcSource::RESTORED);
 			DEBUG_WARN("EXTERNAL_WAKEUP: reveil hors TPL (cause=%d) — chaine pseudo-RTC rompue, heure restauree sans avance (%u)",
@@ -940,11 +940,11 @@ static LFSFileSystem& init_storage(NrfSwitch& nrf_reed_switch, Is25Flash& is25_f
 		// Non-TPL5111 boards: restore last known RTC directly
 		if (last_rtc > 0) {
 			rtc->settime(static_cast<std::time_t>(last_rtc));
-			// RESTORED et non GNSS: le temps passe hors tension est inconnu, donc
-			// l'erreur de cette heure ne se borne pas. Sans cette distinction,
-			// is_set() renvoyait « oui » et le firmware annoncait cette valeur au
-			// recepteur a +/- 2 s — mesure au banc le 2026-08-25 avec 52 jours
-			// d'ecart.
+			// RESTORED and not GNSS: the time spent unpowered is unknown, so the
+			// error on this time cannot be bounded. Without this distinction,
+			// is_set() returned "yes" and the firmware announced this value to
+			// the receiver as +/- 2 s — measured on the bench on 2026-08-25
+			// with 52 days of drift.
 			rtc->note_source(RtcSource::RESTORED);
 			DEBUG_INFO("Restored LAST_KNOWN_RTC = %u (provenance: restauree)", last_rtc);
 		}
@@ -1458,10 +1458,10 @@ int main()
 	//   - SWS analog detector multi-sample (UW_SAMPLE_GAP = 1000 ms) : both 1000 ms
 	//     and 250 ms thresholds let reduce_power_rails() fire between samples.
 	//   - SWS underwater fast-sample (period ~500 ms) : 1000 ms threshold blocks
-	//     bascule (500 < 1000) → VSYS stuck at 3.3V the whole dive. 250 ms lets
-	//     the ~500 ms idle window between samples trigger the bascule.
+	//     the toggle (500 < 1000) → VSYS stuck at 3.3V the whole dive. 250 ms
+	//     lets the ~500 ms idle window between samples trigger the toggle.
 	//   - Generic services scheduled every 300-900 ms : same story.
-	// Cost: each bascule cycle adds ~2 ms PMU::delay_ms in restore_power_rails().
+	// Cost: each toggle cycle adds ~2 ms PMU::delay_ms in restore_power_rails().
 	// At a 500 ms cycle that's 0.4 % time overhead — negligible vs the ~8 µA saved
 	// while at 1.8V. The TPS63901 SEL pin supports unlimited switching.
 	static constexpr uint64_t IDLE_POWER_SAVE_THRESHOLD_MS = 250;
@@ -1501,7 +1501,7 @@ int main()
 				if (remaining <= IDLE_POWER_SAVE_THRESHOLD_MS) {
 					PMU::restore_power_rails();
 					power_rails_reduced = false;
-					// DEBUG_TRACE("IDLE_POWER_SAVE: exit (%llu ms remaining)", remaining);  // log retiré : trop verbeux (pollue même en Verbose)
+					// DEBUG_TRACE("IDLE_POWER_SAVE: exit (%llu ms remaining)", remaining);  // log removed: too verbose (pollutes even in Verbose)
 // #if VALIDATION_LOG_ENABLE
 // 					uint64_t now_ms = PMU::get_timestamp_ms();
 // 					uint64_t this_reduce_ms = (s_val_last_enter_reduce_ms > 0 &&
@@ -1520,7 +1520,7 @@ int main()
 			// Reduce power rails when no tasks are due for a while
 			uint64_t idle_ms = system_scheduler->ms_until_next_task();
 			if (idle_ms > IDLE_POWER_SAVE_THRESHOLD_MS && !power_rails_reduced) {
-				// DEBUG_TRACE("IDLE_POWER_SAVE: enter (%llu ms idle)", idle_ms);  // log retiré : trop verbeux (pollue même en Verbose)
+				// DEBUG_TRACE("IDLE_POWER_SAVE: enter (%llu ms idle)", idle_ms);  // log removed: too verbose (pollutes even in Verbose)
 				power_rails_reduced = true;
 				PMU::reduce_power_rails();
 // #if VALIDATION_LOG_ENABLE

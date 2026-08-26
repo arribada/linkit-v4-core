@@ -307,13 +307,13 @@ void BleInterface::advertising_init()
     init.config.ble_adv_fast_enabled  = true;
     init.config.ble_adv_fast_interval = APP_ADV_INTERVAL;
     init.config.ble_adv_fast_timeout  = APP_ADV_DURATION;
-    // Le module SDK relance l'advertising tout seul sur BLE_GAP_EVT_DISCONNECTED
-    // (on_disconnected -> ble_advertising_start). Comme la deconnexion demandee
-    // par stop() est ASYNCHRONE, cet evenement arrive APRES la sortie du mode
-    // configuration: la balise se remettait a emettre indefiniment
-    // (APP_ADV_DURATION = UNLIMITED). On coupe ce redemarrage implicite et on
-    // le refait EXPLICITEMENT dans notre gestionnaire, seulement si
-    // l'advertising est encore voulu.
+    // The SDK module restarts advertising all by itself on
+    // BLE_GAP_EVT_DISCONNECTED (on_disconnected -> ble_advertising_start).
+    // Because the disconnection requested by stop() is ASYNCHRONOUS, that event
+    // arrives AFTER we have left configuration mode: the beacon would start
+    // transmitting again indefinitely (APP_ADV_DURATION = UNLIMITED). We cut
+    // this implicit restart and redo it EXPLICITLY in our own handler, only if
+    // advertising is still wanted.
     init.config.ble_adv_on_disconnect_disabled = true;
     init.evt_handler = static_on_adv_evt;
 
@@ -325,13 +325,13 @@ void BleInterface::advertising_init()
 }
 
 #ifdef BENCH_TEST
-/// @brief Banc: l'advertising est-il voulu, et quel mode le module SDK croit-il actif ?
+/// @brief Bench: is advertising wanted, and which mode does the SDK module believe is active?
 bool BleInterface::bench_is_advertising()
 {
-    // Uniquement NOTRE intention. Ne pas y melanger adv_mode_current: ce champ
-    // reste fige sur FAST apres sd_ble_gap_adv_stop(), donc un ET/OU avec lui
-    // rend un verdict toujours positif — une jauge incapable de constater un
-    // arret, qui declarait le correctif en echec alors qu'il fonctionnait.
+    // OUR intention only. Do not mix adv_mode_current into it: that field stays
+    // stuck on FAST after sd_ble_gap_adv_stop(), so an AND/OR with it always
+    // yields a positive verdict — a gauge unable to observe a stop, one that
+    // declared the fix a failure while it was in fact working.
     return m_advertising_wanted;
 }
 
@@ -342,16 +342,16 @@ int BleInterface::bench_adv_mode()
 
 unsigned int BleInterface::bench_probe_advertising()
 {
-    // Seule mesure qui fasse foi: on demande au SoftDevice d'arreter.
-    // NRF_SUCCESS -> il advertissait reellement; NRF_ERROR_INVALID_STATE -> non.
+    // The only authoritative measurement: we ask the SoftDevice to stop.
+    // NRF_SUCCESS -> it really was advertising; NRF_ERROR_INVALID_STATE -> it was not.
     return (unsigned int)sd_ble_gap_adv_stop(m_advertising.adv_handle);
 }
 
-/// @brief Banc: rejoue la deconnexion BLE sans telephone.
-/// C'est CETTE sequence qui laissait la balise en advertising permanent: stop()
-/// demande la deconnexion, l'evenement arrive apres la sortie du mode config, et
-/// le module SDK relancait l'advertising. On la reproduit ici a l'identique en
-/// passant l'evenement au module SDK puis a notre propre gestionnaire.
+/// @brief Bench: replays the BLE disconnection without a phone.
+/// It is THIS sequence that left the beacon advertising permanently: stop()
+/// requests the disconnection, the event arrives after we have left config mode,
+/// and the SDK module restarted advertising. We reproduce it identically here by
+/// passing the event to the SDK module and then to our own handler.
 void BleInterface::bench_inject_disconnect()
 {
     ble_evt_t evt;
@@ -368,10 +368,10 @@ void BleInterface::advertising_start()
 {
     m_advertising_wanted = true;
     uint32_t err_code = ble_advertising_start(&m_advertising, BLE_ADV_MODE_FAST);
-    // Pas d'APP_ERROR_CHECK ici: il provoque un RESET COMPLET de la balise. Or
-    // l'erreur la plus probable est NRF_ERROR_INVALID_STATE (advertising deja
-    // actif), parfaitement benigne. Redemarrer un appareil scelle en mission
-    // pour ca serait pire que le probleme.
+    // No APP_ERROR_CHECK here: it causes a FULL RESET of the beacon. Yet the
+    // most likely error is NRF_ERROR_INVALID_STATE (advertising already
+    // active), which is perfectly benign. Rebooting a sealed device out on a
+    // mission for that would be worse than the problem.
     if (err_code != NRF_SUCCESS)
         DEBUG_ERROR("BleInterface::advertising_start: ble_advertising_start=0x%08lX", (unsigned long)err_code);
 }
@@ -380,9 +380,9 @@ void BleInterface::advertising_stop()
 {
     m_advertising_wanted = false;
     uint32_t err_code = sd_ble_gap_adv_stop(m_advertising.adv_handle);
-    // NRF_ERROR_INVALID_STATE = on n'advertissait pas: normal, on n'en dit rien.
-    // Le code retour etait auparavant totalement ignore, donc un echec reel
-    // passait inapercu alors qu'il laisse la radio allumee.
+    // NRF_ERROR_INVALID_STATE = we were not advertising: normal, we say nothing.
+    // The return code used to be completely ignored, so a real failure went
+    // unnoticed even though it leaves the radio powered on.
     if (err_code != NRF_SUCCESS && err_code != NRF_ERROR_INVALID_STATE)
         DEBUG_ERROR("BleInterface::advertising_stop: sd_ble_gap_adv_stop=0x%08lX", (unsigned long)err_code);
 }
@@ -422,9 +422,9 @@ void BleInterface::ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context
             	e.event_type = BLEServiceEventType::DISCONNECTED;
                 (void)m_on_event(e);
             }
-            // Reprise explicite (le SDK ne le fait plus, cf. advertising_init):
-            // en configuration, un telephone qui se deconnecte doit pouvoir se
-            // reconnecter; apres un stop(), la radio doit rester eteinte.
+            // Explicit restart (the SDK no longer does it, cf. advertising_init):
+            // in configuration mode, a phone that disconnects must be able to
+            // reconnect; after a stop(), the radio must stay off.
             if (m_advertising_wanted)
                 advertising_start();
             break;

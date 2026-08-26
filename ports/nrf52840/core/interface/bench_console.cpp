@@ -166,10 +166,10 @@ bool bench::handle_line(const std::string& raw) {
             reply(buf);
         }
     } else if (cmd == "%LB") {
-        // Coherence des deux seuils batterie. Le DEBUG_WARN correspondant part
-        // dans system.log (les logs console sont volontairement muets pendant un
-        // echange DTE), donc un test ne peut pas l'observer sur la console: on
-        // expose ici le verdict, emis par la meme branche que l'avertissement.
+        // Consistency of the two battery thresholds. The matching DEBUG_WARN goes
+        // to system.log (console logs are deliberately silent during a DTE
+        // exchange), so a test cannot observe it on the console: we expose the
+        // verdict here, emitted by the same branch as the warning.
         char buf[96];
         snprintf(buf, sizeof(buf), "%%LB coherent=%d lb=%u crit=%u",
                  configuration_store->check_battery_thresholds() ? 1 : 0,

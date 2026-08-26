@@ -160,7 +160,7 @@ void ArgosTxScheduler::schedule_periodic(unsigned int period_ms, bool jitter_en,
 	throw ErrorCode::RESOURCE_NOT_AVAILABLE;
 }
 
-/// @brief Epoch du prochain passage satellite — LECTURE SEULE.
+/// @brief Epoch of the next satellite pass — READ ONLY.
 std::time_t ArgosTxScheduler::next_pass_epoch(ArgosConfig& config, BasePassPredict& pass_predict,
                                               std::time_t now) {
 	if (!m_location.has_value() || pass_predict.num_records == 0)
@@ -275,17 +275,17 @@ unsigned int ArgosTxScheduler::schedule_prepass(ArgosConfig& config, BasePassPre
 			           static_cast<unsigned>(next_pass.satHexId),
 			           static_cast<unsigned>(next_pass.uplinkStatus));
 			m_curr_schedule_abs = schedule;
-			// 2026-08 — plus d'ecrasement de la modulation ici. Cette ligne
-			// forcait LDA2 sans condition, annulant le
-			// `adaptive ? LDA2 : resolve_non_adaptive_modulation()` que le
-			// service venait d'evaluer une poignee de lignes plus haut. Le
-			// correctif de modulation du 2026-05-25 avait bien traite le
-			// service pour PASS_PREDICTION — son propre commentaire l'affirme —
-			// mais personne n'avait vu que l'ordonnanceur ecrasait le resultat
-			// juste apres. Consequence: en mode prediction de passage, une
-			// configuration LDK + adaptatif desactive partait quand meme en
-			// LDA2, la trame etait dimensionnee pour la mauvaise modulation, et
-			// ensure_modulation reecrivait le RCONF maitre a chaque emission.
+			// 2026-08 — no more overwriting of the modulation here. This line
+			// forced LDA2 unconditionally, cancelling the
+			// `adaptive ? LDA2 : resolve_non_adaptive_modulation()` that the
+			// service had just evaluated a handful of lines above. The
+			// modulation fix of 2026-05-25 did correctly handle the
+			// service for PASS_PREDICTION — its own comment says so —
+			// but nobody had seen that the scheduler overwrote the result
+			// just afterwards. Consequence: in pass prediction mode, an
+			// LDK + adaptive-disabled configuration still went out in
+			// LDA2, the frame was sized for the wrong modulation, and
+			// ensure_modulation rewrote the master RCONF on every transmission.
 			return static_cast<unsigned int>(schedule - now_ms);
 		}
 

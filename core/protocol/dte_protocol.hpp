@@ -1263,13 +1263,13 @@ private:
 				if (try_lookup_key(key, param)) {
 					val.push_back(param);
 				} else {
-					// Une clef inconnue etait purement jetee ici, sans trace. En
-					// aval, une demande dont AUCUNE clef n'est reconnue arrivait
-					// donc avec une liste vide — indiscernable d'une demande vide,
-					// qui veut dire "rends-moi tout". La balise repondait sa
-					// configuration entiere a une faute de frappe, et une clef
-					// assez longue suffisait a forcer une reponse enorme. On les
-					// enregistre pour que l'appelant puisse faire la difference.
+					// An unknown key was simply thrown away here, with no trace.
+					// Downstream, a request in which NONE of the keys is recognised
+					// therefore arrived with an empty list — indistinguishable from
+					// an empty request, which means "give me everything". The beacon
+					// answered with its ENTIRE configuration to a typo, and a long
+					// enough key was enough to force a huge response. We record them
+					// so that the caller can tell the difference.
 					DEBUG_WARN("DTEDecoder: clef inconnue \"%s\" ignoree", key.c_str());
 					rejected_keys.push_back(key);
 				}
@@ -1359,13 +1359,13 @@ private:
 						}
 						case BaseEncoding::TEXT:
 						{
-							// Cette branche etait la seule du decodeur de parametres a
-							// ne PAS valider, alors qu'un validateur de chaine existe
-							// (il controle BASE_TEXT_MAX_LENGTH et la liste des valeurs
-							// permises). Mesure au banc le 2026-08-26: 128 caracteres
-							// passent et sont persistes, 129 tuent la balise — plus
-							// aucune reponse jusqu'au reset. Une seule trame DTE
-							// suffisait donc a la faire taire.
+							// This branch was the only one in the parameter decoder that
+							// did NOT validate, even though a string validator exists
+							// (it checks BASE_TEXT_MAX_LENGTH and the list of allowed
+							// values). Measured on the bench on 2026-08-26: 128 characters
+							// go through and are persisted, 129 kill the beacon — no
+							// answer at all until reset. A single DTE frame was therefore
+							// enough to silence it.
 							DTEEncoder::validate(param_ref, value);
 							key_value.value = value;
 							val.push_back(key_value);
@@ -1584,20 +1584,20 @@ public:
 		if (str_pos + size_of_length_field >= str.size())
 			return false;
 
-		// Le champ de longueur fait EXACTEMENT size_of_length_field caracteres
-		// hexadecimaux. sscanf seul ne le garantit pas, et les deux facons dont il
-		// echoue ont ete mesurees au banc le 2026-08-26:
-		//   "ZZZ" -> sscanf ne convertit rien, rend 0, et laisse `length` NON
-		//            INITIALISEE. La comparaison plus bas portait donc sur une
-		//            valeur indeterminee: 15 envois identiques ont produit deux
-		//            reponses differentes.
-		//   "00;" -> sscanf reussit en ne consommant que DEUX caracteres. L'avance
-		//            en aveugle de trois sautait alors le delimiteur, le controle
-		//            suivant echouait, et la fonction rendait false — c'est-a-dire
-		//            AUCUNE REPONSE. L'hote restait bloque en attente.
-		// On valide donc les trois caracteres avant de convertir, et on leve une
-		// erreur de format: le nom de commande est deja connu a ce stade, la
-		// reponse peut donc etre nommee et l'hote n'attend pas dans le vide.
+		// The length field is EXACTLY size_of_length_field hexadecimal
+		// characters. sscanf alone does not guarantee that, and the two ways it
+		// fails were measured on the bench on 2026-08-26:
+		//   "ZZZ" -> sscanf converts nothing, returns 0, and leaves `length`
+		//            UNINITIALISED. The comparison further down therefore ran
+		//            on an indeterminate value: 15 identical sends produced two
+		//            different responses.
+		//   "00;" -> sscanf succeeds while consuming only TWO characters. Blindly
+		//            advancing by three then skipped the delimiter, the next
+		//            check failed, and the function returned false — that is,
+		//            NO RESPONSE AT ALL. The host stayed blocked, waiting.
+		// We therefore validate the three characters before converting, and raise
+		// a format error: the command name is already known at this point, so the
+		// response can be named and the host is not left waiting for nothing.
 		size_t length = 0;
 		for (unsigned int k = 0; k < size_of_length_field; k++) {
 			if (!isxdigit(static_cast<unsigned char>(str[str_pos + k]))) {

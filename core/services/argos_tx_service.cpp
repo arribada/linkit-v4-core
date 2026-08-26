@@ -48,17 +48,17 @@ void ArgosTxService::service_init() {
 	m_kineis.subscribe(*this);
 	m_kineis.set_tcxo_warmup_time(argos_config.argos_tcxo_warmup_time);
 
-	// 2026-08 — amorcer la position de l'ordonnanceur avec le dernier fix
-	// PERSISTE, et non attendre le prochain.
+	// 2026-08 — seed the scheduler's location from the last PERSISTED fix,
+	// instead of waiting for the next one.
 	//
-	// `m_location` de ArgosTxScheduler est un optional remis a vide a chaque
-	// construction, et il n'etait alimente que par notify_peer_event, donc
-	// uniquement par un fix obtenu APRES le demarrage. Consequence: apres un
-	// reset, schedule_prepass sortait sur « no known GPS location, cannot
-	// predict passes — TX disabled until next GPS fix » et la balise restait
-	// muette en PASS_PREDICTION, alors que sa derniere position connue etait
-	// disponible en flash tout ce temps. Une position de la veille reste
-	// largement exploitable pour predire une visibilite satellite.
+	// ArgosTxScheduler's `m_location` is an optional reset to empty at every
+	// construction, and it was only fed by notify_peer_event, hence only by a
+	// fix obtained AFTER startup. Consequence: after a reset, schedule_prepass
+	// bailed out on "no known GPS location, cannot predict passes — TX
+	// disabled until next GPS fix" and the beacon stayed mute in
+	// PASS_PREDICTION, while its last known position had been available in
+	// flash the whole time. A position from the day before is still largely
+	// usable to predict satellite visibility.
 	{
 		const GPSLogEntry& last_gps = configuration_store->get_last_gps_entry();
 		if (last_gps.info.valid) {
@@ -91,8 +91,8 @@ void ArgosTxService::service_init() {
 		DEBUG_WARN("ArgosTxService: SURFACING_BURST mode requires UNDERWATER_EN=1 — burst will not trigger without SWS");
 	}
 
-	// Position-less: LEGACY et DUTY_CYCLE avec GNSS_EN=0 se rabattent sur un TX
-	// Doppler seul (aucune position sur l'air, sauf fix en cache via REUSE_LAST).
+	// Position-less: LEGACY and DUTY_CYCLE with GNSS_EN=0 fall back to a
+	// Doppler-only TX (no position on air, except a cached fix via REUSE_LAST).
 	if ((argos_config.mode == BaseArgosMode::LEGACY ||
 	     argos_config.mode == BaseArgosMode::DUTY_CYCLE) &&
 	    !argos_config.gnss_en) {
@@ -100,12 +100,12 @@ void ArgosTxService::service_init() {
 		           argos_config.mode == BaseArgosMode::LEGACY ? "LEGACY" : "DUTY_CYCLE");
 	}
 
-	// PASS_PREDICTION + GNSS_EN=0 est une combinaison INCOMPATIBLE, pas un mode
-	// degrade: la prevision de passage a besoin d'une position pour calculer, et
-	// service_next_schedule_in_ms() n'a aucune branche pour ce cas — il tombe sur
-	// un SCHEDULE_DISABLED qui etait muet. La balise restait donc silencieuse,
-	// sans la moindre trace. On le signale fort ici; le blocage se fait en amont,
-	// cote interface de configuration.
+	// PASS_PREDICTION + GNSS_EN=0 is an INCOMPATIBLE combination, not a
+	// degraded mode: pass prediction needs a position to compute, and
+	// service_next_schedule_in_ms() has NO branch for that case — it falls
+	// through to a SCHEDULE_DISABLED that was silent. The beacon therefore
+	// stayed mute, without the slightest trace. We flag it loudly here; the
+	// blocking is done upstream, on the configuration interface side.
 	if (argos_config.mode == BaseArgosMode::PASS_PREDICTION && !argos_config.gnss_en) {
 		DEBUG_ERROR("ArgosTxService: CONFIGURATION INCOMPATIBLE — PASS_PREDICTION exige GNSS_EN=1 "
 		            "(la prevision de passage se calcule a partir d'une position). AUCUNE emission "
@@ -231,14 +231,14 @@ unsigned int ArgosTxService::service_next_schedule_in_ms() {
 		}
 	}
 
-	// --- Gating prepass orthogonal au mode (2026-08) -------------------------
-	// Pour tout mode AUTRE que PASS_PREDICTION (qui gere son alignement lui-meme),
-	// on pose un plancher "pas avant la prochaine fenetre satellite" via le meme
-	// mecanisme que le dry-time SWS. Emettre hors fenetre, c'est depenser la
-	// batterie pour une trame qu'aucun satellite n'entend.
-	// Tout echec (AOP absents/perimes, aucun passage calculable, fenetre au-dela
-	// de SAT_PREPASS_MAX_WAIT_S) laisse le mode emettre en PERIODIQUE: on ne
-	// rend jamais la balise muette.
+	// --- Prepass gating, orthogonal to the mode (2026-08) --------------------
+	// For any mode OTHER than PASS_PREDICTION (which handles its own alignment),
+	// we set a "not before the next satellite window" floor through the same
+	// mechanism as the SWS dry-time. Transmitting outside a window means
+	// spending battery on a frame that no satellite hears.
+	// Any failure (AOP missing/expired, no computable pass, window beyond
+	// SAT_PREPASS_MAX_WAIT_S) still lets the mode transmit PERIODICALLY: we
+	// never leave the beacon mute.
 	if (argos_config.prepass_en && argos_config.mode != BaseArgosMode::PASS_PREDICTION &&
 	    argos_config.mode != BaseArgosMode::OFF) {
 		unsigned int age_s = 0;
@@ -517,13 +517,13 @@ unsigned int ArgosTxService::service_next_schedule_in_ms() {
 					m_scheduled_mode = argos_config.adaptive_modulation ? KineisModulation::VLDA4 : resolve_non_adaptive_modulation();
 					return m_sched.schedule_legacy(argos_config, now);
 				}
-				// Seuls DUTY_CYCLE et LEGACY savent se passer du GNSS. Tout autre
-				// mode arrivant ici — PASS_PREDICTION en pratique — n'a aucune
-				// branche d'ordonnancement et sort desactive. C'etait un `return`
-				// nu: aucune trace, balise muette, et rien pour le diagnostiquer
-				// sur le terrain. L'incompatibilite est signalee au demarrage dans
-				// service_init(); on la redit ici pour que le log dise POURQUOI
-				// plus aucune emission n'est planifiee.
+				// Only DUTY_CYCLE and LEGACY know how to do without the GNSS. Any
+				// other mode landing here — PASS_PREDICTION in practice — has NO
+				// scheduling branch and exits disabled. It used to be a bare
+				// `return`: no trace, mute beacon, and nothing to diagnose it with
+				// in the field. The incompatibility is reported at startup in
+				// service_init(); we say it again here so the log states WHY
+				// no transmission is scheduled any more.
 				DEBUG_ERROR("ArgosTxService: mode %d avec GNSS_EN=0 — aucun ordonnancement possible, "
 				            "TX desactive (configuration incompatible)",
 				            static_cast<int>(argos_config.mode));
@@ -534,35 +534,35 @@ unsigned int ArgosTxService::service_next_schedule_in_ms() {
 				DEBUG_INFO("ArgosTxService: RTC time not known yet — TX disabled until first time fix");
 				return Service::SCHEDULE_DISABLED;
 			}
-			// 2026-08 — LE VERROU DU PREMIER MESSAGE A ETE SUPPRIME.
+			// 2026-08 — THE FIRST-MESSAGE LOCK HAS BEEN REMOVED.
 			//
-			// Il tenait TOUTE emission, heartbeat de presence compris, tant
-			// qu'aucun fix GPS valide n'etait tombe depuis la mise sous tension.
-			// Une balise qui redemarrait sans jamais retrouver de fix — recepteur
-			// en panne, ciel bouche — disparaissait donc definitivement des
-			// ecrans: ni position, ni signe de vie. C'est precisement ce qui
-			// serait arrive au tag terrain du 2026-08-22 si un WDT ou une OTA
-			// etait survenu pendant les trois jours de panne GNSS.
+			// It held back EVERY transmission, presence heartbeat included, as
+			// long as no valid GPS fix had landed since power-on. A beacon that
+			// restarted without ever getting a fix back — broken receiver,
+			// blocked sky — therefore vanished for good from the screens:
+			// neither position nor sign of life. That is precisely what would
+			// have happened to the field tag of 2026-08-22 if a WDT or an OTA
+			// had occurred during the three days of GNSS outage.
 			//
-			// Le motif d'origine (parite v3: « heure connue » impliquait « le GNSS
-			// a pose l'heure ») ne tient pas: en Doppler, LEGACY ou DUTY_CYCLE la
-			// balise emet a sa periode et c'est le segment sol qui reconstruit la
-			// position a partir des instants de reception — son horloge n'entre
-			// pas dans le calcul. Seule la prediction de passage a besoin d'une
-			// heure et d'une position justes, et elle a sa propre garde dans
+			// The original rationale (v3 parity: "time known" implied "the GNSS
+			// set the time") does not hold: in Doppler, LEGACY or DUTY_CYCLE the
+			// beacon transmits at its period and it is the ground segment that
+			// rebuilds the position from the reception instants — its clock does
+			// not enter the computation. Only pass prediction needs a correct
+			// time and position, and it has its own guard in
 			// ArgosTxScheduler::schedule_prepass.
 			//
-			// RSPB etait deja exempte de ce verrou, exactement pour cette raison.
+			// RSPB was already exempt from this lock, for exactly that reason.
 			//
-			// Ce qui reste conditionne, en revanche, c'est la salve de synchro
-			// temporelle: elle TRANSPORTE l'heure, donc l'emettre sur une horloge
-			// que le GNSS n'a pas corrigee reviendrait a diffuser une date fausse.
+			// What does stay conditional, on the other hand, is the time-sync
+			// burst: it CARRIES the time, so transmitting it on a clock the GNSS
+			// has not corrected would amount to broadcasting a wrong date.
 			if (m_is_first_tx && argos_config.time_sync_burst_en &&
 			    m_gps_fix_corrected_clock) {
-				// Modulation provisionnelle, comme LEGACY/DUTY_CYCLE plus bas :
-				// adaptive -> LDA2 (process_time_sync_burst rebascule en LDK selon
-				// la taille), non-adaptive -> RCONF maître. Avant 2026-06-25 c'était
-				// LDA2 forcé inconditionnellement (cf. point utilisateur).
+				// Provisional modulation, like LEGACY/DUTY_CYCLE further down:
+				// adaptive -> LDA2 (process_time_sync_burst switches back to LDK
+				// depending on size), non-adaptive -> master RCONF. Before 2026-06-25
+				// it was LDA2 forced unconditionally (cf. user point).
 				m_scheduled_mode = argos_config.adaptive_modulation
 					? KineisModulation::LDA2
 					: resolve_non_adaptive_modulation();
@@ -621,11 +621,11 @@ unsigned int ArgosTxService::service_next_schedule_in_ms() {
 				} else {
 					m_scheduled_task = [this]() { process_gnss_burst(); };
 				}
-				// AOP inexploitables (absents ou perimes) -> repli PERIODIQUE.
-				// Auparavant on rendait SCHEDULE_DISABLED: la balise restait
-				// muette jusqu'a la prochaine entree GPS, sans que rien ne le
-				// signale. Rester silencieux est le pire des deux maux; mieux
-				// vaut emettre a l'aveugle que pas du tout.
+				// AOP unusable (missing or expired) -> fall back to PERIODIC.
+				// We used to return SCHEDULE_DISABLED: the beacon stayed mute
+				// until the next GPS entry, with nothing to signal it. Staying
+				// silent is the worse of the two evils; better to transmit
+				// blind than not at all.
 				unsigned int age_s = 0;
 				AopEtat etat = aop_etat(argos_config, now, age_s);
 				if (etat != AopEtat::UTILISABLE) {
@@ -635,17 +635,17 @@ unsigned int ArgosTxService::service_next_schedule_in_ms() {
 					return m_sched.schedule_legacy(argos_config, now);
 				}
 				BasePassPredict& pass_predict = configuration_store->read_pass_predict();
-				// m_scheduled_mode est resolu juste au-dessus et n'est plus
-				// touche par l'ordonnanceur.
+				// m_scheduled_mode is resolved just above and is no longer
+				// touched by the scheduler.
 				unsigned int schedule = m_sched.schedule_prepass(argos_config, pass_predict, now);
 				if (schedule == ArgosTxScheduler::INVALID_SCHEDULE) {
 					DEBUG_WARN("ArgosTxService: aucun passage calculable — repli periodique");
 					refresh_prepass_status(argos_config, now, 0);
 					return m_sched.schedule_legacy(argos_config, now);
 				}
-				// Garde-fou: une fenetre trop lointaine ne doit pas bloquer les
-				// emissions pendant des heures. Au-dela de SAT_PREPASS_MAX_WAIT_S
-				// on emet en periodique (0 = pas de garde-fou).
+				// Safeguard: a window too far away must not block transmissions
+				// for hours. Beyond SAT_PREPASS_MAX_WAIT_S we transmit in
+				// periodic mode (0 = no safeguard).
 				static constexpr unsigned int MS_PER_S = 1000;
 				if (argos_config.prepass_max_wait_s &&
 				    schedule > argos_config.prepass_max_wait_s * MS_PER_S) {
@@ -1080,9 +1080,9 @@ void ArgosTxService::notify_peer_event(ServiceEvent& e) {
 				// failures on the 3rd TX
 				m_kineis.set_idle_timeout((argos_config.surfacing_burst_max_s + 10) * 1000);
 				m_scheduled_task = [this]() { process_doppler_burst(); };
-				// Hors mode adaptatif la modulation vient du RCONF maitre, comme
-				// sur le chemin d'ordonnancement du meme mode plus haut. Un LDA2
-				// code en dur ici annulait le reglage de l'operateur.
+				// Outside adaptive mode the modulation comes from the master RCONF, as
+				// on the scheduling path of the same mode further up. An LDA2 hardcoded
+				// here cancelled the operator's setting.
 				m_scheduled_mode = argos_config.adaptive_modulation
 					? KineisModulation::VLDA4
 					: resolve_non_adaptive_modulation();
@@ -1103,7 +1103,7 @@ void ArgosTxService::notify_peer_event(ServiceEvent& e) {
 	// "raw arrives during in-flight TX" is NOT handled here (no pending
 	// flag — Argos keeps it simple per user request); on that path the
 	// CloudLocate just fires at the next normal timer tick, with a small
-	// timing penalty vs the LoRa "dans la foulée" guarantee.
+	// timing penalty vs the LoRa "immediately after" guarantee.
 	if (e.event_source == ServiceIdentifier::GNSS_SENSOR &&
 	    e.event_type == ServiceEventType::GNSS_CLOUDLOCATE_READY) {
 		if (m_is_surfacing_burst && !m_has_gnss_fix_since_surfacing && !m_is_tx_pending) {
@@ -1238,14 +1238,14 @@ void ArgosTxService::process_time_sync_burst() {
 		KineisPacket packet = ArgosPacketBuilder::build_gnss_packet(v, argos_config.is_out_of_zone, argos_config.is_lb,
 				argos_config.delta_time_loc,
 				size_bits);
-		// Modulation : même politique adaptative + taille-de-payload que
-		// process_gnss_burst (2026-06-25). Avant, LDA2 était forcé
-		// inconditionnellement, ce qui sur-provisionnait le paquet time-sync
-		// (toujours un seul fix latest = 96 bits) et ignorait le RCONF maître en
-		// non-adaptatif. Le fix gnss_burst (adaptive sélection + garde
-		// size_fits_modulation + fallback non-adaptatif, cf. process_gnss_burst)
-		// évite de remettre à KIM2 une trame de mauvaise longueur (+ERROR=5) ou un
-		// drop oversize silencieux. Device-agnostique (sûr aussi côté SMD).
+		// Modulation: same adaptive + payload-size policy as process_gnss_burst
+		// (2026-06-25). Before, LDA2 was forced unconditionally, which
+		// over-provisioned the time-sync packet (always a single latest fix =
+		// 96 bits) and ignored the master RCONF in non-adaptive. The gnss_burst
+		// fix (adaptive selection + size_fits_modulation guard + non-adaptive
+		// fallback, cf. process_gnss_burst) avoids handing KIM2 a frame of the
+		// wrong length (+ERROR=5) or a silent oversize drop. Device-agnostic
+		// (safe on the SMD side too).
 		if (argos_config.adaptive_modulation) {
 			m_scheduled_mode = (size_bits <= 128) ? KineisModulation::LDK : KineisModulation::LDA2;
 			if (!ensure_modulation(m_scheduled_mode)) {
@@ -1259,10 +1259,10 @@ void ArgosTxService::process_time_sync_burst() {
 				}
 			}
 		} else {
-			// Non-adaptatif : on garde la modulation du RCONF maître (fixée au
-			// scheduling via resolve_non_adaptive_modulation()). Si elle ne tient
-			// pas le paquet (ex. maître VLDA4 = 24 b), repli sur LDA2 si provisionné,
-			// sinon skip propre plutôt qu'un drop oversize silencieux de KIM2.
+			// Non-adaptive: keep the master RCONF modulation (fixed at scheduling
+			// via resolve_non_adaptive_modulation()). If it does not hold the packet
+			// (e.g. VLDA4 master = 24 b), fall back to LDA2 if provisioned, else a
+			// clean skip rather than a silent KIM2 oversize drop.
 			if (!size_fits_modulation(size_bits, m_scheduled_mode)) {
 				if (size_fits_modulation(size_bits, KineisModulation::LDA2) &&
 				    ensure_modulation(KineisModulation::LDA2)) {
@@ -1379,9 +1379,9 @@ void ArgosTxService::process_sensor_burst() {
 					}
 				}
 			} else {
-				// Non-adaptatif: 192 bits, seul LDA2 les porte. C'est la remontee
-				// de securite legitime — mais elle n'etait jamais APPLIQUEE ici,
-				// et on partait en LDA2 sur un module reste sur le RCONF maitre.
+				// Non-adaptive: 192 bits, only LDA2 carries them. That is the
+				// legitimate safety escalation — but it was never APPLIED here,
+				// and we left in LDA2 on a module still on the master RCONF.
 				if (!ensure_modulation(KineisModulation::LDA2)) {
 					DEBUG_ERROR("ArgosTxService::process_sensor_burst: fastloc %u bits need LDA2, not provisioned — skipping TX",
 					            size_bits);
@@ -1472,11 +1472,11 @@ void ArgosTxService::process_sensor_burst() {
 				}
 			}
 		} else {
-			// Ce processeur etait le seul du fichier sans branche non-adaptative:
-			// le LDA2 pose plus haut partait tel quel, sans qu'aucun
-			// ensure_modulation ne programme le module. Meme politique que
-			// process_time_sync_burst et process_gnss_burst — le RCONF maitre fait
-			// foi, et on ne remonte vers LDA2 que si le paquet ne tient pas dedans.
+			// This processor was the only one in the file without a non-adaptive
+			// branch: the LDA2 set further up shipped as-is, without any
+			// ensure_modulation programming the module. Same policy as
+			// process_time_sync_burst and process_gnss_burst — the master RCONF
+			// prevails, and we escalate to LDA2 only if the packet does not fit it.
 			m_scheduled_mode = resolve_non_adaptive_modulation();
 			if (!size_fits_modulation(size_bits, m_scheduled_mode)) {
 				if (size_fits_modulation(size_bits, KineisModulation::LDA2) &&
@@ -1592,13 +1592,13 @@ void ArgosTxService::process_gnss_burst() {
 			return;
 		}
 
-		// Une entree fastloc produit une trame LDA2 pleine (FASTLOC_PACKET_BITS
-		// vaut LDA2_FRAME_BITS = 192 bits). En adaptatif on vise donc LDA2
-		// d'emblee. En NON-adaptatif on ne touche pas a la modulation resolue a
-		// l'ordonnancement: c'est le RCONF maitre qui fait foi, et la garde de
-		// taille du bloc `else` plus bas fait la remontee vers LDA2 en appelant
-		// ensure_modulation() — donc en programmant reellement le module, ce que
-		// l'ecrasement direct ne faisait pas.
+		// A fastloc entry produces a full LDA2 frame (FASTLOC_PACKET_BITS equals
+		// LDA2_FRAME_BITS = 192 bits). In adaptive we therefore aim for LDA2
+		// straight away. In NON-adaptive we do not touch the modulation resolved
+		// at scheduling: the master RCONF prevails, and the size guard of the
+		// `else` block further down performs the escalation to LDA2 by calling
+		// ensure_modulation() — hence by actually programming the module, which
+		// the direct overwrite did not do.
 		if (v.back()->info.event_type == GPSEventType::FASTLOC) {
 			packet = ArgosPacketBuilder::build_fastloc_packet(v.back(), argos_config.is_lb);
 			size_bits = ArgosPacketBuilder::FASTLOC_PACKET_BITS;
@@ -1625,11 +1625,11 @@ void ArgosTxService::process_gnss_burst() {
 					size_bits);
 		}
 
-		// Adaptive modulation: un paquet SHORT (96 bits) tient dans LDK, un LONG
-		// (192) demande LDA2. Attention: le paquet FASTLOC fait 192 bits lui aussi
-		// (FASTLOC_PACKET_BITS = LDA2_FRAME_BITS), contrairement a ce que disait ce
-		// commentaire — c'est pourquoi la garde de taille ci-dessous ne le rattrapait
-		// pas quand la modulation etait ecrasee en LDA2 juste avant.
+		// Adaptive modulation: a SHORT packet (96 bits) fits in LDK, a LONG
+		// (192) requires LDA2. Careful: the FASTLOC packet is 192 bits too
+		// (FASTLOC_PACKET_BITS = LDA2_FRAME_BITS), contrary to what this
+		// comment used to say — which is why the size guard below did not catch
+		// it when the modulation was overwritten to LDA2 just before.
 		if (argos_config.adaptive_modulation) {
 			m_scheduled_mode = (size_bits <= 128) ? KineisModulation::LDK : KineisModulation::LDA2;
 			if (!ensure_modulation(m_scheduled_mode)) {
@@ -2000,10 +2000,10 @@ void ArgosTxService::process_doppler_burst() {
 				}
 			}
 		} else {
-			// Non-adaptatif: meme remontee de securite que les trois branches
-			// soeurs de ce processeur (prewarm, CloudLocate, position en cache),
-			// qui elles l'appliquent bien. Sans cela le ping de surface partait en
-			// LDA2 sur un module reste sur le maitre.
+			// Non-adaptive: same safety escalation as the three sibling branches
+			// of this processor (prewarm, CloudLocate, cached position), which do
+			// apply it. Without it the surface ping left in LDA2 on a module still
+			// on the master.
 			if (!ensure_modulation(KineisModulation::LDA2)) {
 				DEBUG_ERROR("ArgosTxService::process_doppler_burst: fastloc %u bits need LDA2, not provisioned — skipping TX",
 				            size_bits);
@@ -2434,12 +2434,12 @@ unsigned int ArgosTxService::apply_spacing_guard(unsigned int proposed_delay_ms,
 	return deferred_ms;
 }
 
-/// @brief Le gating prepass est-il actif ? Independant du mode Argos.
+/// @brief Is prepass gating active? Independent of the Argos mode.
 bool ArgosTxService::prepass_gating_active(const ArgosConfig& config) {
-	// Deux dimensions independantes: le mode dit QUOI/QUAND emettre, le prepass
-	// dit SI un satellite ecoute. PASS_PREDICTION est conserve tel quel et vaut
-	// "LEGACY + prepass" — les balises deja configurees ainsi gardent leur
-	// comportement sans aucune migration.
+	// Two independent dimensions: the mode says WHAT/WHEN to transmit, the
+	// prepass says IF a satellite is listening. PASS_PREDICTION is kept as is
+	// and means "LEGACY + prepass" — beacons already configured that way keep
+	// their behaviour with no migration at all.
 	return config.prepass_en || config.mode == BaseArgosMode::PASS_PREDICTION;
 }
 
@@ -2459,20 +2459,20 @@ bool ArgosTxService::aop_is_usable(const ArgosConfig& config, std::time_t now,
 	return aop_etat(config, now, age_s) == AopEtat::UTILISABLE;
 }
 
-/// @brief Les AOP sont-ils exploitables (presents, dates, non perimes) ?
+/// @brief Are the AOP usable (present, dated, not expired)?
 ArgosTxService::AopEtat ArgosTxService::aop_etat(const ArgosConfig& config, std::time_t now,
                                                  unsigned int& age_s) {
 	age_s = 0;
 	BasePassPredict& pp = configuration_store->read_pass_predict();
 	if (pp.num_records == 0)
 		return AopEtat::AUCUN_ENREGISTREMENT;
-	// last_aop_update = ARGOS_AOP_DATE, pose a la reception d'un PASPW.
-	// Sa valeur d'usine est ancienne (oct. 2021): une balise jamais provisionnee
-	// est donc consideree perimee des l'activation de la limite d'age, et
-	// retombe en periodique — c'est le comportement sur, pas un accident.
-	// Sans heure fiable, aucune fenetre n'est calculable — et surtout l'age des
-	// AOP n'a aucun sens. Cause distincte car le remede l'est aussi: regler la
-	// RTC ($RTCW ou un fix GNSS), pas re-televerser des AOP.
+	// last_aop_update = ARGOS_AOP_DATE, set when a PASPW is received.
+	// Its factory value is old (Oct. 2021): a beacon that was never provisioned
+	// is therefore considered expired as soon as the age limit is enabled, and
+	// falls back to periodic — that is the safe behaviour, not an accident.
+	// Without a reliable time no window can be computed — and above all the AOP
+	// age is meaningless. A distinct cause because the remedy is one too: set
+	// the RTC ($RTCW or a GNSS fix), not re-upload the AOP.
 	if (!service_is_time_known())
 		return AopEtat::RTC_NON_REGLEE;
 	if (config.last_aop_update <= 0 || now <= config.last_aop_update)
@@ -2480,13 +2480,13 @@ ArgosTxService::AopEtat ArgosTxService::aop_etat(const ArgosConfig& config, std:
 	std::time_t age = now - config.last_aop_update;
 	age_s = static_cast<unsigned int>(age);
 	if (config.aop_max_age_days == 0)
-		return AopEtat::UTILISABLE;   // 0 = pas de peremption
+		return AopEtat::UTILISABLE;   // 0 = no expiry
 	static constexpr std::time_t SECS_PER_DAY = 24 * 60 * 60;
 	return (age < static_cast<std::time_t>(config.aop_max_age_days) * SECS_PER_DAY)
 	       ? AopEtat::UTILISABLE : AopEtat::PERIME;
 }
 
-/// @brief Met a jour les statuts lisibles par STATR (PPT01..PPT04).
+/// @brief Update the statuses readable through STATR (PPT01..PPT04).
 void ArgosTxService::refresh_prepass_status(const ArgosConfig& config, std::time_t now,
                                             std::time_t next_pass_epoch) {
 	unsigned int age_s = 0;
@@ -2498,7 +2498,7 @@ void ArgosTxService::refresh_prepass_status(const ArgosConfig& config, std::time
 			configuration_store->write_param(ParamID::SAT_NEXT_PASS_TS,
 			                                 static_cast<unsigned int>(next_pass_epoch));
 	} catch (...) {
-		// Un statut est de l'information, jamais une raison d'empecher un TX.
+		// A status is information, never a reason to prevent a TX.
 		DEBUG_WARN("ArgosTxService::refresh_prepass_status: ecriture impossible");
 	}
 }

@@ -858,11 +858,11 @@ void Service::reschedule(bool immediate) {
 void Service::deschedule() {
 	system_scheduler->cancel_task(m_task_timeout);
 	system_scheduler->cancel_task(m_task_period);
-	// L'annulation est une DECISION observable au banc. Sans cette ligne, une
-	// plongee qui annule un service simplement "scheduled" (et non "initiated")
-	// ne provoque aucun passage par reschedule(): la valeur du banc restait
-	// figee sur "scheduled" et un test de gating SWS concluait a tort que la
-	// balise emettait toujours sous l'eau.
+	// Cancellation is a DECISION that is observable on the bench. Without this
+	// line, a dive that cancels a service which is merely "scheduled" (and not
+	// "initiated") triggers no pass through reschedule(): the bench value stayed
+	// frozen on "scheduled" and an SWS gating test wrongly concluded that the
+	// beacon was still transmitting underwater.
 	BENCH_SCHED_NOTE(SCHEDULE_DISABLED, "descheduled");
 	m_last_schedule = Service::SCHEDULE_DISABLED;
 }

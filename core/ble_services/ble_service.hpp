@@ -44,21 +44,21 @@ public:
 	virtual std::string read_line() = 0;
 	virtual void set_device_name(const std::string&) = 0;
 #ifdef BENCH_TEST
-	/// @brief Banc uniquement: l'advertising est-il encore voulu/actif ?
-	/// Permet de VERIFIER sur la carte qu'apres une sortie du mode configuration
-	/// la radio reste bien eteinte, au lieu de le deduire du code.
+	/// @brief Bench only: is advertising still wanted/active?
+	/// Lets you VERIFY on the board that after leaving configuration mode
+	/// the radio really does stay off, instead of inferring it from the code.
 	virtual bool bench_is_advertising() { return false; }
-	/// @brief Banc: mode advertising vu par le module SDK (0 = IDLE).
-	/// ATTENTION: sd_ble_gap_adv_stop() NE remet PAS ce champ a IDLE — il reste
-	/// fige sur FAST apres un arret. Il ne prouve donc rien a lui seul.
+	/// @brief Bench: advertising mode as seen by the SDK module (0 = IDLE).
+	/// WARNING: sd_ble_gap_adv_stop() does NOT reset this field to IDLE — it stays
+	/// stuck on FAST after a stop. So on its own it proves nothing.
 	virtual int bench_adv_mode() { return -1; }
-	/// @brief Banc: sonde AUTORITATIVE aupres du SoftDevice.
-	/// Renvoie le code retour de sd_ble_gap_adv_stop(): 0 = on advertissait
-	/// VRAIMENT (et on vient de l'arreter), NRF_ERROR_INVALID_STATE (8) = on
-	/// n'advertissait pas. Effet de bord assume: coupe l'advertising.
+	/// @brief Bench: AUTHORITATIVE probe of the SoftDevice.
+	/// Returns the return code of sd_ble_gap_adv_stop(): 0 = we were REALLY
+	/// advertising (and we have just stopped it), NRF_ERROR_INVALID_STATE (8) =
+	/// we were not advertising. Accepted side effect: it stops advertising.
 	virtual unsigned int bench_probe_advertising() { return 0xFFFFFFFF; }
-	/// @brief Banc uniquement: injecte un evenement de deconnexion BLE synthetique
-	/// pour rejouer, sans telephone, la sequence qui laissait l'advertising rallume.
+	/// @brief Bench only: injects a synthetic BLE disconnection event
+	/// to replay, with no phone, the sequence that left advertising switched back on.
 	virtual void bench_inject_disconnect() {}
 #endif
 };

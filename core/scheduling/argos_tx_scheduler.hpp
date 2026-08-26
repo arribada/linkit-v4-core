@@ -60,23 +60,23 @@ public:
 	/// @param now            Current RTC time.
 	/// @return Delay in ms until next TX, or INVALID_SCHEDULE.
 	///
-	/// 2026-08 — le parametre de sortie `scheduled_mode` a ete SUPPRIME. Il
-	/// n'etait jamais relu par l'ordonnanceur, seulement ecrit, et il ecrasait
-	/// sans condition la modulation que le service venait de resoudre a partir
-	/// de la configuration utilisateur. Choisir la modulation est une decision
-	/// de politique: elle appartient au service, comme pour LEGACY, DUTY_CYCLE
-	/// et SURFACING_BURST.
+	/// 2026-08 — the `scheduled_mode` output parameter was REMOVED. It was
+	/// never read back by the scheduler, only written, and it unconditionally
+	/// overwrote the modulation that the service had just resolved from the
+	/// user configuration. Choosing the modulation is a policy decision: it
+	/// belongs to the service, just as it does for LEGACY, DUTY_CYCLE and
+	/// SURFACING_BURST.
 	unsigned int schedule_prepass(ArgosConfig& config, BasePassPredict& pass_predict,
 	                              std::time_t now);
 
 	/// @brief Set earliest allowed TX time (e.g., after SWS dry_time_before_tx).
 	void set_earliest_schedule(std::time_t t);
 
-	/// @brief Epoch du prochain passage satellite, SANS effet de bord.
-	/// @return epoch du prochain AOS, ou 0 si aucun passage calculable.
-	/// schedule_prepass() ecrit m_curr_schedule_abs et ne peut donc pas etre
-	/// appelee speculativement pour un mode non-prepass: elle corromprait
-	/// l'ordonnancement periodique. Cette variante ne touche AUCUN membre.
+	/// @brief Epoch of the next satellite pass, WITHOUT any side effect.
+	/// @return epoch of the next AOS, or 0 if no pass can be computed.
+	/// schedule_prepass() writes m_curr_schedule_abs and therefore cannot be
+	/// called speculatively for a non-prepass mode: it would corrupt the
+	/// periodic scheduling. This variant touches NO member.
 	std::time_t next_pass_epoch(ArgosConfig& config, BasePassPredict& pass_predict,
 	                            std::time_t now);
 

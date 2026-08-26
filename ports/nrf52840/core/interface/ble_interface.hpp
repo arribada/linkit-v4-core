@@ -76,10 +76,10 @@ private:
     volatile bool m_is_first_ota_packet;
     std::function<int(BLEServiceEvent& event)> m_on_event;
     unsigned int m_ota_file_id;
-    /// @brief L'advertising est-il VOULU ? Deux chemins le relancent tout seuls
-    /// (le module SDK sur deconnexion, et notre propre BLE_ADV_EVT_IDLE); sans
-    /// cet indicateur ils le rallument apres un stop() et la balise reste
-    /// decouvrable en permanence. Pose par advertising_start(), efface par
+    /// @brief Is advertising WANTED? Two paths restart it all on their own
+    /// (the SDK module on disconnect, and our own BLE_ADV_EVT_IDLE); without
+    /// this flag they turn it back on after a stop() and the beacon stays
+    /// discoverable permanently. Set by advertising_start(), cleared by
     /// advertising_stop().
     bool m_advertising_wanted = false;
 };

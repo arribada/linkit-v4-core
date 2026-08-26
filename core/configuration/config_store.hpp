@@ -22,11 +22,11 @@
 #include "hauled_mode_service.hpp"
 
 #if VALIDATION_LOG_ENABLE
-// Les traces [VAL-*] de ce header horodatent avec la RTC globale. Sans cette
-// declaration, une compilation avec -DVALIDATION_LOG_ENABLE=1 echoue sur
-// "'rtc' was not declared in this scope" — et comme les scripts de build ne
-// verifiaient pas le code de retour de make, l'echec produisait quand meme des
-// commandes de flash pointant sur un binaire perime.
+// The [VAL-*] traces in this header timestamp using the global RTC. Without
+// this declaration, a build with -DVALIDATION_LOG_ENABLE=1 fails on
+// "'rtc' was not declared in this scope" — and since the build scripts did not
+// check make's return code, the failure still produced flash commands pointing
+// at a stale binary.
 #include "rtc.hpp"
 extern RTC *rtc;
 #endif
@@ -103,9 +103,9 @@ struct ArgosConfig {
 	BaseGnssStrategy gnss_strategy;
 	unsigned int argos_rx_aop_update_period;
 	std::time_t last_aop_update;
-	bool prepass_en;                   // gating prepass, independant du mode
-	unsigned int aop_max_age_days;     // au-dela: AOP perime -> repli periodique
-	unsigned int prepass_max_wait_s;   // attente max sans fenetre (0 = illimite)
+	bool prepass_en;                   // prepass gating, independent of the mode
+	unsigned int aop_max_age_days;     // beyond this: AOP stale -> periodic fallback
+	unsigned int prepass_max_wait_s;   // max wait without a window (0 = unlimited)
 	bool        cert_tx_enable;
 	std::string cert_tx_payload;
 	BaseArgosModulation cert_tx_modulation;
@@ -145,16 +145,16 @@ protected:
 	// recovery path instead: keep ARGOS_DECID/ARGOS_HEXID, reset the rest,
 	// reprovision after upgrade.
 	// 0x20 (2026-07): +ARGOS_BLIND_EN/RETX_NB/RETX_PERIOD_S (slots 243-245, blind MAC profile).
-	// 0x20 CONSERVE en 2026-08 malgre l'ajout des slots 246-252 (prepass
-	// orthogonal + statuts). Un bump n'est PAS necessaire ici et serait nuisible:
-	// il ne conserve que ARGOS_DECID/ARGOS_HEXID et remet TOUT le reste aux
-	// valeurs d'usine, ce qui obligerait a reprovisionner chaque balise deployee.
-	// L'ajout se fait EN FIN de table, donc aucun slot existant ne bouge; a la
-	// relecture d'un ancien fichier, les entrees 246+ tombent sur une fin de
-	// fichier, deserialize_config_entry() rend false, la boucle applique la
-	// valeur par defaut et CONTINUE (elle ne s'arrete pas), puis reserialise.
-	// Le bump reste obligatoire si l'on RETIRE ou DEPLACE un slot existant:
-	// c'est ce qui avait decale tous les suivants avec ARP36/37 en 2026-06.
+	// 0x20 KEPT in 2026-08 despite the addition of slots 246-252 (orthogonal
+	// prepass + statuses). A bump is NOT needed here and would be harmful:
+	// it only keeps ARGOS_DECID/ARGOS_HEXID and resets EVERYTHING else to
+	// factory values, which would force reprovisioning every deployed beacon.
+	// The addition is made AT THE END of the table, so no existing slot moves;
+	// when re-reading an old file, entries 246+ land on an end of file,
+	// deserialize_config_entry() returns false, the loop applies the default
+	// value and CONTINUES (it does not stop), then reserializes.
+	// The bump stays mandatory if an existing slot is REMOVED or MOVED:
+	// that is what shifted all the following ones with ARP36/37 in 2026-06.
 	static inline const unsigned int m_config_version_code = 0x1c07e800 | 0x20;
 	static inline const unsigned int m_config_version_code_aop = 0x1c07e800 | 0x03;
 	static inline const std::array<BaseType,MAX_CONFIG_ITEMS> default_params { {
@@ -402,16 +402,16 @@ protected:
 		/* [236] HAULED_TR_NOM */ 7200U,               // 2 h interval when hauled
 		/* [237] HAULED_GNSS_EN */ (bool)false,        // GNSS off when hauled by default
 		/* [238] HAULED_GNSS_STRAT */ 1U,              // BaseGnssStrategy::REUSE_LAST (stored as uint per BaseMap)
-		/* [239] GNSS_CLOUDLOCATE_ALWAYS */ (bool)false,  // false=CloudLocate only on cold-start surfaces (default, battery-friendly); true=raw-meas captured at every SURFACING_BURST surface (short-surface tortue fallback)
+		/* [239] GNSS_CLOUDLOCATE_ALWAYS */ (bool)false,  // false=CloudLocate only on cold-start surfaces (default, battery-friendly); true=raw-meas captured at every SURFACING_BURST surface (short-surface turtle fallback)
 		/* [240] GNSS_DEEP_IDLE_AFTER_OFF_S */ 0U,     // 0=disabled (immediate poweroff, default — no behavior change); 0xFFFFFFFF=never poweroff (rail always on, M10Q in deep-idle); else=duration in seconds. Replaces deprecated GNSS_BCKP_CHARGE_* (slots 223-225).
 		/* [241] GNSS_CLOUDLOCATE_ONLY */ (bool)false, // FAST3b: when true + FASTLOC_MODE=CLOUDLOCATE, end GNSS session on first raw measurement (skip full PVT wait). Off by default to preserve current behavior.
 		/* [242] GNSS_COLD_START_AFTER_NTRY */ 0U,     // 0=disabled (default, no regression). N>0=force a real cold start (BBR wipe + cold timeout) after N consecutive GNSS sessions with no fix, to recover a receiver stuck on stale assistance.
 		/* [243] ARGOS_BLIND_EN */ (bool)false,        // BASIC by default (no behavior change)
 		/* [244] ARGOS_BLIND_RETX_NB */ 4U,            // module retransmissions per blind burst
 		/* [245] ARGOS_BLIND_RETX_PERIOD_S */ 60U,     // seconds between module retransmissions
-		/* [246] SAT_PREPASS_EN */ (bool)false,        // off par defaut: aucun changement de comportement
-		/* [247] SAT_AOP_MAX_AGE_DAYS */ 14U,          // prudent en attendant la valeur officielle Kineis
-		/* [248] SAT_PREPASS_MAX_WAIT_S */ 0U,         // 0 = pas de garde-fou (comportement actuel)
+		/* [246] SAT_PREPASS_EN */ (bool)false,        // off by default: no behavior change
+		/* [247] SAT_AOP_MAX_AGE_DAYS */ 14U,          // conservative while waiting for the official Kineis value
+		/* [248] SAT_PREPASS_MAX_WAIT_S */ 0U,         // 0 = no safety guard (current behavior)
 		/* [249] SAT_AOP_VALID */ (bool)false,
 		/* [250] SAT_AOP_AGE_S */ 0U,
 		/* [251] SAT_NEXT_PASS_TS */ 0U,

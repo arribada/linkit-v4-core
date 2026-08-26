@@ -846,12 +846,12 @@ static void sync_bridge_log_silencing();  // Forward decl — defined near proce
 
 void ConfigurationState::exit() {
 	DEBUG_INFO("exit: ConfigurationState");
-	// Couper le BLE EN PREMIER, et sous protection. Cet appel etait la DERNIERE
-	// instruction de exit() et sans try/catch: si stop_bridge() ou
-	// power_off_immediate() levait, on n'y arrivait jamais et la balise repartait
-	// en operation avec la radio BLE en advertising permanent — sur un appareil
-	// scelle, une fuite de courant invisible. OperationalState::exit() protegeait
-	// deja le sien de la meme facon.
+	// Shut the BLE down FIRST, and under protection. This call used to be the LAST
+	// instruction of exit() and had no try/catch: if stop_bridge() or
+	// power_off_immediate() threw, we never got there and the beacon went back to
+	// operation with the BLE radio advertising permanently — on a sealed device,
+	// an invisible current leak. OperationalState::exit() was already protecting
+	// its own the same way.
 	try { ble_service->stop(); }
 	catch (...) { DEBUG_ERROR("exit: ConfigurationState: ble_service->stop failed"); }
 
@@ -904,14 +904,14 @@ void ConfigurationState::exit() {
 	// suppressed until next process_usb_data tick (which is cancelled above).
 	sync_bridge_log_silencing();
 #endif
-	// Filet contre un `PWRON GNSS`/`PWRON ALL` laisse en l'air: la commande DTE
-	// allume le recepteur sans minuterie et seul `PWRON OFF` le decremente. Sans
-	// ce rattrapage, le compteur de clients ne repasse jamais a zero: chaque
-	// session de service fait ensuite +1/-1 au-dessus du compte fuite, le driver
-	// reste en reception en permanence (~25-30 mA) et le verrou VSYS maintient
-	// le rail commun a 3,3 V — batterie videe en quelques jours sur un appareil
-	// scelle, sans aucun moyen de s'en apercevoir. On ne coupe que si quelque
-	// chose est reellement allume, pour ne pas relacher VSENSORS sans l'avoir pris.
+	// Safety net against a `PWRON GNSS`/`PWRON ALL` left dangling: the DTE command
+	// powers the receiver up with no timer and only `PWRON OFF` decrements it.
+	// Without this catch-up, the client counter never gets back to zero: every
+	// later service session then does +1/-1 on top of the leaked count, the driver
+	// stays in reception permanently (~25-30 mA) and the VSYS latch holds the
+	// shared rail at 3.3 V — battery drained in a few days on a sealed device,
+	// with NO way at all of noticing it. We only cut power if something is
+	// really powered on, so as not to release VSENSORS without having taken it.
 	if (gps_device && gps_device->is_powered()) {
 		DEBUG_WARN("exit: ConfigurationState — GNSS encore alimente (PWRON non annule) | coupure du rail");
 		gps_device->power_off_immediate();
