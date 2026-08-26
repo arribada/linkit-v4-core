@@ -11,6 +11,7 @@
 #include "usb_interface.hpp"
 #include "gentracker.hpp"
 #include "gps_service.hpp"
+#include "ble_service.hpp"
 #include "service.hpp"
 #include "reed.hpp"
 #include "scheduler.hpp"
@@ -21,6 +22,7 @@
 
 extern Scheduler  *system_scheduler;
 extern GPSService *gps_service;
+extern BLEService *ble_service;
 
 namespace {
 
@@ -112,6 +114,30 @@ bool bench::handle_line(const std::string& raw) {
         reply(std::string("%BENCH OK state=") + state_name());
     } else if (cmd == "%STATE") {
         reply(std::string("%STATE ") + state_name());
+    } else if (cmd == "%BLE") {
+        // %BLE        -> etat de l'advertising
+        // %BLE DISC   -> rejoue une deconnexion BLE (sans telephone)
+        if (!ble_service) {
+            reply("%BLE ERR no-ble-service");
+        } else if (line.find(" PROBE") != std::string::npos) {
+            char buf[80];
+            snprintf(buf, sizeof(buf), "%%BLE PROBE rc=%u (0=advertissait, 8=non)",
+                     ble_service->bench_probe_advertising());
+            reply(buf);
+        } else if (line.find(" DISC") != std::string::npos) {
+            ble_service->bench_inject_disconnect();
+            char buf[96];
+            snprintf(buf, sizeof(buf), "%%BLE OK disconnect-injected wanted=%d mode=%d",
+                     ble_service->bench_is_advertising() ? 1 : 0,
+                     ble_service->bench_adv_mode());
+            reply(buf);
+        } else {
+            char buf[96];
+            snprintf(buf, sizeof(buf), "%%BLE wanted=%d mode=%d state=%s",
+                     ble_service->bench_is_advertising() ? 1 : 0,
+                     ble_service->bench_adv_mode(), state_name());
+            reply(buf);
+        }
     } else if (cmd == "%SCHED") {
         // Schedule of EVERY registered service, straight from the decision point
         // in Service::reschedule(). Needed because the only log line that proves

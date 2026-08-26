@@ -846,6 +846,14 @@ static void sync_bridge_log_silencing();  // Forward decl — defined near proce
 
 void ConfigurationState::exit() {
 	DEBUG_INFO("exit: ConfigurationState");
+	// Couper le BLE EN PREMIER, et sous protection. Cet appel etait la DERNIERE
+	// instruction de exit() et sans try/catch: si stop_bridge() ou
+	// power_off_immediate() levait, on n'y arrivait jamais et la balise repartait
+	// en operation avec la radio BLE en advertising permanent — sur un appareil
+	// scelle, une fuite de courant invisible. OperationalState::exit() protegeait
+	// deja le sien de la meme facon.
+	try { ble_service->stop(); }
+	catch (...) { DEBUG_ERROR("exit: ConfigurationState: ble_service->stop failed"); }
 	system_scheduler->cancel_task(m_ble_inactivity_timeout_task);
 	system_scheduler->cancel_task(m_backup_charge_blink_task);
 	// MED #6 audit fix: cancel the BackupChargeStopBLE task too — its lambda
@@ -885,7 +893,6 @@ void ConfigurationState::exit() {
 		DEBUG_WARN("exit: ConfigurationState — GNSS encore alimente (PWRON non annule) | coupure du rail");
 		gps_device->power_off_immediate();
 	}
-	ble_service->stop();
 	led_handle::dispatch<SetLEDOff>({});
 }
 
