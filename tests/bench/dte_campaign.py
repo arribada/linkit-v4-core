@@ -1202,3 +1202,73 @@ CASES_V7 = [
          titre='Fenetre de limitation enorme sans debordement 32 bits',
          fn=c_limiteur_fenetre_enorme),
 ]
+
+def c_duty_masque_nul(r, case):
+    """Un masque duty-cycle vide doit etre SIGNALE, pas produire un silence muet.
+
+    ArgosTxScheduler::INVALID_SCHEDULE vaut numeriquement SCHEDULE_DISABLED, donc
+    renvoyer directement le resultat de schedule_duty_cycle() eteignait la balise
+    sans une seule ligne de log. Et la cause dominante est un masque d heures a
+    zero — qui est le DEFAUT USINE de DUTY_CYCLE (ARP18) comme de
+    LB_ARGOS_DUTY_CYCLE (LBP05): choisir ARGOS_MODE=DUTY_CYCLE sans poser de
+    masque rendait le tag muet, et rien ne le disait.
+    """
+    b = r.b
+    try:
+        b.enter_config()
+        b.write_params({'ARGOS_MODE': 3, 'DUTY_CYCLE': 0, 'GNSS_EN': 1,
+                        'NTRY_PER_MESSAGE': 0, 'TR_NOM': 60, 'UNDERWATER_EN': 0,
+                        'SAT_PREPASS_EN': 0, 'RATE_LIMIT_EN': 0})
+        b.exit_config()
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}')
+    mk = b.mark()
+    time.sleep(2); b._send('%GPS 43.6 3.9 5000 9\r')
+    # On ATTEND la trace au lieu de dormir un temps fixe: la tentative de
+    # planification suit le fix avec un delai variable, et une fenetre figee
+    # de 18 s la manquait alors que le firmware la produisait bien.
+    avert = []
+    fin = time.time() + 60
+    while time.time() < fin:
+        time.sleep(2)
+        with b._lock:
+            jr = [l for _, l in b.history[mk:]]
+        avert = [l.strip()[24:170] for l in jr
+                 if 'DUTY_CYCLE mask is 0x000000' in l
+                 or 'no TX slot found in 24h search' in l]
+        if avert:
+            break
+    s_nul = _sched_argos(r)
+
+    # masque plein: la planification doit repartir
+    try:
+        b.enter_config(); b.write_params({'DUTY_CYCLE': 16777215}); b.exit_config()
+    except Exception as e:
+        return r.record(case, 'ERROR', f'reconfiguration impossible: {type(e).__name__}')
+    time.sleep(2); b._send('%GPS 43.6 3.9 5000 9\r')
+    s_plein = None
+    fin = time.time() + 60
+    while time.time() < fin:
+        time.sleep(3)
+        s_plein = _sched_argos(r)
+        if s_plein and s_plein[0] is not None:
+            break
+
+    try:
+        b.enter_config(); b.write_params({'ARGOS_MODE': 0}); b.exit_config()
+    except Exception:
+        pass
+
+    trace = f'masque nul -> {s_nul} | masque plein -> {s_plein}\n' + '\n'.join(avert[:2])
+    if not avert:
+        r.record(case, 'FAIL', 'masque nul: aucun avertissement, la balise se tait en silence', trace)
+    elif not (s_plein and s_plein[0] is not None):
+        r.record(case, 'FAIL', 'masque plein: aucune emission planifiee', trace)
+    else:
+        r.record(case, 'PASS', 'masque nul signale explicitement, masque plein planifie', trace)
+
+CASES_V8 = [
+    dict(id='DC-01', risque='BLOQUANT',
+         titre='Un masque duty-cycle vide est signale, pas silencieux',
+         fn=c_duty_masque_nul),
+]

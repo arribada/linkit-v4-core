@@ -35,6 +35,32 @@ extern MortalityService *mortality_service;
 
 
 /// @brief Construct Argos TX service with a KineisDevice backend (SMD/KIM2/LoRa).
+/// @brief Report a duty-cycle schedule that came back unusable, then pass it on.
+///
+/// ArgosTxScheduler::INVALID_SCHEDULE is numerically SCHEDULE_DISABLED, so
+/// returning it straight from schedule_duty_cycle() silently switched the
+/// beacon off with no log line at all. The dominant cause is an all-zero hour
+/// mask -- which is the FACTORY DEFAULT of both DUTY_CYCLE (ARP18) and
+/// LB_ARGOS_DUTY_CYCLE (LBP05): selecting ARGOS_MODE=DUTY_CYCLE without also
+/// setting a mask mutes the tag, and nothing said so. The behaviour is
+/// deliberately unchanged -- an explicit mask is the operator's decision -- but
+/// the log now names the reason.
+static unsigned int report_duty_cycle_schedule(unsigned int schedule, const ArgosConfig& cfg)
+{
+	if (schedule != ArgosTxScheduler::INVALID_SCHEDULE)
+		return schedule;
+
+	if ((cfg.duty_cycle & 0xFFFFFF) == 0)
+		DEBUG_WARN("ArgosTxService: DUTY_CYCLE mask is 0x000000 — no hour is enabled, "
+		           "so no transmission can ever be scheduled (this is the factory default: "
+		           "set ARP18, or LBP05 in low-battery mode)");
+	else
+		DEBUG_WARN("ArgosTxService: no duty-cycle slot found within 24 h "
+		           "(mask=0x%06X, tx_interval=%u s) — no transmission scheduled",
+		           cfg.duty_cycle & 0xFFFFFF, cfg.tx_interval_s);
+	return schedule;
+}
+
 ArgosTxService::ArgosTxService(KineisDevice& device) : Service(ServiceIdentifier::ARGOS_TX, "ARGOSTX"),
 	m_kineis(device)
 {
@@ -521,7 +547,7 @@ unsigned int ArgosTxService::service_next_schedule_in_ms() {
 				}
 				if (argos_config.mode == BaseArgosMode::DUTY_CYCLE) {
 					m_scheduled_mode = argos_config.adaptive_modulation ? KineisModulation::VLDA4 : resolve_non_adaptive_modulation();
-					return m_sched.schedule_duty_cycle(argos_config, now);
+					return report_duty_cycle_schedule(m_sched.schedule_duty_cycle(argos_config, now), argos_config);
 				}
 				if (argos_config.mode == BaseArgosMode::LEGACY) {
 					m_scheduled_mode = argos_config.adaptive_modulation ? KineisModulation::VLDA4 : resolve_non_adaptive_modulation();
@@ -603,7 +629,7 @@ unsigned int ArgosTxService::service_next_schedule_in_ms() {
 				} else {
 					m_scheduled_task = [this]() { process_gnss_burst(); };
 				}
-				return m_sched.schedule_duty_cycle(argos_config, now);
+				return report_duty_cycle_schedule(m_sched.schedule_duty_cycle(argos_config, now), argos_config);
 			}
 			if (argos_config.mode == BaseArgosMode::LEGACY) {
 				m_scheduled_mode = argos_config.adaptive_modulation
