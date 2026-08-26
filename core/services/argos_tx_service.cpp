@@ -713,6 +713,24 @@ void ArgosTxService::service_initiate() {
 		return;
 	}
 
+	// The device cannot transmit and receive at the same time. Firing a TX now
+	// would retrieve a depth pile entry -- consuming one of its NTRY redundancy
+	// slots -- build a packet, hand it to a module locked in DL, and time out
+	// 30 s later having emitted nothing. The cycle then repeats until the pile
+	// is exhausted.
+	//
+	// Reception has priority by design (no preemption), so simply defer: no
+	// entry is retrieved, no credit is spent, and the TX resumes on its own
+	// once the window closes.
+	if (m_kineis.is_receiving()) {
+		std::time_t now = service_current_time();
+		DEBUG_INFO("ArgosTxService::service_initiate: device is receiving, deferring TX by %u s "
+		           "(no depth pile entry consumed)", ARGOS_TX_RX_BUSY_DEFER_S);
+		m_sched.set_earliest_schedule(now + (std::time_t)ARGOS_TX_RX_BUSY_DEFER_S);
+		service_complete(nullptr, nullptr, true);
+		return;
+	}
+
 	// Re-check gates that service_next_schedule_in_ms enforces. The framework
 	// (Service::reschedule in service.cpp:586) schedules a task that fires
 	// service_initiate() DIRECTLY after the delay returned by

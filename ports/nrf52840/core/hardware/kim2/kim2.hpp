@@ -51,6 +51,14 @@ public:
 	/// @return true when a reception was pending or running.
 	bool stop_receive() override;
 
+	/// @brief True from start_receive() until the RX session is closed, i.e.
+	///        while the module cannot accept an AT+TX. Covers the stop sequence
+	///        as well: the module is still in DL mode until it answers or is
+	///        power cycled.
+	bool is_receiving() const override {
+		return m_rx_requested || m_rx_active || m_state == receive;
+	}
+
 	/// @brief No-op — KIM2 frequency is set via RCONF.
 	void set_frequency(double freq_mhz) override;
 

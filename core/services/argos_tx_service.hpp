@@ -195,6 +195,11 @@ private:
 	KineisModulation m_last_preconfig_mod = KineisModulation::LDA2;
 	std::optional<KineisModulation> m_modulation_preconfig;
 
+	// Deferral applied when the device is busy receiving. Re-checked at this
+	// cadence until the RX window closes; each re-check costs one scheduling
+	// cycle, so keep it well above a second and well below a full RX window.
+	static constexpr unsigned int ARGOS_TX_RX_BUSY_DEFER_S = 60;
+
 	// Device error backoff
 	static constexpr unsigned int DEVICE_ERROR_MAX_CONSECUTIVE = 3;
 	static constexpr unsigned int DEVICE_ERROR_BACKOFF_BASE_MS = 60000;

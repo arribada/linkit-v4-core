@@ -75,6 +75,12 @@ public:
 	virtual void warm_up_for_tx() {}
 	virtual void start_receive(const KineisModulation mode) = 0;
 	virtual bool stop_receive() = 0;
+
+	/// @brief True while the backend is receiving (or about to), i.e. unable to
+	///        transmit. Lets the TX service defer instead of consuming a depth
+	///        pile redundancy slot on a transmission that cannot leave.
+	///        Default false for backends with no receive path.
+	virtual bool is_receiving() const { return false; }
 	virtual void set_frequency(double freq_mhz) = 0;
 	virtual void set_tcxo_warmup_time(unsigned int ms) = 0;
 	virtual void set_tx_power(unsigned int power) { (void)power; }
