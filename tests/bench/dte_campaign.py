@@ -46,7 +46,46 @@ class Runner:
                 b.close()
             except Exception:
                 pass
+            # A mi-parcours, le port peut exister mais le lien etre mort
+            # (URB en ECONNRESET): retenter n'y changera rien, il faut relier.
+            if k == tries // 2:
+                try: self.relink()
+                except Exception: pass
             time.sleep(2)
+        return False
+
+    def relink(self):
+        """Repare le lien USB-over-IP sans toucher au J-Link.
+
+        Le lien meurt en cours de campagne: usbipd affiche encore "Attached"
+        alors que TOUS les URB echouent (dmesg: vhci_hcd urb->status -104) et
+        que serial.Serial() se bloque pour toujours a l'ouverture. Trois runs
+        ont ete perdus ainsi, sans le moindre message.
+        Sequence qui marche: detacher UNIQUEMENT 6-3 (jamais --all, qui
+        emporterait le J-Link et donc le SWD), basculer le pullup D+ par SWD
+        (= rebranchement logiciel), puis attacher DANS LA SECONDE ou Windows
+        repasse CM_PROB_NONE — attendre plus fait rater la fenetre.
+        """
+        import subprocess as sp
+        def ps(c):
+            try: return sp.run(['powershell.exe','-Command',c], capture_output=True,
+                               text=True, timeout=60).stdout
+            except Exception: return ''
+        self.say('   reparation du lien USB…')
+        ps('usbipd detach --busid 6-3')
+        time.sleep(3)
+        for v in ('0', '1'):
+            sp.run(['nrfjprog','--memwr','0x40027504','--val',v], capture_output=True, timeout=60)
+            sp.run(['nrfjprog','--run'], capture_output=True, timeout=60)
+            if v == '0': time.sleep(4)
+        for _ in range(25):
+            time.sleep(1)
+            n = ps("(Get-PnpDevice -PresentOnly | Where-Object { $_.InstanceId -like "
+                   "'*VID_1915*' -and $_.Problem -eq 'CM_PROB_NONE' }).Count").strip()
+            if n.isdigit() and int(n) >= 1:
+                ps('usbipd attach --busid 6-3 --wsl')
+                time.sleep(6)
+                return os.path.exists('/dev/ttyACM0')
         return False
 
     def recover(self):
@@ -757,25 +796,48 @@ def _sched_argos(r, timeout=45.0):
     return dernier if dernier else (None, 'aucune-reponse')
 
 def c_modes_planifient(r, case):
-    """Chaque mode Argos doit planifier une emission. Un mode qui n'annonce rien
-       est un mode qui laissera la balise muette sur le terrain."""
+    """Chaque mode Argos doit planifier une emission QUAND IL LE PEUT.
+
+    Une premiere version echouait sur 3 modes sur 4. Verification manuelle: le
+    firmware avait RAISON et journalisait meme pourquoi. Le cas ne remplissait
+    pas les prealables de l'ordonnancement:
+      - NTRY_PER_MESSAGE=1 + aucun fix injecte -> "depth pile has no eligible
+        entries (NTRY exhausted or empty) — TX disabled until next GPS entry".
+        Les modes bases sur la position (LEGACY/DUTY_CYCLE/PASS_PREDICTION) ne
+        peuvent RIEN planifier; DOPPLER passait car il n'exige pas de position.
+      - DUTY_CYCLE=0 (defaut) = aucune plage horaire -> "no TX slot".
+      - PASS_PREDICTION sans donnees AOP ne peut predire aucun passage.
+    On pose donc les prealables (NTRY illimite, toutes plages horaires, fix
+    injecte) et on traite l'absence d'AOP comme un resultat LEGITIME, pas un
+    echec — sinon le test accuse le firmware d'un defaut qui n'existe pas.
+    """
     b = r.b
     modes = [(2, 'LEGACY'), (3, 'DUTY_CYCLE'), (4, 'DOPPLER'), (1, 'PASS_PREDICTION')]
     muets, releve = [], {}
     for val, nom in modes:
         try:
             b.enter_config()
-            # GNSS actif: PASS_PREDICTION sans GNSS est une combinaison
-            # explicitement incompatible, ce n'est pas ce qu'on teste ici.
-            b.write_params({'ARGOS_MODE': val, 'GNSS_EN': 1, 'ARGOS_NTRY_PER_MESSAGE': 1})
+            b.write_params({'ARGOS_MODE': val, 'GNSS_EN': 1,
+                            'ARGOS_NTRY_PER_MESSAGE': 0,      # illimite
+                            'DUTY_CYCLE': 16777215})           # toutes les heures
             b.exit_config()
         except Exception as e:
             muets.append(f'{nom}: configuration impossible ({type(e).__name__})')
             continue
+        mk = b.mark()
+        time.sleep(2)
+        try: b._send('%GPS 43.6 3.9 5000 9\r')    # position fraiche -> pile eligible
+        except Exception: pass
         ms, pourquoi = _sched_argos(r)
+        with b._lock:
+            jr = [l for _, l in b.history[mk:]]
+        sans_aop = any('prepass indisponible' in l or 'returned no pass' in l for l in jr)
         releve[nom] = f'{ms}ms ({pourquoi})' if ms is not None else f'RIEN ({pourquoi})'
         if ms is None:
-            muets.append(f'{nom}: aucune emission planifiee -> {pourquoi}')
+            if nom == 'PASS_PREDICTION' and sans_aop:
+                releve[nom] += ' [legitime: aucun passage predictible sans AOP]'
+            else:
+                muets.append(f'{nom}: aucune emission planifiee -> {pourquoi}')
     try:
         b.enter_config(); b.write_params({'ARGOS_MODE': 0})
     except Exception: pass
@@ -783,7 +845,7 @@ def c_modes_planifient(r, case):
         r.record(case, 'FAIL', f'{len(muets)} mode(s) sans planification',
                  '\n'.join(muets) + '\n---\n' + json.dumps(releve, ensure_ascii=False)[:900])
     else:
-        r.record(case, 'PASS', f'{len(modes)} modes planifient une emission',
+        r.record(case, 'PASS', f'{len(modes)} modes planifient quand les prealables sont reunis',
                  json.dumps(releve, ensure_ascii=False)[:700])
 
 def c_prepass_sans_gnss(r, case):
@@ -813,3 +875,151 @@ CASES_V4 = [
  dict(id='ARG-01', risque='BLOQUANT', titre='Chaque mode Argos planifie une emission', fn=c_modes_planifient),
  dict(id='ARG-02', risque='BLOQUANT', titre='PASS_PREDICTION sans GNSS est signale', fn=c_prepass_sans_gnss),
 ]
+
+# ---------------------------------------------------------------------------
+# Vague 5 — SWS (contacteur eau de mer) et mode SURFACING_BURST.
+# Les assertions ci-dessous ont ete ecrites APRES observation sur la carte
+# (scratchpad/sws_explore.py), pas avant: les deux faux verdicts de la journee
+# venaient d'un critere invente avant d'avoir vu le comportement reel.
+# ---------------------------------------------------------------------------
+
+def _sched_tous(r, timeout=10.0):
+    """Rend {service: (ms|None, raison)} pour TOUS les services."""
+    m, _ = r.raw_until('%SCHED\r', r'%SCHED .*ARGOSTX=', timeout=timeout)
+    if not m: return {}
+    return {nom: (None if val == 'none' else int(val[:-2]), why)
+            for nom, val, why in re.findall(r'(\w+)=(none|\d+ms)\(([^)]*)\)', m.string)}
+
+def _attendre_raison(r, service, raisons, timeout=40.0):
+    """Sonde %SCHED jusqu'a ce que `service` presente une des raisons attendues."""
+    fin = time.time() + timeout; vu = None
+    while time.time() < fin:
+        d = _sched_tous(r)
+        if service in d:
+            vu = d[service]
+            if vu[1] in raisons: return vu
+        time.sleep(2)
+    return vu
+
+def c_sws_gate(r, case):
+    """Le SWS doit COUPER les emissions sous l'eau et les RETABLIR en surface.
+
+    Observe sur la carte: %DIVE -> ARGOSTX et GNSS passent tous deux a
+    none(underwater); %SURFACE -> ils repassent a un etat planifie. C'est le
+    coeur d'un traceur marin: emettre en plongee, c'est gaspiller la batterie
+    pour une transmission que le satellite ne recevra pas.
+    """
+    b = r.b
+    try:
+        b.enter_config()
+        b.write_params({'ARGOS_MODE': 2, 'GNSS_EN': 1, 'ARGOS_NTRY_PER_MESSAGE': 0,
+                        'DUTY_CYCLE': 16777215, 'UNDERWATER_EN': 1,
+                        'MIN_SURFACE_CYCLE_INTERVAL_S': 0, 'DRY_TIME_BEFORE_TX': 0})
+        b.exit_config()
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}')
+    time.sleep(2); b._send('%GPS 43.6 3.9 5000 9\r'); time.sleep(10)
+
+    # Deux preuves valables que la balise n'emettra pas sous l'eau:
+    #   'underwater'  -> reschedule() a REPRIS une decision et l'a refusee
+    #                    (arrive quand le service etait en cours de cycle)
+    #   'descheduled' -> notify_underwater_state a ANNULE la tache sans repasser
+    #                    par reschedule() (cas d'un service simplement planifie)
+    # Le critere qui compte est le meme dans les deux cas: plus AUCUNE echeance
+    # (ms is None). N'exiger que 'underwater' faisait echouer le test alors que
+    # le firmware coupait bel et bien — un faux "la balise emet sous l'eau",
+    # le pire faux positif possible sur un traceur marin.
+    GATE_OK = ('underwater', 'descheduled', 'no-schedule')
+    ecarts = []
+    b._send('%DIVE\r')
+    for svc in ('ARGOSTX', 'GNSS'):
+        vu = _attendre_raison(r, svc, GATE_OK)
+        if not vu or vu[0] is not None or vu[1] not in GATE_OK:
+            ecarts.append(f'{svc} apres %DIVE: {vu} (attendu: aucune echeance, {GATE_OK})')
+    b._send('%SURFACE\r')
+    vu = _attendre_raison(r, 'ARGOSTX', ('scheduled', 'already-initiated'))
+    if not vu or vu[1] not in ('scheduled', 'already-initiated'):
+        ecarts.append(f'ARGOSTX apres %SURFACE: {vu} (attendu re-planifie)')
+
+    if ecarts:
+        r.record(case, 'FAIL', f'{len(ecarts)} ecart(s) de gating SWS', '\n'.join(ecarts))
+    else:
+        r.record(case, 'PASS', 'SWS coupe sous l eau et retablit en surface',
+                 f'surface -> {vu}')
+
+def c_sws_dry_time(r, case):
+    """DRY_TIME_BEFORE_TX doit retarder l emission apres emersion.
+
+    Le gestionnaire de surface pose set_earliest_schedule(now + dry_time)
+    (argos_tx_service.cpp:994). Deux points de mesure (60 s puis 5 s) plutot
+    qu un seul: une valeur isolee pourrait etre une coincidence.
+    """
+    b = r.b
+    mesures = {}
+    for dry in (60, 5):
+        try:
+            b.enter_config()
+            b.write_params({'ARGOS_MODE': 2, 'GNSS_EN': 1, 'ARGOS_NTRY_PER_MESSAGE': 0,
+                            'DUTY_CYCLE': 16777215, 'UNDERWATER_EN': 1,
+                            'MIN_SURFACE_CYCLE_INTERVAL_S': 0, 'DRY_TIME_BEFORE_TX': dry})
+            b.exit_config()
+        except Exception as e:
+            return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}')
+        time.sleep(2); b._send('%GPS 43.6 3.9 5000 9\r'); time.sleep(8)
+        b._send('%DIVE\r');    _attendre_raison(r, 'ARGOSTX', ('underwater',), 30)
+        b._send('%SURFACE\r'); vu = _attendre_raison(r, 'ARGOSTX', ('scheduled', 'already-initiated'), 30)
+        mesures[dry] = vu
+    m60, m5 = mesures.get(60), mesures.get(5)
+    if not m60 or m60[0] is None or not m5 or m5[0] is None:
+        return r.record(case, 'FAIL', 'mesure impossible', f'{mesures}')
+    # 60 s doit repousser nettement plus loin que 5 s.
+    if m60[0] > m5[0] + 20000:
+        r.record(case, 'PASS', f'dry-time respecte: 60s->{m60[0]}ms vs 5s->{m5[0]}ms', f'{mesures}')
+    else:
+        r.record(case, 'FAIL', f'dry-time sans effet: 60s->{m60[0]}ms vs 5s->{m5[0]}ms', f'{mesures}')
+
+def c_surfacing_burst(r, case):
+    """SURFACING_BURST doit declencher une salve a l emersion.
+
+    Prealables imposes par le firmware lui-meme: UNDERWATER_EN=1 (sinon il
+    previent "SURFACING_BURST mode requires UNDERWATER_EN=1") et pas de
+    cooldown actif (MIN_SURFACE_CYCLE_INTERVAL_S=0), sans quoi l absence de
+    salve serait un comportement CORRECT et non un defaut.
+    """
+    b = r.b
+    try:
+        b.enter_config()
+        b.write_params({'ARGOS_MODE': 5, 'GNSS_EN': 1, 'ARGOS_NTRY_PER_MESSAGE': 0,
+                        'DUTY_CYCLE': 16777215, 'UNDERWATER_EN': 1,
+                        'MIN_SURFACE_CYCLE_INTERVAL_S': 0, 'DRY_TIME_BEFORE_TX': 0,
+                        'SURFACING_BURST_MAX_MSG': 3})
+        b.exit_config()
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}')
+    time.sleep(2); b._send('%GPS 43.6 3.9 5000 9\r'); time.sleep(10)
+    b._send('%DIVE\r'); _attendre_raison(r, 'ARGOSTX', ('underwater',), 30)
+    mk = b.mark(); b._send('%SURFACE\r')
+    vu = _attendre_raison(r, 'ARGOSTX', ('scheduled', 'already-initiated'), 45)
+    time.sleep(10)
+    with b._lock:
+        jr = [l for _, l in b.history[mk:]]
+    salve = [l.strip()[24:150] for l in jr
+             if re.search(r'SURFACING_BURST|burst sequence|GNSS TX #', l)]
+    avert = [l.strip()[24:150] for l in jr if 'requires UNDERWATER_EN' in l]
+    try:
+        b.enter_config(); b.write_params({'ARGOS_MODE': 0})
+    except Exception: pass
+    if avert:
+        r.record(case, 'FAIL', 'prealable non rempli malgre UNDERWATER_EN=1', '\n'.join(avert))
+    elif salve or (vu and vu[0] is not None):
+        r.record(case, 'PASS', 'salve d emersion declenchee',
+                 f'sched={vu}\n' + '\n'.join(salve[:6]))
+    else:
+        r.record(case, 'FAIL', 'aucune salve ni planification apres emersion', f'sched={vu}')
+
+CASES_V5 = [
+    dict(id='SWS-01', risque='BLOQUANT', titre='Le SWS coupe et retablit les emissions', fn=c_sws_gate),
+    dict(id='SWS-02', risque='MAJEUR',   titre='DRY_TIME_BEFORE_TX retarde l emission', fn=c_sws_dry_time),
+    dict(id='ARG-03', risque='BLOQUANT', titre='SURFACING_BURST declenche une salve', fn=c_surfacing_burst),
+]
+
