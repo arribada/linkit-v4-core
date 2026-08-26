@@ -29,6 +29,9 @@ public:
 	void start_file_transfer(OTAFileIdentifier file_id, const lfs_size_t length, const uint32_t crc32) override;
 	void write_file_data(void * const data, lfs_size_t length) override;
 	void abort_file_transfer() override;
+	bool is_transfer_incomplete() const override {
+		return m_file_size != 0 && m_file_bytes_received < m_file_size;
+	}
 	void complete_file_transfer() override;
 	void apply_file_update() override;
 };

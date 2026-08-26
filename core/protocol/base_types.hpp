@@ -445,14 +445,14 @@ enum class ParamID {
 	// independent dimensions: the mode says WHAT/WHEN to transmit, the prepass
 	// says WHETHER the satellite is listening. ARGOS_MODE=PASS_PREDICTION is still
 	// accepted and equals LEGACY + SAT_PREPASS_EN=1 (compatibility, no migration).
-	SAT_PREPASS_EN                           = 246,  // bool: gating prepass sur TOUS les modes
-	SAT_AOP_MAX_AGE_DAYS                     = 247,  // uint: au-dela, AOP perime -> repli periodique
-	SAT_PREPASS_MAX_WAIT_S                   = 248,  // uint: attente max sans fenetre (0 = illimite) -> repli periodique
-	// === Statuts prepass en lecture seule (slots 249-252, clef *T* -> STATR) ===
-	SAT_AOP_VALID                            = 249,  // bool: AOP present et non perime
-	SAT_AOP_AGE_S                            = 250,  // uint: age des AOP en secondes
-	SAT_NEXT_PASS_TS                         = 251,  // uint: epoch du prochain AOS (0 = inconnu)
-	SAT_LAST_PASS_TS                         = 252,  // uint: epoch du dernier passage exploite
+	SAT_PREPASS_EN                           = 246,  // bool: prepass gating on EVERY mode
+	SAT_AOP_MAX_AGE_DAYS                     = 247,  // uint: beyond this, AOP expired -> periodic fallback
+	SAT_PREPASS_MAX_WAIT_S                   = 248,  // uint: max wait with no window (0 = unlimited) -> periodic fallback
+	// === Read-only prepass statuses (slots 249-252, *T* key -> STATR) ===
+	SAT_AOP_VALID                            = 249,  // bool: AOP present and not expired
+	SAT_AOP_AGE_S                            = 250,  // uint: age of the AOP data, in seconds
+	SAT_NEXT_PASS_TS                         = 251,  // uint: epoch of the next AOS (0 = unknown)
+	SAT_LAST_PASS_TS                         = 252,  // uint: epoch of the last pass used
 	// === Sentinel (fixed regardless of #ifdef combinations) ===
 	__PARAM_SIZE                             = 253,
 	__NULL_PARAM                             = 0xFFFF

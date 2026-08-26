@@ -31,6 +31,22 @@ public:
 	/// @brief Abort an in-progress transfer and clean up.
 	virtual void abort_file_transfer() = 0;
 
+	/// @brief Has a transfer been started but not fully received yet?
+	///
+	/// Exists to separate two states that look identical from the outside. A
+	/// successful complete_file_transfer() deliberately does NOT clear the
+	/// transfer state -- apply_file_update() still needs it, and for
+	/// MCU_FIRMWARE that call is DEFERRED onto the scheduler. So "a transfer
+	/// exists" is true both for an upload interrupted midway and for one that
+	/// is finished and merely waiting to be applied. Aborting the first is
+	/// necessary (it otherwise leaks an open file handle and refuses every
+	/// later transfer); aborting the second ERASES the staged firmware header
+	/// and silently loses the update.
+	///
+	/// Default false so that an updater which cannot tell the two apart is
+	/// never aborted on someone else's behalf.
+	virtual bool is_transfer_incomplete() const { return false; }
+
 	/// @brief Complete transfer — verify CRC, finalize file.
 	virtual void complete_file_transfer() = 0;
 

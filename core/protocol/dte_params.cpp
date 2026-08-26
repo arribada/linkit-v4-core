@@ -448,8 +448,8 @@ const BaseMap param_map[] = {
 	{ "ARGOS_BLIND_RETX_NB",        "ARP45", BaseEncoding::UINT, 1U, 127U, {}, true, true },
 	// [245] BLIND retx_period_s — interval (s) between module retransmissions (KMAC ctx; module range 60..65535)
 	{ "ARGOS_BLIND_RETX_PERIOD_S",  "ARP46", BaseEncoding::UINT, 60U, 65535U, {}, true, true },
-	// Prepass orthogonal + statuts (2026-08). Clefs PPP0x = config (PARMR),
-	// PPT0x = statut lecture seule (STATR, filtre sur key[2]=='T').
+	// Orthogonal prepass + statuses (2026-08). PPP0x keys = configuration
+	// (PARMR), PPT0x = read-only status (STATR, filters on key[2]=='T').
 	{ "SAT_PREPASS_EN", "PPP07", BaseEncoding::BOOLEAN, 0, 0, {}, true, true },
 	{ "SAT_AOP_MAX_AGE_DAYS", "PPP08", BaseEncoding::UINT, 1U, 90U, {}, true, true },
 	{ "SAT_PREPASS_MAX_WAIT_S", "PPP09", BaseEncoding::UINT, 0U, 604800U, {}, true, true },

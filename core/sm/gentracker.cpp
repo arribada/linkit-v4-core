@@ -865,7 +865,16 @@ void ConfigurationState::exit() {
 	// refused until the next reboot. Cheap no-op when nothing is in progress
 	// (m_file_size == 0); can throw on the MCU_FIRMWARE erase path, hence the
 	// guard.
-	try { if (ota_updater) ota_updater->abort_file_transfer(); }
+	// Only a transfer that is genuinely unfinished. A fully received image is
+	// waiting for apply_file_update(), which for MCU_FIRMWARE is posted on the
+	// scheduler and therefore has NOT run yet: aborting there would erase the
+	// staged firmware header and lose a perfectly good update.
+	try {
+		if (ota_updater && ota_updater->is_transfer_incomplete()) {
+			DEBUG_WARN("exit: ConfigurationState — aborting an unfinished OTA transfer");
+			ota_updater->abort_file_transfer();
+		}
+	}
 	catch (...) { DEBUG_ERROR("exit: ConfigurationState: abort_file_transfer failed"); }
 
 #ifdef USB_DTE_ENABLED

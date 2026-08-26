@@ -18,6 +18,10 @@
 #include "debug.hpp"
 #include "is25_flash.hpp"
 #include "config_store.hpp"
+#include "ota_file_updater.hpp"
+#include "crc32.hpp"
+
+extern OTAFileUpdater *ota_updater;
 
 extern Is25Flash *bench_flash;
 
@@ -102,6 +106,88 @@ void cmd_fastloc(const std::string& line) {
 
 }  // namespace
 
+
+/// @brief Deterministic filler byte for the %OTA harness.
+static inline uint8_t bench_ota_byte(unsigned int i) { return (uint8_t)(i & 0xFF); }
+
+/// Bench-only OTA driver. It exercises the updater directly rather than over
+/// BLE, because the interesting behaviour is not the transport: it is whether
+/// leaving configuration mode aborts an UNFINISHED transfer (it must, or the
+/// file handle leaks and every later transfer is refused) while leaving a
+/// FINISHED one alone (it must, or the staged image is destroyed before
+/// apply_file_update() runs). Uses OTAFileIdentifier::GPS_CONFIG, which is a
+/// plain LittleFS file -- never the firmware region, and never a reset.
+static unsigned int s_ota_total = 0;
+static unsigned int s_ota_sent  = 0;
+
+static void bench_ota(const std::string& line) {
+    if (!ota_updater) { reply("%OTA ERR no-updater"); return; }
+
+    if (line.find(" START") != std::string::npos) {
+        unsigned int size = 0;
+        if (sscanf(line.c_str(), "%%OTA START %u", &size) != 1 || size == 0 || (size & 3)) {
+            reply("%OTA ERR usage: %OTA START <size, multiple of 4>"); return;
+        }
+        uint32_t crc = 0xFFFFFFFF;
+        for (unsigned int i = 0; i < size; i++) {
+            uint8_t b = bench_ota_byte(i);
+            CRC32::checksum_update(&b, 1, crc);
+        }
+        CRC32::checksum_finalize(crc);
+        try {
+            ota_updater->start_file_transfer(OTAFileIdentifier::GPS_CONFIG, size, crc);
+        } catch (ErrorCode e) {
+            char buf[64]; snprintf(buf, sizeof(buf), "%%OTA ERR start=%u", (unsigned)e);
+            reply(buf); return;
+        }
+        s_ota_total = size; s_ota_sent = 0;
+        char buf[80]; snprintf(buf, sizeof(buf), "%%OTA OK start size=%u crc=%08lX",
+                               size, (unsigned long)crc);
+        reply(buf);
+    } else if (line.find(" DATA") != std::string::npos) {
+        unsigned int n = 0;
+        if (sscanf(line.c_str(), "%%OTA DATA %u", &n) != 1 || n == 0) {
+            reply("%OTA ERR usage: %OTA DATA <bytes>"); return;
+        }
+        if (s_ota_sent + n > s_ota_total) n = s_ota_total - s_ota_sent;
+        uint8_t chunk[64];
+        try {
+            while (n) {
+                unsigned int k = n > sizeof(chunk) ? (unsigned int)sizeof(chunk) : n;
+                for (unsigned int j = 0; j < k; j++) chunk[j] = bench_ota_byte(s_ota_sent + j);
+                ota_updater->write_file_data(chunk, k);
+                s_ota_sent += k; n -= k;
+            }
+        } catch (ErrorCode e) {
+            char buf[64]; snprintf(buf, sizeof(buf), "%%OTA ERR data=%u", (unsigned)e);
+            reply(buf); return;
+        }
+        char buf[80]; snprintf(buf, sizeof(buf), "%%OTA OK data sent=%u/%u", s_ota_sent, s_ota_total);
+        reply(buf);
+    } else if (line.find(" END") != std::string::npos) {
+        try {
+            ota_updater->complete_file_transfer();
+        } catch (ErrorCode e) {
+            char buf[64]; snprintf(buf, sizeof(buf), "%%OTA ERR end=%u", (unsigned)e);
+            reply(buf); return;
+        }
+        reply("%OTA OK end");
+    } else if (line.find(" ABORT") != std::string::npos) {
+        try { ota_updater->abort_file_transfer(); }
+        catch (ErrorCode e) {
+            char buf[64]; snprintf(buf, sizeof(buf), "%%OTA ERR abort=%u", (unsigned)e);
+            reply(buf); return;
+        }
+        s_ota_total = s_ota_sent = 0;
+        reply("%OTA OK abort");
+    } else {
+        char buf[96];
+        snprintf(buf, sizeof(buf), "%%OTA incomplete=%d sent=%u/%u",
+                 ota_updater->is_transfer_incomplete() ? 1 : 0, s_ota_sent, s_ota_total);
+        reply(buf);
+    }
+}
+
 bool bench::handle_line(const std::string& raw) {
     // Trim trailing CR/LF/space.
     std::string line = raw;
@@ -165,6 +251,8 @@ bool bench::handle_line(const std::string& raw) {
                      (status & 0x40) ? 1 : 0, (status & 0x01) ? 1 : 0);
             reply(buf);
         }
+    } else if (cmd == "%OTA") {
+        bench_ota(line);
     } else if (cmd == "%LB") {
         // Consistency of the two battery thresholds. The matching DEBUG_WARN goes
         // to system.log (console logs are deliberately silent during a DTE
