@@ -20,6 +20,9 @@
 #include "config_store.hpp"
 #include "ota_file_updater.hpp"
 #include "crc32.hpp"
+#include "nrf_i2c.hpp"
+#include "pmu.hpp"
+#include "bsp.hpp"
 
 extern OTAFileUpdater *ota_updater;
 
@@ -188,6 +191,48 @@ static void bench_ota(const std::string& line) {
     }
 }
 
+
+/// @brief Scan an I2C bus for responding addresses.
+///
+/// Answers a question no amount of code reading can settle: what is actually
+/// FITTED on this board. The BSP declares devices that may or may not be
+/// populated, and it also declares ADS1115_DEVICE / ADS1115_ADDRESS (0x48) for
+/// which no driver exists anywhere in the tree -- so a positive response there
+/// means the part is on the bus and simply unused by the firmware.
+///
+/// Uses read_safe(), which does not throw, and a 1-byte read: a device that
+/// ACKs its address answers, everything else is skipped. Reserved ranges
+/// (0x00-0x07, 0x78-0x7F) are not probed.
+static void bench_i2c_scan(const std::string& line) {
+    unsigned int bus = (line.find(" EXT") != std::string::npos)
+                     ? (unsigned int)EXT_I2C_BUS : (unsigned int)ONBOARD_I2C_BUS;
+    std::string found;
+    char tmp[8];
+    unsigned int n = 0;
+
+    // read_safe() retries three times and logs an ERROR line per failure, so a
+    // full sweep would bury the answer under 112 error lines and take about
+    // 30 s. Mute the console for the duration and feed the watchdog: the scan
+    // runs in a scheduler task and nothing else gets a turn while it does.
+    auto *saved_log = DebugLogger::console_log;
+    DebugLogger::console_log = nullptr;
+    for (unsigned int addr = 0x08; addr <= 0x77; addr++) {
+        uint8_t b = 0;
+        if (NrfI2C::read_safe((uint8_t)bus, (uint8_t)addr, &b, 1)) {
+            snprintf(tmp, sizeof(tmp), "%02X ", addr);
+            found += tmp;
+            n++;
+        }
+        PMU::kick_watchdog();
+    }
+    DebugLogger::console_log = saved_log;
+    char buf[160];
+    snprintf(buf, sizeof(buf), "%%I2C bus=%s found=%u addrs=%s",
+             bus == (unsigned int)EXT_I2C_BUS ? "EXT" : "ONBOARD", n,
+             n ? found.c_str() : "-");
+    reply(buf);
+}
+
 bool bench::handle_line(const std::string& raw) {
     // Trim trailing CR/LF/space.
     std::string line = raw;
@@ -251,6 +296,22 @@ bool bench::handle_line(const std::string& raw) {
                      (status & 0x40) ? 1 : 0, (status & 0x01) ? 1 : 0);
             reply(buf);
         }
+    } else if (cmd == "%SCHEDQ") {
+        // Occupation des files de l ordonnanceur. Sert a prouver qu une tache
+        // auto-reprogrammee ne se duplique pas: un aller-retour
+        // configuration/operationnel doit laisser deferred= inchange.
+        char buf[128];
+        snprintf(buf, sizeof(buf),
+                 "%%SCHEDQ imm=%u/%u(hw=%u) deferred=%u/%u(hw=%u)",
+                 system_scheduler->tasks_size(), Scheduler::capacity(),
+                 system_scheduler->tasks_high_water(),
+                 system_scheduler->deferred_size(), Scheduler::capacity(),
+                 system_scheduler->deferred_high_water());
+        reply(buf);
+    } else if (cmd == "%I2C") {
+        // %I2C        -> scan du bus interne
+        // %I2C EXT    -> scan du bus externe
+        bench_i2c_scan(line);
     } else if (cmd == "%OTA") {
         bench_ota(line);
     } else if (cmd == "%LB") {

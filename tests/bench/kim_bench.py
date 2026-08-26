@@ -285,13 +285,32 @@ class Bench:
                     parsed[k] = v
         return m.group(0), parsed
 
-    def write_params(self, kv, timeout=6.0):
-        """PARMW a dict of {name_or_key: value}. Returns response line."""
+    def write_params(self, kv, timeout=6.0, strict=True):
+        """PARMW a dict of {name_or_key: value}. Returns the response match.
+
+        A partial rejection answers `$N;PARMW#<len>;<key1>,<key2>` and the board
+        still applies every OTHER key. That is correct firmware behaviour, but
+        for a TEST it is a trap: a mistyped parameter name is passed through
+        verbatim by _key(), lands in the rejected list, and the precondition it
+        was supposed to establish is silently never applied — the case then goes
+        green while testing something else entirely. This is not hypothetical:
+        `ARGOS_NTRY_PER_MESSAGE` (the real name is NTRY_PER_MESSAGE / ARP19) sat
+        in four campaign cases doing exactly that.
+
+        strict=True raises on any rejected key. Pass strict=False only when a
+        rejection is what the case is deliberately provoking.
+        """
         toks = [f"{self._key(k)}={v}" for k, v in kv.items()]
         payload = ",".join(toks)
         mk = self.mark()
         self._send(f"$PARMW#{len(payload):03X};{payload}\r")
-        return self.expect(r"\$([ON]);PARMW#", timeout, from_idx=mk)
+        m = self.expect(r"\$([ON]);PARMW#([0-9A-Fa-f]{3});?(.*)$", timeout, from_idx=mk)
+        if strict and m and m.group(1) == 'N':
+            refus = m.group(3).rstrip('\r').strip()
+            raise RuntimeError(
+                f"PARMW rejected: {refus or '(no key named)'} "
+                f"— requested {sorted(kv)}; the other keys WERE applied")
+        return m
 
 
 # =====================================================================

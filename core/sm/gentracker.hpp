@@ -35,6 +35,17 @@ public:
 	static void kick_watchdog();
 	static void periodic_config_flush();
 	static inline bool m_config_flush_active = false;
+	/// @brief Handle on the pending periodic-flush task.
+	///
+	/// The chain re-posts itself, so without a handle it could never be
+	/// cancelled and the only brake was m_config_flush_active, tested when the
+	/// task FIRES. Entering configuration cleared the flag but left the task
+	/// pending; leaving configuration set the flag again and started a SECOND
+	/// chain, and when the first one finally fired it saw the flag true and
+	/// re-posted itself. Every config visit inside the 30-min window therefore
+	/// added a permanent chain: one save_params() flash write per chain per
+	/// period, plus one more deferred-timer slot held forever.
+	static inline Scheduler::TaskHandle m_config_flush_task;
 	static void notify_bad_filesystem_error();
 
 	/// @brief True while a reed-switch confirmation gesture is awaiting the

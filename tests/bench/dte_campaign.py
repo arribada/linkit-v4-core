@@ -403,7 +403,10 @@ def c_bornes(r, case):
         try:
             _, avant = b.read_params([cle])
             k = list(avant.keys())[0] if avant else None
-            b.write_params({cle: val})
+            # Le refus est PRECISEMENT ce que ce cas cherche a provoquer:
+            # strict=False, sinon write_params leve et le cas se declare en
+            # echec alors que le firmware fait exactement ce qu'on lui demande.
+            b.write_params({cle: val}, strict=False)
             _, apres = b.read_params([cle])
             if k and apres.get(k) == str(val):
                 defauts.append(f'{cle}={val} ({quoi}) ACCEPTEE')
@@ -818,7 +821,7 @@ def c_modes_planifient(r, case):
         try:
             b.enter_config()
             b.write_params({'ARGOS_MODE': val, 'GNSS_EN': 1,
-                            'ARGOS_NTRY_PER_MESSAGE': 0,      # illimite
+                            'NTRY_PER_MESSAGE': 0,      # illimite
                             'DUTY_CYCLE': 16777215})           # toutes les heures
             b.exit_config()
         except Exception as e:
@@ -912,7 +915,7 @@ def c_sws_gate(r, case):
     b = r.b
     try:
         b.enter_config()
-        b.write_params({'ARGOS_MODE': 2, 'GNSS_EN': 1, 'ARGOS_NTRY_PER_MESSAGE': 0,
+        b.write_params({'ARGOS_MODE': 2, 'GNSS_EN': 1, 'NTRY_PER_MESSAGE': 0,
                         'DUTY_CYCLE': 16777215, 'UNDERWATER_EN': 1,
                         'MIN_SURFACE_CYCLE_INTERVAL_S': 0, 'DRY_TIME_BEFORE_TX': 0})
         b.exit_config()
@@ -959,7 +962,7 @@ def c_sws_dry_time(r, case):
     for dry in (60, 5):
         try:
             b.enter_config()
-            b.write_params({'ARGOS_MODE': 2, 'GNSS_EN': 1, 'ARGOS_NTRY_PER_MESSAGE': 0,
+            b.write_params({'ARGOS_MODE': 2, 'GNSS_EN': 1, 'NTRY_PER_MESSAGE': 0,
                             'DUTY_CYCLE': 16777215, 'UNDERWATER_EN': 1,
                             'MIN_SURFACE_CYCLE_INTERVAL_S': 0, 'DRY_TIME_BEFORE_TX': dry})
             b.exit_config()
@@ -989,7 +992,7 @@ def c_surfacing_burst(r, case):
     b = r.b
     try:
         b.enter_config()
-        b.write_params({'ARGOS_MODE': 5, 'GNSS_EN': 1, 'ARGOS_NTRY_PER_MESSAGE': 0,
+        b.write_params({'ARGOS_MODE': 5, 'GNSS_EN': 1, 'NTRY_PER_MESSAGE': 0,
                         'DUTY_CYCLE': 16777215, 'UNDERWATER_EN': 1,
                         'MIN_SURFACE_CYCLE_INTERVAL_S': 0, 'DRY_TIME_BEFORE_TX': 0,
                         'SURFACING_BURST_MAX_MSG': 3})
@@ -1023,3 +1026,58 @@ CASES_V5 = [
     dict(id='ARG-03', risque='BLOQUANT', titre='SURFACING_BURST declenche une salve', fn=c_surfacing_burst),
 ]
 
+def _schedq(b, timeout=20.0):
+    """imm, deferred, deferred_high_water — occupation des files de l ordonnanceur."""
+    mk = b.mark(); b._send('%SCHEDQ\r')
+    m = b.expect(r'%SCHEDQ imm=(\d+)/\d+\(hw=\d+\) deferred=(\d+)/\d+\(hw=(\d+)\)',
+                 timeout, from_idx=mk)
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3))) if m else None
+
+def c_fuite_taches_differees(r, case):
+    """Un aller-retour configuration/operationnel ne doit RIEN laisser derriere lui.
+
+    periodic_config_flush() se re-programme lui-meme et n avait aucun handle: il
+    etait donc incancellable, et le seul frein etait m_config_flush_active, teste
+    au DECLENCHEMENT. Entrer en configuration baissait le drapeau mais laissait la
+    tache en attente; en ressortir le relevait et demarrait une SECONDE chaine, et
+    quand la premiere finissait par tirer elle voyait le drapeau haut et se
+    re-programmait. Chaque visite dans la fenetre de 30 min ajoutait donc une
+    chaine permanente: une ecriture flash save_params() de plus par periode, et un
+    creneau de timer differe retenu pour toujours (capacite 128).
+
+    Mesure du 2026-08-26 sur le binaire sans correctif: 17 -> 22 en cinq
+    aller-retours, high-water 19 -> 23. Avec correctif: plat.
+    """
+    b = r.b
+    try:
+        b.enter_config(); b.write_params({'ARGOS_MODE': 0}); b.exit_config()
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}')
+    time.sleep(3)
+    base = _schedq(b)
+    if not base:
+        return r.record(case, 'ERROR', '%SCHEDQ sans reponse (sonde absente du build ?)')
+    suite = []
+    for _ in range(5):
+        try:
+            b.enter_config(); time.sleep(1.5); b.exit_config(); time.sleep(3)
+        except Exception as e:
+            return r.record(case, 'ERROR', f'aller-retour impossible: {type(e).__name__}')
+        q = _schedq(b)
+        if not q:
+            return r.record(case, 'ERROR', '%SCHEDQ sans reponse en cours de cycle')
+        suite.append(q[1])
+    croissance = suite[-1] - base[1]
+    trace = f'depart={base[1]} puis {suite}'
+    if croissance > 0:
+        r.record(case, 'FAIL',
+                 f'la file differee croit de {croissance} en 5 aller-retours — tache non annulee',
+                 trace)
+    else:
+        r.record(case, 'PASS', 'file differee stable sur 5 aller-retours', trace)
+
+CASES_V6 = [
+    dict(id='SCH-01', risque='BLOQUANT',
+         titre='Un aller-retour configuration ne fuit pas de tache differee',
+         fn=c_fuite_taches_differees),
+]

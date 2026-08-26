@@ -354,7 +354,11 @@ void GenTracker::periodic_config_flush() {
 		}
 	}
 	if (m_config_flush_active) {
-		system_scheduler->post_task_prio([](){
+		// Cancel first: this call may be the one from OperationalState::entry()
+		// re-arming the chain while an earlier task is still pending. Without
+		// this the two chains coexist for good.
+		system_scheduler->cancel_task(m_config_flush_task);
+		m_config_flush_task = system_scheduler->post_task_prio([](){
 			periodic_config_flush();
 		}, "ConfigFlush", Scheduler::DEFAULT_PRIORITY, CONFIG_FLUSH_INTERVAL_MS);
 	}
@@ -756,6 +760,9 @@ void OperationalState::exit() {
 	// would transit to ErrorState→OffState and brick a sealed device whose
 	// only "fault" was a glitchy peripheral during a reed-magnet gesture.
 	m_config_flush_active = false;
+	// Drop the pending flush rather than waiting for it to fire and notice the
+	// flag: if we re-enter Operational before it does, it re-arms itself.
+	system_scheduler->cancel_task(m_config_flush_task);
 	if (configuration_store->is_valid()) {
 		try { configuration_store->save_params(); }
 		catch (...) { DEBUG_ERROR("OperationalState::exit: save_params failed"); }
