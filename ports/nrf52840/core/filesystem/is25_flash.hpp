@@ -10,6 +10,8 @@
  * QSPI peripheral is only active while an operation is in progress.
  */
 
+#include <cstdint>
+
 #include "filesystem.hpp"
 
 #define IS25_BLOCK_COUNT   (4096)    ///< Total 4 KB blocks (16 MB / 4 KB)
@@ -23,7 +25,12 @@ public:
 
 	/**
 	 * @brief Initialise the IS25LP128F: QSPI peripheral, device ID check, QSPI mode enable.
-	 * @return true on success, false if QSPI init or device ID verification failed.
+	 *
+	 * Retries the whole sequence up to INIT_MAX_ATTEMPTS times, issuing a JEDEC
+	 * software reset to the die between attempts.  See init_attempt() for why a
+	 * plain single-shot init is not enough after an interrupted write.
+	 *
+	 * @return true on success, false if the device could not be brought up.
 	 */
 	[[nodiscard]] bool init();
 
@@ -58,6 +65,45 @@ private:
 
 	/// @brief Sync pending operations, enter deep power-down, uninit QSPI, float pins.
 	void _power_down_hw();
+
+	/// @name Bring-up and recovery
+	/// @{
+
+	/// @brief One full bring-up attempt (QSPI init, wake, ID check, QE bit).
+	/// @param attempt  1-based attempt number; attempts after the first begin
+	///                 with a software reset of the die.
+	/// @return true on success.  On failure the QSPI peripheral is left
+	///         uninitialised and power-cycled, ready for the next attempt.
+	bool init_attempt(unsigned int attempt);
+
+	/// @brief Poll RDSR until the write-in-progress bit clears.
+	/// @param timeout_us   Maximum time to wait.
+	/// @param elapsed_us   Out: time actually spent waiting.
+	/// @return true if WIP is clear, false on timeout or transfer error.
+	bool wait_wip_clear(uint32_t timeout_us, uint32_t &elapsed_us);
+
+	/// @brief JEDEC software reset of the die (RSTEN then RST).
+	/// @note Requires the QSPI peripheral to be initialised.
+	void software_reset();
+	/// @}
+
+public:
+#ifdef BENCH_TEST
+	/// @brief Bench probe: read the status register (bit0 WIP, bit6 QE).
+	uint8_t bench_status();
+
+	/// @brief Bench probe: exercise the recovery path on real silicon.
+	///
+	/// Issues RSTEN+RST and checks the die answers its JEDEC ID afterwards.
+	/// Non-destructive: quad mode is re-asserted if the reset cleared it, so the
+	/// filesystem keeps working after the probe.
+	/// @param jedec   Out: the three ID bytes read back after the reset.
+	/// @param status  Out: the status register read back after the reset.
+	/// @return true if the die identified correctly after the software reset.
+	bool bench_software_reset(uint8_t jedec[3], uint8_t &status);
+#endif
+
+private:
 
 public:
 	/**

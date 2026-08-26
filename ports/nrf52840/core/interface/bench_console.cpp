@@ -16,6 +16,10 @@
 #include "reed.hpp"
 #include "scheduler.hpp"
 #include "debug.hpp"
+#include "is25_flash.hpp"
+#include "config_store.hpp"
+
+extern Is25Flash *bench_flash;
 
 #include <cstdio>
 #include <cstdlib>
@@ -138,6 +142,40 @@ bool bench::handle_line(const std::string& raw) {
                      ble_service->bench_adv_mode(), state_name());
             reply(buf);
         }
+    } else if (cmd == "%FLASH") {
+        // %FLASH        -> statut du composant (WIP/QE) + etat d'init
+        // %FLASH SWRST  -> exerce RSTEN+RST sur silicium reel, non destructif
+        if (!bench_flash) {
+            reply("%FLASH ERR no-flash");
+        } else if (line.find(" SWRST") != std::string::npos) {
+            uint8_t jedec[3] = { 0, 0, 0 };
+            uint8_t status = 0;
+            bool ok = bench_flash->bench_software_reset(jedec, status);
+            char buf[128];
+            snprintf(buf, sizeof(buf),
+                     "%%FLASH SWRST %s jedec=%02X%02X%02X status=%02X qe=%d wip=%d",
+                     ok ? "OK" : "ERR", jedec[0], jedec[1], jedec[2], status,
+                     (status & 0x40) ? 1 : 0, (status & 0x01) ? 1 : 0);
+            reply(buf);
+        } else {
+            uint8_t status = bench_flash->bench_status();
+            char buf[128];
+            snprintf(buf, sizeof(buf), "%%FLASH init=%d status=%02X qe=%d wip=%d",
+                     bench_flash->is_init() ? 1 : 0, status,
+                     (status & 0x40) ? 1 : 0, (status & 0x01) ? 1 : 0);
+            reply(buf);
+        }
+    } else if (cmd == "%LB") {
+        // Coherence des deux seuils batterie. Le DEBUG_WARN correspondant part
+        // dans system.log (les logs console sont volontairement muets pendant un
+        // echange DTE), donc un test ne peut pas l'observer sur la console: on
+        // expose ici le verdict, emis par la meme branche que l'avertissement.
+        char buf[96];
+        snprintf(buf, sizeof(buf), "%%LB coherent=%d lb=%u crit=%u",
+                 configuration_store->check_battery_thresholds() ? 1 : 0,
+                 configuration_store->read_param<unsigned int>(ParamID::LB_THRESHOLD),
+                 configuration_store->read_param<unsigned int>(ParamID::LB_CRITICAL_THRESH));
+        reply(buf);
     } else if (cmd == "%SCHED") {
         // Schedule of EVERY registered service, straight from the decision point
         // in Service::reschedule(). Needed because the only log line that proves

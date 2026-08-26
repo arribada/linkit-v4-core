@@ -177,6 +177,12 @@ std::string DTEHandler::PARMW_REQ(int error_code, std::vector<ParamValue>& param
 	// Save all the parameters (incl. the re-seeded modulation cache above)
 	configuration_store->save_params();
 
+	// Coherence warning: nothing in the parameter table can catch a low-battery
+	// pair written in the wrong order, and the consequence (critical shutdown
+	// silently relocated to LB_THRESHOLD) is invisible until the battery runs
+	// down in the field.
+	(void)configuration_store->check_battery_thresholds();
+
 	// Notify configuration updated action
 	action = DTEAction::CONFIG_UPDATED;
 

@@ -854,6 +854,29 @@ void ConfigurationState::exit() {
 	// deja le sien de la meme facon.
 	try { ble_service->stop(); }
 	catch (...) { DEBUG_ERROR("exit: ConfigurationState: ble_service->stop failed"); }
+
+	// Abandon any OTA still in flight, HERE rather than in the BLE DISCONNECTED
+	// handler. That handler used to be the only place calling this, which was
+	// fragile twice over: it needed a DISCONNECTED event to actually arrive
+	// (leaving via the reed gesture with no phone attached never produced one),
+	// and since stop() now deregisters the callback it would not run at all.
+	// Without the abort, OTAFlashFileUpdater keeps m_file_size != 0 and an open
+	// LittleFS file handle: the handle leaks and every later transfer is
+	// refused until the next reboot. Cheap no-op when nothing is in progress
+	// (m_file_size == 0); can throw on the MCU_FIRMWARE erase path, hence the
+	// guard.
+	try { if (ota_updater) ota_updater->abort_file_transfer(); }
+	catch (...) { DEBUG_ERROR("exit: ConfigurationState: abort_file_transfer failed"); }
+
+#ifdef USB_DTE_ENABLED
+	// Drop the async writer back onto USB. It may still be holding the lambda
+	// installed on BLE CONNECT, whose link is now gone — same reasoning as
+	// above: the DISCONNECTED handler used to do this and no longer runs.
+	dte_handler->set_async_write([](const std::string& msg) {
+		UsbInterface::get_instance().write(msg);
+	});
+#endif
+
 	system_scheduler->cancel_task(m_ble_inactivity_timeout_task);
 	system_scheduler->cancel_task(m_backup_charge_blink_task);
 	// MED #6 audit fix: cancel the BackupChargeStopBLE task too — its lambda
@@ -1005,6 +1028,16 @@ int ConfigurationState::on_ble_event(BLEServiceEvent& event) {
 /// so the tag resumes its mission. A deliberate power-off stays available via
 /// the reed LONG_HOLD (POWEROFF) gesture and the DTE command — both untouched.
 void ConfigurationState::on_ble_inactivity_timeout() {
+	// Defence in depth: transit<>() leaves whatever state the FSM is CURRENTLY
+	// in, not the one that armed the timer. A stale BLE callback re-arming this
+	// from OperationalState therefore yanked a running mission back through
+	// PreOperationalState — restarting every service — for no reason. The
+	// callback leak is fixed in BleInterface::stop(); this guard makes the
+	// timer harmless even if anything else ever re-arms it out of context.
+	if (!is_in_state<ConfigurationState>()) {
+		DEBUG_WARN("BLE Inactivity Timeout fired outside configuration mode — ignored");
+		return;
+	}
 	DEBUG_INFO("BLE Inactivity Timeout — returning to operation (as if exit gesture)");
 	transit<PreOperationalState>();
 }

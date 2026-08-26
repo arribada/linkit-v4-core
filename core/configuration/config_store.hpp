@@ -535,6 +535,62 @@ public:
 	/// @brief Write Argos pass prediction data to flash.
 	virtual void write_pass_predict(BasePassPredict& value) = 0;
 
+	/// @brief Warn if the low-battery threshold pair cannot do its job.
+	///
+	/// Both LB_THRESHOLD (LBP02) and LB_CRITICAL_THRESH (LBP12) are percentages
+	/// of state-of-charge accepting 0..100 independently, so nothing in the
+	/// parameter table catches an inconsistent pair.
+	///
+	/// What is actually at stake: the ASYNCHRONOUS shutdown path
+	/// (BatteryMonitor::actuate_events -> BatteryMonitorEventVoltageCritical ->
+	/// BatteryCriticalState) compares against LB_CRITICAL_THRESH directly and
+	/// keeps working whatever these two are set to. What depends on the pair is
+	/// the SYNCHRONOUS pre-transmission guard in ArgosTxService/LoRaTxService,
+	/// which refuses to start a high-current transmission on an already-critical
+	/// battery. That guard sits inside `if (argos_config.is_lb)`, and
+	/// `is_lb = LB_EN && SOC < LB_THRESHOLD` — so it only ever runs when LB mode
+	/// is enabled AND the low-battery band has been entered first.
+	///
+	/// Hence: silent when LB_EN is off (the guard is inactive by design, and
+	/// LB_EN defaults to false — warning there would be noise on a default
+	/// config). When LB_EN is on, LB_THRESHOLD must be strictly greater than
+	/// LB_CRITICAL_THRESH, and the two failure modes are reported distinctly
+	/// because they are not the same mistake.
+	///
+	/// Called at boot (init_battery) and after every DTE config write. This is a
+	/// warning: the write is not blocked.
+	/// @return true when the pair can do its job (or LB mode is off).
+	bool check_battery_thresholds() {
+		bool lb_en;
+		unsigned int lb, crit;
+		try {
+			lb_en = read_param<bool>(ParamID::LB_EN);
+			lb    = read_param<unsigned int>(ParamID::LB_THRESHOLD);
+			crit  = read_param<unsigned int>(ParamID::LB_CRITICAL_THRESH);
+		} catch (...) {
+			return true;  // store not readable yet — not our problem to report
+		}
+
+		if (!lb_en)
+			return true;  // LB mode disabled: the gated guard is inactive by design
+
+		if (lb > crit)
+			return true;
+
+		if (lb < crit)
+			DEBUG_WARN("ConfigurationStore: LB_THRESHOLD (LBP02=%u%%) is BELOW "
+			           "LB_CRITICAL_THRESH (LBP12=%u%%) — the pre-transmission critical-battery "
+			           "guard only runs once the low-battery band is entered, so it will not "
+			           "fire until %u%% instead of %u%%",
+			           lb, crit, lb, crit);
+		else
+			DEBUG_WARN("ConfigurationStore: LB_THRESHOLD (LBP02) equals LB_CRITICAL_THRESH "
+			           "(LBP12=%u%%) — there is no low-battery band at all, so LB mode never "
+			           "takes effect before the critical shutdown",
+			           crit);
+		return false;
+	}
+
 	/// @brief Read a configuration parameter by ID.
 	/// @tparam T  Expected parameter type (e.g., unsigned int, bool, std::string).
 	/// @throws CONFIG_STORE_CORRUPTED if store is invalid or type mismatch.

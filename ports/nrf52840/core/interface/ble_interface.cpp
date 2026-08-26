@@ -103,6 +103,17 @@ void BleInterface::stop()
     m_carriage_return_received = false;
     m_receive_buffer_len = 0;
     m_is_first_ota_packet = false;
+
+    // Deregister the owning state's callback. It was posted by start() and,
+    // until now, NEVER cleared — so ConfigurationState's handler stayed live
+    // for the rest of the device's life. Any later connection re-entered it
+    // from OperationalState, where it re-armed the 20-minute BLE inactivity
+    // timer (which then forced Operational -> PreOperational -> Operational,
+    // seen in the field on 2026-08-24 08:35:07), hijacked the DTE async writer
+    // onto BLE, and drove the configuration LED states. The interface's own
+    // housekeeping (m_conn_handle, RX buffers) runs before this dispatch in
+    // ble_evt_handler, so dropping the callback here loses nothing.
+    m_on_event = nullptr;
 }
 
 std::string BleInterface::read_line()
@@ -496,6 +507,27 @@ void BleInterface::nrf_qwr_error_handler(uint32_t nrf_error)
 /**@snippet [Handling the data received over BLE] */
 void BleInterface::stm_ota_event_handler(uint16_t conn_handle, ble_stm_ota_t * p_stm_ota, ble_stm_ota_event_t * p_evt)
 {
+	// No owner registered — bail out before touching m_on_event.
+	//
+	// This runs in SoftDevice interrupt context, reached through the plain-C
+	// frames of ble_stm_ota.c. Those frames are EXIDX_CANTUNWIND, so an
+	// exception thrown below cannot unwind through them and lands straight in
+	// std::terminate. Every m_on_event() call further down is either bare or
+	// wrapped in `catch (ErrorCode)`, which does NOT catch the
+	// std::bad_function_call that an empty std::function throws.
+	//
+	// Before stop() started clearing m_on_event this could not happen: the
+	// callback was set for the lifetime of the device. Now it can — a reed
+	// swipe out of configuration while a phone still has OTA writes in flight
+	// leaves a few hundred ms during which queued write-without-response
+	// packets still arrive. Reply "interrupted" so the peer fails cleanly.
+	if (!m_on_event)
+	{
+		uint8_t status[3] = { STM_OTA_STATUS_FILE_RECEPTION_INTERRUPTED, STM_OTA_STATUS_IGNORE, STM_OTA_STATUS_IGNORE };
+		ble_stm_ota_on_file_upload_status(conn_handle, p_stm_ota, status);
+		return;
+	}
+
 	BLEServiceEvent s_evt;
 	switch (p_evt->event_type)
 	{

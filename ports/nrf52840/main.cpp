@@ -312,6 +312,97 @@ FSM_INITIAL_STATE(GenTracker, BootState)
 	}
 }
 
+/// @brief Blink the status LED for a bounded time, then leave it off.
+/// @param color          Colour to flash.
+/// @param total_ms       Approximate total duration.
+/// @param delay_ms       Half-period.
+/// @param feed_watchdog  Keep the WDT fed while blinking.
+static void blink_bounded(RGBLedColor color, unsigned int total_ms,
+                          unsigned int delay_ms, bool feed_watchdog) {
+	for (unsigned int t = 0; t < total_ms; t += 2 * delay_ms) {
+#ifdef GPIO_LED_REG
+		GPIOPins::set(GPIO_LED_REG);
+#endif
+		NrfRGBLed::set_color_raw(BSP::GPIO::GPIO_LED_RED, BSP::GPIO::GPIO_LED_GREEN, BSP::GPIO::GPIO_LED_BLUE, color);
+		nrf_delay_ms(delay_ms);
+		NrfRGBLed::set_color_raw(BSP::GPIO::GPIO_LED_RED, BSP::GPIO::GPIO_LED_GREEN, BSP::GPIO::GPIO_LED_BLUE, RGBLedColor::BLACK);
+		nrf_delay_ms(delay_ms);
+		if (feed_watchdog)
+			PMU::kick_watchdog();
+	}
+	NrfRGBLed::set_color_raw(BSP::GPIO::GPIO_LED_RED, BSP::GPIO::GPIO_LED_GREEN, BSP::GPIO::GPIO_LED_BLUE, RGBLedColor::BLACK);
+#ifdef GPIO_LED_REG
+	GPIOPins::clear(GPIO_LED_REG);
+#endif
+}
+
+/// @brief Consecutive IS25 bring-up failures, kept in .noinit RAM.
+///
+/// Survives the explicit resets issued by flash_init_failed() and any watchdog
+/// reset, but not a battery removal: a cold power-on leaves the RAM
+/// uninitialised and the magic will not match, which is exactly the semantics
+/// we want (an operator who re-seats the battery gets a fresh set of retries).
+struct FlashFailNoinit {
+	uint32_t magic;
+	uint32_t count;
+};
+static __attribute__((section(".noinit"))) volatile FlashFailNoinit s_flashfail;
+static constexpr uint32_t FLASHFAIL_MAGIC = 0x15250FA1;
+
+/// @brief Explicit reboots attempted before handing the board to the watchdog.
+static constexpr uint32_t FLASH_INIT_MAX_RESETS = 5;
+
+/// @brief The filesystem flash would not come up — recover instead of trapping.
+///
+/// This used to be `fault_blink_loop(RED, 100)`: an infinite blink that fed the
+/// watchdog on every iteration. On a sealed device that is unrecoverable — the
+/// board sits there red forever, the magnet does nothing (the scheduler and the
+/// FSM were never started), and nothing is logged because system.log lives on
+/// the very flash that failed. Observed in the field on 2026-08-25; the board
+/// only came back after a manual RESET.
+///
+/// The escalation below is deliberately explicit and bounded:
+///   1. up to FLASH_INIT_MAX_RESETS announced reboots, each one re-running the
+///      driver's own software-reset recovery (Is25Flash::init_attempt), which
+///      is what clears a die left mid-erase;
+///   2. after that, a minute of red so an operator can identify the fault, then
+///      sleep WITHOUT feeding the watchdog, so the WDT reclaims the board every
+///      15 min and the whole recovery cycle runs again — slow, low power, and
+///      never a permanent trap.
+#ifdef BENCH_TEST
+/// @brief Bench-only handle on the filesystem flash, for the %FLASH probes.
+Is25Flash *bench_flash = nullptr;
+#endif
+
+[[noreturn]] static void flash_init_failed() {
+	if (s_flashfail.magic != FLASHFAIL_MAGIC) {
+		s_flashfail.magic = FLASHFAIL_MAGIC;
+		s_flashfail.count = 0;
+	}
+	s_flashfail.count = s_flashfail.count + 1;
+	const uint32_t fails = s_flashfail.count;
+
+	if (fails <= FLASH_INIT_MAX_RESETS) {
+		DEBUG_ERROR("IS25 flash init failed (%lu/%lu) — explicit reset to retry recovery",
+		            (unsigned long)fails, (unsigned long)FLASH_INIT_MAX_RESETS);
+		blink_bounded(RGBLedColor::RED, 2000, 100, true);
+		PMU::reset(false);
+		for (;;) { }   // PMU::reset does not return
+	}
+
+	DEBUG_ERROR("IS25 flash init failed (%lu) — unrecoverable, deferring to the watchdog",
+	            (unsigned long)fails);
+#ifdef DEBUG_NO_WATCHDOG
+	// No watchdog to reclaim us on this build: keep rebooting on our own, slowly.
+	blink_bounded(RGBLedColor::RED, 30000, 100, false);
+	PMU::reset(false);
+	for (;;) { }
+#else
+	blink_bounded(RGBLedColor::RED, 60000, 100, false);
+	for (;;) { __WFI(); }   // watchdog (15 min) reboots us and we try again
+#endif
+}
+
 extern "C" void HardFault_Handler() {
 #ifdef NDEBUG
 	for (;;) { PMU::save_stack(PMULogType::HARDFAULT); PMU::reset(false); }
@@ -556,10 +647,18 @@ static InitContext init_peripherals()
 
 	DEBUG_TRACE("IS25 flash...");
 	static Is25Flash is25_flash;
-	if (!is25_flash.init()) {
-		DEBUG_ERROR("IS25 flash init failed — cannot continue without filesystem");
-		fault_blink_loop(RGBLedColor::RED, 100);
-	}
+	if (!is25_flash.init())
+		flash_init_failed();   // never returns
+
+	// The flash is up: forget any past bring-up failures so a transient fault
+	// months from now gets the full retry budget again rather than dropping
+	// straight into the watchdog-paced path.
+	s_flashfail.magic = FLASHFAIL_MAGIC;
+	s_flashfail.count = 0;
+
+#ifdef BENCH_TEST
+	bench_flash = &is25_flash;
+#endif
 
 	return {nrf_reed_switch, is25_flash};
 }
@@ -884,6 +983,7 @@ static void init_battery()
 	DEBUG_TRACE("Battery monitor...");
 	uint8_t critical_batt_level = static_cast<uint8_t>(configuration_store->read_param<unsigned int>(ParamID::LB_CRITICAL_THRESH));
 	uint8_t low_batt_level = static_cast<uint8_t>(configuration_store->read_param<unsigned int>(ParamID::LB_THRESHOLD));
+	(void)configuration_store->check_battery_thresholds();
 
 #if defined(BATTERY_MONITOR_ANALOG)
 #ifdef BATTERY_ADC

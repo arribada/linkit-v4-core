@@ -12,12 +12,102 @@
 #include "nrf_delay.h"
 
 
-bool Is25Flash::init()
+namespace {
+
+/// @brief Longest internal write cycle we may have to ride out at boot.
+///
+/// A reset (watchdog, brown-out, operator) in the middle of a LittleFS sector
+/// erase leaves the die self-timing that erase from its own charge pump.  It
+/// survives the CPU reset, and until it finishes the flash answers nothing but
+/// RDSR — a JEDEC ID read returns garbage.  IS25LP128F specifies 300 ms max for
+/// a 4 KB sector erase (the granularity we use, see _sync()), so the 50 ms this
+/// file used to allow was six times too short: the boot that followed any
+/// interrupted write — a satellite AOP table being saved, a log flush, a config
+/// save — failed on a perfectly healthy part and dropped main() into a
+/// permanent red blink loop.  Field occurrence 2026-08-25.  2 s leaves margin
+/// for a hot die and for the 64 KB block erase path.
+constexpr uint32_t WIP_BOOT_TIMEOUT_US = 2000000;
+
+/// @brief WRSR (status register write) is quick — 15 ms typical worst case.
+constexpr uint32_t WRSR_TIMEOUT_US = 50000;
+
+/// @brief RDSR poll interval while waiting for WIP.
+constexpr uint32_t WIP_POLL_US = 50;
+
+/// @brief Settling time after a software reset (tRST is tens of us; be generous).
+constexpr uint32_t RESET_RECOVERY_MS = 10;
+
+/// @brief Full bring-up attempts before init() gives up.
+constexpr unsigned int INIT_MAX_ATTEMPTS = 3;
+
+/// @brief Common cinstr scaffolding: IO3 high (it doubles as RESET# while the
+/// die is in SPI mode), no automatic WIP wait (we do our own, bounded).
+inline nrf_qspi_cinstr_conf_t cinstr_base()
 {
 	nrf_qspi_cinstr_conf_t config;
-	uint8_t status;
+	config.opcode    = 0;
+	config.length    = NRF_QSPI_CINSTR_LEN_1B;
+	config.io2_level = false;
+	config.io3_level = true;
+	config.wipwait   = false;
+	config.wren      = false;
+	return config;
+}
+
+}  // namespace
+
+
+bool Is25Flash::wait_wip_clear(uint32_t timeout_us, uint32_t &elapsed_us)
+{
+	nrf_qspi_cinstr_conf_t config = cinstr_base();
+	uint8_t rx_buffer[3];
+
+	config.opcode = IS25LP128F::RDSR;
+	config.length = NRF_QSPI_CINSTR_LEN_2B;
+
+	elapsed_us = 0;
+	for (;;)
+	{
+		rx_buffer[0] = 0xFF;
+		if (nrfx_qspi_cinstr_xfer(&config, nullptr, rx_buffer) != NRFX_SUCCESS)
+			return false;
+
+		if (!(rx_buffer[0] & IS25LP128F::STATUS_WIP))
+			return true;
+
+		if (elapsed_us >= timeout_us)
+			return false;
+
+		nrf_delay_us(WIP_POLL_US);
+		elapsed_us += WIP_POLL_US;
+	}
+}
+
+
+void Is25Flash::software_reset()
+{
+	// RSTEN then RST. This is the only in-band recovery available to us: the
+	// IS25 shares the main 3V3 rail (no dedicated load switch to cycle) and its
+	// hardware RESET# on IO3 is disabled once the non-volatile QE bit is set —
+	// which it is on every device that has booted at least once.
+	nrf_qspi_cinstr_conf_t config = cinstr_base();
+
+	config.opcode = IS25LP128F::RSTEN;
+	(void)nrfx_qspi_cinstr_xfer(&config, nullptr, nullptr);
+
+	config.opcode = IS25LP128F::RST;
+	(void)nrfx_qspi_cinstr_xfer(&config, nullptr, nullptr);
+
+	nrf_delay_ms(RESET_RECOVERY_MS);
+}
+
+
+bool Is25Flash::init_attempt(unsigned int attempt)
+{
+	nrf_qspi_cinstr_conf_t config;
 	uint8_t rx_buffer[3];
 	uint8_t tx_buffer[1];
+	uint32_t waited = 0;
 
 	// If setting the SO/io1 pin to an input is not done then the nrfx_qspi_init() timesout when the board
 	// is reprogrammed using a JLink. It is unclear why this happens but having this in place causes no harm.
@@ -27,30 +117,57 @@ bool Is25Flash::init()
 	nrfx_err_t ret = nrfx_qspi_init(&BSP::QSPI_Inits[BSP::QSPI_0].config, nullptr, nullptr);
 	if (ret != NRFX_SUCCESS)
 	{
+		// nrfx_qspi_init() sets m_cb.state = INITIALIZED *before* it waits for
+		// the peripheral to be ready, so a NRFX_ERROR_TIMEOUT leaves the driver
+		// claiming it is up. Without this uninit, attempts 2 and 3 would get
+		// NRFX_ERROR_INVALID_STATE straight away and the software-reset
+		// recovery below would never run — the retry loop would be decorative.
+		// INVALID_PARAM is the one failure that returns before the state is
+		// set; uninit would then be operating on an uninitialised driver.
+		if (ret != NRFX_ERROR_INVALID_PARAM)
+			nrfx_qspi_uninit();
+		nrf_peripheral_power_reset(NRF_QSPI_BASE_ADDR);
 		DEBUG_ERROR("IS25LP128F QSPI initialisation failure - %d", ret);
 		return false;
 	}
 
-	config.io2_level = false;
-	// Keep IO3 high during transfers as this is the reset line in SPI mode.
-	// We'll make use of this line once the FLASH chip is in QSPI mode.
-	config.io3_level = true;
-	config.wipwait   = false;
+	config = cinstr_base();
 
 	// Issue a wake-up command in case the device is in deep sleep
 	config.opcode = IS25LP128F::RDPD;
 	config.length = NRF_QSPI_CINSTR_LEN_1B;
-	config.wren = false;
-
 	nrfx_qspi_cinstr_xfer(&config, nullptr, nullptr);
 
 	nrf_delay_ms(1);
+
+	// Retries start by resetting the die: whatever made the previous attempt
+	// fail (stuck state machine, stale QPI mode, half-decoded command) is
+	// exactly what a software reset is for.
+	if (attempt > 1)
+		software_reset();
+
+	// Ride out any program/erase the die is still finishing from before we
+	// booted. This MUST come before the JEDEC ID read: while WIP is set the
+	// part answers RDSR and nothing else, so the ID check below would fail on a
+	// perfectly good device and take the whole board down with it.
+	if (!wait_wip_clear(WIP_BOOT_TIMEOUT_US, waited))
+	{
+		nrfx_qspi_uninit();
+		nrf_peripheral_power_reset(NRF_QSPI_BASE_ADDR);
+		DEBUG_ERROR("IS25LP128F: WIP still set after %lu us — die busy or unresponsive",
+		            (unsigned long)waited);
+		return false;
+	}
+	if (waited)
+		DEBUG_WARN("IS25LP128F: rode out an interrupted write/erase (%lu us)",
+		           (unsigned long)waited);
 
 	// Read and check the SPI device ID matches the expected value
 	config.opcode = IS25LP128F::RDJDID;
 	config.length = NRF_QSPI_CINSTR_LEN_4B;
 	config.wren = false;
 
+	rx_buffer[0] = rx_buffer[1] = rx_buffer[2] = 0;
 	nrfx_qspi_cinstr_xfer(&config, nullptr, rx_buffer);
 
 	if (rx_buffer[0] != IS25LP128F::MANUFACTURER_ID ||
@@ -59,41 +176,51 @@ bool Is25Flash::init()
 	{
 		nrfx_qspi_uninit();
 		nrf_peripheral_power_reset(NRF_QSPI_BASE_ADDR);
-		DEBUG_ERROR("IS25LP128F not correctly identified");
+		DEBUG_ERROR("IS25LP128F not correctly identified (read %02X %02X %02X, expected %02X %02X %02X)",
+		            rx_buffer[0], rx_buffer[1], rx_buffer[2],
+		            IS25LP128F::MANUFACTURER_ID, IS25LP128F::MEMORY_TYPE_ID, IS25LP128F::CAPACITY_ID);
 		return false;
 	}
 
-	// Switch to QSPI mode
-	config.opcode = IS25LP128F::WRSR;
-	tx_buffer[0] = IS25LP128F::STATUS_QE;
-	config.length = NRF_QSPI_CINSTR_LEN_2B;
-	config.wren = true;
-	nrfx_qspi_cinstr_xfer(&config, tx_buffer, nullptr);
-
-	// Wait for QSPI mode to be programmed (bounded — WRSR typically < 15 ms)
+	// Switch to QSPI mode. QE lives in the NON-VOLATILE status register, so on
+	// every boot after the first it is already set: skip the write. That spares
+	// the register a program cycle per boot and — more to the point — removes a
+	// ~15 ms window per boot during which a reset would leave WIP stuck.
+	//
+	// The skip condition deliberately checks the WHOLE register, not just QE.
+	// The unconditional write this replaces put SR = STATUS_QE, which also
+	// CLEARED the block-protect bits (BP0..BP3) and SRWD. Skipping on "QE set"
+	// alone would let a latched block-protect survive every boot while init()
+	// still reported success — the filesystem would then fail to write with no
+	// explanation. Re-normalise unless the register is exactly what we want.
+	constexpr uint8_t SR_PROTECT_MASK = IS25LP128F::STATUS_BP0 | IS25LP128F::STATUS_BP1 |
+	                                    IS25LP128F::STATUS_BP2 | IS25LP128F::STATUS_BP3 |
+	                                    IS25LP128F::STATUS_SRWD;
 	config.opcode = IS25LP128F::RDSR;
 	config.length = NRF_QSPI_CINSTR_LEN_2B;
 	config.wren = false;
+	rx_buffer[0] = 0;
+	nrfx_qspi_cinstr_xfer(&config, nullptr, rx_buffer);
 
-	constexpr uint32_t WRSR_TIMEOUT_US = 50000;  // 50 ms — well above WRSR max (15 ms)
-	constexpr uint32_t WRSR_POLL_US    = 10;
-	uint32_t elapsed = 0;
-	do
+	if (!(rx_buffer[0] & IS25LP128F::STATUS_QE) || (rx_buffer[0] & SR_PROTECT_MASK))
 	{
-		nrfx_qspi_cinstr_xfer(&config, nullptr, rx_buffer);
-		status = rx_buffer[0];
-		if (!(status & IS25LP128F::STATUS_WIP))
-			break;
-		nrf_delay_us(WRSR_POLL_US);
-		elapsed += WRSR_POLL_US;
-	} while (elapsed < WRSR_TIMEOUT_US);
+		if (rx_buffer[0] & SR_PROTECT_MASK)
+			DEBUG_WARN("IS25LP128F: status register had protection bits set (%02X) — normalising",
+			           rx_buffer[0]);
+		config.opcode = IS25LP128F::WRSR;
+		tx_buffer[0] = IS25LP128F::STATUS_QE;
+		config.length = NRF_QSPI_CINSTR_LEN_2B;
+		config.wren = true;
+		nrfx_qspi_cinstr_xfer(&config, tx_buffer, nullptr);
 
-	if (status & IS25LP128F::STATUS_WIP)
-	{
-		nrfx_qspi_uninit();
-		nrf_peripheral_power_reset(NRF_QSPI_BASE_ADDR);
-		DEBUG_ERROR("IS25LP128F WRSR timeout (WIP stuck after %lu us)", elapsed);
-		return false;
+		// Wait for QSPI mode to be programmed (bounded — WRSR typically < 15 ms)
+		if (!wait_wip_clear(WRSR_TIMEOUT_US, waited))
+		{
+			nrfx_qspi_uninit();
+			nrf_peripheral_power_reset(NRF_QSPI_BASE_ADDR);
+			DEBUG_ERROR("IS25LP128F WRSR timeout (WIP stuck after %lu us)", (unsigned long)waited);
+			return false;
+		}
 	}
 
 	// init() manages QSPI directly, use hardware-level power down
@@ -102,6 +229,91 @@ bool Is25Flash::init()
 	m_is_init = true;
 	return true;
 }
+
+
+#ifdef BENCH_TEST
+
+uint8_t Is25Flash::bench_status()
+{
+	power_up();
+	nrf_qspi_cinstr_conf_t config = cinstr_base();
+	uint8_t rx[3] = { 0, 0, 0 };
+	config.opcode = IS25LP128F::RDSR;
+	config.length = NRF_QSPI_CINSTR_LEN_2B;
+	(void)nrfx_qspi_cinstr_xfer(&config, nullptr, rx);
+	power_down();
+	return rx[0];
+}
+
+bool Is25Flash::bench_software_reset(uint8_t jedec[3], uint8_t &status)
+{
+	power_up();
+
+	software_reset();
+
+	nrf_qspi_cinstr_conf_t config = cinstr_base();
+	uint8_t rx[3] = { 0, 0, 0 };
+
+	config.opcode = IS25LP128F::RDJDID;
+	config.length = NRF_QSPI_CINSTR_LEN_4B;
+	(void)nrfx_qspi_cinstr_xfer(&config, nullptr, rx);
+	jedec[0] = rx[0];
+	jedec[1] = rx[1];
+	jedec[2] = rx[2];
+
+	// A reset returns the die to its power-on state. QE is non-volatile (the
+	// runtime power_up path never re-writes it, yet quad reads keep working),
+	// but re-assert it if it did come back clear — otherwise this probe would
+	// leave the filesystem unable to read until the next reboot.
+	config.opcode = IS25LP128F::RDSR;
+	config.length = NRF_QSPI_CINSTR_LEN_2B;
+	config.wren = false;
+	rx[0] = 0;
+	(void)nrfx_qspi_cinstr_xfer(&config, nullptr, rx);
+	status = rx[0];
+
+	if (!(status & IS25LP128F::STATUS_QE))
+	{
+		uint8_t tx[1] = { IS25LP128F::STATUS_QE };
+		uint32_t waited = 0;
+		DEBUG_WARN("IS25LP128F bench: software reset cleared QE — re-asserting");
+		config.opcode = IS25LP128F::WRSR;
+		config.length = NRF_QSPI_CINSTR_LEN_2B;
+		config.wren = true;
+		(void)nrfx_qspi_cinstr_xfer(&config, tx, nullptr);
+		(void)wait_wip_clear(WRSR_TIMEOUT_US, waited);
+	}
+
+	power_down();
+
+	return jedec[0] == IS25LP128F::MANUFACTURER_ID &&
+	       jedec[1] == IS25LP128F::MEMORY_TYPE_ID &&
+	       jedec[2] == IS25LP128F::CAPACITY_ID;
+}
+
+#endif  // BENCH_TEST
+
+
+bool Is25Flash::init()
+{
+	for (unsigned int attempt = 1; attempt <= INIT_MAX_ATTEMPTS; attempt++)
+	{
+		if (init_attempt(attempt))
+		{
+			if (attempt > 1)
+				DEBUG_WARN("IS25LP128F: recovered on attempt %u/%u", attempt, INIT_MAX_ATTEMPTS);
+			return true;
+		}
+
+		if (attempt < INIT_MAX_ATTEMPTS)
+			DEBUG_WARN("IS25LP128F: bring-up attempt %u/%u failed — retrying with a software reset",
+			           attempt, INIT_MAX_ATTEMPTS);
+	}
+
+	DEBUG_ERROR("IS25LP128F: bring-up failed after %u attempts", INIT_MAX_ATTEMPTS);
+	return false;
+}
+
 
 /**
  * @brief Internal read — QSPI must be powered up by caller.
@@ -236,7 +448,15 @@ int Is25Flash::_sync()
 {
 	nrfx_err_t ret;
 
-	// Expected max wait: 300 ms (worst-case 4 KB erase)
+	// Deliberately left at 300 ms — the IS25LP128F maximum for a 4 KB sector
+	// erase — even though that leaves no margin. This wait is REACHABLE FROM
+	// SOFTDEVICE INTERRUPT CONTEXT: a BLE OTA write lands in
+	// stm_ota_event_handler (NRF_SDH_DISPATCH_MODEL = INTERRUPT) and runs
+	// ota_updater->write_file_data() straight through to LittleFS. Raising the
+	// budget would extend a busy-wait inside the radio's own IRQ and put the
+	// BLE link at risk. A rare timeout here surfaces as LFS_ERR_IO, which the
+	// caller handles; a one-second stall in the SoftDevice IRQ does not.
+	// The bring-up path has its own, much longer budget — see WIP_BOOT_TIMEOUT_US.
 	constexpr uint32_t WAIT_TIME_US = 10;
 	constexpr uint32_t WAIT_ATTEMPTS = 30000;
 
