@@ -231,6 +231,40 @@ unsigned int ArgosTxService::service_next_schedule_in_ms() {
 		}
 	}
 
+	// --- Gating prepass orthogonal au mode (2026-08) -------------------------
+	// Pour tout mode AUTRE que PASS_PREDICTION (qui gere son alignement lui-meme),
+	// on pose un plancher "pas avant la prochaine fenetre satellite" via le meme
+	// mecanisme que le dry-time SWS. Emettre hors fenetre, c'est depenser la
+	// batterie pour une trame qu'aucun satellite n'entend.
+	// Tout echec (AOP absents/perimes, aucun passage calculable, fenetre au-dela
+	// de SAT_PREPASS_MAX_WAIT_S) laisse le mode emettre en PERIODIQUE: on ne
+	// rend jamais la balise muette.
+	if (argos_config.prepass_en && argos_config.mode != BaseArgosMode::PASS_PREDICTION &&
+	    argos_config.mode != BaseArgosMode::OFF) {
+		unsigned int age_s = 0;
+		std::time_t aos = 0;
+		AopEtat etat = aop_etat(argos_config, now, age_s);
+		if (etat != AopEtat::UTILISABLE) {
+			DEBUG_WARN("ArgosTxService: prepass demande mais %s (age=%u s) — emission periodique",
+			           aop_etat_texte(etat), age_s);
+		} else {
+			BasePassPredict& pp = configuration_store->read_pass_predict();
+			aos = m_sched.next_pass_epoch(argos_config, pp, now);
+			if (aos <= 0) {
+				DEBUG_WARN("ArgosTxService: prepass demande mais aucun passage calculable — emission periodique");
+			} else if (argos_config.prepass_max_wait_s &&
+			           aos > now + static_cast<std::time_t>(argos_config.prepass_max_wait_s)) {
+				DEBUG_INFO("ArgosTxService: prochaine fenetre dans %lld s > attente max %u s — emission periodique",
+				           static_cast<long long>(aos - now), argos_config.prepass_max_wait_s);
+			} else {
+				DEBUG_INFO("ArgosTxService: emission alignee sur la prochaine fenetre (dans %lld s)",
+				           static_cast<long long>(aos - now));
+				m_sched.set_earliest_schedule(aos);
+			}
+		}
+		refresh_prepass_status(argos_config, now, aos);
+	}
+
 	// Refresh provisioned-modulation mask in case PARMW edited an RCONF since
 	// the last cycle. Cheap (3 string-length checks); only logs on change.
 	refresh_modulation_availability();
@@ -587,17 +621,40 @@ unsigned int ArgosTxService::service_next_schedule_in_ms() {
 				} else {
 					m_scheduled_task = [this]() { process_gnss_burst(); };
 				}
+				// AOP inexploitables (absents ou perimes) -> repli PERIODIQUE.
+				// Auparavant on rendait SCHEDULE_DISABLED: la balise restait
+				// muette jusqu'a la prochaine entree GPS, sans que rien ne le
+				// signale. Rester silencieux est le pire des deux maux; mieux
+				// vaut emettre a l'aveugle que pas du tout.
+				unsigned int age_s = 0;
+				AopEtat etat = aop_etat(argos_config, now, age_s);
+				if (etat != AopEtat::UTILISABLE) {
+					DEBUG_WARN("ArgosTxService: prepass impossible — %s (age=%u s, limite=%u j) — repli periodique",
+					           aop_etat_texte(etat), age_s, argos_config.aop_max_age_days);
+					refresh_prepass_status(argos_config, now, 0);
+					return m_sched.schedule_legacy(argos_config, now);
+				}
 				BasePassPredict& pass_predict = configuration_store->read_pass_predict();
 				// m_scheduled_mode est resolu juste au-dessus et n'est plus
 				// touche par l'ordonnanceur.
 				unsigned int schedule = m_sched.schedule_prepass(argos_config, pass_predict, now);
 				if (schedule == ArgosTxScheduler::INVALID_SCHEDULE) {
-					// v3 behavior: no pass found (or no known location) -> no TX.
-					// The service is re-armed by the next GPS entry (notify_peer_event
-					// reschedules when not scheduled). No duty-cycle fallback.
-					DEBUG_WARN("ArgosTxService: PASS_PREDICTION returned no pass — TX disabled until next GPS entry");
-					return Service::SCHEDULE_DISABLED;
+					DEBUG_WARN("ArgosTxService: aucun passage calculable — repli periodique");
+					refresh_prepass_status(argos_config, now, 0);
+					return m_sched.schedule_legacy(argos_config, now);
 				}
+				// Garde-fou: une fenetre trop lointaine ne doit pas bloquer les
+				// emissions pendant des heures. Au-dela de SAT_PREPASS_MAX_WAIT_S
+				// on emet en periodique (0 = pas de garde-fou).
+				static constexpr unsigned int MS_PER_S = 1000;
+				if (argos_config.prepass_max_wait_s &&
+				    schedule > argos_config.prepass_max_wait_s * MS_PER_S) {
+					DEBUG_INFO("ArgosTxService: prochaine fenetre dans %u s > attente max %u s — repli periodique",
+					           schedule / MS_PER_S, argos_config.prepass_max_wait_s);
+					refresh_prepass_status(argos_config, now, now + schedule / MS_PER_S);
+					return m_sched.schedule_legacy(argos_config, now);
+				}
+				refresh_prepass_status(argos_config, now, now + schedule / MS_PER_S);
 				return schedule;
 			}
 		}
@@ -2375,6 +2432,75 @@ unsigned int ArgosTxService::apply_spacing_guard(unsigned int proposed_delay_ms,
 	// fire "early" relative to our spacing.
 	m_sched.schedule_at(now + (std::time_t)(deferred_ms / 1000) + 1);
 	return deferred_ms;
+}
+
+/// @brief Le gating prepass est-il actif ? Independant du mode Argos.
+bool ArgosTxService::prepass_gating_active(const ArgosConfig& config) {
+	// Deux dimensions independantes: le mode dit QUOI/QUAND emettre, le prepass
+	// dit SI un satellite ecoute. PASS_PREDICTION est conserve tel quel et vaut
+	// "LEGACY + prepass" — les balises deja configurees ainsi gardent leur
+	// comportement sans aucune migration.
+	return config.prepass_en || config.mode == BaseArgosMode::PASS_PREDICTION;
+}
+
+const char *ArgosTxService::aop_etat_texte(AopEtat e) {
+	switch (e) {
+	case AopEtat::AUCUN_ENREGISTREMENT: return "aucun enregistrement AOP (jamais provisionne)";
+	case AopEtat::RTC_NON_REGLEE:       return "RTC non reglee (pas d'heure fiable)";
+	case AopEtat::DATE_ABSENTE:         return "date de bulletin absente ou posterieure a l'heure courante";
+	case AopEtat::PERIME:               return "bulletin perime";
+	case AopEtat::UTILISABLE:           return "utilisable";
+	default:                            return "etat inconnu";
+	}
+}
+
+bool ArgosTxService::aop_is_usable(const ArgosConfig& config, std::time_t now,
+                                   unsigned int& age_s) {
+	return aop_etat(config, now, age_s) == AopEtat::UTILISABLE;
+}
+
+/// @brief Les AOP sont-ils exploitables (presents, dates, non perimes) ?
+ArgosTxService::AopEtat ArgosTxService::aop_etat(const ArgosConfig& config, std::time_t now,
+                                                 unsigned int& age_s) {
+	age_s = 0;
+	BasePassPredict& pp = configuration_store->read_pass_predict();
+	if (pp.num_records == 0)
+		return AopEtat::AUCUN_ENREGISTREMENT;
+	// last_aop_update = ARGOS_AOP_DATE, pose a la reception d'un PASPW.
+	// Sa valeur d'usine est ancienne (oct. 2021): une balise jamais provisionnee
+	// est donc consideree perimee des l'activation de la limite d'age, et
+	// retombe en periodique — c'est le comportement sur, pas un accident.
+	// Sans heure fiable, aucune fenetre n'est calculable — et surtout l'age des
+	// AOP n'a aucun sens. Cause distincte car le remede l'est aussi: regler la
+	// RTC ($RTCW ou un fix GNSS), pas re-televerser des AOP.
+	if (!service_is_time_known())
+		return AopEtat::RTC_NON_REGLEE;
+	if (config.last_aop_update <= 0 || now <= config.last_aop_update)
+		return AopEtat::DATE_ABSENTE;
+	std::time_t age = now - config.last_aop_update;
+	age_s = static_cast<unsigned int>(age);
+	if (config.aop_max_age_days == 0)
+		return AopEtat::UTILISABLE;   // 0 = pas de peremption
+	static constexpr std::time_t SECS_PER_DAY = 24 * 60 * 60;
+	return (age < static_cast<std::time_t>(config.aop_max_age_days) * SECS_PER_DAY)
+	       ? AopEtat::UTILISABLE : AopEtat::PERIME;
+}
+
+/// @brief Met a jour les statuts lisibles par STATR (PPT01..PPT04).
+void ArgosTxService::refresh_prepass_status(const ArgosConfig& config, std::time_t now,
+                                            std::time_t next_pass_epoch) {
+	unsigned int age_s = 0;
+	bool valid = aop_is_usable(config, now, age_s);
+	try {
+		configuration_store->write_param(ParamID::SAT_AOP_VALID, valid);
+		configuration_store->write_param(ParamID::SAT_AOP_AGE_S, age_s);
+		if (next_pass_epoch > 0)
+			configuration_store->write_param(ParamID::SAT_NEXT_PASS_TS,
+			                                 static_cast<unsigned int>(next_pass_epoch));
+	} catch (...) {
+		// Un statut est de l'information, jamais une raison d'empecher un TX.
+		DEBUG_WARN("ArgosTxService::refresh_prepass_status: ecriture impossible");
+	}
 }
 
 bool ArgosTxService::should_promote_doppler_to_gnss(unsigned int max_age_s) {

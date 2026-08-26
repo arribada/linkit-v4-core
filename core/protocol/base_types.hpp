@@ -438,8 +438,23 @@ enum class ParamID {
 	ARGOS_BLIND_EN                           = 243,  // bool: enable BLIND MAC profile (module-owned retx burst). Default false = BASIC (nRF-paced). SMD-UART + KIM2.
 	ARGOS_BLIND_RETX_NB                      = 244,  // uint 1..127: retransmissions the module sends per blind burst (KMAC retx_nb). NTRY_PER_MESSAGE stays the nRF-side count of blind sequences.
 	ARGOS_BLIND_RETX_PERIOD_S                = 245,  // uint 60..65535 s: interval between the module's blind retransmissions (KMAC retx_period_s). Distinct from TR_NOM (interval between blind sequences).
+	// === Prepass gating orthogonal au mode Argos (slots 246-248, 2026-08) ===
+	// Jusqu'ici le gating prepass n'existait QUE via ARGOS_MODE=PASS_PREDICTION,
+	// donc impossible de combiner "n'emettre qu'au passage d'un satellite" avec
+	// DUTY_CYCLE, DOPPLER ou SURFACING_BURST. Le mode et le gating sont pourtant
+	// deux dimensions independantes: le mode dit QUOI/QUAND emettre, le prepass
+	// dit SI le satellite ecoute. ARGOS_MODE=PASS_PREDICTION reste accepte et
+	// equivaut a LEGACY + SAT_PREPASS_EN=1 (compatibilite, aucune migration).
+	SAT_PREPASS_EN                           = 246,  // bool: gating prepass sur TOUS les modes
+	SAT_AOP_MAX_AGE_DAYS                     = 247,  // uint: au-dela, AOP perime -> repli periodique
+	SAT_PREPASS_MAX_WAIT_S                   = 248,  // uint: attente max sans fenetre (0 = illimite) -> repli periodique
+	// === Statuts prepass en lecture seule (slots 249-252, clef *T* -> STATR) ===
+	SAT_AOP_VALID                            = 249,  // bool: AOP present et non perime
+	SAT_AOP_AGE_S                            = 250,  // uint: age des AOP en secondes
+	SAT_NEXT_PASS_TS                         = 251,  // uint: epoch du prochain AOS (0 = inconnu)
+	SAT_LAST_PASS_TS                         = 252,  // uint: epoch du dernier passage exploite
 	// === Sentinel (fixed regardless of #ifdef combinations) ===
-	__PARAM_SIZE                             = 246,
+	__PARAM_SIZE                             = 253,
 	__NULL_PARAM                             = 0xFFFF
 };
 

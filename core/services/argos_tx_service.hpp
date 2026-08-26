@@ -140,6 +140,28 @@ private:
 	// Doppler TX slot.
 	bool should_promote_doppler_to_gnss(unsigned int max_age_s);
 
+	/// @brief Le gating prepass est-il actif ? Independant du mode.
+	/// ARGOS_MODE=PASS_PREDICTION reste accepte et vaut LEGACY + prepass, pour ne
+	/// pas casser les balises deja configurees (aucune migration).
+	static bool prepass_gating_active(const ArgosConfig& config);
+
+	/// @brief Pourquoi les AOP sont-ils inexploitables ? Trois causes bien
+	/// distinctes: les confondre dans un seul message rend le diagnostic terrain
+	/// trompeur ("age=0 s ... perime" ne veut rien dire).
+	enum class AopEtat { UTILISABLE, AUCUN_ENREGISTREMENT, RTC_NON_REGLEE, DATE_ABSENTE, PERIME };
+
+	/// @brief Les AOP sont-ils exploitables ? (presents, dates, non perimes)
+	/// @param[out] age_s age des AOP en secondes (0 si inconnu)
+	/// Sans AOP valides aucune fenetre n'est calculable: l'appelant doit alors
+	/// retomber en emission periodique plutot que de rester muet.
+	AopEtat aop_etat(const ArgosConfig& config, std::time_t now, unsigned int& age_s);
+	bool aop_is_usable(const ArgosConfig& config, std::time_t now, unsigned int& age_s);
+	static const char *aop_etat_texte(AopEtat e);
+
+	/// @brief Met a jour les parametres de statut lisibles par STATR.
+	void refresh_prepass_status(const ArgosConfig& config, std::time_t now,
+	                            std::time_t next_pass_epoch);
+
 	// BaseGnssStrategy::REUSE_LAST plumbing: read the most recent depth-pile fix
 	// if it is fresh enough per ParamID::GNSS_REUSE_FIX_MAX_AGE_S. Returns false
 	// when the pile is empty, the latest entry is not a real fix, the entry is

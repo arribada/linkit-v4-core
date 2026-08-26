@@ -160,6 +160,42 @@ void ArgosTxScheduler::schedule_periodic(unsigned int period_ms, bool jitter_en,
 	throw ErrorCode::RESOURCE_NOT_AVAILABLE;
 }
 
+/// @brief Epoch du prochain passage satellite — LECTURE SEULE.
+std::time_t ArgosTxScheduler::next_pass_epoch(ArgosConfig& config, BasePassPredict& pass_predict,
+                                              std::time_t now) {
+	if (!m_location.has_value() || pass_predict.num_records == 0)
+		return 0;
+
+	std::time_t start_time = now;
+	std::time_t stop_time = start_time + static_cast<std::time_t>(24 * SECONDS_PER_HOUR);
+	struct tm *p_tm = std::gmtime(&start_time);
+	struct tm tm_start = *p_tm;
+	p_tm = std::gmtime(&stop_time);
+	struct tm tm_stop = *p_tm;
+
+	PredictionPassConfiguration_t pp_config = {
+		static_cast<float>(m_location.value().latitude),
+		static_cast<float>(m_location.value().longitude),
+		{ static_cast<uint16_t>(1900 + tm_start.tm_year), static_cast<uint8_t>(tm_start.tm_mon + 1),
+		  static_cast<uint8_t>(tm_start.tm_mday), static_cast<uint8_t>(tm_start.tm_hour),
+		  static_cast<uint8_t>(tm_start.tm_min), static_cast<uint8_t>(tm_start.tm_sec) },
+		{ static_cast<uint16_t>(1900 + tm_stop.tm_year), static_cast<uint8_t>(tm_stop.tm_mon + 1),
+		  static_cast<uint8_t>(tm_stop.tm_mday), static_cast<uint8_t>(tm_stop.tm_hour),
+		  static_cast<uint8_t>(tm_stop.tm_min), static_cast<uint8_t>(tm_stop.tm_sec) },
+		static_cast<float>(config.prepass_min_elevation),
+		static_cast<float>(config.prepass_max_elevation),
+		static_cast<float>(config.prepass_min_duration) / 60.0f,
+		config.prepass_max_passes,
+		static_cast<float>(config.prepass_linear_margin) / 60.0f,
+		config.prepass_comp_step
+	};
+	SatelliteNextPassPrediction_t next_pass;
+	if (PREVIPASS_compute_next_pass(&pp_config, pass_predict.records,
+	                                pass_predict.num_records, &next_pass))
+		return static_cast<std::time_t>(next_pass.epoch);
+	return 0;
+}
+
 /// @brief Schedule next TX using satellite pass prediction (PREVIPASS).
 /// @return Delay in ms until next TX, or INVALID_SCHEDULE if no pass found.
 unsigned int ArgosTxScheduler::schedule_prepass(ArgosConfig& config, BasePassPredict& pass_predict,

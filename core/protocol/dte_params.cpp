@@ -448,6 +448,15 @@ const BaseMap param_map[] = {
 	{ "ARGOS_BLIND_RETX_NB",        "ARP45", BaseEncoding::UINT, 1U, 127U, {}, true, true },
 	// [245] BLIND retx_period_s — interval (s) between module retransmissions (KMAC ctx; module range 60..65535)
 	{ "ARGOS_BLIND_RETX_PERIOD_S",  "ARP46", BaseEncoding::UINT, 60U, 65535U, {}, true, true },
+	// Prepass orthogonal + statuts (2026-08). Clefs PPP0x = config (PARMR),
+	// PPT0x = statut lecture seule (STATR, filtre sur key[2]=='T').
+	{ "SAT_PREPASS_EN", "PPP07", BaseEncoding::BOOLEAN, 0, 0, {}, true, true },
+	{ "SAT_AOP_MAX_AGE_DAYS", "PPP08", BaseEncoding::UINT, 1U, 90U, {}, true, true },
+	{ "SAT_PREPASS_MAX_WAIT_S", "PPP09", BaseEncoding::UINT, 0U, 604800U, {}, true, true },
+	{ "SAT_AOP_VALID", "PPT01", BaseEncoding::BOOLEAN, 0, 0, {}, true, false },
+	{ "SAT_AOP_AGE_S", "PPT02", BaseEncoding::UINT, 0U, 0xFFFFFFFFU, {}, true, false },
+	{ "SAT_NEXT_PASS_TS", "PPT03", BaseEncoding::UINT, 0U, 0xFFFFFFFFU, {}, true, false },
+	{ "SAT_LAST_PASS_TS", "PPT04", BaseEncoding::UINT, 0U, 0xFFFFFFFFU, {}, true, false },
 };
 
 const size_t param_map_size = sizeof(param_map) / sizeof(param_map[0]);

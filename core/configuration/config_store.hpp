@@ -103,6 +103,9 @@ struct ArgosConfig {
 	BaseGnssStrategy gnss_strategy;
 	unsigned int argos_rx_aop_update_period;
 	std::time_t last_aop_update;
+	bool prepass_en;                   // gating prepass, independant du mode
+	unsigned int aop_max_age_days;     // au-dela: AOP perime -> repli periodique
+	unsigned int prepass_max_wait_s;   // attente max sans fenetre (0 = illimite)
 	bool        cert_tx_enable;
 	std::string cert_tx_payload;
 	BaseArgosModulation cert_tx_modulation;
@@ -142,6 +145,16 @@ protected:
 	// recovery path instead: keep ARGOS_DECID/ARGOS_HEXID, reset the rest,
 	// reprovision after upgrade.
 	// 0x20 (2026-07): +ARGOS_BLIND_EN/RETX_NB/RETX_PERIOD_S (slots 243-245, blind MAC profile).
+	// 0x20 CONSERVE en 2026-08 malgre l'ajout des slots 246-252 (prepass
+	// orthogonal + statuts). Un bump n'est PAS necessaire ici et serait nuisible:
+	// il ne conserve que ARGOS_DECID/ARGOS_HEXID et remet TOUT le reste aux
+	// valeurs d'usine, ce qui obligerait a reprovisionner chaque balise deployee.
+	// L'ajout se fait EN FIN de table, donc aucun slot existant ne bouge; a la
+	// relecture d'un ancien fichier, les entrees 246+ tombent sur une fin de
+	// fichier, deserialize_config_entry() rend false, la boucle applique la
+	// valeur par defaut et CONTINUE (elle ne s'arrete pas), puis reserialise.
+	// Le bump reste obligatoire si l'on RETIRE ou DEPLACE un slot existant:
+	// c'est ce qui avait decale tous les suivants avec ARP36/37 en 2026-06.
 	static inline const unsigned int m_config_version_code = 0x1c07e800 | 0x20;
 	static inline const unsigned int m_config_version_code_aop = 0x1c07e800 | 0x03;
 	static inline const std::array<BaseType,MAX_CONFIG_ITEMS> default_params { {
@@ -396,6 +409,13 @@ protected:
 		/* [243] ARGOS_BLIND_EN */ (bool)false,        // BASIC by default (no behavior change)
 		/* [244] ARGOS_BLIND_RETX_NB */ 4U,            // module retransmissions per blind burst
 		/* [245] ARGOS_BLIND_RETX_PERIOD_S */ 60U,     // seconds between module retransmissions
+		/* [246] SAT_PREPASS_EN */ (bool)false,        // off par defaut: aucun changement de comportement
+		/* [247] SAT_AOP_MAX_AGE_DAYS */ 14U,          // prudent en attendant la valeur officielle Kineis
+		/* [248] SAT_PREPASS_MAX_WAIT_S */ 0U,         // 0 = pas de garde-fou (comportement actuel)
+		/* [249] SAT_AOP_VALID */ (bool)false,
+		/* [250] SAT_AOP_AGE_S */ 0U,
+		/* [251] SAT_NEXT_PASS_TS */ 0U,
+		/* [252] SAT_LAST_PASS_TS */ 0U,
 	}};
 	static inline const BasePassPredict default_prepass = {
 		/* version_code */ m_config_version_code_aop,
@@ -973,6 +993,9 @@ public:
 			argos_config.is_lb = true;
 			argos_config.gnss_en = read_param<bool>(ParamID::LB_GNSS_EN);
 			argos_config.last_aop_update = read_param<std::time_t>(ParamID::ARGOS_AOP_DATE);
+			argos_config.prepass_en = read_param<bool>(ParamID::SAT_PREPASS_EN);
+			argos_config.aop_max_age_days = read_param<unsigned int>(ParamID::SAT_AOP_MAX_AGE_DAYS);
+			argos_config.prepass_max_wait_s = read_param<unsigned int>(ParamID::SAT_PREPASS_MAX_WAIT_S);
 			argos_config.argos_rx_aop_update_period = read_param<unsigned int>(ParamID::ARGOS_RX_AOP_UPDATE_PERIOD);
 			argos_config.argos_rx_max_window = read_param<unsigned int>(ParamID::ARGOS_RX_MAX_WINDOW);
 			argos_config.argos_rx_en = read_param<bool>(ParamID::ARGOS_RX_EN);
@@ -1003,6 +1026,9 @@ public:
 		} else if (argos_config.is_out_of_zone) {
 			argos_config.gnss_en = read_param<bool>(ParamID::GNSS_EN);
 			argos_config.last_aop_update = read_param<std::time_t>(ParamID::ARGOS_AOP_DATE);
+			argos_config.prepass_en = read_param<bool>(ParamID::SAT_PREPASS_EN);
+			argos_config.aop_max_age_days = read_param<unsigned int>(ParamID::SAT_AOP_MAX_AGE_DAYS);
+			argos_config.prepass_max_wait_s = read_param<unsigned int>(ParamID::SAT_PREPASS_MAX_WAIT_S);
 			argos_config.argos_rx_aop_update_period = read_param<unsigned int>(ParamID::ARGOS_RX_AOP_UPDATE_PERIOD);
 			argos_config.argos_rx_max_window = read_param<unsigned int>(ParamID::ARGOS_RX_MAX_WINDOW);
 			argos_config.argos_rx_en = read_param<bool>(ParamID::ARGOS_RX_EN);
@@ -1034,6 +1060,9 @@ public:
 			// Use default params
 			argos_config.gnss_en = read_param<bool>(ParamID::GNSS_EN);
 			argos_config.last_aop_update = read_param<std::time_t>(ParamID::ARGOS_AOP_DATE);
+			argos_config.prepass_en = read_param<bool>(ParamID::SAT_PREPASS_EN);
+			argos_config.aop_max_age_days = read_param<unsigned int>(ParamID::SAT_AOP_MAX_AGE_DAYS);
+			argos_config.prepass_max_wait_s = read_param<unsigned int>(ParamID::SAT_PREPASS_MAX_WAIT_S);
 			argos_config.argos_rx_aop_update_period = read_param<unsigned int>(ParamID::ARGOS_RX_AOP_UPDATE_PERIOD);
 			argos_config.argos_rx_max_window = read_param<unsigned int>(ParamID::ARGOS_RX_MAX_WINDOW);
 			argos_config.argos_rx_en = read_param<bool>(ParamID::ARGOS_RX_EN);

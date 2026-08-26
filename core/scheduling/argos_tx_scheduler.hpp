@@ -72,6 +72,14 @@ public:
 	/// @brief Set earliest allowed TX time (e.g., after SWS dry_time_before_tx).
 	void set_earliest_schedule(std::time_t t);
 
+	/// @brief Epoch du prochain passage satellite, SANS effet de bord.
+	/// @return epoch du prochain AOS, ou 0 si aucun passage calculable.
+	/// schedule_prepass() ecrit m_curr_schedule_abs et ne peut donc pas etre
+	/// appelee speculativement pour un mode non-prepass: elle corromprait
+	/// l'ordonnancement periodique. Cette variante ne touche AUCUN membre.
+	std::time_t next_pass_epoch(ArgosConfig& config, BasePassPredict& pass_predict,
+	                            std::time_t now);
+
 	/// @brief Update last known GPS position for prepass computation.
 	void set_last_location(double lon, double lat);
 

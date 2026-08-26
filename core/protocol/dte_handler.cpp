@@ -367,6 +367,16 @@ std::string DTEHandler::PASPW_REQ(int error_code, std::vector<BaseType>& arg_lis
 
 		if (argos_aop_date)
 		{
+			// NOTE (2026-08): une fusion "le plus frais gagne" par satHexId a ete
+			// implementee puis RETIREE apres essai. Le magasin contient un jeu
+			// d'AOP par DEFAUT USINE date d'octobre 2021: la fusion le laissait
+			// battre un bulletin reellement televerse par l'operateur s'il etait
+			// plus ancien — l'inverse du comportement voulu. Le test
+			// PASPW_REQ_DecodeDayOfYearWiderThan8Bits l'a mis en evidence.
+			// Tant qu'il n'existe qu'UNE source d'AOP (le televersement DTE), le
+			// remplacement integral est correct. La fusion redeviendra utile avec
+			// le downlink satellite, ou elle arbitrera entre deux sources reelles;
+			// elle devra alors distinguer le defaut usine d'une vraie base.
 			// Update configuration store
 			configuration_store->write_pass_predict(pass_predict);
 
