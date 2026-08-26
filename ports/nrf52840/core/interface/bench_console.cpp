@@ -11,6 +11,7 @@
 #include "usb_interface.hpp"
 #include "gentracker.hpp"
 #include "gps_service.hpp"
+#include "service.hpp"
 #include "reed.hpp"
 #include "scheduler.hpp"
 #include "debug.hpp"
@@ -111,6 +112,13 @@ bool bench::handle_line(const std::string& raw) {
         reply(std::string("%BENCH OK state=") + state_name());
     } else if (cmd == "%STATE") {
         reply(std::string("%STATE ") + state_name());
+    } else if (cmd == "%SCHED") {
+        // Schedule of EVERY registered service, straight from the decision point
+        // in Service::reschedule(). Needed because the only log line that proves
+        // scheduling is DEBUG_TRACE, i.e. compiled out at DEBUG_LEVEL=3 — a test
+        // watching the console for it can never see it, and a looser pattern just
+        // matches unrelated services and passes without verifying anything.
+        reply(std::string("%SCHED ") + ServiceManager::bench_schedule_report());
     } else if (cmd == "%CFG") {
         if (GenTracker::is_in_state<ConfigurationState>()) {
             reply("%CFG OK already-config");

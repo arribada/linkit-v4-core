@@ -17,6 +17,10 @@
 #include "rate_limiter.hpp"
 #include "hauled_mode_service.hpp"
 #include <cstddef>
+#ifdef BENCH_TEST
+#include <cstdio>
+#include <string>
+#endif
 #include <stdexcept>
 #include <variant>
 
@@ -701,6 +705,31 @@ bool Service::service_is_battery_level_low() {
 	return battery_monitor->is_battery_low();
 }
 
+#ifdef BENCH_TEST
+/// Record the scheduling decision for the bench console. Deliberately placed on
+/// EVERY branch of reschedule(), including those that plan nothing: a test that
+/// only sees the success path cannot tell "this mode scheduled an emission" from
+/// "this mode scheduled nothing and I am reading the previous mode's value".
+#define BENCH_SCHED_NOTE(ms, why) do { m_bench_sched_ms = (ms); m_bench_sched_why = (why); } while (0)
+
+/// @brief Bench-only: one-line schedule report over ALL registered services.
+std::string ServiceManager::bench_schedule_report() {
+	std::string out;
+	for (auto const& kv : m_map) {
+		Service& s = kv.second;
+		char buf[96];
+		if (s.bench_sched_ms() == Service::SCHEDULE_DISABLED)
+			snprintf(buf, sizeof(buf), "%s=none(%s) ", s.bench_name(), s.bench_sched_why());
+		else
+			snprintf(buf, sizeof(buf), "%s=%ums(%s) ", s.bench_name(), s.bench_sched_ms(), s.bench_sched_why());
+		out += buf;
+	}
+	return out;
+}
+#else
+#define BENCH_SCHED_NOTE(ms, why) do { } while (0)
+#endif
+
 /// @brief Internal: compute next schedule, post task to scheduler, arm timeout.
 /// @param immediate  true to schedule with 0 delay.
 void Service::reschedule(bool immediate) {
@@ -718,6 +747,7 @@ void Service::reschedule(bool immediate) {
 	// through the normal path at resurface (after clearing m_is_underwater).
 	if (m_is_underwater) {
 		DEBUG_TRACE("Service::reschedule: service %s skipped (underwater)", m_name);
+		BENCH_SCHED_NOTE(SCHEDULE_DISABLED, "underwater");
 		return;
 	}
 	if (is_started()) {
@@ -726,6 +756,7 @@ void Service::reschedule(bool immediate) {
 			if (!m_is_initiated) {
 				if (next_schedule != SCHEDULE_DISABLED) {
 					DEBUG_TRACE("Service::reschedule: service %s scheduled in %u msecs", m_name, next_schedule);
+					BENCH_SCHED_NOTE(next_schedule, "scheduled");
 					m_last_schedule = next_schedule;
 					m_task_period = system_scheduler->post_task_prio(
 						[this]() {
@@ -807,15 +838,19 @@ void Service::reschedule(bool immediate) {
 					}, "ServicePeriod", Scheduler::DEFAULT_PRIORITY, next_schedule);
 				} else {
 					DEBUG_TRACE("Service::reschedule: service %s schedule currently disabled", m_name);
+					BENCH_SCHED_NOTE(SCHEDULE_DISABLED, "no-schedule");
 				}
 			} else {
 				DEBUG_TRACE("Service::reschedule: service %s already initiated", m_name);
+				BENCH_SCHED_NOTE(next_schedule, "already-initiated");
 			}
 		} else {
 			DEBUG_TRACE("Service::reschedule: service %s is not enabled", m_name);
+			BENCH_SCHED_NOTE(SCHEDULE_DISABLED, "not-enabled");
 		}
 	} else {
 		DEBUG_TRACE("Service::reschedule: service %s is stopped", m_name);
+		BENCH_SCHED_NOTE(SCHEDULE_DISABLED, "stopped");
 	}
 }
 

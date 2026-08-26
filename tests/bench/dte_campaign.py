@@ -700,3 +700,116 @@ CASES_V3 = [
  dict(id='PAR-06', risque='BLOQUANT', titre='Aller-retour de tous les parametres', fn=c_aller_retour_complet),
  dict(id='PAR-07', risque='BLOQUANT', titre='Lot mixte: rejet individuel, pas global', fn=c_lot_mixte),
 ]
+
+
+# =====================================================================
+#  Vague 4 — modes Argos et ordonnancement
+#
+#  On verifie que chaque mode PLANIFIE correctement, pas qu'il emet: le
+#  journal annonce la prochaine echeance avant toute transmission, ce qui
+#  suffit a distinguer un mode qui fonctionne d'un mode qui reste muet.
+#  Aucun cas ne laisse le mode arme en sortant.
+# =====================================================================
+
+def _journal(r, secondes, motif):
+    """Ecoute le journal pendant une duree et rend les lignes qui correspondent."""
+    b = r.b
+    idx = b.mark()
+    rx = re.compile(motif)
+    fin = time.time() + secondes
+    vues = []
+    while time.time() < fin:
+        time.sleep(0.3)
+        with b._lock:
+            lignes = [l for _, l in b.history[idx:]]
+            idx = len(b.history)
+        for l in lignes:
+            if rx.search(l):
+                vues.append(l.strip())
+    return vues
+
+def _sched_argos(r, timeout=45.0):
+    """Interroge %SCHED et rend (ms, raison) pour le service ARGOSTX.
+
+    Pourquoi une commande console plutot que le journal: la SEULE ligne qui
+    prouve un ordonnancement est
+        Service::reschedule: service %s scheduled in %u msecs
+    et c'est un DEBUG_TRACE, donc compile HORS du binaire a DEBUG_LEVEL=3 (le
+    niveau du build banc). Aucun motif ne peut la voir. Une premiere version de
+    ce cas elargissait le motif jusqu'a accrocher des lignes du service GPS
+    ("first_schedule", "scheduler re-opens") et passait sans rien verifier.
+    %SCHED lit la decision la ou elle est prise, pour tous les services.
+    """
+    fin = time.time() + timeout
+    dernier = None
+    while time.time() < fin:
+        m, _ = r.raw_until('%SCHED\r', r'%SCHED .*ARGOSTX=', timeout=6.0)
+        if m:
+            ligne = m.string if hasattr(m, 'string') else ''
+            mm = re.search(r'ARGOSTX=(none|\d+ms)\(([^)]*)\)', ligne)
+            if mm:
+                dernier = (None if mm.group(1) == 'none' else int(mm.group(1)[:-2]), mm.group(2))
+                # "stopped"/"not-enabled" juste apres la sortie de config est
+                # transitoire: on laisse le service se relancer avant de conclure.
+                if dernier[1] not in ('stopped', 'not-enabled', 'never'):
+                    return dernier
+        time.sleep(2.0)
+    return dernier if dernier else (None, 'aucune-reponse')
+
+def c_modes_planifient(r, case):
+    """Chaque mode Argos doit planifier une emission. Un mode qui n'annonce rien
+       est un mode qui laissera la balise muette sur le terrain."""
+    b = r.b
+    modes = [(2, 'LEGACY'), (3, 'DUTY_CYCLE'), (4, 'DOPPLER'), (1, 'PASS_PREDICTION')]
+    muets, releve = [], {}
+    for val, nom in modes:
+        try:
+            b.enter_config()
+            # GNSS actif: PASS_PREDICTION sans GNSS est une combinaison
+            # explicitement incompatible, ce n'est pas ce qu'on teste ici.
+            b.write_params({'ARGOS_MODE': val, 'GNSS_EN': 1, 'ARGOS_NTRY_PER_MESSAGE': 1})
+            b.exit_config()
+        except Exception as e:
+            muets.append(f'{nom}: configuration impossible ({type(e).__name__})')
+            continue
+        ms, pourquoi = _sched_argos(r)
+        releve[nom] = f'{ms}ms ({pourquoi})' if ms is not None else f'RIEN ({pourquoi})'
+        if ms is None:
+            muets.append(f'{nom}: aucune emission planifiee -> {pourquoi}')
+    try:
+        b.enter_config(); b.write_params({'ARGOS_MODE': 0})
+    except Exception: pass
+    if muets:
+        r.record(case, 'FAIL', f'{len(muets)} mode(s) sans planification',
+                 '\n'.join(muets) + '\n---\n' + json.dumps(releve, ensure_ascii=False)[:900])
+    else:
+        r.record(case, 'PASS', f'{len(modes)} modes planifient une emission',
+                 json.dumps(releve, ensure_ascii=False)[:700])
+
+def c_prepass_sans_gnss(r, case):
+    """PASS_PREDICTION avec GNSS_EN=0: combinaison incompatible qui rendait la
+       balise muette SANS AUCUNE TRACE. Doit desormais se signaler."""
+    b = r.b
+    try:
+        b.enter_config()
+        b.write_params({'ARGOS_MODE': 1, 'GNSS_EN': 0})
+        b.exit_config()
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}')
+    vues = _journal(r, 40, r'INCOMPATIBLE|incompatible|PASS_PREDICTION|SCHEDULE_DISABLED')
+    try:
+        b.enter_config(); b.write_params({'ARGOS_MODE': 0, 'GNSS_EN': 1})
+    except Exception: pass
+    signale = any('incompatible' in v.lower() for v in vues)
+    if signale:
+        r.record(case, 'PASS', 'la combinaison est signalee explicitement', '\n'.join(vues[:3]))
+    else:
+        r.record(case, 'FAIL',
+                 'combinaison incompatible NON signalee — la balise se tait sans trace',
+                 '\n'.join(vues[:5]) if vues else '<aucune trace en 40 s>')
+
+
+CASES_V4 = [
+ dict(id='ARG-01', risque='BLOQUANT', titre='Chaque mode Argos planifie une emission', fn=c_modes_planifient),
+ dict(id='ARG-02', risque='BLOQUANT', titre='PASS_PREDICTION sans GNSS est signale', fn=c_prepass_sans_gnss),
+]

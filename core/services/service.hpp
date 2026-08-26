@@ -8,6 +8,9 @@
 #include <functional>
 #include <variant>
 #include <ctime>
+#ifdef BENCH_TEST
+#include <string>
+#endif
 
 #include "service_scheduler.hpp"
 #include "scheduler.hpp"
@@ -36,6 +39,18 @@ public:
 	unsigned int get_last_schedule();
 	bool is_underwater_deferred();
 	bool is_initiated();
+#ifdef BENCH_TEST
+	/// @brief Bench-only: last scheduling DECISION taken by reschedule(), captured
+	/// on EVERY branch — including those that schedule nothing. get_last_schedule()
+	/// cannot serve this purpose: it feeds is_scheduled() in production logic and is
+	/// only written on the success path, so a mode that schedules nothing leaves the
+	/// PREVIOUS mode's value behind and reads as if it had scheduled. Zero prod
+	/// footprint. SCHEDULE_DISABLED means "nothing planned"; the reason string says
+	/// which branch decided it.
+	unsigned int bench_sched_ms() const { return m_bench_sched_ms; }
+	const char  *bench_sched_why() const { return m_bench_sched_why; }
+	const char  *bench_name() const { return m_name; }
+#endif
 
 private:
 	bool m_is_started = false;
@@ -49,6 +64,10 @@ private:
 	unsigned int m_unique_id = 0;
 	Logger *m_logger = nullptr;
 	unsigned int m_last_schedule = SCHEDULE_DISABLED;
+#ifdef BENCH_TEST
+	unsigned int  m_bench_sched_ms  = SCHEDULE_DISABLED;
+	const char   *m_bench_sched_why = "never";
+#endif
 
 	void reschedule(bool immediate = false);
 	void deschedule();
@@ -205,6 +224,10 @@ public:
 	static unsigned int get_cooldown_remaining_s(std::time_t now);
 	static void notify_passive_surfacing();
 	static unsigned int get_passive_surfacing_count();
+#ifdef BENCH_TEST
+	/// @brief Bench-only: one-line schedule report over ALL registered services.
+	static std::string bench_schedule_report();
+#endif
 	static void save_cooldown_state();
 	static void restore_cooldown_state();
 	static void enter_cooldown_sleep();
