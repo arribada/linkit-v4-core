@@ -142,7 +142,7 @@ private:
 	void schedule_doppler_cal_tx();
 
 	// Helper: read params by filter character (used by PARMR_REQ and STATR_REQ)
-	static std::string read_params_by_filter(int error_code, std::vector<ParamID>& params, char filter_char, DTECommand resp_cmd);
+	static std::string read_params_by_filter(int error_code, std::vector<ParamID>& params, const std::vector<std::string>& rejected_keys, char filter_char, DTECommand resp_cmd);
 
 #if defined(ARGOS_SMD) && (ARGOS_SMD == 1)
 	// Helper: return error response when SMD instance is not available
@@ -158,8 +158,8 @@ public:
 
 	static std::string PARML_REQ(int error_code);
 	static std::string PARMW_REQ(int error_code, std::vector<ParamValue>& param_values, std::vector<std::string>& rejected_keys, DTEAction& action);
-	static std::string PARMR_REQ(int error_code, std::vector<ParamID>& params);
-	static std::string STATR_REQ(int error_code, std::vector<ParamID>& params);
+	static std::string PARMR_REQ(int error_code, std::vector<ParamID>& params, const std::vector<std::string>& rejected_keys);
+	static std::string STATR_REQ(int error_code, std::vector<ParamID>& params, const std::vector<std::string>& rejected_keys);
 	static std::string PROFW_REQ(int error_code, std::vector<BaseType>& arg_list);
 	static std::string PROFR_REQ(int error_code);
 	static std::string SECUR_REQ(int error_code, std::vector<BaseType>& arg_list);

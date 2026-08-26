@@ -44,10 +44,25 @@ void DTEHandler::reset_state() {
 }
 
 // Fix #37: Shared helper for PARMR_REQ and STATR_REQ
-std::string DTEHandler::read_params_by_filter(int error_code, std::vector<ParamID>& params, char filter_char, DTECommand resp_cmd) {
+std::string DTEHandler::read_params_by_filter(int error_code, std::vector<ParamID>& params, const std::vector<std::string>& rejected_keys, char filter_char, DTECommand resp_cmd) {
 
 	if (error_code) {
 		return DTEEncoder::encode(resp_cmd, error_code);
+	}
+
+	// Une liste de clefs VIDE veut dire "rends-moi tout" — c'est le comportement
+	// documente. Mais une liste dont TOUTES les clefs ont ete rejetees arrivait ici
+	// vide elle aussi, et la balise repondait alors sa configuration ENTIERE au lieu
+	// d'une erreur. Mesure au banc le 2026-08-26: $PARMR#005;ZZZ99 rend
+	// $O;PARMR#60C;... soit 163 parametres. Deux consequences: la moindre faute de
+	// frappe d'un operateur renvoie tout, et surtout une clef assez longue force la
+	// construction d'une reponse enorme — c'est par la qu'un payload de 4095 octets
+	// fige la carte. On distingue donc les deux cas: rien de demande, ou rien de
+	// reconnu.
+	if (params.size() == 0 && !rejected_keys.empty()) {
+		DEBUG_WARN("DTEHandler::read_params_by_filter: %u clef(s) demandee(s), aucune reconnue",
+		           static_cast<unsigned>(rejected_keys.size()));
+		return DTEEncoder::encode(resp_cmd, (int)DTEError::PARAM_KEY_UNRECOGNISED);
 	}
 
 	// Check special case where params is zero length => retrieve all matching key types
@@ -181,16 +196,16 @@ std::string DTEHandler::PARMW_REQ(int error_code, std::vector<ParamValue>& param
 	return DTEEncoder::encode(DTECommand::PARMW_RESP, DTEError::OK);
 }
 
-std::string DTEHandler::PARMR_REQ(int error_code, std::vector<ParamID>& params) {
-	return read_params_by_filter(error_code, params, 'P', DTECommand::PARMR_RESP);
+std::string DTEHandler::PARMR_REQ(int error_code, std::vector<ParamID>& params, const std::vector<std::string>& rejected_keys) {
+	return read_params_by_filter(error_code, params, rejected_keys, 'P', DTECommand::PARMR_RESP);
 }
 
-std::string DTEHandler::STATR_REQ(int error_code, std::vector<ParamID>& params) {
+std::string DTEHandler::STATR_REQ(int error_code, std::vector<ParamID>& params, const std::vector<std::string>& rejected_keys) {
 	// Refresh live RTC value before reading status params
 	if (rtc) {
 		configuration_store->write_param(ParamID::RTC_CURRENT_TIME, static_cast<unsigned int>(rtc->gettime()));
 	}
-	return read_params_by_filter(error_code, params, 'T', DTECommand::STATR_RESP);
+	return read_params_by_filter(error_code, params, rejected_keys, 'T', DTECommand::STATR_RESP);
 }
 
 std::string DTEHandler::PROFW_REQ(int error_code, std::vector<BaseType>& arg_list) {
@@ -1888,7 +1903,15 @@ std::string DTEHandler::RTCW_REQ(int error_code, std::vector<BaseType>& arg_list
 #pragma GCC diagnostic ignored "-Wswitch-enum"
 
 DTEAction DTEHandler::handle_dte_message(const std::string& req, std::string& resp) {
-	DTECommand command;
+	// Sentinelle OBLIGATOIRE. Cette variable etait non initialisee, et le
+	// decodeur leve DTE_PROTOCOL_UNKNOWN_COMMAND *avant* de l'affecter: le
+	// switch plus bas s'executait alors sur une valeur indeterminee. Mesure au
+	// banc le 2026-08-26: sur douze commandes inconnues, ONZE reponses portaient
+	// le nom d'une AUTRE commande — un hote pouvait les prendre pour la reponse a
+	// une requete differente. Les actions destructrices (redemarrage,
+	// reinitialisation d'usine) etaient heureusement gardees par `if
+	// (!error_code)`, donc l'aiguillage errone ne pouvait pas faire de degat.
+	DTECommand command = DTECommand::__NUM_REQ;
 	std::vector<ParamID> params;
 	std::vector<ParamValue> param_values;
 	std::vector<BaseType> arg_list;
@@ -1938,6 +1961,13 @@ DTEAction DTEHandler::handle_dte_message(const std::string& req, std::string& re
 		}
 	}
 
+	// Commande jamais identifiee: on ne peut pas nommer la reponse, et surtout on
+	// ne doit pas aiguiller vers un gestionnaire arbitraire.
+	if (command >= DTECommand::__NUM_REQ) {
+		DEBUG_WARN("DTEHandler: commande non identifiee, aucun aiguillage");
+		return action;
+	}
+
 	try {
 	switch(command) {
 	case DTECommand::PARML_REQ:
@@ -1947,10 +1977,10 @@ DTEAction DTEHandler::handle_dte_message(const std::string& req, std::string& re
 		resp = PARMW_REQ(error_code, param_values, rejected_keys, action);
 		break;
 	case DTECommand::PARMR_REQ:
-		resp = PARMR_REQ(error_code, params);
+		resp = PARMR_REQ(error_code, params, rejected_keys);
 		break;
 	case DTECommand::STATR_REQ:
-		resp = STATR_REQ(error_code, params);
+		resp = STATR_REQ(error_code, params, rejected_keys);
 		break;
 	case DTECommand::PROFW_REQ:
 		resp = PROFW_REQ(error_code, arg_list);

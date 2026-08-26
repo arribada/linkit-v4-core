@@ -1244,7 +1244,7 @@ private:
 		}
 	}
 
-	static size_t decode(const std::string& s, std::vector<ParamID>& val) {
+	static size_t decode(const std::string& s, std::vector<ParamID>& val, std::vector<std::string>& rejected_keys) {
 		constexpr std::string_view delim = ",";
 
 		// Iterate over comma seperated values
@@ -1262,8 +1262,17 @@ private:
 				ParamID param;
 				if (try_lookup_key(key, param)) {
 					val.push_back(param);
+				} else {
+					// Une clef inconnue etait purement jetee ici, sans trace. En
+					// aval, une demande dont AUCUNE clef n'est reconnue arrivait
+					// donc avec une liste vide — indiscernable d'une demande vide,
+					// qui veut dire "rends-moi tout". La balise repondait sa
+					// configuration entiere a une faute de frappe, et une clef
+					// assez longue suffisait a forcer une reponse enorme. On les
+					// enregistre pour que l'appelant puisse faire la difference.
+					DEBUG_WARN("DTEDecoder: clef inconnue \"%s\" ignoree", key.c_str());
+					rejected_keys.push_back(key);
 				}
-				// Unknown keys are logged and skipped
 			}
 
 			prev = pos + delim.size();
@@ -1555,8 +1564,31 @@ public:
 		if (str_pos + size_of_length_field >= str.size())
 			return false;
 
-		size_t length;
-		sscanf(&str[str_pos], "%3zX", &length);
+		// Le champ de longueur fait EXACTEMENT size_of_length_field caracteres
+		// hexadecimaux. sscanf seul ne le garantit pas, et les deux facons dont il
+		// echoue ont ete mesurees au banc le 2026-08-26:
+		//   "ZZZ" -> sscanf ne convertit rien, rend 0, et laisse `length` NON
+		//            INITIALISEE. La comparaison plus bas portait donc sur une
+		//            valeur indeterminee: 15 envois identiques ont produit deux
+		//            reponses differentes.
+		//   "00;" -> sscanf reussit en ne consommant que DEUX caracteres. L'avance
+		//            en aveugle de trois sautait alors le delimiteur, le controle
+		//            suivant echouait, et la fonction rendait false — c'est-a-dire
+		//            AUCUNE REPONSE. L'hote restait bloque en attente.
+		// On valide donc les trois caracteres avant de convertir, et on leve une
+		// erreur de format: le nom de commande est deja connu a ce stade, la
+		// reponse peut donc etre nommee et l'hote n'attend pas dans le vide.
+		size_t length = 0;
+		for (unsigned int k = 0; k < size_of_length_field; k++) {
+			if (!isxdigit(static_cast<unsigned char>(str[str_pos + k]))) {
+				DEBUG_ERROR("DTE_PROTOCOL_BAD_FORMAT: champ de longueur non hexadecimal");
+				throw DTE_PROTOCOL_BAD_FORMAT;
+			}
+		}
+		if (sscanf(&str[str_pos], "%3zX", &length) != 1) {
+			DEBUG_ERROR("DTE_PROTOCOL_BAD_FORMAT: champ de longueur illisible");
+			throw DTE_PROTOCOL_BAD_FORMAT;
+		}
 		str_pos += size_of_length_field;
 
 		// Check the command deliminator //
@@ -1643,7 +1675,7 @@ public:
 					break;
 				case BaseEncoding::KEY_LIST:
 					DEBUG_TRACE("BaseEncoding::KEY_LIST");
-					payload_pos += decode(remaining_str, keys);
+					payload_pos += decode(remaining_str, keys, rejected_keys);
 					break;
 				case BaseEncoding::DECIMAL:
 				{
