@@ -456,3 +456,121 @@ CASES = [
 
 if __name__ == '__main__':
     Runner().run(CASES)
+
+
+# =====================================================================
+#  Vague 2 — commandes de controle, ponts serie, lecture exhaustive
+#  Toujours aucune emission: la configuration de reference force
+#  ARGOS_MODE=OFF et desarme la certification.
+# =====================================================================
+
+def c_pwron(r, case):
+    """PWRON: les composants valides passent, la valeur hors borne est refusee.
+       On termine IMPERATIVEMENT par une extinction pour ne rien laisser alimente."""
+    defauts = []
+    for val, quoi in [(1,'GNSS'), (2,'capteurs'), (3,'satellite'), (0,'tout'), (4,'extinction')]:
+        lines, err = r.raw(f"$PWRON#001;{val}\r", wait=2.5)
+        if err: return r.record(case, 'ERROR', err)
+        m = _resp(lines, 'PWRON')
+        if not m: defauts.append(f'{quoi} ({val}): aucune reponse')
+        elif m.group(1) != 'O': defauts.append(f'{quoi} ({val}): refuse -> {m.group(0)[:40]}')
+    # hors borne
+    lines, _ = r.raw("$PWRON#001;5\r", wait=2.5)
+    m = _resp(lines, 'PWRON')
+    if not m: defauts.append('valeur 5 hors borne: aucune reponse')
+    elif m.group(1) != 'N': defauts.append(f'valeur 5 hors borne ACCEPTEE: {m.group(0)[:40]}')
+    # on ne laisse rien sous tension
+    r.raw("$PWRON#001;4\r", wait=3.0)
+    vivant = r.b.ping(timeout=6) if r.b else False
+    if not vivant: defauts.append('carte muette apres la sequence')
+    if defauts: r.record(case, 'FAIL', f'{len(defauts)} anomalie(s)', '\n'.join(defauts))
+    else: r.record(case, 'PASS', '5 composants pilotes, valeur hors borne refusee, extinction faite')
+
+def c_cmd_emettrices_refusees(r, case):
+    """Les commandes qui EMETTENT sur d'autres variantes doivent etre refusees ici.
+       C'est un point de securite: une acceptation silencieuse ferait transmettre."""
+    defauts = []
+    for frame, nom in [("$SATDP#000;\r", 'SATDP'), ("$COMCW#001;0\r", 'COMCW'),
+                       ("$SATTX#001;0\r", 'SATTX')]:
+        lines, err = r.raw(frame, wait=2.5)
+        if err: return r.record(case, 'ERROR', err)
+        rep = None
+        for l in lines:
+            mm = re.search(r'\$([ON]);([A-Z]+)#[0-9A-Fa-f]{3};(.*)', l)
+            if mm: rep = (mm.group(1), mm.group(2), mm.group(3).strip()); break
+        if rep is None:
+            continue                      # silence = commande absente du build, acceptable
+        # $O; acquitte la TRAME, pas la commande: le refus se lit dans la charge
+        # utile (statut non nul et/ou mention explicite de non-support).
+        refus = (rep[2].startswith('1') or 'not supported' in rep[2].lower()
+                 or 'unsupported' in rep[2].lower())
+        if rep[0] == 'O' and not refus:
+            defauts.append(f'{nom} ACCEPTEE sans refus explicite sur un build KIM2: {rep}')
+        if rep[1] != nom:
+            defauts.append(f'{nom}: la reponse porte le nom {rep[1]}')
+    if defauts:
+        r.record(case, 'FAIL', 'commande emettrice mal gardee', '\n'.join(defauts))
+    else:
+        r.record(case, 'PASS', 'SATDP / COMCW / SATTX refusees ou absentes, aucune emission possible')
+
+def c_lecture_exhaustive(r, case):
+    """Lire chaque parametre individuellement: aucun ne doit faire taire la balise."""
+    b = r.b
+    lines, err = r.raw("$PARML#000;\r", wait=4.0)
+    if err: return r.record(case, 'ERROR', err)
+    m = _resp(lines, 'PARML')
+    if not m: return r.record(case, 'FAIL', 'PARML sans reponse')
+    clefs = [k.strip() for k in m.group(3).rstrip('\r').split(',') if k.strip()]
+    muets, erreurs = [], []
+    for k in clefs:
+        payload = k
+        l2, e2 = r.raw(f"$PARMR#{len(payload):03X};{payload}\r", wait=0.9)
+        if e2: return r.record(case, 'ERROR', f'{k}: {e2}')
+        mm = _resp(l2, 'PARMR')
+        if mm is None: muets.append(k)
+        elif mm.group(1) == 'N': erreurs.append(f'{k}->{mm.group(3).strip()}')
+    vivant = b.ping(timeout=6)
+    detail = f'{len(clefs)} clefs lues, {len(muets)} muettes, {len(erreurs)} en erreur'
+    if muets or not vivant:
+        r.record(case, 'FAIL', detail + ('' if vivant else ' — CARTE MUETTE a la fin'),
+                 'muets: ' + ', '.join(muets[:20]))
+    else:
+        r.record(case, 'PASS', detail + ', carte vivante',
+                 ('erreurs: ' + ', '.join(erreurs[:10])) if erreurs else None)
+
+def c_pont_kim(r, case):
+    """Pont serie vers le module: une fois ouvert il capte TOUT, la sortie est +++."""
+    b = r.b
+    lines, err = r.raw("$KIMBR#001;1\r", wait=3.0)
+    if err: return r.record(case, 'ERROR', err)
+    m = _resp(lines, 'KIMBR')
+    if not m or m.group(1) != 'O':
+        return r.record(case, 'FAIL', f'ouverture du pont refusee: {m.group(0) if m else "<silence>"}')
+    # le pont doit avaler la commande DTE d'arret
+    l2, _ = r.raw("$KIMBR#001;0\r", wait=2.0)
+    avalee = _resp(l2, 'KIMBR') is None
+    # une commande AT doit atteindre le module
+    l3, _ = r.raw("AT+FW=?\r\n", wait=3.0)
+    module_repond = any('+FW=' in l or '+OK' in l for l in l3)
+    # sortie
+    # gentracker.cpp: la sortie est comparee a une LIGNE complete rendue par
+    # usb.read_line(), qui n'aboutit qu'au terminateur. "+++" seul reste dans le
+    # tampon et le pont ne se ferme jamais — verifie au banc le 2026-08-26.
+    r.raw("+++\r", wait=3.0)
+    l5, _ = r.raw("$PARML#000;\r", wait=3.0)
+    canal_rendu = _resp(l5, 'PARML') is not None
+    if not canal_rendu:
+        return r.record(case, 'FAIL',
+                        'CANAL DTE NON RENDU apres +++ — la balise reste prisonniere du pont',
+                        '\n'.join(l5[:6]))
+    d = (f"pont ouvert, commande d'arret {'avalee' if avalee else 'EXECUTEE (fuite)'}, "
+         f"module {'repond' if module_repond else 'muet'}, canal rendu par +++")
+    r.record(case, 'PASS' if avalee else 'FAIL', d)
+
+
+CASES_V2 = [
+ dict(id='CMD-25', risque='BLOQUANT', titre='PWRON: composants et valeur hors borne', fn=c_pwron),
+ dict(id='CMD-27', risque='BLOQUANT', titre='Commandes emettrices refusees sur build KIM2', fn=c_cmd_emettrices_refusees),
+ dict(id='PAR-04', risque='BLOQUANT', titre='Lecture individuelle de tous les parametres', fn=c_lecture_exhaustive),
+ dict(id='CMD-37', risque='BLOQUANT', titre='Pont serie KIM2 et sortie par +++', fn=c_pont_kim),
+]
