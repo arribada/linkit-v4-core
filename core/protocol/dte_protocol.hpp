@@ -1244,7 +1244,7 @@ private:
 		}
 	}
 
-	static size_t decode(const std::string& s, std::vector<ParamID>& val) {
+	static size_t decode(const std::string& s, std::vector<ParamID>& val, std::vector<std::string>& rejected_keys) {
 		constexpr std::string_view delim = ",";
 
 		// Iterate over comma seperated values
@@ -1262,8 +1262,17 @@ private:
 				ParamID param;
 				if (try_lookup_key(key, param)) {
 					val.push_back(param);
+				} else {
+					// Une clef inconnue etait purement jetee ici, sans trace. En
+					// aval, une demande dont AUCUNE clef n'est reconnue arrivait
+					// donc avec une liste vide — indiscernable d'une demande vide,
+					// qui veut dire "rends-moi tout". La balise repondait sa
+					// configuration entiere a une faute de frappe, et une clef
+					// assez longue suffisait a forcer une reponse enorme. On les
+					// enregistre pour que l'appelant puisse faire la difference.
+					DEBUG_WARN("DTEDecoder: clef inconnue \"%s\" ignoree", key.c_str());
+					rejected_keys.push_back(key);
 				}
-				// Unknown keys are logged and skipped
 			}
 
 			prev = pos + delim.size();
@@ -1666,7 +1675,7 @@ public:
 					break;
 				case BaseEncoding::KEY_LIST:
 					DEBUG_TRACE("BaseEncoding::KEY_LIST");
-					payload_pos += decode(remaining_str, keys);
+					payload_pos += decode(remaining_str, keys, rejected_keys);
 					break;
 				case BaseEncoding::DECIMAL:
 				{
