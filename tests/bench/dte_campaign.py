@@ -97,6 +97,35 @@ class Runner:
             lines = [l for _, l in b.history[mk:]]
         return lines, None
 
+    def raw_until(self, payload, motif, timeout=25.0):
+        """Envoie une trame et ATTEND la reponse, au lieu de dormir une duree fixe.
+
+        Les quatre faux verdicts de la campagne du 2026-08-26 venaient tous d'une
+        pause trop courte: le firmware ne consomme qu'une ligne par tick de 50 ms,
+        et une ecriture de RCONF remet le module satellite sous tension pour lui
+        parler en AT — une vingtaine de secondes. Une attente fixe ne peut pas
+        couvrir les deux, une attente adaptative si.
+        """
+        b = self.b
+        rx = re.compile(motif)
+        mk = b.mark()
+        try:
+            b._send(payload)
+        except Exception as e:
+            return None, f"envoi impossible: {type(e).__name__}"
+        fin = time.time() + timeout
+        idx = mk
+        while time.time() < fin:
+            time.sleep(0.15)
+            with b._lock:
+                lignes = [l for _, l in b.history[idx:]]
+                idx = len(b.history)
+            for l in lignes:
+                m = rx.search(l)
+                if m:
+                    return m, None
+        return None, None            # pas de reponse dans le delai
+
     def record(self, case, verdict, detail, evidence=None):
         rec = {'ts': time.strftime('%Y-%m-%dT%H:%M:%S'), 'id': case['id'],
                'titre': case['titre'], 'risque': case['risque'],
@@ -573,4 +602,101 @@ CASES_V2 = [
  dict(id='CMD-27', risque='BLOQUANT', titre='Commandes emettrices refusees sur build KIM2', fn=c_cmd_emettrices_refusees),
  dict(id='PAR-04', risque='BLOQUANT', titre='Lecture individuelle de tous les parametres', fn=c_lecture_exhaustive),
  dict(id='CMD-37', risque='BLOQUANT', titre='Pont serie KIM2 et sortie par +++', fn=c_pont_kim),
+]
+
+
+# =====================================================================
+#  Vague 3 — gardes de non-regression sur la validation des parametres
+#
+#  Ces deux cas existent parce qu'ajouter de la validation peut casser ce
+#  qui marchait: un defaut d'usine hors de sa propre liste deviendrait
+#  irrecevable, et un lot mixte pourrait etre rejete en bloc. Les deux
+#  scenarios sont exactement ceux que fait une interface de configuration.
+# =====================================================================
+
+def _cles_non_inscriptibles():
+    """Les clefs declarees is_writable=false dans dte_params.cpp.
+
+    Certains parametres sont des etats que le firmware entretient lui-meme
+    (LAST_KNOWN_RTC, ARGOS_CACHED_MODULATION): ils se lisent mais ne s'ecrivent
+    pas, et leur refus est correct. On lit la table du firmware plutot que de
+    figer une liste ici, pour que le test suive les evolutions du depot.
+    """
+    import os
+    chemin = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          '..', '..', 'core', 'protocol', 'dte_params.cpp')
+    try:
+        src = open(chemin).read()
+    except OSError:
+        return set()
+    cles = set()
+    motif = (r'\{\s*"[A-Z0-9_]+"\s*,\s*"([A-Z0-9]+)"\s*,\s*BaseEncoding::\w+\s*,'
+             r'[^,]*,[^,]*,\s*\{[^}]*\}\s*,\s*(true|false)\s*,\s*(true|false)\s*\}')
+    for m in re.finditer(motif, src):
+        if m.group(3) == 'false':
+            cles.add(m.group(1))
+    return cles
+
+def c_aller_retour_complet(r, case):
+    """Lire toute la configuration, puis reecrire CHAQUE parametre INSCRIPTIBLE
+       avec sa propre valeur. Aucun ne doit etre refuse: sinon la validation
+       rejette un etat que la balise porte legitimement."""
+    m, err = r.raw_until("$PARMR#000;\r", r'\$O;PARMR#[0-9A-Fa-f]{3};(.*)', timeout=15)
+    if err: return r.record(case, 'ERROR', err)
+    if not m: return r.record(case, 'FAIL', 'PARMR global sans reponse')
+    paires = [t for t in m.group(1).rstrip('\r').split(',') if '=' in t]
+    if not paires: return r.record(case, 'FAIL', 'PARMR global vide')
+    non_inscriptibles = _cles_non_inscriptibles()
+    refuses, muets, ignores = [], [], 0
+    for t in paires:
+        if t.split('=', 1)[0] in non_inscriptibles:
+            ignores += 1
+            continue
+        # 25 s: l'ecriture d'un RCONF rallume le module satellite et lui parle en AT
+        mm, e2 = r.raw_until(f"$PARMW#{len(t):03X};{t}\r", r'\$([ON]);PARMW#', timeout=25)
+        if e2: return r.record(case, 'ERROR', f'{t[:24]}: {e2}')
+        if mm is None: muets.append(t[:30])
+        elif mm.group(1) == 'N': refuses.append(t[:30])
+    vivant = r.b.ping(timeout=8)
+    d = (f'{len(paires)-ignores} parametres inscriptibles relus et reecrits '
+         f'({ignores} en lecture seule ignores), {len(refuses)} refuses, {len(muets)} sans reponse')
+    if refuses or muets or not vivant:
+        r.record(case, 'FAIL', d + ('' if vivant else ' — CARTE MUETTE'),
+                 'refuses: ' + ', '.join(refuses[:12]) + '\nmuets: ' + ', '.join(muets[:12]))
+    else:
+        r.record(case, 'PASS', d + ', carte vivante')
+
+def c_lot_mixte(r, case):
+    """Un lot contenant une clef invalide doit refuser CELLE-LA et appliquer les
+       autres — pas rejeter l'ensemble, et surtout pas rendre la config illisible."""
+    b = r.b
+    try:
+        b.write_params({'HAULED_ARGOS_MODE': 2, 'LED_MODE': 1, 'ARGOS_MODE': 0})
+        time.sleep(1.5)
+        _, avant = b.read_params(['HAULED_ARGOS_MODE', 'LED_MODE', 'ARGOS_MODE'])
+    except Exception as e:
+        return r.record(case, 'ERROR', f'preparation: {type(e).__name__}')
+    # HMP10=5 est hors de SA liste {0..4}, alors que ARP01=5 serait legitime
+    lot = 'ARP01=2,HMP10=5,LDP01=0'
+    m, err = r.raw_until(f"$PARMW#{len(lot):03X};{lot}\r", r'\$([ON]);PARMW#[0-9A-Fa-f]{3};(.*)', timeout=20)
+    if err: return r.record(case, 'ERROR', err)
+    if m is None: return r.record(case, 'FAIL', 'lot mixte sans reponse')
+    _, apres = b.read_params(['HAULED_ARGOS_MODE', 'LED_MODE', 'ARGOS_MODE'])
+    mg, _ = r.raw_until("$PARMR#000;\r", r'\$O;PARMR#', timeout=15)
+    defauts = []
+    if m.group(1) != 'N':        defauts.append(f'le lot est accepte en bloc: {m.group(0)[:40]}')
+    if 'HMP10' not in m.group(2): defauts.append('la reponse ne nomme pas la clef refusee')
+    if apres.get('HMP10') != avant.get('HMP10'): defauts.append('la clef invalide a ete ECRITE')
+    if apres.get('ARP01') != '2': defauts.append('un parametre VALIDE du lot a ete perdu (ARP01)')
+    if apres.get('LDP01') != '0': defauts.append('un parametre VALIDE du lot a ete perdu (LDP01)')
+    if mg is None:               defauts.append('PARMR global MUET apres le lot')
+    try: b.write_params({'HAULED_ARGOS_MODE': 2, 'LED_MODE': 1, 'ARGOS_MODE': 0})
+    except Exception: pass
+    if defauts: r.record(case, 'FAIL', f'{len(defauts)} anomalie(s)', '\n'.join(defauts))
+    else: r.record(case, 'PASS', 'clef fautive refusee et nommee, parametres valides appliques, config lisible')
+
+
+CASES_V3 = [
+ dict(id='PAR-06', risque='BLOQUANT', titre='Aller-retour de tous les parametres', fn=c_aller_retour_complet),
+ dict(id='PAR-07', risque='BLOQUANT', titre='Lot mixte: rejet individuel, pas global', fn=c_lot_mixte),
 ]
