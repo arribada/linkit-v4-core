@@ -1403,6 +1403,7 @@ private:
 						case BaseEncoding::ARGOSPOWER:
 						{
 							BaseArgosPower x = decode_power(value);
+							DTEEncoder::validate(param_ref, x);
 							key_value.value = x;
 							val.push_back(key_value);
 							break;
@@ -1417,6 +1418,7 @@ private:
 						case BaseEncoding::DEPTHPILE:
 						{
 							BaseDepthPile x = decode_depth_pile(value);
+							DTEEncoder::validate(param_ref, x);
 							key_value.value = x;
 							val.push_back(key_value);
 							break;
@@ -1424,6 +1426,7 @@ private:
 						case BaseEncoding::ARGOSMODE:
 						{
 							BaseArgosMode x = decode_mode(value);
+							DTEEncoder::validate(param_ref, x);
 							key_value.value = x;
 							val.push_back(key_value);
 							break;
@@ -1431,6 +1434,7 @@ private:
 						case BaseEncoding::GNSSFIXMODE:
 						{
 							BaseGNSSFixMode x = decode_gnss_fix_mode(value);
+							DTEEncoder::validate(param_ref, x);
 							key_value.value = x;
 							val.push_back(key_value);
 							break;
@@ -1438,6 +1442,7 @@ private:
 						case BaseEncoding::GNSSDYNMODEL:
 						{
 							BaseGNSSDynModel x = decode_gnss_dyn_model(value);
+							DTEEncoder::validate(param_ref, x);
 							key_value.value = x;
 							val.push_back(key_value);
 							break;
@@ -1445,6 +1450,7 @@ private:
 						case BaseEncoding::LEDMODE:
 						{
 							BaseLEDMode x = decode_led_mode(value);
+							DTEEncoder::validate(param_ref, x);
 							key_value.value = x;
 							val.push_back(key_value);
 							break;
@@ -1452,6 +1458,7 @@ private:
 						case BaseEncoding::ZONETYPE:
 						{
 							BaseZoneType x = decode_zone_type(value);
+							DTEEncoder::validate(param_ref, x);
 							key_value.value = x;
 							val.push_back(key_value);
 							break;
@@ -1459,6 +1466,7 @@ private:
 						case BaseEncoding::MODULATION:
 						{
 							BaseArgosModulation x = decode_argos_modulation(value);
+							DTEEncoder::validate(param_ref, x);
 							key_value.value = x;
 							val.push_back(key_value);
 							break;
@@ -1466,6 +1474,7 @@ private:
 						case BaseEncoding::DEBUGMODE:
 						{
 							BaseDebugMode x = decode_debug_mode(value);
+							DTEEncoder::validate(param_ref, x);
 							key_value.value = x;
 							val.push_back(key_value);
 							break;
@@ -1473,6 +1482,7 @@ private:
 						case BaseEncoding::PRESSURESENSORLOGGINGMODE:
 						{
 							BasePressureSensorLoggingMode x = decode_pressure_sensor_logging_mode(value);
+							DTEEncoder::validate(param_ref, x);
 							key_value.value = x;
 							val.push_back(key_value);
 							break;
@@ -1480,6 +1490,7 @@ private:
 						case BaseEncoding::PRESSURESENSORFULLSCALE:
 						{
 							BasePressureSensorFullScale x = decode_pressure_sensor_full_scale(value);
+							DTEEncoder::validate(param_ref, x);
 							key_value.value = x;
 							val.push_back(key_value);
 							break;
@@ -1487,6 +1498,7 @@ private:
 						case BaseEncoding::SENSORENABLETXMODE:
 						{
 							BaseSensorEnableTxMode x = decode_sensor_enable_tx_mode(value);
+							DTEEncoder::validate(param_ref, x);
 							key_value.value = x;
 							val.push_back(key_value);
 							break;
