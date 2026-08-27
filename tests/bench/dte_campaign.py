@@ -4093,3 +4093,225 @@ CASES_V20 = [
     dict(id='ZONE-07', risque='MAJEUR',   titre='Le timeout GNSS de zone se substitue au nominal',
          fn=c_zone_gnss_timeout),
 ]
+
+
+# =====================================================================
+#  Vague 21 — sortie des donnees: DUMPD et son protocole multi-paquets
+#
+#  C est par la que la mission quitte la balise. Le protocole rend
+#  "mmm,MMM,<charge>" ou mmm est l index du paquet et MMM le dernier index
+#  (dte_handler.cpp:418). Une sequence d index cassee, c est de la donnee
+#  perdue en silence: rien ne l annonce, et le journal reste intact sur la
+#  carte pendant que l operateur croit l avoir recupere.
+# =====================================================================
+
+_DUMPD_SYSTEME = 0     # BaseLogDType::INTERNAL
+_DUMPD_GNSS    = 1     # BaseLogDType::GNSS_SENSOR
+_DUMPD_PLAFOND = 48    # paquets aspires au plus par cas — voir _dumpd()
+
+# En-tete d un paquet: $O;DUMPD#<len>;<mmm>,<MMM>,<charge base64>
+# Les DEUX index sont en HEXADECIMAL (mesure: "A,3FE" puis "10,3FE"), ce qu un
+# motif en \d+ manque des le onzieme paquet.
+_RE_DUMPD = re.compile(r'\$O;DUMPD#[0-9A-Fa-f]+;([0-9A-Fa-f]+),([0-9A-Fa-f]+),')
+
+def _dumpd(b, d_type, plafond=_DUMPD_PLAFOND, silence=6.0):
+    """Aspire un journal. Rend (index vus, MMM, refus, tronque).
+
+    UNE requete declenche un FLUX de paquets, elle n en rend pas un seul.
+    Mesure du 2026-08-27, horodatages a la milliseconde:
+
+        20:26:50.709  >> $DUMPD#001;0
+        20:26:50.710  $O;DUMPD#23E;1,3FE,...
+        20:26:50.715  $O;DUMPD#382;2,3FE,...   <- sans nouvelle requete
+
+    Une premiere version envoyait une requete par paquet en posant son repere
+    juste avant: elle sautait les paquets arrives entre-temps et lisait
+    [0, 1, 3]. Le firmware n y etait pour rien.
+
+    `plafond` borne l aspiration — le journal systeme fait 1023 paquets et on
+    n a pas besoin de tout pour eprouver la sequence. La troncature est RENDUE
+    a l appelant, jamais passee sous silence.
+    """
+    mk = b.mark()
+    b._send(f'$DUMPD#001;{d_type}\r')
+    vus, mmm, refus = [], None, False
+    dernier_recu = time.time()
+    while time.time() - dernier_recu < silence and len(vus) < plafond:
+        time.sleep(0.5)
+        with b._lock:
+            lignes = [l for _, l in b.history[mk:]]
+        nouveaux = []
+        for l in lignes:
+            m = _RE_DUMPD.search(l)
+            if m:
+                nouveaux.append((int(m.group(1), 16), int(m.group(2), 16)))
+            elif '$N;DUMPD' in l:
+                refus = True
+        if len(nouveaux) > len(vus):
+            dernier_recu = time.time()
+        vus = [i for i, _ in nouveaux]
+        if nouveaux:
+            mmm = nouveaux[-1][1]
+        if mmm is not None and vus and vus[-1] >= mmm:
+            break
+    tronque = bool(mmm is not None and vus and vus[-1] < mmm)
+    return vus, mmm, refus, tronque
+
+def _dumpd_silence(b, silence=8.0, plafond=180.0):
+    """Attend que le flux DUMPD se taise.
+
+    Indispensable avant tout cas qui interroge DUMPD: une aspiration
+    precedente continue de deverser ses paquets (le journal systeme en compte
+    1023), et ces paquets repondent au meme motif. Sans cette purge, un cas lit
+    la fin du flux precedent en croyant lire sa propre reponse — c est ainsi
+    que DUMP-02 a rapporte un index 230 pour un journal qui commence a 0.
+    """
+    fin = time.time() + plafond
+    mk = b.mark()
+    dernier = time.time()
+    vu = 0
+    while time.time() < fin:
+        time.sleep(1.0)
+        with b._lock:
+            lignes = [l for _, l in b.history[mk:]]
+        n = sum(1 for l in lignes if _RE_DUMPD.search(l))
+        if n > vu:
+            vu = n
+            dernier = time.time()
+        elif time.time() - dernier >= silence:
+            return True
+    return False
+
+def _dumpd_flux(b, d_type, plafond=8, silence=6.0):
+    """Comme _dumpd mais rend les paires (index, MMM) telles quelles."""
+    mk = b.mark()
+    b._send(f'$DUMPD#001;{d_type}\r')
+    paires, refus = [], False
+    dernier_recu = time.time()
+    while time.time() - dernier_recu < silence and len(paires) < plafond:
+        time.sleep(0.5)
+        with b._lock:
+            lignes = [l for _, l in b.history[mk:]]
+        courant = []
+        for l in lignes:
+            m = _RE_DUMPD.search(l)
+            if m:
+                courant.append((int(m.group(1), 16), int(m.group(2), 16)))
+            elif '$N;DUMPD' in l:
+                refus = True
+        if len(courant) > len(paires):
+            dernier_recu = time.time()
+        paires = courant
+    return paires, refus
+
+def c_dumpd_sequence(r, case):
+    """Les index de paquets se suivent sans trou ni repetition.
+
+    Cette paire d index est le seul controle d integrite dont dispose l hote.
+    Un saut ou une repetition signifie que des entrees ne remontent jamais — et
+    comme la carte considere le journal comme lu, la perte est definitive et
+    muette.
+    """
+    b = r.b
+    _dumpd_silence(b)
+    vus, mmm, refus, tronque = _dumpd(b, _DUMPD_SYSTEME)
+    apercu = vus[:20]
+    trace = (f'index vus = {apercu}{" ..." if len(vus) > 20 else ""}\n'
+             f'{len(vus)} paquets, MMM = {mmm}, tronque = {tronque}')
+    if refus:
+        return r.record(case, 'ERROR', 'DUMPD refuse la demande', trace)
+    if not vus:
+        return r.record(case, 'ERROR', 'DUMPD ne rend aucun paquet — journal vide ?', trace)
+    defauts = []
+    if vus[0] != 0:
+        defauts.append(f'la sequence commence a {vus[0]} au lieu de 0')
+    if vus != list(range(len(vus))):
+        manquants = sorted(set(range(vus[-1] + 1)) - set(vus))
+        defauts.append(f'index non consecutifs, manquants: {manquants[:12]}')
+    if not tronque and mmm is not None and vus[-1] != mmm:
+        defauts.append(f'arret a l index {vus[-1]} alors que MMM={mmm}')
+    if defauts:
+        return r.record(case, 'FAIL', '; '.join(defauts), trace)
+    borne = f'jusqu a {vus[-1]} (plafond du cas, MMM={mmm})' if tronque else f'de 0 a {mmm}'
+    r.record(case, 'PASS', f'{len(vus)} paquets consecutifs {borne}', trace)
+
+def c_dumpd_changement_type(r, case):
+    """Deux aspirations successives de journaux differents partent chacune de 0.
+
+    C est le geste courant de l operateur: recuperer le journal systeme, puis
+    celui des positions. Si l etat d index fuit de l une a l autre, la seconde
+    reprend la ou la premiere s est arretee et son debut n arrive jamais — on
+    croit tenir le journal GNSS alors qu il en manque la tete, sans qu aucune
+    erreur ne soit tracee. Le firmware s en protege (dte_handler.cpp:437,
+    "Reset state if dump type changed mid-stream").
+
+    Ce que ce cas N ATTEINT PAS, et pourquoi: la bascule VRAIMENT en plein flux
+    n est pas eprouvable sur ce lien. Trois passes l ont montre le 2026-08-27 —
+    le flux sortant sature la console (le firmware ne consomme qu une ligne par
+    tick) et la requete de bascule reste sans reponse. On ne saurait pas
+    distinguer une garde qui n a pas joue d une requete jamais lue, et un cas
+    qui ne peut pas distinguer ces deux-la ne vaut rien. On purge donc entre
+    les deux aspirations et on eprouve la fuite d etat, qui est le defaut reel.
+    """
+    b = r.b
+    _dumpd_silence(b)
+    systeme, refus = _dumpd_flux(b, _DUMPD_SYSTEME, plafond=6)
+    if refus or not systeme:
+        return r.record(case, 'ERROR', 'premiere aspiration impossible', f'systeme = {systeme}')
+    if len(systeme) < 2:
+        return r.record(case, 'ERROR',
+                        'le journal systeme tient en un paquet — fuite d etat non evaluable',
+                        f'systeme = {systeme}')
+    mmm_systeme = systeme[-1][1]
+    if not _dumpd_silence(b):
+        return r.record(case, 'ERROR',
+                        'le flux ne se tarit pas — seconde aspiration non isolable',
+                        f'systeme = {[i for i, _ in systeme]}')
+    gnss, refus2 = _dumpd_flux(b, _DUMPD_GNSS, plafond=4)
+    trace = (f'systeme: {[i for i, _ in systeme]} (MMM={mmm_systeme})\n'
+             f'GNSS: {gnss[:6]}')
+    if refus2:
+        return r.record(case, 'ERROR',
+                        'le journal GNSS est refuse (vide ?) — cas non evaluable', trace)
+    if not gnss:
+        return r.record(case, 'ERROR', 'aucun paquet pour le journal GNSS', trace)
+    if gnss[0][1] == mmm_systeme:
+        return r.record(case, 'ERROR',
+                        f'les deux journaux annoncent le meme MMM={mmm_systeme} — '
+                        'on ne peut pas prouver qu il s agit bien du second', trace)
+    if gnss[0][0] != 0:
+        return r.record(case, 'FAIL',
+                        f'la seconde aspiration commence a l index {gnss[0][0]}: son debut '
+                        'est saute (fuite d etat entre journaux)', trace)
+    r.record(case, 'PASS',
+             f'la seconde aspiration repart de 0 (journal distinct, MMM={gnss[0][1]})', trace)
+
+def c_dumpd_type_inconnu(r, case):
+    """Un type de journal inexistant est refuse, pas servi au hasard.
+
+    Le type est un index dans une table (m_logger_dump). Servir un journal
+    voisin pour un index hors table donnerait les donnees d un capteur pour
+    celles d un autre — pire qu une erreur, une donnee fausse indiscernable
+    d une vraie.
+    """
+    b = r.b
+    # Sans purge, un paquet du flux precedent ($O;DUMPD#...) serait pris pour
+    # la reponse et le cas conclurait que le type 99 est accepte.
+    _dumpd_silence(b)
+    m = b.dte('DUMPD', '99', timeout=10.0)
+    ligne = (m.string if m and hasattr(m, 'string') else '') or ''
+    if not m:
+        return r.record(case, 'ERROR', 'aucune reponse a un type inconnu')
+    if m.group(1) != 'N':
+        return r.record(case, 'FAIL',
+                        f'le type 99 est ACCEPTE et sert des donnees: {ligne[:90]}', ligne[:200])
+    r.record(case, 'PASS', 'le type de journal inconnu est refuse', ligne[:160])
+
+CASES_V21 = [
+    dict(id='DUMP-01', risque='BLOQUANT', titre='Les index de paquets se suivent de 0 a MMM',
+         fn=c_dumpd_sequence),
+    dict(id='DUMP-02', risque='MAJEUR',   titre='Changer de journal remet l index a zero',
+         fn=c_dumpd_changement_type),
+    dict(id='DUMP-03', risque='MAJEUR',   titre='Un type de journal inconnu est refuse',
+         fn=c_dumpd_type_inconnu),
+]
