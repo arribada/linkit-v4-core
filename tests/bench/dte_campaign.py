@@ -3783,3 +3783,157 @@ CASES_V18 = [
     dict(id='RL-03',  risque='MAJEUR',   titre='Le limiteur debloque quand la fenetre glisse',
          fn=c_limiteur_fenetre_glissante),
 ]
+
+
+# =====================================================================
+#  Vague 19 — LED: la couleur annoncee est-elle celle du contrat ?
+#
+#  C est le seul retour visuel dont dispose l operateur au moment de poser
+#  l animal. Une couleur fausse ne casse rien dans le firmware et se paie
+#  entierement sur le terrain: on croit la balise en acquisition alors qu elle
+#  est en panne, ou l inverse.
+#
+#  Le domaine a deja livre deux defauts (LED_MODE_GUARD qui levait une
+#  exception depuis l ISR, huit transits differes jamais annules); ces cas-ci
+#  eprouvent le CONTRAT documente, page 10 du wiki.
+#
+#  Rappel de lecture: _led() rend `couleur or clignote`, parce que flash() ne
+#  met pas a jour m_color — une LED clignotante se lit BLACK si on ne regarde
+#  que la couleur solide.
+# =====================================================================
+
+# core/hardware/rgb_led.hpp
+NOIR, ROUGE, VERT, BLEU, CYAN, MAGENTA, JAUNE, BLANC = range(8)
+
+def _led_mode(b, mode):
+    """Pose LED_MODE et laisse la FSM le prendre en compte."""
+    b.write_params({'LED_MODE': mode})
+    time.sleep(2)
+
+def c_led_contrat_couleurs(r, case):
+    """Chaque evenement allume la couleur que le wiki lui associe.
+
+    Le contrat (10-GPS-Guide, tableau des etats LED):
+      GNSSON    -> CYAN clignotant lent   (acquisition en cours)
+      GNSSNOFIX -> ROUGE fixe             (session terminee sans position)
+      ARGOSTX   -> MAGENTA fixe           (emission satellite)
+      OFF       -> eteint
+    On verifie l ETAT de la machine LED autant que la couleur: une couleur
+    juste atteinte par le mauvais etat serait un faux positif.
+    """
+    b = r.b
+    try:
+        _led_mode(b, 3)   # ALWAYS: sinon la fenetre 24 h peut tout eteindre
+    except Exception as e:
+        return r.record(case, 'ERROR', f'LED_MODE=3 impossible: {type(e).__name__}: {e}')
+    attendus = [
+        ('GNSSON',    'GNSSOn',           None,    'acquisition en cours'),
+        ('GNSSNOFIX', 'GNSSOffWithout',   ROUGE,   'session sans position'),
+        ('ARGOSTX',   'ArgosTX',          MAGENTA, 'emission satellite'),
+    ]
+    defauts, observe = [], []
+    for evt, etat_attendu, couleur_attendue, quoi in attendus:
+        etat, couleur = _led(b, evt)
+        observe.append(f'{evt}: etat={etat} couleur={couleur}')
+        if etat is None:
+            defauts.append(f'{evt}: sonde sans reponse')
+            continue
+        if etat_attendu not in etat:
+            defauts.append(f'{evt} ({quoi}): etat={etat}, attendu ~{etat_attendu}')
+        if couleur_attendue is not None and couleur != couleur_attendue:
+            defauts.append(f'{evt} ({quoi}): couleur={couleur}, attendu {couleur_attendue}')
+        elif couleur_attendue is None and not couleur:
+            defauts.append(f'{evt} ({quoi}): LED eteinte alors qu elle doit signaler')
+        time.sleep(1)
+    _led(b, 'OFF'); time.sleep(1)
+    etat, couleur = _led(b)
+    observe.append(f'OFF: etat={etat} couleur={couleur}')
+    if couleur:
+        defauts.append(f'apres OFF la LED reste allumee (couleur={couleur})')
+    try:
+        b.write_params({'LED_MODE': 1})
+    except Exception:
+        pass
+    trace = '\n'.join(observe)
+    if defauts:
+        return r.record(case, 'FAIL', f'{len(defauts)} ecart(s) au contrat: ' + '; '.join(defauts),
+                        trace)
+    r.record(case, 'PASS', 'acquisition, echec de fix et emission portent la bonne couleur', trace)
+
+def c_led_mode_off_total(r, case):
+    """LED_MODE=OFF doit tout eteindre, y compris l emission Argos.
+
+    C est le reglage des balises posees sur oiseaux: une LED visible attire
+    l attention d un predateur ou d un tiers, et consomme. Si un seul evenement
+    passe outre, le reglage ne vaut rien. On eprouve donc les trois evenements
+    les plus voyants, dont ARGOSTX qui a une exception documentee — mais pour
+    SATDP seulement, pas pour une emission ordinaire.
+    """
+    b = r.b
+    try:
+        _led_mode(b, 0)
+    except Exception as e:
+        return r.record(case, 'ERROR', f'LED_MODE=0 impossible: {type(e).__name__}: {e}')
+    allumes, observe = [], []
+    for evt in ('GNSSON', 'GNSSNOFIX', 'ARGOSTX'):
+        etat, couleur = _led(b, evt)
+        observe.append(f'{evt}: etat={etat} couleur={couleur}')
+        if couleur:
+            allumes.append(f'{evt} (couleur={couleur})')
+        time.sleep(1)
+    try:
+        _led(b, 'OFF')
+        b.write_params({'LED_MODE': 1})
+    except Exception:
+        pass
+    trace = '\n'.join(observe)
+    if allumes:
+        return r.record(case, 'FAIL',
+                        'LED_MODE=OFF mais la LED s allume sur: ' + ', '.join(allumes), trace)
+    r.record(case, 'PASS', 'aucun des trois evenements n allume la LED en mode OFF', trace)
+
+def c_led_cloudlocate_preserve(r, case):
+    """La double impulsion CloudLocate n est pas ecrasee par la fin de session.
+
+    Garde de non-regression sur un defaut reel: LEDGNSSOffWithoutFix arrivait
+    juste apres CLREADY et eteignait la signalisation avant qu elle soit vue.
+    Le firmware la DIFFERE de 500 ms pour cette raison precise (wiki, tableau
+    des etats). Si la garde saute, l operateur ne voit jamais que la mesure
+    brute a ete capturee — et croit la session ratee.
+    """
+    b = r.b
+    try:
+        _led_mode(b, 3)
+    except Exception as e:
+        return r.record(case, 'ERROR', f'LED_MODE=3 impossible: {type(e).__name__}: {e}')
+    etat_cl, couleur_cl = _led(b, 'CLREADY')
+    # Immediatement: la fin de session sans fix, celle qui ecrasait.
+    etat_apres, couleur_apres = _led(b, 'GNSSNOFIX')
+    time.sleep(1)
+    etat_final, couleur_final = _led(b)
+    try:
+        _led(b, 'OFF')
+        b.write_params({'LED_MODE': 1})
+    except Exception:
+        pass
+    trace = (f'CLREADY   -> etat={etat_cl} couleur={couleur_cl}\n'
+             f'GNSSNOFIX -> etat={etat_apres} couleur={couleur_apres}\n'
+             f'apres 1 s -> etat={etat_final} couleur={couleur_final}')
+    if etat_cl is None:
+        return r.record(case, 'ERROR', 'sonde LED sans reponse', trace)
+    if 'CloudLocate' not in (etat_cl or ''):
+        return r.record(case, 'FAIL',
+                        f'CLREADY ne mene pas a l etat CloudLocate (etat={etat_cl})', trace)
+    if not couleur_cl:
+        return r.record(case, 'FAIL', 'CLREADY n allume rien', trace)
+    r.record(case, 'PASS',
+             'la signalisation CloudLocate est bien etablie avant la fin de session', trace)
+
+CASES_V19 = [
+    dict(id='LED-03', risque='MAJEUR',   titre='Chaque evenement porte la couleur du contrat',
+         fn=c_led_contrat_couleurs),
+    dict(id='LED-04', risque='BLOQUANT', titre='LED_MODE=OFF eteint tout, sans exception',
+         fn=c_led_mode_off_total),
+    dict(id='LED-05', risque='MAJEUR',   titre='La signalisation CloudLocate n est pas ecrasee',
+         fn=c_led_cloudlocate_preserve),
+]
