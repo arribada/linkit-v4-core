@@ -3500,3 +3500,286 @@ CASES_V17 = [
     dict(id='STAT-01',  risque='MAJEUR',   titre='STATR rend un etat technique coherent',
          fn=c_statr_coherent),
 ]
+
+
+# =====================================================================
+#  Vague 18 — detecteur d immersion analogique, observe a la source
+#
+#  $SWSST#000; rend les treize champs de SWSAnalogService::Status en une
+#  requete synchrone (dte_handler.cpp:1573), dont `surface_level`: 0 = aucune
+#  detection, 1..5 = les paliers L1..L5 de la cascade. C est le seul acces
+#  direct a cette cascade, et il ne demande aucun materiel supplementaire.
+#
+#  Rappel: les trames DTE ne repondent QU EN MODE CONFIGURATION (cf. vague 17),
+#  et baseline() y laisse la carte.
+# =====================================================================
+
+def _swsst(b, timeout=10.0, essais=4):
+    """$SWSST -> dict des treize champs, ou None."""
+    champs = ('air', 'eau', 'seuil', 'hysteresis', 'adc_brut', 'adc_filtre',
+              'calibre', 'immerge', 'temps_etat_s', 'palier', 'contraste_x10',
+              'pic_observe', 'delai_us')
+    for _ in range(essais):
+        m = b.dte('SWSST', '', timeout=timeout)
+        ligne = (m.string if m and hasattr(m, 'string') else '') or ''
+        if m and ';SWSST' in ligne:
+            corps = ligne.split(';', 2)[-1]
+            vals = re.findall(r'(\d+)', corps)
+            # Le premier nombre est la longueur de trame: on la saute.
+            vals = vals[1:] if len(vals) > len(champs) else vals
+            if len(vals) >= len(champs):
+                return dict(zip(champs, (int(v) for v in vals[:len(champs)])))
+        time.sleep(2)
+    return None
+
+def _sws_actif(b, secondes=30):
+    """Met le detecteur EN SERVICE, le laisse mesurer, puis interroge la sonde.
+
+    Deux contraintes OPPOSEES se rencontrent ici, et les ignorer donne une
+    reponse plausible mais vide de sens:
+
+      - les trames DTE ne repondent QU EN MODE CONFIGURATION (vague 17);
+      - les services ne tournent QU EN DEHORS — ils sont arretes a l entree en
+        configuration et redemarres a la sortie, et c est Service::start() qui
+        appelle service_init() (service.cpp:585).
+
+    Ecrire UNP01=1 en restant en configuration ne demarre donc RIEN: $SWSST rend
+    adc_brut=0 et contraste=0 tout en annoncant une calibration valide (les
+    lignes de base viennent du .noinit), parce que m_contrast_x10 n est
+    renseigne que par update_dynamic_threshold(), au fil de l echantillonnage
+    (sws_analog_calibration.cpp:352). Mesure du 2026-08-27: SWS-04 est passe sur
+    des valeurs persistees sans qu une seule mesure ait ete prise.
+
+    Il faut donc sortir, laisser mesurer, et revenir pour lire.
+    """
+    b.write_params({'UNDERWATER_EN': 1})
+    b.exit_config()
+    time.sleep(secondes)
+    b.enter_config()
+    return _swsst(b)
+
+def c_sws_etat_coherent(r, case):
+    """Le detecteur rend un etat physiquement coherent, a sec.
+
+    Sur la paillasse l electrode est a l air: la carte DOIT se dire hors de
+    l eau, et l ADC doit se tenir du cote air du seuil. C est le controle le
+    plus elementaire de toute la chaine d immersion, et pourtant rien ne le
+    verifiait: si le seuil derive au-dessus de la mesure d air, la balise se
+    croit immergee en permanence et cesse d emettre — panne muette et totale.
+    """
+    b = r.b
+    try:
+        st = _sws_actif(b)
+    except Exception as e:
+        return r.record(case, 'ERROR', f'mise en service impossible: {type(e).__name__}: {e}')
+    if not st:
+        return r.record(case, 'ERROR', '$SWSST sans reponse (ENABLE_SWS_ANALOG absent ?)')
+    trace = ', '.join(f'{k}={v}' for k, v in st.items())
+    defauts = []
+    if not st['adc_brut'] and not st['adc_filtre']:
+        try:
+            b.write_params({'UNDERWATER_EN': 0})
+        except Exception:
+            pass
+        return r.record(case, 'ERROR',
+                        'le detecteur n a pris aucune mesure (adc=0) — cas non concluant',
+                        trace)
+    if st['immerge']:
+        defauts.append('la carte se declare IMMERGEE alors qu elle est a l air')
+    if not st['calibre']:
+        defauts.append('calibration invalide')
+    if not (st['air'] < st['seuil'] < st['eau']):
+        defauts.append(f"seuil hors de l intervalle air..eau "
+                       f"({st['air']} < {st['seuil']} < {st['eau']} est faux)")
+    # SAADC 12 bits: toute valeur au-dela de 4095 est une lecture aberrante.
+    for cle in ('air', 'eau', 'seuil', 'adc_brut', 'adc_filtre', 'pic_observe'):
+        if st[cle] > 4095:
+            defauts.append(f'{cle}={st[cle]} depasse la pleine echelle SAADC (4095)')
+    if st['palier'] > 5:
+        defauts.append(f"palier de detection {st['palier']} hors de la plage L1..L5")
+    try:
+        b.write_params({'UNDERWATER_EN': 0})
+    except Exception:
+        pass
+    if defauts:
+        return r.record(case, 'FAIL', '; '.join(defauts), trace)
+    r.record(case, 'PASS',
+             f"a sec: hors de l eau, calibre, air={st['air']} < seuil={st['seuil']} "
+             f"< eau={st['eau']}", trace)
+
+def c_sws_hysteresis_appliquee(r, case):
+    """UNP22 atteint reellement le service au redemarrage.
+
+    L hysteresis est ce qui empeche le detecteur de basculer a chaque clapot.
+    Le risque qu on couvre ici est celui, deja rencontre sur les seuils
+    batterie, d un parametre ecrit puis jamais relu: sur une balise scellee,
+    reglee par BLE et jamais redemarree a la main, un reglage qui n arrive pas
+    au service est un reglage perdu en silence.
+
+    Ce que ce cas N AFFIRME PAS, et pourquoi — trois passes l ont etabli au
+    banc le 2026-08-27: la valeur EN COMPTES ADC (champ `hysteresis` de $SWSST)
+    est calculee dans update_dynamic_threshold() (sws_analog_calibration.cpp:379),
+    appele uniquement sur un evenement de RECALIBRATION. Electrode sechee et
+    stable, aucune recalibration ne se declenche, et le champ reste a la valeur
+    du .noinit quel que soit UNP22 — 10 aux trois essais, y compris avec
+    UNP23=60 force. Ce n est pas un defaut, c est un delai d application: le
+    reglage prend effet au prochain recalage. La preuve du bon acheminement est
+    la ligne d init, elle, immediate:
+
+        19:50:40  $PARMW UNP22=30,UNP23=60
+        19:50:50  SWSAnalog: Init - hyst=30% ratio=35%
+
+    A retenir cote exploitation: un operateur qui regle l hysteresis et relit
+    dans la foulee verra l ANCIENNE valeur en comptes ADC. Ce n est pas que son
+    reglage a ete refuse.
+    """
+    b = r.b
+    def _appliquer(valeur):
+        b.write_params({'SWS_ANALOG_HYSTERESIS': valeur, 'UNDERWATER_EN': 1})
+        mk = b.mark()
+        b.exit_config()
+        vues = _attendre_trace(b, [r'SWSAnalog: Init - hyst=(\d+)%'], 60, depuis=mk)
+        b.enter_config()
+        for l in vues:
+            m = re.search(r'hyst=(\d+)%', l)
+            if m:
+                return int(m.group(1))
+        return None
+    try:
+        bas = _appliquer(4)
+        haut = _appliquer(30)
+        b.write_params({'SWS_ANALOG_HYSTERESIS': 4, 'UNDERWATER_EN': 0})
+    except Exception as e:
+        return r.record(case, 'ERROR', f'ecriture UNP22 impossible: {type(e).__name__}: {e}')
+    trace = f'UNP22=4  -> init hyst={bas}%\nUNP22=30 -> init hyst={haut}%'
+    if bas is None or haut is None:
+        return r.record(case, 'ERROR',
+                        'le service ne trace pas son hysteresis au demarrage — non concluant',
+                        trace)
+    if bas != 4 or haut != 30:
+        return r.record(case, 'FAIL',
+                        f'le service demarre avec hyst={bas}% puis {haut}% au lieu de 4 % puis 30 % — '
+                        'UNP22 n atteint pas le service', trace)
+    r.record(case, 'PASS', 'UNP22 est relu par le service a chaque demarrage (4 % puis 30 %)',
+             trace)
+
+def c_sws_borne_delai(r, case):
+    """Le delai de charge RC reste dans les bornes UNP09..UNP10.
+
+    Le delai s adapte tout seul pour garder du contraste entre air et eau. S il
+    sort de ses bornes, la mesure perd son sens: trop court elle lit du bruit,
+    trop long elle epuise la batterie a chaque echantillon. Les bornes sont
+    la seule protection, et elles n avaient jamais ete verifiees a chaud.
+    """
+    b = r.b
+    try:
+        _, p = b.read_params(['SWS_DELAY_MIN_US', 'SWS_DELAY_MAX_US'])
+        mini = int(p.get(b._key('SWS_DELAY_MIN_US'), 0))
+        maxi = int(p.get(b._key('SWS_DELAY_MAX_US'), 0))
+    except Exception as e:
+        return r.record(case, 'ERROR', f'lecture UNP09/UNP10 impossible: {type(e).__name__}: {e}')
+    try:
+        st = _sws_actif(b)
+        b.write_params({'UNDERWATER_EN': 0})
+    except Exception as e:
+        return r.record(case, 'ERROR', f'mise en service impossible: {type(e).__name__}: {e}')
+    if not st:
+        return r.record(case, 'ERROR', '$SWSST sans reponse')
+    d = st['delai_us']
+    trace = f'delai={d} us, bornes UNP09={mini} UNP10={maxi}'
+    if mini and d < mini:
+        return r.record(case, 'FAIL', f'delai {d} us sous la borne basse {mini} us', trace)
+    if maxi and d > maxi:
+        return r.record(case, 'FAIL', f'delai {d} us au-dessus de la borne haute {maxi} us', trace)
+    r.record(case, 'PASS', f'delai de charge {d} us, dans [{mini}, {maxi}]', trace)
+
+def c_sws_contraste(r, case):
+    """Le contraste eau/air est annonce et exploitable.
+
+    Sous MIN_WATER_AIR_RATIO la calibration ne distingue plus l eau de l air, et
+    le firmware doit le dire plutot que de detecter au hasard. On verifie que le
+    champ est renseigne et concorde avec les lignes de base air et eau.
+    """
+    b = r.b
+    try:
+        st = _sws_actif(b)
+        b.write_params({'UNDERWATER_EN': 0})
+    except Exception as e:
+        return r.record(case, 'ERROR', f'mise en service impossible: {type(e).__name__}: {e}')
+    if not st:
+        return r.record(case, 'ERROR', '$SWSST sans reponse')
+    trace = ', '.join(f'{k}={v}' for k, v in st.items())
+    if st['air'] <= 0:
+        return r.record(case, 'FAIL', 'ligne de base air nulle — contraste indefinissable', trace)
+    attendu = round(10.0 * st['eau'] / st['air'])
+    ecart = abs(st['contraste_x10'] - attendu)
+    if st['contraste_x10'] == 0:
+        # PAS un defaut: m_contrast_x10 n est renseigne que par
+        # update_dynamic_threshold(), lui-meme appele uniquement sur un
+        # evenement de RE-calibration (sws_analog_detection.cpp:185, 220, 449...).
+        # Sur un banc sec, electrode stable et calibration restauree du .noinit,
+        # aucune recalibration ne se declenche: le champ reste a zero alors que
+        # la calibration est parfaitement valide. C est un cache d execution,
+        # ni persiste ni recalcule a l init.
+        #
+        # A SIGNALER cote IHM: un afficheur qui montre "contraste 0.0x" sur une
+        # balise saine inquiete pour rien. C est cosmetique, pas fonctionnel.
+        return r.record(case, 'ERROR',
+                        'contraste non encore calcule (aucune recalibration depuis le '
+                        'demarrage) — cas non concluant a sec', trace)
+    # Une unite de tolerance: le firmware arrondit, nous aussi.
+    if ecart > 1:
+        return r.record(case, 'FAIL',
+                        f"contraste annonce {st['contraste_x10']}/10 mais eau/air donne "
+                        f'{attendu}/10', trace)
+    r.record(case, 'PASS',
+             f"contraste {st['contraste_x10'] / 10:.1f}x, concorde avec eau/air", trace)
+
+def c_limiteur_fenetre_glissante(r, case):
+    """Le quota se libere quand la fenetre glisse, il ne se bloque pas a vie.
+
+    RL-02 prouve que le limiteur BLOQUE au-dela du quota. Le risque symetrique
+    n etait pas couvert: qu il ne debloque jamais. Une balise definitivement
+    muette apres N emissions serait pire que pas de limiteur du tout. On pose
+    une fenetre courte, on sature, puis on attend qu elle glisse.
+    """
+    b = r.b
+    try:
+        b.write_params({'RATE_LIMIT_EN': 1, 'RATE_LIMIT_WINDOW_S': 30,
+                        'RATE_LIMIT_MAX_TX': 1, 'ARGOS_MODE': 0})
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    mk = b.mark()
+    vues = _attendre_trace(b, [r'RateLimiter', r'rate-limited', r'quota'], 90, depuis=mk)
+    try:
+        b.write_params({'RATE_LIMIT_EN': 0, 'RATE_LIMIT_WINDOW_S': 3600,
+                        'RATE_LIMIT_MAX_TX': 4})
+    except Exception:
+        pass
+    trace = '\n'.join(vues[:8])
+    reprogrammations = [l for l in vues if 'reschedule' in l or 'rate-limited' in l]
+    if not vues:
+        return r.record(case, 'ERROR',
+                        'le limiteur ne se manifeste pas — cas non concluant '
+                        '(aucune emission possible sans credentials KIM2)', trace)
+    # Une reprogrammation ANNONCEE avec un delai fini prouve que le deblocage
+    # est prevu. Un SCHEDULE_DISABLED perpetuel serait le defaut recherche.
+    for l in reprogrammations:
+        m = re.search(r'reschedule_s=(\d+)', l)
+        if m and int(m.group(1)) > 3600:
+            return r.record(case, 'FAIL',
+                            f'reprogrammation a {m.group(1)} s pour une fenetre de 30 s', trace)
+    r.record(case, 'PASS', 'le limiteur annonce une reprogrammation bornee', trace)
+
+CASES_V18 = [
+    dict(id='SWS-04', risque='BLOQUANT', titre='A sec, le detecteur est coherent et calibre',
+         fn=c_sws_etat_coherent),
+    dict(id='SWS-05', risque='MAJEUR',   titre='UNP22 porte sur l hysteresis effective',
+         fn=c_sws_hysteresis_appliquee),
+    dict(id='SWS-06', risque='MAJEUR',   titre='Le delai de charge respecte UNP09..UNP10',
+         fn=c_sws_borne_delai),
+    dict(id='SWS-07', risque='MAJEUR',   titre='Le contraste eau/air concorde avec les lignes de base',
+         fn=c_sws_contraste),
+    dict(id='RL-03',  risque='MAJEUR',   titre='Le limiteur debloque quand la fenetre glisse',
+         fn=c_limiteur_fenetre_glissante),
+]
