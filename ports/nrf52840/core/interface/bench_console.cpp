@@ -23,6 +23,8 @@
 
 extern RGBLed *status_led;
 using led_handle = LEDState;   // meme alias que gentracker.cpp / ledsm.cpp
+#include "argos_tx_service.hpp"
+extern ArgosTxService *argos_tx_service_instance;
 #include "moored_mode_service.hpp"
 #include "ota_file_updater.hpp"
 #include "crc32.hpp"
@@ -353,6 +355,17 @@ bool bench::handle_line(const std::string& raw) {
                      bench_flash->is_init() ? 1 : 0, status,
                      (status & 0x40) ? 1 : 0, (status & 0x01) ? 1 : 0);
             reply(buf);
+        }
+    } else if (cmd == "%PILE") {
+        // Contenu de la pile de profondeur: type et compteur de salve par
+        // entree. C est le seul moyen de voir une position CONSOMMEE sans avoir
+        // ete emise — retrieve() decremente avant que la salve decide quoi
+        // encoder, et une entree a 0 n est plus jamais eligible.
+        if (!argos_tx_service_instance) {
+            reply("%PILE ERR no-service");
+        } else {
+            std::string d = argos_tx_service_instance->bench_dump_pile();
+            reply(std::string("%PILE ") + (d.empty() ? "vide" : d));
         }
     } else if (cmd == "%LED") {
         bench_led(line);

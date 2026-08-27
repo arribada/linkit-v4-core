@@ -28,6 +28,14 @@ public:
 	// not trust. Pure / static so unit tests can exercise it without an instance.
 	static unsigned int compute_gps_log_age_seconds(const GPSLogEntry &entry, std::time_t now);
 
+#ifdef BENCH_TEST
+	/// @brief Bench probe: depth-pile contents as "<type>:<burst_counter>" per slot.
+	/// burst_counter is what retrieve() decrements, and an entry at 0 is never
+	/// eligible again -- the only way to observe a position being consumed
+	/// without ever being encoded into a packet.
+	std::string bench_dump_pile() { return m_depth_pile_manager.bench_dump_gps(); }
+#endif
+
 protected:
 	void service_init() override;
 	void service_term() override;

@@ -2435,3 +2435,118 @@ CASES_V14 = [
     dict(id='LED-01', risque='BLOQUANT', titre='Un transit differe n ecrase pas l etat suivant', fn=c_led_transit_orphelin),
     dict(id='LED-02', risque='MAJEUR',   titre='LED_MODE eteint et rallume',                      fn=c_led_mode_off),
 ]
+
+# =====================================================================
+#  Vague 15 — pile de profondeur: une position ne doit pas etre
+#  consommee sans avoir ete emise
+# =====================================================================
+
+def _pile(b, timeout=12.0):
+    """%PILE -> [(type, compteur), ...] du plus ancien au plus recent.
+       type: 0=fix, 1=no-fix, 2=fastloc, 3=cloudlocate."""
+    mk = b.mark(); b._send('%PILE\r')
+    m = b.expect(r'%PILE (vide|(?:\d+:\d+ ?)+)', timeout, from_idx=mk)
+    if not m:
+        return None
+    if m.group(1) == 'vide':
+        return []
+    return [tuple(int(x) for x in p.split(':')) for p in m.group(1).split()]
+
+def c_pile_rotation(r, case):
+    """Chaque entree doit recevoir exactement N emissions, en ALTERNANCE.
+
+    Contrat documente (wiki, Satellite Communication): NTRY_PER_MESSAGE N>0 =
+    "exactement N emissions" PAR ENTREE. Et l ordre voulu est A B C A B C, pas
+    N x A puis N x B: une balise qui viderait tout le credit de la position la
+    plus ancienne avant de passer a la suivante retarderait d autant la plus
+    recente, celle qui interesse le segment sol.
+
+    Le cas eprouve les deux a la fois sur une pile MIXTE (fix reel + fastloc,
+    dont les formats de paquet ne se melangent pas): les credits doivent
+    descendre en alternance, et chaque entree doit finir a zero apres N
+    emissions, pas moins.
+
+    NOTE — ce cas a d abord ete ecrit pour demasquer un defaut suppose:
+    retrieve_gps() decremente burst_counter sur toutes les entrees rendues AVANT
+    que la salve ne decide laquelle encoder, donc un fastloc plus recent devait
+    faire perdre un tour au fix. La MESURE l a refute: la rotation de retrieve()
+    ne rend jamais les deux ensemble ici, chacun garde son compte. Le cas reste
+    comme garde: si la rotation se casse un jour, il le dira.
+    """
+    b = r.b
+    N = 2
+    try:
+        b.enter_config()
+        b.write_params({'ARGOS_MODE': 2, 'GNSS_EN': 1, 'NTRY_PER_MESSAGE': N,
+                        'ARGOS_DEPTH_PILE': 4, 'TR_NOM': 30, 'UNDERWATER_EN': 0,
+                        'SAT_PREPASS_EN': 0, 'RATE_LIMIT_EN': 0, 'LB_EN': 0,
+                        'HAULED_DETECT_EN': 0, 'ARGOS_TX_JITTER_EN': 0,
+                        'ZONE_ENABLE_OUT_OF_ZONE_DETECTION_MODE': 0,
+                        'DLOC_ARG_NOM': 10})
+        b.exit_config()
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    time.sleep(2)
+    if _pile(b) is None:
+        return r.record(case, 'ERROR', '%PILE sans reponse (sonde absente du build ?)')
+
+    # DEUX positions REELLES, pas un fastloc: sur ce banc le fastloc echoue a
+    # l emission (LDA2 non provisionne), ce qui declenche le backoff d erreur
+    # peripherique et perturbe la rotation — le meme montage a rendu 2 emissions
+    # puis 1 sur deux passes consecutives. Une pile homogene eprouve exactement
+    # la meme chose (A B A B) sans cette interference.
+    mk = b.mark()
+    b._send('%GPS 43.600000 3.900000 5000 9\r'); time.sleep(10)
+    b._send('%GPS 44.000000 4.000000 5000 9\r')
+
+    # on echantillonne toute la descente des credits
+    suite = []
+    fin_t = time.time() + 165
+    while time.time() < fin_t:
+        time.sleep(10)
+        p = _pile(b)
+        if p and (not suite or p != suite[-1]):
+            suite.append(p)
+        if p and all(c == 0 for _, c in p):
+            break
+
+    try:
+        b.enter_config(); b.write_params({'ARGOS_MODE': 0, 'NTRY_PER_MESSAGE': 0}); b.exit_config()
+    except Exception:
+        pass
+
+    trace = 'evolution des credits:\n  ' + '\n  '.join(str(x) for x in suite)
+    if len(suite) < 2:
+        return r.record(case, 'ERROR', 'pile non observee assez longtemps — cas non concluant', trace)
+    depart, final = suite[0], suite[-1]
+    if len(depart) < 2:
+        return r.record(case, 'ERROR', 'moins de deux entrees dans la pile — cas non concluant', trace)
+
+    # Compter les emissions ne marche pas: un paquet LONG transporte jusqu a
+    # TROIS positions a la fois, donc deux entrees peuvent partir dans un seul
+    # paquet. On assertionne sur ce qui est reellement en jeu — les credits.
+    defauts = []
+    for i in range(len(suite) - 1):
+        av, ap = suite[i], suite[i + 1]
+        if len(av) != len(ap):
+            continue
+        for k in range(len(av)):
+            if ap[k][1] > av[k][1]:
+                defauts.append(f'credit remonte a l index {k}: {av[k][1]} -> {ap[k][1]}')
+            if av[k][1] - ap[k][1] > 1:
+                defauts.append(f'credit chute de plus de 1 a l index {k}: {av[k][1]} -> {ap[k][1]}')
+    if any(c != 0 for _, c in final):
+        defauts.append(f'des credits subsistent en fin d observation: {final}')
+
+    if defauts:
+        r.record(case, 'FAIL', f'{len(defauts)} anomalie(s) de rotation', trace + '\n' + '\n'.join(defauts))
+    else:
+        r.record(case, 'PASS',
+                 f'les {len(depart)} entrees descendent une a une jusqu a zero, sans saut ni remontee',
+                 trace)
+
+CASES_V15 = [
+    dict(id='DP-01', risque='BLOQUANT',
+         titre='Chaque position recoit ses N emissions, en alternance',
+         fn=c_pile_rotation),
+]

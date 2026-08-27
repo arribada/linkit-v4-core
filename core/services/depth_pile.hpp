@@ -9,6 +9,8 @@
 #include <vector>
 #include <optional>
 #include <climits>
+#include <string>
+#include <cstdio>
 #include "service_scheduler.hpp"
 #include "config_store.hpp"
 #include "scheduler.hpp"
@@ -77,6 +79,22 @@ public:
 	unsigned int size() {
 		return m_entry.size();
 	}
+
+#ifdef BENCH_TEST
+	/// @brief Bench probe: (entry, burst_counter) for every slot, oldest first.
+	///
+	/// burst_counter is what retrieve() decrements, and an entry at 0 is never
+	/// eligible again. That makes it the only way to see a position being
+	/// CONSUMED without ever being encoded into a packet -- which is exactly what
+	/// process_gnss_burst() does when it retrieves a mixed pile and then keeps
+	/// only v.back().
+	std::vector<std::pair<T*, unsigned int>> bench_dump() {
+		std::vector<std::pair<T*, unsigned int>> v;
+		for (auto& e : m_entry)
+			v.push_back({&e.data, e.burst_counter});
+		return v;
+	}
+#endif
 
 	unsigned int eligible() {
 		unsigned int count = 0;
@@ -223,6 +241,31 @@ public:
 	GPSLogEntry* peek_gps_latest_any() {
 		return m_gps_depth_pile.peek_back();
 	}
+
+#ifdef BENCH_TEST
+	/// @brief Bench probe: "<type>:<burst_counter>" per GPS slot, oldest first.
+	/// type: 0=fix, 1=no-fix, 2=fastloc, 3=cloudlocate, 9=autre.
+	std::string bench_dump_gps() {
+		std::string out;
+		char buf[16];
+		for (auto const& p : m_gps_depth_pile.bench_dump()) {
+			unsigned int t;
+			switch (p.first->info.event_type) {
+			case GPSEventType::FASTLOC:     t = 2; break;
+			case GPSEventType::CLOUDLOCATE: t = 3; break;
+			case GPSEventType::ON:
+			case GPSEventType::OFF:
+			case GPSEventType::UPDATE:
+			case GPSEventType::FIX:
+			case GPSEventType::NO_FIX:
+			default: t = p.first->info.valid ? 0u : 1u; break;
+			}
+			snprintf(buf, sizeof(buf), "%u:%u ", t, p.second);
+			out += buf;
+		}
+		return out;
+	}
+#endif
 
 	std::vector<GPSLogEntry*> retrieve_gps(unsigned int depth_pile) {
 		return m_gps_depth_pile.retrieve(depth_pile);

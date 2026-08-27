@@ -372,6 +372,8 @@ static constexpr uint32_t FLASH_INIT_MAX_RESETS = 5;
 #ifdef BENCH_TEST
 /// @brief Bench-only handle on the filesystem flash, for the %FLASH probes.
 Is25Flash *bench_flash = nullptr;
+/// @brief Bench-only handle on the Argos TX service, for the %PILE probe.
+ArgosTxService *argos_tx_service_instance = nullptr;
 #endif
 
 [[noreturn]] static void flash_init_failed() {
@@ -1100,6 +1102,9 @@ static void init_communication(LFSFileSystem& lfs_file_system)
 		kineis_device_instance = &kim2;
 		kim2_device_instance = &kim2;
 		static ArgosTxService argos_tx_service(kim2);
+#ifdef BENCH_TEST
+		argos_tx_service_instance = &argos_tx_service;
+#endif
 	} catch (...) {
 		DEBUG_INFO("KIM2 not detected");
 		kineis_device_instance = nullptr;
