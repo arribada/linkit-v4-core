@@ -2998,6 +2998,21 @@ def c_moored_desactive(r, case):
 
 # ---------------------------------------------------------------------
 #  Mode plongee (DIVE)
+#
+#  UNDERWATER_EN reste a 0 dans ces trois cas, et c est deliberé.
+#  DiveModeService n est gate QUE sur UW_DIVE_MODE_ENABLE (voir
+#  dive_mode_service.hpp: service_is_enabled), pas sur UNP01, tandis que %DIVE
+#  et %SURFACE injectent l evenement directement. Avec UNP01=1 le capteur SWS
+#  reel — sec sur la paillasse — redit "en surface" quelques secondes apres
+#  l injection et ANNULE la plongee en attente. Mesure du 2026-08-27:
+#
+#      18:43:56  >> %DIVE
+#      18:44:04  DiveModeService: dive mode start pending
+#      18:44:07  DiveModeService: dive mode start cancelled — surfaced before 10s
+#
+#  Le firmware avait raison; c est la premisse du cas qui etait fausse. On
+#  isole donc la machine a etats de la plongee du capteur qui la contredit —
+#  le capteur lui-meme est couvert par SWS-01/02.
 # ---------------------------------------------------------------------
 
 def c_dive_engagement(r, case):
@@ -3010,7 +3025,7 @@ def c_dive_engagement(r, case):
     """
     b = r.b
     try:
-        _gnss_base(b, UNDERWATER_EN=1, UW_DIVE_MODE_ENABLE=1, UW_DIVE_MODE_START_TIME=10)
+        _gnss_base(b, UNDERWATER_EN=0, UW_DIVE_MODE_ENABLE=1, UW_DIVE_MODE_START_TIME=10)
     except Exception as e:
         return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
     time.sleep(2)
@@ -3043,7 +3058,7 @@ def c_dive_annulation(r, case):
     """
     b = r.b
     try:
-        _gnss_base(b, UNDERWATER_EN=1, UW_DIVE_MODE_ENABLE=1, UW_DIVE_MODE_START_TIME=45)
+        _gnss_base(b, UNDERWATER_EN=0, UW_DIVE_MODE_ENABLE=1, UW_DIVE_MODE_START_TIME=45)
     except Exception as e:
         return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
     time.sleep(2)
@@ -3089,7 +3104,7 @@ def c_dive_desengagement(r, case):
     """
     b = r.b
     try:
-        _gnss_base(b, UNDERWATER_EN=1, UW_DIVE_MODE_ENABLE=1, UW_DIVE_MODE_START_TIME=5)
+        _gnss_base(b, UNDERWATER_EN=0, UW_DIVE_MODE_ENABLE=1, UW_DIVE_MODE_START_TIME=5)
     except Exception as e:
         return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
     time.sleep(2)
@@ -3147,4 +3162,246 @@ CASES_V16 = [
          fn=c_dive_annulation),
     dict(id='DIVE-03', risque='BLOQUANT', titre='L emersion desengage une plongee active',
          fn=c_dive_desengagement),
+]
+
+
+# =====================================================================
+#  Vague 17 — hors-eau, diagnostics SWS, etat technique
+#
+#  Debloquee par RTCW. Le mode hors-eau se declenche sur une DUREE DE
+#  SECHERESSE dont le seuil minimum est 1 heure (HMP01, borne firmware): on ne
+#  peut pas l attendre au banc. RTCW pose l horloge a un timestamp arbitraire,
+#  et — verifie — il ne RE-ANCRE pas le compteur: reset_for_rtc_sync() n est
+#  appele que depuis le pilote M10Q, sur une vraie synchro GNSS
+#  (m10qasync.cpp:1051). Sauter l horloge de deux heures fait donc exactement
+#  ce qu aurait fait l attente.
+# =====================================================================
+
+def _rtc_now(b, timeout=6.0):
+    """Lit l horloge de la carte via STATR, ou None."""
+    # SYT01 = RTC_CURRENT_TIME, rafraichi a chaque lecture STATR
+    # (dte_params.cpp: "Current RTC time (live, refreshed on STATR read)").
+    m = b.dte('STATR', 'SYT01', timeout=timeout)
+    if not m:
+        return None
+    ligne = m.string if hasattr(m, 'string') else ''
+    mm = re.search(r'SYT01=(\d+)', ligne)
+    return int(mm.group(1)) if mm else None
+
+def _hauled(b, timeout=8.0):
+    """Etat hors-eau lu dans le journal au prochain reveil du service."""
+    mk = b.mark(); b._send('%SCHED\r')
+    m = b.expect(r'%SCHED ', timeout, from_idx=mk)
+    return m.group(0) if m else ''
+
+def c_hauled_entree(r, case):
+    """Une secheresse superieure au seuil fait passer AT_SEA -> HAULED.
+
+    C est la detection elle-meme, pas la substitution de profil (HAULED-01 s en
+    charge). Sans elle, un animal remonte sur une plage continue d emettre sur
+    la cadence de mer — la balise se vide alors qu elle n a plus rien a dire.
+
+    L horloge est avancee de deux heures pour un seuil d une heure: RTCW ne
+    re-ancre pas le compteur, la secheresse mesuree est donc reellement de
+    deux heures du point de vue du service.
+    """
+    b = r.b
+    try:
+        b.enter_config()
+        b.write_params({'HAULED_DETECT_EN': 1, 'HAULED_IDLE_THRESHOLD_H': 1,
+                        'HAULED_RETURN_EVENTS': 2, 'UNDERWATER_EN': 1,
+                        'ARGOS_MODE': 0, 'GNSS_EN': 0})
+        b.exit_config()
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    time.sleep(2)
+    # Un evenement d immersion ancre la derniere trace d eau a maintenant.
+    b._send('%DIVE\r'); time.sleep(3)
+    b._send('%SURFACE\r'); time.sleep(3)
+    t0 = _rtc_now(b)
+    if not t0:
+        return r.record(case, 'ERROR', 'STATR ne rend pas l horloge — saut impossible')
+    mk = b.mark()
+    saut = t0 + 2 * 3600
+    m = b.dte('RTCW', str(saut), timeout=8.0)
+    if not m or ';RTCW' not in (m.string if hasattr(m, 'string') else ''):
+        return r.record(case, 'ERROR', f'RTCW refuse (t={saut})')
+    vues = _attendre_trace(b, [r'AT_SEA . HAULED', r'HAULED', r'dry for (\d+) s'],
+                           120, depuis=mk)
+    try:
+        b.enter_config()
+        b.write_params({'HAULED_DETECT_EN': 0, 'HAULED_IDLE_THRESHOLD_H': 24,
+                        'UNDERWATER_EN': 0})
+        b.exit_config()
+    except Exception:
+        pass
+    trace = '\n'.join(vues[:6])
+    entree = [l for l in vues if 'HAULED' in l and 'AT_SEA' in l]
+    if not entree:
+        return r.record(case, 'FAIL',
+                        'deux heures de secheresse pour un seuil d une heure, '
+                        'mais aucun passage en HAULED', trace)
+    m2 = re.search(r'dry for (\d+) s, threshold (\d+) h', entree[0])
+    if m2 and int(m2.group(1)) < int(m2.group(2)) * 3600:
+        return r.record(case, 'FAIL',
+                        f'passage annonce avec dry={m2.group(1)} s < seuil {m2.group(2)} h', trace)
+    r.record(case, 'PASS', 'passage en HAULED sur depassement du seuil de secheresse', trace)
+
+def c_hauled_retour(r, case):
+    """HAULED_RETURN_EVENTS immersions ramenent en AT_SEA.
+
+    Le retour a la mer doit demander PLUSIEURS evenements: une seule vague sur
+    un animal echoue ne doit pas relancer la cadence de mer. On verifie donc
+    qu une immersion NE SUFFIT PAS, puis que la seconde declenche.
+    """
+    b = r.b
+    try:
+        b.enter_config()
+        b.write_params({'HAULED_DETECT_EN': 1, 'HAULED_IDLE_THRESHOLD_H': 1,
+                        'HAULED_RETURN_EVENTS': 2, 'UNDERWATER_EN': 1,
+                        'ARGOS_MODE': 0, 'GNSS_EN': 0})
+        b.exit_config()
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    time.sleep(2)
+    b._send('%DIVE\r'); time.sleep(3)
+    b._send('%SURFACE\r'); time.sleep(3)
+    t0 = _rtc_now(b)
+    if not t0:
+        return r.record(case, 'ERROR', 'STATR ne rend pas l horloge')
+    mk = b.mark()
+    b.dte('RTCW', str(t0 + 2 * 3600), timeout=8.0)
+    if not _attendre_trace(b, [r'AT_SEA . HAULED'], 120, depuis=mk):
+        try:
+            b.enter_config()
+            b.write_params({'HAULED_DETECT_EN': 0, 'HAULED_IDLE_THRESHOLD_H': 24,
+                            'UNDERWATER_EN': 0})
+            b.exit_config()
+        except Exception:
+            pass
+        return r.record(case, 'ERROR', 'jamais entre en HAULED — retour non evaluable')
+
+    mk1 = b.mark()
+    b._send('%DIVE\r'); time.sleep(4); b._send('%SURFACE\r')
+    premier = _attendre_trace(b, [r'HAULED . AT_SEA'], 30, depuis=mk1)
+    mk2 = b.mark()
+    b._send('%DIVE\r'); time.sleep(4); b._send('%SURFACE\r')
+    second = _attendre_trace(b, [r'HAULED . AT_SEA'], 40, depuis=mk2)
+    try:
+        b.enter_config()
+        b.write_params({'HAULED_DETECT_EN': 0, 'HAULED_IDLE_THRESHOLD_H': 24,
+                        'UNDERWATER_EN': 0})
+        b.exit_config()
+    except Exception:
+        pass
+    trace = 'apres 1 immersion: ' + '|'.join(premier[:2]) + \
+            '\napres 2 immersions: ' + '|'.join(second[:2])
+    if premier:
+        return r.record(case, 'FAIL',
+                        'une seule immersion suffit a quitter HAULED alors que '
+                        'HMP02=2 — une vague relancerait la cadence de mer', trace)
+    if not second:
+        return r.record(case, 'FAIL',
+                        'deux immersions ne suffisent pas a quitter HAULED (HMP02=2)', trace)
+    r.record(case, 'PASS', 'une immersion ne suffit pas, deux ramenent en AT_SEA', trace)
+
+def c_rtc_ecriture(r, case):
+    """RTCW pose l horloge, et la carte la relit.
+
+    Base de tout ce qui precede, et surtout de la donnee elle-meme: une position
+    horodatee faux est inexploitable par le segment sol. On verifie l aller-retour
+    avec une tolerance de quelques secondes — le temps de la trame.
+    """
+    b = r.b
+    avant = _rtc_now(b)
+    if not avant:
+        return r.record(case, 'ERROR', 'STATR ne rend pas SYT01 (horloge)')
+    cible = avant + 7200
+    m = b.dte('RTCW', str(cible), timeout=8.0)
+    if not m:
+        return r.record(case, 'FAIL', 'RTCW sans reponse')
+    if (m.group(1) if m.lastindex else '') == 'N':
+        return r.record(case, 'FAIL', f'RTCW refuse pour un timestamp valide ({cible})')
+    time.sleep(2)
+    apres = _rtc_now(b)
+    if apres is None:
+        return r.record(case, 'FAIL', 'horloge illisible apres ecriture')
+    ecart = abs(apres - cible)
+    # On repose une horloge coherente pour ne pas fausser les cas suivants.
+    try:
+        b.dte('RTCW', str(avant + 8), timeout=8.0)
+    except Exception:
+        pass
+    if ecart > 10:
+        return r.record(case, 'FAIL',
+                        f'horloge relue a {apres}, soit {ecart} s de la valeur ecrite')
+    r.record(case, 'PASS', f'aller-retour RTCW exact a {ecart} s pres')
+
+def c_sws_diagnostics(r, case):
+    """SWSSTATS rend les sept compteurs, et l effacement les remet a zero.
+
+    Ces compteurs sont le seul temoin des pathologies du detecteur d immersion
+    (electrode collee, incoherence de calibration, plongee sans fin). S ils ne
+    remontent pas, une balise qui derive n a aucun moyen de le dire.
+    """
+    b = r.b
+    m = b.dte('SWSSTATS', '0', timeout=8.0)
+    if not m:
+        return r.record(case, 'ERROR', 'SWSSTATS sans reponse')
+    ligne = m.string if hasattr(m, 'string') else ''
+    if m.group(1) == 'N':
+        return r.record(case, 'FAIL', f'SWSSTATS refuse: {ligne[:80]}')
+    champs = re.findall(r'(\d+)', ligne.split(';', 1)[-1])
+    if len(champs) < 7:
+        return r.record(case, 'FAIL',
+                        f'SWSSTATS rend {len(champs)} champs au lieu de 7', ligne[:160])
+    m2 = b.dte('SWSSTATS', '1', timeout=8.0)
+    time.sleep(1)
+    m3 = b.dte('SWSSTATS', '0', timeout=8.0)
+    apres = re.findall(r'(\d+)', (m3.string if m3 and hasattr(m3, 'string') else '').split(';', 1)[-1])
+    trace = f'avant={champs[:7]}\napres effacement={apres[:7]}'
+    if not m2 or not m3:
+        return r.record(case, 'FAIL', 'effacement des diagnostics sans reponse', trace)
+    if len(apres) >= 7 and any(int(x) != 0 for x in apres[:7]):
+        return r.record(case, 'FAIL',
+                        'SWSSTATS 1 ne remet pas les compteurs a zero', trace)
+    r.record(case, 'PASS', 'sept compteurs rendus, effacement effectif', trace)
+
+def c_statr_coherent(r, case):
+    """STATR rend un etat technique lisible et plausible.
+
+    C est ce que l operateur consulte avant de poser la balise. Un champ absent
+    ou aberrant passe inapercu a l ecran et se paie sur le terrain.
+    """
+    b = r.b
+    m = b.dte('STATR', '', timeout=10.0)
+    if not m:
+        return r.record(case, 'ERROR', 'STATR sans reponse')
+    ligne = m.string if hasattr(m, 'string') else ''
+    if m.group(1) == 'N':
+        return r.record(case, 'FAIL', f'STATR global refuse: {ligne[:100]}')
+    paires = dict(re.findall(r'([A-Z]{3}\d\d)=([^,\r]*)', ligne))
+    defauts = []
+    if len(paires) < 5:
+        defauts.append(f'seulement {len(paires)} champs rendus')
+    # Tension batterie: le seul champ dont on connaisse la plage physique.
+    for cle, val in paires.items():
+        if val.isdigit() and 2000 <= int(val) <= 5000 and cle.startswith('BAT'):
+            break
+    trace = ', '.join(f'{k}={v}' for k, v in list(paires.items())[:14])
+    if defauts:
+        return r.record(case, 'FAIL', '; '.join(defauts), trace)
+    r.record(case, 'PASS', f'{len(paires)} champs d etat rendus', trace)
+
+CASES_V17 = [
+    dict(id='RTC-01',   risque='BLOQUANT', titre='RTCW pose l horloge et elle est relue',
+         fn=c_rtc_ecriture),
+    dict(id='HAUL-02',  risque='BLOQUANT', titre='La secheresse au-dela du seuil fait passer en HAULED',
+         fn=c_hauled_entree),
+    dict(id='HAUL-03',  risque='MAJEUR',   titre='Il faut HMP02 immersions pour quitter HAULED',
+         fn=c_hauled_retour),
+    dict(id='SWS-03',   risque='MAJEUR',   titre='SWSSTATS rend et efface les diagnostics',
+         fn=c_sws_diagnostics),
+    dict(id='STAT-01',  risque='MAJEUR',   titre='STATR rend un etat technique coherent',
+         fn=c_statr_coherent),
 ]
