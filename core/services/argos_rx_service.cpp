@@ -53,6 +53,18 @@ void ArgosRxService::service_term() {
 bool ArgosRxService::service_is_enabled() {
 	ArgosConfig argos_config;
 	configuration_store->get_argos_configuration(argos_config);
+	// Low battery gates reception EXPLICITLY, and this is not redundant.
+	//
+	// The LB cascade substitutes ARGOS_MODE with LB_ARGOS_MODE, whose default is
+	// LEGACY -- so reception already stopped, but only as a side effect of the
+	// mode no longer being PASS_PREDICTION. LB_ARGOS_MODE accepts
+	// PASS_PREDICTION like any other mode, and an operator choosing it is not
+	// far-fetched ("keep prepass on low battery, it transmits less"). With that
+	// setting the incidental protection vanishes and the receiver powers up for
+	// ARGOS_RX_MAX_WINDOW -- fifteen minutes by default -- on a battery already
+	// declared low. The whole point of the LB profile is to do LESS.
+	if (argos_config.is_lb)
+		return false;
 	return (argos_config.argos_rx_en && argos_config.mode == BaseArgosMode::PASS_PREDICTION && !argos_config.cert_tx_enable);
 }
 
