@@ -3937,3 +3937,159 @@ CASES_V19 = [
     dict(id='LED-05', risque='MAJEUR',   titre='La signalisation CloudLocate n est pas ecrasee',
          fn=c_led_cloudlocate_preserve),
 ]
+
+
+# =====================================================================
+#  Vague 20 — zone geographique, le reste du contrat
+#
+#  ZONE-01..04 couvrent la substitution, la frontiere, la desactivation et la
+#  priorite de la batterie. Restent trois leviers jamais eprouves, et chacun
+#  peut faire taire une balise sans qu aucune erreur ne soit tracee.
+# =====================================================================
+
+def _date_dte(epoch):
+    """Epoch -> 'DD/MM/YYYY HH:MM:SS', le format attendu par decode_datestring."""
+    t = time.gmtime(epoch)
+    return time.strftime('%d/%m/%Y %H:%M:%S', t)
+
+def c_zone_date_activation(r, case):
+    """ZONE_ENABLE_ACTIVATION_DATE retarde la zone jusqu a la date prevue.
+
+    Le cas d usage est une campagne qui commence a une date connue: la balise
+    part avec sa zone deja configuree, mais celle-ci ne doit pas mordre avant.
+    Si la date est ignoree, le profil de zone s applique des le premier fix —
+    et une zone reglee pour economiser (cadence lente, pile courte) ferait
+    manquer tout le debut de la campagne.
+
+    Detail qui compte: la date est comparee a l HORODATAGE DU FIX, pas a
+    l horloge courante (config_store.hpp:836, convert_epochtime sur
+    m_last_gps_log_entry). Comme bench_inject_fix estampille depuis le RTC,
+    piloter l horloge pilote les deux cotes de la comparaison.
+    """
+    b = r.b
+    try:
+        b.enter_config()
+        maintenant = _rtc_now(b)
+        b.exit_config()
+    except Exception as e:
+        return r.record(case, 'ERROR', f'lecture d horloge impossible: {type(e).__name__}: {e}')
+    if not maintenant:
+        return r.record(case, 'ERROR', 'STATR ne rend pas l horloge')
+
+    # 1. Date d activation dans le FUTUR: la zone ne doit pas mordre.
+    try:
+        _profil_zone(b, ooz_actif=True, ZONE_ENABLE_ACTIVATION_DATE=1,
+                     ZONE_ACTIVATION_DATE=_date_dte(maintenant + 30 * 86400))
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    avant = _injecte_et_lit(b, *_DEHORS)
+
+    # 2. Date d activation dans le PASSE: la zone doit mordre.
+    try:
+        _profil_zone(b, ooz_actif=True, ZONE_ENABLE_ACTIVATION_DATE=1,
+                     ZONE_ACTIVATION_DATE=_date_dte(maintenant - 30 * 86400))
+    except Exception as e:
+        return r.record(case, 'ERROR', f'reconfiguration impossible: {type(e).__name__}: {e}')
+    apres = _injecte_et_lit(b, *_DEHORS)
+
+    try:
+        b.enter_config()
+        b.write_params({'ZONE_ENABLE_OUT_OF_ZONE_DETECTION_MODE': 0,
+                        'ZONE_ENABLE_ACTIVATION_DATE': 0})
+        b.exit_config()
+    except Exception:
+        pass
+    trace = f'date future -> {avant}\ndate passee -> {apres}'
+    if avant is None or apres is None:
+        return r.record(case, 'ERROR', '%ARGOSCFG sans reponse', trace)
+    if _est_profil_zone(avant):
+        return r.record(case, 'FAIL',
+                        'le profil de zone s applique alors que la date d activation '
+                        'est dans 30 jours', trace)
+    if not _est_profil_zone(apres):
+        return r.record(case, 'FAIL',
+                        'la date d activation est depassee de 30 jours mais le profil '
+                        'de zone ne s applique pas', trace)
+    r.record(case, 'PASS',
+             'la zone reste inerte avant sa date d activation et mord apres', trace)
+
+def c_zone_duty_cycle(r, case):
+    """ZONE_ARGOS_DUTY_CYCLE remplace bien le masque horaire nominal.
+
+    Un masque de duty-cycle est le moyen le plus direct de faire taire une
+    balise: a zero elle n emet plus une seule fois. C est deja arrive
+    (DUTY-01), et la variante de zone n avait jamais ete verifiee — un masque
+    de zone mal recopie rendrait la balise muette des qu elle sort du domaine,
+    c est-a-dire precisement quand on veut la suivre.
+    """
+    b = r.b
+    try:
+        _profil_zone(b, ooz_actif=True,
+                     DUTY_CYCLE=0xFFFFFF, ZONE_ARGOS_DUTY_CYCLE=0x0F0F0F)
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    dedans = _injecte_et_lit(b, *_DEDANS)
+    dehors = _injecte_et_lit(b, *_DEHORS)
+    try:
+        b.enter_config()
+        b.write_params({'ZONE_ENABLE_OUT_OF_ZONE_DETECTION_MODE': 0,
+                        'ZONE_ARGOS_DUTY_CYCLE': 0xFFFFFF})
+        b.exit_config()
+    except Exception:
+        pass
+    trace = f'dans la zone -> {dedans}\nhors zone    -> {dehors}'
+    if dedans is None or dehors is None:
+        return r.record(case, 'ERROR', '%ARGOSCFG sans reponse', trace)
+    if dedans['duty'] != 0xFFFFFF:
+        return r.record(case, 'FAIL',
+                        f"dans la zone, duty={dedans['duty']:#08x} au lieu du masque nominal",
+                        trace)
+    if dehors['duty'] != 0x0F0F0F:
+        return r.record(case, 'FAIL',
+                        f"hors zone, duty={dehors['duty']:#08x} au lieu du masque de zone "
+                        '0x0f0f0f', trace)
+    r.record(case, 'PASS', 'le masque horaire de zone se substitue au nominal', trace)
+
+def c_zone_gnss_timeout(r, case):
+    """ZONE_GNSS_ACQ_TIMEOUT remplace le timeout nominal hors zone.
+
+    Hors du domaine, on veut souvent chercher la position plus longtemps — la
+    balise est la ou on ne l attendait pas. Le timeout effectif se lit dans la
+    trace d allumage du recepteur (`M10Q on — nav_max=%u`), seul endroit ou la
+    valeur retenue est visible.
+    """
+    b = r.b
+    try:
+        _profil_zone(b, ooz_actif=True, GNSS_ACQ_TIMEOUT=60, ZONE_GNSS_ACQ_TIMEOUT=180)
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    mk = b.mark()
+    b._send(f'%GPS {_DEHORS[0]} {_DEHORS[1]} 5000 9\r')
+    vues = _attendre_trace(b, [r'M10Q on — nav_max=(\d+)'], 120, depuis=mk)
+    try:
+        b.enter_config()
+        b.write_params({'ZONE_ENABLE_OUT_OF_ZONE_DETECTION_MODE': 0,
+                        'GNSS_ACQ_TIMEOUT': 120, 'ZONE_GNSS_ACQ_TIMEOUT': 120})
+        b.exit_config()
+    except Exception:
+        pass
+    trace = '\n'.join(vues[:4])
+    valeurs = [int(m.group(1)) for l in vues
+               for m in [re.search(r'nav_max=(\d+)', l)] if m]
+    if not valeurs:
+        return r.record(case, 'ERROR',
+                        'aucune trace d allumage du recepteur en 120 s — cas non concluant',
+                        trace)
+    if 180 not in valeurs:
+        return r.record(case, 'FAIL',
+                        f'hors zone, nav_max={valeurs} au lieu des 180 de ZOP17', trace)
+    r.record(case, 'PASS', 'hors zone, le recepteur adopte le timeout de zone (180)', trace)
+
+CASES_V20 = [
+    dict(id='ZONE-05', risque='MAJEUR',   titre='La zone reste inerte avant sa date d activation',
+         fn=c_zone_date_activation),
+    dict(id='ZONE-06', risque='BLOQUANT', titre='Le masque horaire de zone se substitue au nominal',
+         fn=c_zone_duty_cycle),
+    dict(id='ZONE-07', risque='MAJEUR',   titre='Le timeout GNSS de zone se substitue au nominal',
+         fn=c_zone_gnss_timeout),
+]
