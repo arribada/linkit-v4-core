@@ -1272,3 +1272,339 @@ CASES_V8 = [
          titre='Un masque duty-cycle vide est signale, pas silencieux',
          fn=c_duty_masque_nul),
 ]
+
+# =====================================================================
+#  Vague 9 — capteurs: lecture, plage, calibration, basse consommation
+#  L accelerometre BMA400 (0x14) et la batterie (SAADC AIN1) sont les deux
+#  seules sources physiques reelles de ce banc: on les eprouve par la PHYSIQUE
+#  (au repos la norme du vecteur d acceleration doit valoir ~1 g) et pas
+#  seulement par des allers-retours de protocole.
+# =====================================================================
+
+def _sensr(b, mask, timeout_s=5, wait=25.0):
+    """$SENSR#len;<masque>,<timeout>. Le timeout DOIT etre dans 5..300.
+
+    Champs de reponse, dans l ordre du gestionnaire:
+      0 batt_mv, 1 batt_soc, 2 pression, 3 temperature, 4 altitude, 5 lat,
+      6 lon, 7 hdop, 8 num_sv, 9 ax, 10 ay, 11 az, 12 temp_accel, 13 activite,
+      14 thermistance, 15 temp_mer, 16 lux, 17 ph, 18 statut
+    Le bit 2 du masque declenche une ACQUISITION GNSS: a eviter en interieur.
+    """
+    p = f'{mask},{timeout_s}'
+    mk = b.mark()
+    b._send(f'$SENSR#{len(p):03X};{p}\r')
+    m = b.expect(r'\$([ON]);SENSR#([0-9A-Fa-f]{3});(.*)$', wait, from_idx=mk)
+    if not m or m.group(1) != 'O':
+        return None
+    ch = m.group(3).rstrip('\r').split(',')
+    if len(ch) < 19:
+        return None
+    def f(i):
+        try: return float(ch[i])
+        except ValueError: return None
+    return dict(batt_mv=f(0), batt_soc=f(1), ax=f(9), ay=f(10), az=f(11),
+                temp=f(12), activite=f(13), statut=int(float(ch[18])))
+
+def _norme_g(d):
+    if d is None or None in (d['ax'], d['ay'], d['az']):
+        return None
+    return (d['ax'] ** 2 + d['ay'] ** 2 + d['az'] ** 2) ** 0.5
+
+def c_capteurs_lecture(r, case):
+    """SENSR doit rendre des valeurs PHYSIQUEMENT plausibles, pas des zeros.
+
+    Au repos l accelerometre ne mesure que la gravite: la norme du vecteur XYZ
+    doit valoir 1 g quelle que soit l orientation de la carte. C est le seul
+    controle qui prouve d un coup que le composant repond, que l echelle est
+    appliquee et que les offsets de calibration ne sont pas aberrants.
+    """
+    b = r.b; defauts = []
+    try:
+        b.enter_config()
+        b.write_params({'AXL_SENSOR_ENABLE': 1})
+        time.sleep(1.0)
+        d = _sensr(b, 9)          # 1=batterie + 8=accelerometre, jamais 4=GNSS
+    except Exception as e:
+        try: b.exit_config()
+        except Exception: pass
+        return r.record(case, 'ERROR', f'SENSR impossible: {type(e).__name__}')
+
+    if d is None:
+        try:
+            b.write_params({'AXL_SENSOR_ENABLE': 0}); b.exit_config()
+        except Exception: pass
+        return r.record(case, 'ERROR', 'SENSR sans reponse exploitable')
+
+    if not (3000 <= (d['batt_mv'] or 0) <= 5000):
+        defauts.append(f"tension batterie invraisemblable: {d['batt_mv']} mV")
+    if not (0 <= (d['batt_soc'] or -1) <= 100):
+        defauts.append(f"charge batterie hors bornes: {d['batt_soc']} %")
+    n = _norme_g(d)
+    if n is None:
+        defauts.append('aucune valeur accelerometre')
+    elif not (0.80 <= n <= 1.20):
+        defauts.append(f'norme du vecteur accelerometre = {n:.3f} g (attendu ~1 g au repos)')
+    if not (0 <= (d['temp'] or -99) <= 60):
+        defauts.append(f"temperature accelerometre invraisemblable: {d['temp']} C")
+    if not (d['statut'] & 0x01):
+        defauts.append('statut: batterie non signalee OK')
+    if not (d['statut'] & 0x08):
+        defauts.append('statut: accelerometre non signale OK')
+
+    trace = (f"batt={d['batt_mv']} mV / {d['batt_soc']} % | "
+             f"xyz=({d['ax']:.3f},{d['ay']:.3f},{d['az']:.3f}) norme={n:.3f} g | "
+             f"temp={d['temp']} C | statut=0x{d['statut']:02X}")
+    try:
+        b.write_params({'AXL_SENSOR_ENABLE': 0}); b.exit_config()
+    except Exception: pass
+    if defauts:
+        r.record(case, 'FAIL', f'{len(defauts)} valeur(s) invraisemblable(s)', trace + '\n' + '\n'.join(defauts))
+    else:
+        r.record(case, 'PASS', 'batterie et accelerometre coherents avec la physique', trace)
+
+def c_capteur_plage_mesure(r, case):
+    """AXP08 est un INDEX DE REGISTRE (0..3 = 2/4/8/16 g), pas une force en g.
+
+    range_to_g() mappe 0..3 sur {2,4,8,16} et retombe sur 4 au-dela: la valeur 4
+    designait donc une plage inexistante, aliasait silencieusement 4 g, et
+    donnait a calculate_threshold_reg() un LSB calcule pour (1 << 6) — soit un
+    registre de seuil de reveil faux d un facteur quatre. En prime, la norme
+    mesuree doit rester ~1 g a TOUTES les plages: c est ce qui prouve que le
+    facteur d echelle suit bien le registre.
+    """
+    b = r.b; defauts = []
+    try:
+        b.enter_config()
+        b.write_params({'AXL_SENSOR_ENABLE': 1})
+        # 4 doit etre refuse (un cran au-dela du registre)
+        b.write_params({'AXL_SENSOR_MEASUREMENT_RANGE': 4}, strict=False)
+        _, relu = b.read_params(['AXL_SENSOR_MEASUREMENT_RANGE'])
+        if relu.get('AXP08') == '4':
+            defauts.append('AXP08=4 ACCEPTEE alors que le registre ne va que jusqu a 3')
+        mesures = {}
+        for reg in (0, 3):
+            b.write_params({'AXL_SENSOR_MEASUREMENT_RANGE': reg})
+            time.sleep(1.5)
+            d = _sensr(b, 9)
+            n = _norme_g(d)
+            mesures[reg] = n
+            if n is None:
+                defauts.append(f'plage {reg}: aucune lecture')
+            elif not (0.80 <= n <= 1.20):
+                defauts.append(f'plage {reg} (={2 << reg if reg < 2 else (8 if reg == 2 else 16)} g): norme={n:.3f} g')
+        b.write_params({'AXL_SENSOR_MEASUREMENT_RANGE': 0, 'AXL_SENSOR_ENABLE': 0})
+        b.exit_config()
+    except Exception as e:
+        try: b.exit_config()
+        except Exception: pass
+        return r.record(case, 'ERROR', f'{type(e).__name__}: {e}')
+    trace = 'normes par plage: ' + ', '.join(f'{k}->{v:.3f} g' if v else f'{k}->?' for k, v in mesures.items())
+    if defauts:
+        r.record(case, 'FAIL', f'{len(defauts)} anomalie(s) de plage', trace + '\n' + '\n'.join(defauts))
+    else:
+        r.record(case, 'PASS', 'valeur 4 refusee, echelle correcte a 2 g et a 16 g', trace)
+
+def c_capteur_calibration(r, case):
+    """Calibration de l accelerometre: ecrite, relue, appliquee — et les
+    parametres DTE doivent vraiment atteindre le composant.
+
+    ATTENTION, les offsets SCALR et SCALW sont ASYMETRIQUES (bma400.cpp,
+    calibration_read / calibration_write):
+      ecriture 0/1/2 = poser la calibration X/Y/Z, 3 = auto-calibration
+      lecture  1/2/3 = mesure EN DIRECT, 4/5/6 = calibration X/Y/Z,
+               7/8 = seuil / duree de reveil, 9 = registre de plage,
+               10 = mode d alimentation
+    Un offset de lecture invalide (0 par exemple) ne renvoie PAS d erreur: le
+    pilote retombe sur son `default:` et rend 0.0 avec un simple avertissement
+    dans le journal, ce qu un hote lit comme une valeur legitime.
+
+    Les offsets 9 et 10 servent ici a verifier que AXP08 et AXP09 arrivent
+    reellement jusqu au BMA400, et pas seulement dans le magasin de config.
+    """
+    b = r.b; defauts = []
+    def scalw(offset, value):
+        p = f'0,{offset},{value}'
+        mk = b.mark(); b._send(f'$SCALW#{len(p):03X};{p}\r')
+        m = b.expect(r'\$([ON]);SCALW#', 12.0, from_idx=mk)
+        return bool(m and m.group(1) == 'O')
+    def scalr(offset):
+        p = f'0,{offset}'
+        mk = b.mark(); b._send(f'$SCALR#{len(p):03X};{p}\r')
+        m = b.expect(r'\$([ON]);SCALR#([0-9A-Fa-f]{3});?(.*)$', 12.0, from_idx=mk)
+        if not m or m.group(1) != 'O':
+            return None
+        try: return float(m.group(3).rstrip('\r').split(',')[0])
+        except (ValueError, IndexError): return None
+    try:
+        # 1) les parametres DTE atteignent-ils le composant ?
+        #
+        # sensor_init() n applique la plage et le mode d alimentation qu au
+        # DEMARRAGE du service. Les ecrire en mode configuration ne les pousse
+        # donc pas tout de suite: il faut ressortir en operationnel pour que le
+        # service redemarre. Un test qui reste en configuration mesure 0/0 et
+        # conclut a tort que les parametres n arrivent pas au composant.
+        releves = {}
+        for reg, mode_att in ((3, 1), (0, 0)):
+            b.enter_config()
+            b.write_params({'AXL_SENSOR_ENABLE': 1,
+                            'AXL_SENSOR_MEASUREMENT_RANGE': reg,
+                            'AXL_SENSOR_POWER_MODE': mode_att})
+            b.exit_config()
+            time.sleep(4)
+            b.enter_config()
+            lu_p, lu_m = scalr(9), scalr(10)
+            releves[reg] = (lu_p, lu_m)
+            if lu_p is None or int(lu_p) != reg:
+                defauts.append(f'AXP08={reg} mais le registre de plage du composant vaut {lu_p}')
+            if lu_m is None or int(lu_m) != mode_att:
+                defauts.append(f'AXP09={mode_att} mais le mode d alimentation vaut {lu_m}')
+            b.exit_config()
+        b.enter_config()
+        time.sleep(1.0)
+
+        # 2) aller-retour d un offset de calibration, et effet sur la mesure
+        anciens = {o: scalr(o) for o in (4, 5, 6)}       # calibration X/Y/Z
+        if any(v is None for v in anciens.values()):
+            defauts.append(f'calibration illisible en 4/5/6: {anciens}')
+        avant_x = scalr(1)                                # mesure X en direct
+        DELTA = 0.25
+        base_x = anciens.get(4) or 0.0
+        cible = round(base_x + DELTA, 4)
+        if not scalw(0, cible):                           # ecriture: offset 0 = X
+            defauts.append('SCALW refuse')
+        relu = scalr(4)
+        if relu is None or abs(relu - cible) > 0.02:
+            defauts.append(f'calibration X relue {relu}, attendu {cible}')
+        time.sleep(1.2)
+        apres_x = scalr(1)
+        if avant_x is not None and apres_x is not None:
+            bouge = apres_x - avant_x
+            # tolerance large: la carte n est pas sur un marbre, la mesure bouge
+            # naturellement de quelques centiemes de g entre deux lectures.
+            if abs(abs(bouge) - DELTA) > 0.15:
+                defauts.append(f'la mesure X a bouge de {bouge:+.3f} g, attendu ~{DELTA} g')
+
+        # 3) un offset de lecture invalide ne doit pas passer pour une vraie valeur
+        invalide = scalr(0)
+
+        for o, v in anciens.items():
+            if v is not None:
+                scalw(o - 4, v)                            # 4/5/6 (lecture) -> 0/1/2 (ecriture)
+        b.write_params({'AXL_SENSOR_ENABLE': 0})
+        b.exit_config()
+    except Exception as e:
+        try: b.exit_config()
+        except Exception: pass
+        return r.record(case, 'ERROR', f'{type(e).__name__}: {e}')
+
+    trace = (f'apres redemarrage du service: {releves} | '
+             f'calib initiale {anciens} | X direct {avant_x} -> {apres_x} | '
+             f'offset invalide 0 -> {invalide}')
+    if defauts:
+        r.record(case, 'FAIL', f'{len(defauts)} anomalie(s) de calibration', trace + '\n' + '\n'.join(defauts))
+    else:
+        r.record(case, 'PASS', 'AXP08/AXP09 atteignent le composant, offset ecrit relu et applique', trace)
+
+def c_capteur_basse_conso(r, case):
+    """Parametres de veille de l accelerometre: bornes tenues et valeurs conservees.
+
+    AXP09 = mode d alimentation (0 = LOW_POWER avec moteur de reveil, 1 = NORMAL
+    avec interruption GEN1). AXP03 = seuil de reveil en g. AXP04 = nombre
+    d echantillons. Une valeur hors bornes doit etre REFUSEE, jamais tronquee en
+    silence: un seuil de reveil errone rend le tag soit aveugle au mouvement,
+    soit constamment reveille — les deux se paient en batterie sur un an.
+    """
+    b = r.b; defauts = []
+    essais = [
+        ('AXL_SENSOR_POWER_MODE',       3,     'mode d alimentation (0..2)'),
+        ('AXL_SENSOR_WAKEUP_THRESH',    9.0,   'seuil de reveil (0..8 g)'),
+        ('AXL_SENSOR_WAKEUP_SAMPLES',   51,    'echantillons de reveil (0..50)'),
+    ]
+    try:
+        b.enter_config()
+        for cle, val, quoi in essais:
+            _, avant = b.read_params([cle])
+            k = list(avant.keys())[0] if avant else None
+            b.write_params({cle: val}, strict=False)
+            _, apres = b.read_params([cle])
+            if k and apres.get(k) == str(val):
+                defauts.append(f'{cle}={val} ({quoi}) ACCEPTEE')
+            elif k and avant.get(k) != apres.get(k):
+                defauts.append(f'{cle} silencieusement change {avant.get(k)} -> {apres.get(k)}')
+        # valeurs valides: doivent tenir
+        b.write_params({'AXL_SENSOR_POWER_MODE': 0, 'AXL_SENSOR_WAKEUP_THRESH': 0.5,
+                        'AXL_SENSOR_WAKEUP_SAMPLES': 5})
+        _, v = b.read_params(['AXL_SENSOR_POWER_MODE', 'AXL_SENSOR_WAKEUP_THRESH',
+                              'AXL_SENSOR_WAKEUP_SAMPLES'])
+        if v.get('AXP09') != '0':
+            defauts.append(f"AXP09=0 non conserve: {v.get('AXP09')}")
+        if v.get('AXP04') != '5':
+            defauts.append(f"AXP04=5 non conserve: {v.get('AXP04')}")
+        try:
+            if abs(float(v.get('AXP03', '0')) - 0.5) > 0.01:
+                defauts.append(f"AXP03=0.5 non conserve: {v.get('AXP03')}")
+        except ValueError:
+            defauts.append(f"AXP03 illisible: {v.get('AXP03')}")
+        # mode NORMAL doit aussi passer
+        b.write_params({'AXL_SENSOR_POWER_MODE': 1})
+        _, v2 = b.read_params(['AXL_SENSOR_POWER_MODE'])
+        if v2.get('AXP09') != '1':
+            defauts.append(f"AXP09=1 non conserve: {v2.get('AXP09')}")
+        b.write_params({'AXL_SENSOR_POWER_MODE': 0})
+        b.exit_config()
+    except Exception as e:
+        try: b.exit_config()
+        except Exception: pass
+        return r.record(case, 'ERROR', f'{type(e).__name__}: {e}')
+    if defauts:
+        r.record(case, 'FAIL', f'{len(defauts)} anomalie(s)', '\n'.join(defauts))
+    else:
+        r.record(case, 'PASS', 'bornes tenues et parametres de veille conserves')
+
+def c_batterie_coherence(r, case):
+    """La batterie lue par SENSR et celle publiee par STATR doivent concorder.
+
+    Ce sont deux chemins distincts vers la meme mesure SAADC (AIN1): SENSR lit a
+    la demande, STATR publie la valeur filtree. Un ecart franc signale soit un
+    filtrage casse, soit deux unites differentes.
+    """
+    b = r.b; defauts = []
+    try:
+        b.enter_config()
+        d = _sensr(b, 1)
+        p = 'POT06,POT03'
+        mk = b.mark(); b._send(f'$STATR#{len(p):03X};{p}\r')
+        m = b.expect(r'\$([ON]);STATR#[0-9A-Fa-f]{3};(.*)$', 12.0, from_idx=mk)
+        b.exit_config()
+    except Exception as e:
+        try: b.exit_config()
+        except Exception: pass
+        return r.record(case, 'ERROR', f'{type(e).__name__}: {e}')
+    if d is None or not m:
+        return r.record(case, 'ERROR', 'SENSR ou STATR sans reponse')
+    st = {}
+    for morceau in m.group(2).rstrip('\r').split(','):
+        if '=' in morceau:
+            k, v = morceau.split('=', 1); st[k] = v
+    try:
+        v_statr = float(st.get('POT06', 'nan')) * 1000.0
+        soc_statr = float(st.get('POT03', 'nan'))
+    except ValueError:
+        return r.record(case, 'ERROR', f'STATR illisible: {st}')
+    if abs(v_statr - d['batt_mv']) > 250:
+        defauts.append(f"tension: SENSR {d['batt_mv']} mV vs STATR {v_statr:.0f} mV")
+    if abs(soc_statr - d['batt_soc']) > 10:
+        defauts.append(f"charge: SENSR {d['batt_soc']} % vs STATR {soc_statr:.0f} %")
+    trace = f"SENSR {d['batt_mv']} mV / {d['batt_soc']} % | STATR {v_statr:.0f} mV / {soc_statr:.0f} %"
+    if defauts:
+        r.record(case, 'FAIL', 'les deux chemins de mesure divergent', trace + '\n' + '\n'.join(defauts))
+    else:
+        r.record(case, 'PASS', 'SENSR et STATR concordent sur la batterie', trace)
+
+CASES_V9 = [
+    dict(id='SENS-R1', risque='BLOQUANT', titre='Lecture capteurs physiquement plausible', fn=c_capteurs_lecture),
+    dict(id='SENS-R2', risque='BLOQUANT', titre='Plage de mesure: bornes et facteur d echelle', fn=c_capteur_plage_mesure),
+    dict(id='SENS-R3', risque='MAJEUR',   titre='Calibration ecrite, relue et appliquee', fn=c_capteur_calibration),
+    dict(id='SENS-R4', risque='MAJEUR',   titre='Parametres de basse consommation bornes', fn=c_capteur_basse_conso),
+    dict(id='BATT-R1', risque='MAJEUR',   titre='SENSR et STATR concordent sur la batterie', fn=c_batterie_coherence),
+]

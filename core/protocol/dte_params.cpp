@@ -182,7 +182,13 @@ const BaseMap param_map[] = {
 	{ "AXL_SENSOR_PERIODIC", "AXP02", BaseEncoding::UINT, 0U, 0U, {}, ENABLE_AXL_SENSOR, true },
 	{ "AXL_SENSOR_WAKEUP_THRESH", "AXP03", BaseEncoding::FLOAT, (double)0.0, (double)8.0, {}, ENABLE_AXL_SENSOR, true },
 	{ "AXL_SENSOR_WAKEUP_SAMPLES", "AXP04", BaseEncoding::UINT, 0U, 50U, {}, ENABLE_AXL_SENSOR, true },
-	{ "AXL_SENSOR_MEASUREMENT_RANGE", "AXP08", BaseEncoding::UINT, 0U, 4U, {}, ENABLE_AXL_SENSOR, true },
+		// 0..3 = BMA400_RANGE_2G/4G/8G/16G. The upper bound was 4, one past the
+	// end: the value is a REGISTER INDEX, not a g-force. range_to_g() maps
+	// 0..3 to {2,4,8,16} and falls back to 4 for anything above, so AXP08=4
+	// designated a range that does not exist, silently aliased 4 g, and fed
+	// calculate_threshold_reg() an LSB computed for (1 << 6) -- putting the
+	// wakeup threshold register out by a factor of four.
+	{ "AXL_SENSOR_MEASUREMENT_RANGE", "AXP08", BaseEncoding::UINT, 0U, 3U, {}, ENABLE_AXL_SENSOR, true },
 	{ "AXL_SENSOR_POWER_MODE", "AXP09", BaseEncoding::UINT, 0U, 2U, {}, ENABLE_AXL_SENSOR, true },
 	// [124-125] Pressure sensor (slots always reserved)
 	{ "PRESSURE_SENSOR_ENABLE", "PRP01", BaseEncoding::BOOLEAN, 0, 0, {}, ENABLE_PRESSURE_SENSOR, true },
