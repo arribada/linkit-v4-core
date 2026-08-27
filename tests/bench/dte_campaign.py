@@ -9,7 +9,7 @@ qu'un depouillement soit possible sans relire le log brut.
 CONTRAINTE ASSUMEE: aucun cas de ce fichier ne declenche d'emission Argos. Le
 mode est force a OFF et la certification desarmee au debut de chaque cas.
 """
-import sys, time, json, re, subprocess, os
+import sys, time, json, re, subprocess, os, glob
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from kim_bench import Bench
 
@@ -37,7 +37,11 @@ class Runner:
             self.b = None
         for k in range(tries):
             try:
-                b = Bench(port='/dev/ttyACM0', quiet=True)
+                # port=None => auto-detection. Sous WSL le noeud change de
+                # numero a chaque re-enumeration (ttyACM0 -> ttyACM1...), et
+                # un port code en dur fait echouer la campagne sur
+                # 'carte injoignable' alors que la carte va tres bien.
+                b = Bench(port=None, quiet=True)
                 b.open()
                 try: b.ser.write_timeout = 5
                 except Exception: pass
@@ -54,6 +58,22 @@ class Runner:
             time.sleep(2)
         return False
 
+    def _busid_carte(self):
+        """Busid usbipd du CDC Nordic (VID 1915), decouvert a chaud."""
+        import subprocess as sp
+        for exe in ('usbipd.exe', '/mnt/c/Program Files/usbipd-win/usbipd.exe'):
+            try:
+                out = sp.run([exe, 'list'], capture_output=True, text=True, timeout=30).stdout
+            except Exception:
+                continue
+            for ligne in out.splitlines():
+                if '1915:' in ligne:
+                    m = re.match(r'\s*(\d+-\d+)\s', ligne)
+                    if m:
+                        return m.group(1)
+            break
+        return None
+
     def relink(self):
         """Repare le lien USB-over-IP sans toucher au J-Link.
 
@@ -61,18 +81,23 @@ class Runner:
         alors que TOUS les URB echouent (dmesg: vhci_hcd urb->status -104) et
         que serial.Serial() se bloque pour toujours a l'ouverture. Trois runs
         ont ete perdus ainsi, sans le moindre message.
-        Sequence qui marche: detacher UNIQUEMENT 6-3 (jamais --all, qui
-        emporterait le J-Link et donc le SWD), basculer le pullup D+ par SWD
-        (= rebranchement logiciel), puis attacher DANS LA SECONDE ou Windows
-        repasse CM_PROB_NONE — attendre plus fait rater la fenetre.
+        Sequence qui marche: detacher UNIQUEMENT le CDC de la carte (jamais
+        --all, qui emporterait le J-Link et donc le SWD), basculer le pullup D+
+        par SWD (= rebranchement logiciel), puis attacher DANS LA SECONDE ou
+        Windows repasse CM_PROB_NONE — attendre plus fait rater la fenetre.
+
+        Le busid est DECOUVERT et non code en dur: il change des qu on rebranche
+        sur un autre port (6-3 est devenu 5-3 en cours de session), et un busid
+        perime fait echouer la reparation en silence.
         """
         import subprocess as sp
         def ps(c):
             try: return sp.run(['powershell.exe','-Command',c], capture_output=True,
                                text=True, timeout=60).stdout
             except Exception: return ''
-        self.say('   reparation du lien USB…')
-        ps('usbipd detach --busid 6-3')
+        busid = self._busid_carte() or '5-3'
+        self.say(f'   reparation du lien USB (busid {busid})…')
+        ps(f'usbipd detach --busid {busid}')
         time.sleep(3)
         for v in ('0', '1'):
             sp.run(['nrfjprog','--memwr','0x40027504','--val',v], capture_output=True, timeout=60)
@@ -83,9 +108,9 @@ class Runner:
             n = ps("(Get-PnpDevice -PresentOnly | Where-Object { $_.InstanceId -like "
                    "'*VID_1915*' -and $_.Problem -eq 'CM_PROB_NONE' }).Count").strip()
             if n.isdigit() and int(n) >= 1:
-                ps('usbipd attach --busid 6-3 --wsl')
+                ps(f'usbipd attach --busid {busid} --wsl')
                 time.sleep(6)
-                return os.path.exists('/dev/ttyACM0')
+                return bool(glob.glob('/dev/ttyACM*') or glob.glob('/dev/ttyUSB*'))
         return False
 
     def recover(self):
