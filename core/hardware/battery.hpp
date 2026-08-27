@@ -56,6 +56,21 @@ public:
 	/// @brief Last computed battery level (0-100%).
 	uint8_t get_level() { return m_last_level; }
 	/// @brief True if level is below low_level threshold.
+	/// @brief Re-apply the configured SOC thresholds.
+	///
+	/// They used to be set ONLY by the constructor, from init_battery() at boot,
+	/// and nothing in the tree ever wrote them again: LB_THRESHOLD (LBP02) and
+	/// LB_CRITICAL_THRESH (LBP12) written over DTE therefore had no effect until
+	/// the next reboot -- and a sealed tag cannot be rebooted on demand. Worse,
+	/// ConfigurationStore::check_battery_thresholds() reads the STORED pair, so
+	/// it could report a healthy ordering while the monitor was still enforcing
+	/// the old one. Both boards are affected: NrfBatteryMonitor and the STC3117
+	/// gas gauge share this base and both compare against these two members.
+	void set_thresholds(uint8_t low_level, uint8_t critical_level) {
+		m_low_level = low_level;
+		m_critical_level = critical_level;
+	}
+
 	bool is_battery_low() { return m_is_low_level; }
 	/// @brief True if voltage is below critical threshold (with hysteresis).
 	bool is_battery_critical() { return m_is_critical_voltage; }

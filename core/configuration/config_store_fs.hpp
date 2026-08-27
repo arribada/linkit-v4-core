@@ -403,6 +403,19 @@ protected:
 
 	/// @brief Refresh cached battery level/voltage from BatteryMonitor.
 	void update_battery_level() override {
+		// Push the configured thresholds BEFORE sampling: the monitor takes them
+		// through its constructor only, so without this a DTE change to LBP02 or
+		// LBP12 would not take effect until the next reboot. This is the natural
+		// place -- it already runs on every refresh and it is the one call site
+		// that holds both the config store and the monitor.
+		try {
+			battery_monitor->set_thresholds(
+				static_cast<uint8_t>(read_param<unsigned int>(ParamID::LB_THRESHOLD)),
+				static_cast<uint8_t>(read_param<unsigned int>(ParamID::LB_CRITICAL_THRESH)));
+		} catch (...) {
+			// Store unreadable: keep whatever the monitor already had rather than
+			// letting a battery refresh throw into its callers.
+		}
 		battery_monitor->update();
 		m_battery_level = battery_monitor->get_level();
 		m_battery_voltage = battery_monitor->get_voltage();
