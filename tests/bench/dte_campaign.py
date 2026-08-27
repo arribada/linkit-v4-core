@@ -4315,3 +4315,106 @@ CASES_V21 = [
     dict(id='DUMP-03', risque='MAJEUR',   titre='Un type de journal inconnu est refuse',
          fn=c_dumpd_type_inconnu),
 ]
+
+
+# =====================================================================
+#  Vague 22 — prepasse satellite: le repli doit etre BRUYANT
+#
+#  Le mode prepasse n emet qu aux passages calcules du satellite. S il ne peut
+#  pas les calculer — table AOP absente, perimee, ou aucun passage a portee —
+#  la seule issue acceptable est de retomber sur l emission periodique EN LE
+#  DISANT. Une balise qui se tait sans trace est indiscernable d une balise en
+#  panne, et c est exactement le defaut deja corrige sur le masque de
+#  duty-cycle vide.
+# =====================================================================
+
+def _statr(b, cles, timeout=10.0, essais=3):
+    """STATR sur une liste de cles -> {cle: valeur}. Mode configuration requis."""
+    for _ in range(essais):
+        m = b.dte('STATR', ','.join(cles), timeout=timeout)
+        ligne = (m.string if m and hasattr(m, 'string') else '') or ''
+        paires = dict(re.findall(r'([A-Z]{3}\d\d)=([^,\r]*)', ligne))
+        if paires:
+            return paires
+        time.sleep(2)
+    return {}
+
+def c_prepass_repli_bruyant(r, case):
+    """Sans AOP exploitable, la prepasse retombe sur le periodique EN LE DISANT.
+
+    Le banc n a pas de table AOP fraiche: c est donc le cas nominal du repli,
+    et le seul verdict acceptable est une trace explicite. Un silence serait le
+    pire des resultats — la balise ne transmettrait plus et rien ne l indiquerait
+    a l operateur.
+    """
+    b = r.b
+    try:
+        b.enter_config()
+        b.write_params({'ARGOS_MODE': 2, 'SAT_PREPASS_EN': 1, 'TR_NOM': 60,
+                        'GNSS_EN': 1, 'NTRY_PER_MESSAGE': 0, 'DUTY_CYCLE': 0xFFFFFF,
+                        'UNDERWATER_EN': 0, 'LB_EN': 0, 'RATE_LIMIT_EN': 0,
+                        'ZONE_ENABLE_OUT_OF_ZONE_DETECTION_MODE': 0})
+        aop = _statr(b, ['PPT01', 'PPT02'])
+        b.exit_config()
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    mk = b.mark()
+    b._send('%GPS 43.6 3.9 5000 9\r')
+    vues = _attendre_trace(b, [r'prepass (?:demande mais|impossible)', r'repli periodique',
+                               r'emission periodique', r'aucun passage calculable'],
+                           120, depuis=mk)
+    try:
+        b.enter_config()
+        b.write_params({'SAT_PREPASS_EN': 0, 'ARGOS_MODE': 0})
+        b.exit_config()
+    except Exception:
+        pass
+    trace = f'AOP: {aop}\n' + '\n'.join(vues[:5])
+    if not vues:
+        return r.record(case, 'FAIL',
+                        'prepasse demandee sans AOP exploitable, et AUCUNE trace de repli '
+                        'en 120 s — la balise se tait en silence', trace)
+    r.record(case, 'PASS', 'le repli sur emission periodique est annonce', trace)
+
+def c_aop_statut_coherent(r, case):
+    """Le statut AOP annonce concorde avec la decision de repli.
+
+    PPT01 (validite) et PPT02 (age) sont ce que l IHM affiche a l operateur
+    avant une pose. S ils annoncent une table valide alors que le firmware
+    retombe sur le periodique faute d AOP, l operateur part avec une balise
+    dont il croit la prepasse operante.
+    """
+    b = r.b
+    try:
+        b.enter_config()
+        aop = _statr(b, ['PPT01', 'PPT02', 'PPP08'])
+        b.exit_config()
+    except Exception as e:
+        return r.record(case, 'ERROR', f'lecture STATR impossible: {type(e).__name__}: {e}')
+    if not aop:
+        return r.record(case, 'ERROR', 'STATR ne rend pas le statut AOP')
+    trace = ', '.join(f'{k}={v}' for k, v in aop.items())
+    valide = aop.get('PPT01', '')
+    if valide not in ('0', '1'):
+        return r.record(case, 'FAIL', f'PPT01 (validite AOP) vaut {valide!r}, attendu 0 ou 1',
+                        trace)
+    age = aop.get('PPT02', '')
+    if not age.isdigit():
+        return r.record(case, 'FAIL', f'PPT02 (age AOP) vaut {age!r}, attendu un entier', trace)
+    # Coherence: une table declaree valide ne peut pas etre plus vieille que la
+    # limite configuree (PPP08, en jours).
+    limite_j = aop.get('PPP08', '')
+    if valide == '1' and limite_j.isdigit() and int(limite_j) > 0:
+        if int(age) > int(limite_j) * 86400:
+            return r.record(case, 'FAIL',
+                            f'AOP declaree valide alors qu elle a {int(age) // 86400} jours '
+                            f'pour une limite de {limite_j} jours', trace)
+    r.record(case, 'PASS',
+             f"statut AOP coherent (valide={valide}, age={age} s, limite={limite_j} j)", trace)
+
+CASES_V22 = [
+    dict(id='ARG-04', risque='BLOQUANT', titre='Sans AOP, le repli periodique est annonce',
+         fn=c_prepass_repli_bruyant),
+    dict(id='ARG-05', risque='MAJEUR',   titre='Le statut AOP annonce est coherent',
+         fn=c_aop_statut_coherent),
+]

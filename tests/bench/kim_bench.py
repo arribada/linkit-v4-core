@@ -122,7 +122,14 @@ class Bench:
                 raise RuntimeError(
                     "No bench board found. Is it plugged in and attached to WSL "
                     "(see wsl_usb.sh)? Is the firmware built with --bench?")
-        self.ser = serial.Serial(self.port, self.baud, timeout=0.1)
+        # write_timeout n est pas un detail: sur un CDC a moitie mort — le
+        # noeud /dev/ttyACM existe, mais l endpoint ne draine plus — un write()
+        # sans borne BLOQUE POUR TOUJOURS. Mesure du 2026-08-27: une campagne
+        # est restee pendue dans _autodetect, sans une ligne de sortie, jusqu a
+        # ce qu on aille lire sa pile. C est le pire mode de defaillance pour un
+        # essai autonome: il ne rate pas, il s arrete indefiniment. Avec la
+        # borne, l ecriture leve et connect() peut reparer le lien.
+        self.ser = serial.Serial(self.port, self.baud, timeout=0.1, write_timeout=5)
         self._start_reader()
         return self
 
@@ -132,7 +139,7 @@ class Bench:
     def _autodetect(self):
         for p in self._candidate_ports():
             try:
-                s = serial.Serial(p, self.baud, timeout=0.1)
+                s = serial.Serial(p, self.baud, timeout=0.1, write_timeout=5)
             except OSError:
                 continue
             try:
@@ -147,6 +154,11 @@ class Bench:
                         print(f"[detect] bench board on {p}")
                         s.close()
                         return p
+            except (serial.SerialException, OSError):
+                # Port present mais moribond: on passe au candidat suivant au
+                # lieu d avorter tout le balayage. Sans write_timeout ce chemin
+                # n existait pas — l ecriture pendait a la place.
+                pass
             finally:
                 s.close()
         return None
