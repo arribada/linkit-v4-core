@@ -330,14 +330,21 @@ class Bench:
                     parsed[k] = v
         return m.group(0), parsed
 
-    def check_coded(self, kv):
+    def check_coded(self, kv, strict=True):
         """Raise before sending if a code-table parameter got a raw value.
 
         Catching this here rather than in the reply saves a whole case: the
         board's partial rejection still applies the other keys, so the run
         continues on a half-established precondition.
+
+        Silent when strict=False, and that is not a loophole -- it is the
+        distinction that matters. strict=True means "I intend every one of these
+        to be applied, catch my mistake"; strict=False means "I am deliberately
+        probing what the board refuses". A bounds case writes ARGOS_MODE=6 ON
+        PURPOSE and needs the board's own rejection, not the host's. Without
+        this, PAR-02 went red on a guard that was doing its job.
         """
-        if not self._coded:
+        if not self._coded or not strict:
             return
         for nom, val in kv.items():
             info = self._coded.get(nom)
@@ -364,7 +371,7 @@ class Bench:
         strict=True raises on any rejected key. Pass strict=False only when a
         rejection is what the case is deliberately provoking.
         """
-        self.check_coded(kv)
+        self.check_coded(kv, strict)
         toks = [f"{self._key(k)}={v}" for k, v in kv.items()]
         payload = ",".join(toks)
         mk = self.mark()
