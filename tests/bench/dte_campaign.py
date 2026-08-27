@@ -2040,3 +2040,194 @@ CASES_V11 = [
     dict(id='ZONE-03', risque='MAJEUR',   titre='Detection desactivee: aucune substitution',  fn=c_zone_desactivee),
     dict(id='ZONE-04', risque='MAJEUR',   titre='LOW_BATTERY prime sur hors-zone',            fn=c_zone_batterie_prime),
 ]
+
+# =====================================================================
+#  Vague 12 — planification Argos, mode hors-eau, limiteur de debit
+#  Tout se pilote avec les sondes deja presentes: on pose la RTC ($RTCW) pour
+#  atterrir sur une heure choisie, et on lit la decision dans %SCHED / %ARGOSCFG.
+# =====================================================================
+
+def _rtcw(b, epoch):
+    p = str(int(epoch))
+    mk = b.mark(); b._send(f'$RTCW#{len(p):03X};{p}\r')
+    return b.expect(r'\$([ON]);RTCW#', 12.0, from_idx=mk)
+
+def _rtc_lu(b):
+    p = 'SYT01'
+    mk = b.mark(); b._send(f'$STATR#{len(p):03X};{p}\r')
+    m = b.expect(r'\$O;STATR#[0-9A-Fa-f]{3};SYT01=(\d+)', 12.0, from_idx=mk)
+    return int(m.group(1)) if m else None
+
+def c_duty_masque_horaire(r, case):
+    """Le masque duty-cycle est inverse: bit 23 = heure 0 UTC.
+
+    is_in_duty_cycle() teste `duty_cycle & (0x800000 >> heure_utc)`. Se tromper
+    de sens revient a emettre a 23 h quand on voulait minuit — invisible en
+    relisant le parametre, et decale de douze heures en moyenne les fenetres
+    d emission negociees avec CLS. On l eprouve en posant la RTC sur une heure
+    connue puis en n autorisant QUE cette heure, puis QUE l heure suivante.
+    """
+    b = r.b
+    # 2026-01-01 10:30:00 UTC — bien au milieu de l heure 10, loin des bords.
+    base = 1767263400
+    heure = 10
+    try:
+        b.enter_config()
+        _rtcw(b, base)
+        b.write_params({'ARGOS_MODE': 3, 'GNSS_EN': 1, 'NTRY_PER_MESSAGE': 0,
+                        'TR_NOM': 60, 'UNDERWATER_EN': 0, 'SAT_PREPASS_EN': 0,
+                        'RATE_LIMIT_EN': 0, 'LB_EN': 0, 'HAULED_DETECT_EN': 0,
+                        'ARGOS_TX_JITTER_EN': 0,
+                        'DUTY_CYCLE': 0x800000 >> heure})     # seule l heure 10
+        b.exit_config()
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    time.sleep(2); b._send('%GPS 43.6 3.9 5000 9\r'); time.sleep(16)
+    dedans = _sched_argos(r)
+
+    try:
+        b.enter_config()
+        _rtcw(b, base)                                        # on se remet a 10h30
+        b.write_params({'DUTY_CYCLE': 0x800000 >> ((heure + 2) % 24)})   # seule l heure 12
+        b.exit_config()
+    except Exception as e:
+        return r.record(case, 'ERROR', f'reconfiguration impossible: {type(e).__name__}: {e}')
+    time.sleep(2); b._send('%GPS 43.6 3.9 5000 9\r'); time.sleep(16)
+    dehors = _sched_argos(r)
+
+    try:
+        b.enter_config(); b.write_params({'ARGOS_MODE': 0, 'DUTY_CYCLE': 16777215}); b.exit_config()
+    except Exception:
+        pass
+
+    trace = f'heure courante autorisee -> {dedans} | seule heure+2 autorisee -> {dehors}'
+    if not (dedans and dedans[0] is not None):
+        return r.record(case, 'FAIL', 'heure courante autorisee: aucune emission planifiee', trace)
+    if not (dehors and dehors[0] is not None):
+        return r.record(case, 'FAIL', 'heure+2 autorisee: aucune planification du tout', trace)
+    # 10h30 -> prochaine fenetre a 12h00 = ~5400 s. On tolere largement.
+    attendu_ms = 5400 * 1000
+    if dedans[0] > 600000:
+        r.record(case, 'FAIL', f'heure courante autorisee mais emission repoussee de {dedans[0]} ms', trace)
+    elif not (0.5 * attendu_ms <= dehors[0] <= 1.6 * attendu_ms):
+        r.record(case, 'FAIL',
+                 f'heure+2: delai {dehors[0]} ms, attendu ~{attendu_ms} ms — mappage bit/heure suspect',
+                 trace)
+    else:
+        r.record(case, 'PASS', 'bit 23 = heure 0 UTC: mappage confirme sur deux heures', trace)
+
+def c_hauled_substitution(r, case):
+    """Le mode hors-eau doit substituer HMP10/HMP11 et pas s engager trop tot.
+
+    HauledModeService::evaluate() compare (maintenant - dernier evenement SWS) a
+    HAULED_IDLE_THRESHOLD_H. On ne va pas attendre une heure au banc: on plonge
+    pour DATER un evenement, puis on fait avancer la RTC de deux heures.
+
+    ORDRE CRITIQUE, et c est ce qui avait fait rougir ce cas a tort: il faut
+    poser la RTC PUIS plonger PUIS activer HMP00. `last_uw_event_rtc` vit en
+    .noinit et survit aux redemarrages, donc il porte encore la date des
+    plongees des cas precedents; reculer la RTC ensuite rend l ecart enorme et
+    engage HAULED instantanement. Le firmware, lui, se protege correctement du
+    cas jamais-plonge (`if (last_uw_event_rtc == 0) return`).
+    """
+    b = r.b
+    BASE = 1767263400          # 2026-01-01 10:30:00 UTC
+    try:
+        b.enter_config()
+        _rtcw(b, BASE)
+        b.write_params({'ARGOS_MODE': 2, 'TR_NOM': 60, 'NTRY_PER_MESSAGE': 0,
+                        'GNSS_EN': 1, 'UNDERWATER_EN': 1, 'LB_EN': 0,
+                        'ZONE_ENABLE_OUT_OF_ZONE_DETECTION_MODE': 0,
+                        'SAT_PREPASS_EN': 0, 'RATE_LIMIT_EN': 0,
+                        'HAULED_DETECT_EN': 0,          # desactive pendant qu on date
+                        'HAULED_IDLE_THRESHOLD_H': 1, 'HAULED_RETURN_EVENTS': 2,
+                        'HAULED_ARGOS_MODE': 2, 'HAULED_TR_NOM': 900,
+                        'HAULED_GNSS_EN': 0, 'HAULED_GNSS_STRAT': 0})
+        b.exit_config()
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+
+    # 1) dater un evenement SWS a l heure de base
+    time.sleep(2)
+    b._send('%DIVE\r'); time.sleep(4); b._send('%SURFACE\r'); time.sleep(6)
+
+    # 2) activer la detection: l ecart est ~0, le profil doit rester nominal
+    try:
+        b.enter_config(); b.write_params({'HAULED_DETECT_EN': 1}); b.exit_config()
+    except Exception as e:
+        return r.record(case, 'ERROR', f'activation impossible: {type(e).__name__}: {e}')
+    time.sleep(2); b._send('%GPS 43.6 3.9 5000 9\r'); time.sleep(12)
+    avant = _argoscfg(b)
+
+    # 3) deux heures plus tard sans le moindre evenement: sortie d eau
+    try:
+        b.enter_config()
+        maintenant = _rtc_lu(b) or BASE
+        _rtcw(b, maintenant + 2 * 3600)
+        b.exit_config()
+    except Exception as e:
+        return r.record(case, 'ERROR', f'saut d horloge impossible: {type(e).__name__}: {e}')
+    time.sleep(3); b._send('%GPS 43.6 3.9 5000 9\r'); time.sleep(14)
+    apres = _argoscfg(b)
+
+    try:
+        b.enter_config()
+        b.write_params({'HAULED_DETECT_EN': 0, 'ARGOS_MODE': 0, 'UNDERWATER_EN': 0})
+        b.exit_config()
+    except Exception:
+        pass
+    if not avant or not apres:
+        return r.record(case, 'ERROR', '%ARGOSCFG sans reponse')
+    trace = f'ecart ~0: {avant}\napres 2 h sans evenement SWS: {apres}'
+    if avant['tr_nom'] != 60:
+        r.record(case, 'FAIL',
+                 'HAULED engage alors que le dernier evenement SWS date de quelques secondes', trace)
+    elif apres['tr_nom'] != 900:
+        r.record(case, 'FAIL', 'apres 2 h a sec, le profil HAULED n est pas applique', trace)
+    else:
+        r.record(case, 'PASS',
+                 'nominal tant que le seuil n est pas franchi, HAULED ensuite', trace)
+
+def c_limiteur_bloque(r, case):
+    """Le limiteur doit bloquer au-dela de RATE_LIMIT_MAX_TX dans la fenetre.
+
+    C est le garde-fou de budget batterie: sans lui, un mode mal regle ou une
+    salve emballee vide la balise. On autorise UNE emission sur dix minutes et
+    on verifie que la suivante est repoussee, avec un delai coherent avec la
+    fenetre restante.
+    """
+    b = r.b
+    try:
+        b.enter_config()
+        b.write_params({'ARGOS_MODE': 2, 'GNSS_EN': 1, 'NTRY_PER_MESSAGE': 0,
+                        'TR_NOM': 30, 'UNDERWATER_EN': 0, 'SAT_PREPASS_EN': 0,
+                        'LB_EN': 0, 'HAULED_DETECT_EN': 0, 'ARGOS_TX_JITTER_EN': 0,
+                        'RATE_LIMIT_EN': 1, 'RATE_LIMIT_WINDOW_S': 600,
+                        'RATE_LIMIT_MAX_TX': 1})
+        b.exit_config()
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    mk = b.mark()
+    time.sleep(2); b._send('%GPS 43.6 3.9 5000 9\r')
+    vues = _attendre_trace(b, [r'rate limit reached'], 150, depuis=mk)
+    bloque = _sched_argos(r)
+    try:
+        b.enter_config()
+        b.write_params({'RATE_LIMIT_EN': 0, 'RATE_LIMIT_WINDOW_S': 3600,
+                        'RATE_LIMIT_MAX_TX': 10, 'ARGOS_MODE': 0})
+        b.exit_config()
+    except Exception:
+        pass
+    trace = f'planification bloquee: {bloque}\n' + '\n'.join(vues[:3])
+    if not vues:
+        r.record(case, 'FAIL', 'le quota est atteint mais rien ne signale le blocage', trace)
+    elif not (bloque and bloque[0] is not None and bloque[0] > 30000):
+        r.record(case, 'FAIL', 'blocage signale mais la replanification reste courte', trace)
+    else:
+        r.record(case, 'PASS', 'quota atteint: emission repoussee et blocage signale', trace)
+
+CASES_V12 = [
+    dict(id='DUTY-02',  risque='BLOQUANT', titre='Masque duty-cycle: bit 23 = heure 0 UTC', fn=c_duty_masque_horaire),
+    dict(id='HAULED-01',risque='BLOQUANT', titre='Le profil hors-eau se substitue au nominal', fn=c_hauled_substitution),
+    dict(id='RL-02',    risque='MAJEUR',   titre='Le limiteur bloque au-dela du quota',        fn=c_limiteur_bloque),
+]
