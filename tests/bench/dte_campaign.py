@@ -9,7 +9,7 @@ qu'un depouillement soit possible sans relire le log brut.
 CONTRAINTE ASSUMEE: aucun cas de ce fichier ne declenche d'emission Argos. Le
 mode est force a OFF et la certification desarmee au debut de chaque cas.
 """
-import sys, time, json, re, subprocess, os, glob
+import sys, time, json, re, subprocess, os, glob, fcntl
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from kim_bench import Bench
 
@@ -19,8 +19,28 @@ os.makedirs(OUT, exist_ok=True)
 RESULTS = f'{OUT}/campaign_results.jsonl'
 LOG     = f'{OUT}/campaign.log'
 
+BENCH_LOCK = '/tmp/dte_campaign.lock'
+
+class BancOccupe(RuntimeError):
+    pass
+
 class Runner:
     def __init__(self):
+        # Verrou exclusif sur le banc. Deux campagnes simultanees ne se
+        # contentent pas de se marcher dessus sur le port serie: chacune
+        # appelle recover(), donc `nrfjprog --reset`, et REDEMARRE la carte
+        # sous l autre. Le symptome est une "carte muette" au beau milieu d un
+        # cas qui n a rien fait de mal — un faux defaut tres convaincant, et
+        # c est exactement ce qui est arrive le 2026-08-27. Le verrou est un
+        # fcntl sur un fichier: il tombe tout seul si le processus meurt.
+        self._lockf = open(BENCH_LOCK, 'w')
+        try:
+            fcntl.flock(self._lockf, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            raise BancOccupe(
+                'une autre campagne detient deja le banc (verrou %s). '
+                'Arreter le processus en cours avant de relancer.' % BENCH_LOCK)
+        self._lockf.write(str(os.getpid())); self._lockf.flush()
         self.b = None
         self.logf = open(LOG, 'a', buffering=1)
         self.n_pass = self.n_fail = self.n_error = 0
@@ -97,6 +117,16 @@ class Runner:
             except Exception: return ''
         busid = self._busid_carte() or '5-3'
         self.say(f'   reparation du lien USB (busid {busid})…')
+        # D abord le remede le moins cher: le CDC est souvent encore enumere
+        # cote Windows (usbipd le dit "Shared" et non "Attached"), il ne lui
+        # manque qu un rattachement. Le passage par SWD ci-dessous rebranche le
+        # peripherique pour de bon, mais il coute une dizaine de secondes et il
+        # a lui-meme echoue une fois faute d avoir vu CM_PROB_NONE a temps.
+        ps(f'usbipd attach --busid {busid} --wsl')
+        time.sleep(5)
+        if glob.glob('/dev/ttyACM*') or glob.glob('/dev/ttyUSB*'):
+            self.say('   lien retabli par simple rattachement')
+            return True
         ps(f'usbipd detach --busid {busid}')
         time.sleep(3)
         for v in ('0', '1'):
@@ -2445,10 +2475,10 @@ def _pile(b, timeout=12.0):
     """%PILE -> [(type, compteur), ...] du plus ancien au plus recent.
        type: 0=fix, 1=no-fix, 2=fastloc, 3=cloudlocate."""
     mk = b.mark(); b._send('%PILE\r')
-    m = b.expect(r'%PILE (vide|(?:\d+:\d+ ?)+)', timeout, from_idx=mk)
+    m = b.expect(r'%PILE (empty|vide|(?:\d+:\d+ ?)+)', timeout, from_idx=mk)
     if not m:
         return None
-    if m.group(1) == 'vide':
+    if m.group(1) in ('empty', 'vide'):
         return []
     return [tuple(int(x) for x in p.split(':')) for p in m.group(1).split()]
 
@@ -2549,4 +2579,553 @@ CASES_V15 = [
     dict(id='DP-01', risque='BLOQUANT',
          titre='Chaque position recoit ses N emissions, en alternance',
          fn=c_pile_rotation),
+]
+
+
+# =====================================================================
+#  Vague 16 — logique GNSS, mode amarre, mode plongee
+#
+#  Limite CONNUE et documentee: %GPS injecte la position directement dans
+#  GPSService et court-circuite le pilote M10Q. Or les filtres hAcc et HDOP
+#  (GNP20/21, GNP02/03) vivent dans m10qasync.cpp, sur la trame NAV-PVT reelle.
+#  Ils ne sont donc PAS atteignables par injection: aucun cas ci-dessous ne
+#  pretend les couvrir, et ils restent a la charge d un essai terrain ou d une
+#  sonde qui pousserait une NAV-PVT synthetique dans le pilote.
+#
+#  Rappel de niveau de journal: le build banc est en DEBUG_LEVEL=3, donc
+#  DEBUG_TRACE est compile HORS du binaire. Les cas n assertionnent que sur
+#  des lignes INFO/WARN, ou sur les sondes console qui lisent l etat a la
+#  source ("stationary %u/%u" est un TRACE: invisible, on lit %MOORED).
+# =====================================================================
+
+def _gnss_base(b, **extra):
+    """Configuration GNSS de reference: rien d autre ne doit bouger.
+
+    ARGOS_MODE=0 coupe l emission (aucun credential KIM2 sur ce banc, et une
+    tentative d emission declenche un backoff d erreur peripherique qui
+    perturbe tout ce qui suit). UNDERWATER_EN=0 evite que la cascade SWS
+    reprogramme le GNSS sous nos pieds.
+    """
+    cfg = {'ARGOS_MODE': 0, 'GNSS_EN': 1, 'UNDERWATER_EN': 0,
+           'MOORED_DETECT_EN': 0, 'HAULED_DETECT_EN': 0,
+           'UW_DIVE_MODE_ENABLE': 0, 'LB_EN': 0, 'RATE_LIMIT_EN': 0,
+           'ZONE_ENABLE_OUT_OF_ZONE_DETECTION_MODE': 0}
+    cfg.update(extra)
+    b.enter_config(); b.write_params(cfg); b.exit_config()
+
+def c_gnss_desactive(r, case):
+    """GNSS_EN=0 doit reellement supprimer l ordonnancement GNSS.
+
+    C est la premiere economie d energie du produit: un deploiement Argos-seul
+    ne doit pas payer une session GNSS. Si le service reste programme malgre
+    GNP01=0, l autonomie annoncee est fausse.
+    """
+    b = r.b
+    try:
+        _gnss_base(b, GNSS_EN=0)
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    time.sleep(4)
+    m, _ = r.raw_until('%SCHED\r', r'%SCHED .*GNSS=', timeout=15.0)
+    ligne = (m.string if m and hasattr(m, 'string') else '') or ''
+    mm = re.search(r'GNSS=(none|\d+ms)\(([^)]*)\)', ligne)
+    try:
+        b.enter_config(); b.write_params({'GNSS_EN': 1}); b.exit_config()
+    except Exception:
+        pass
+    if not mm:
+        return r.record(case, 'ERROR', '%SCHED ne rapporte pas le service GNSS', ligne[:200])
+    quand, raison = mm.group(1), mm.group(2)
+    if quand != 'none':
+        r.record(case, 'FAIL',
+                 f'GNSS_EN=0 mais le service reste programme dans {quand} ({raison})', ligne[:200])
+    else:
+        r.record(case, 'PASS', f'aucun ordonnancement GNSS (raison: {raison})', ligne[:200])
+
+def c_gnss_fix_unique(r, case):
+    """GNSS_SESSION_SINGLE_FIX=1: la session s arrete au premier fix.
+
+    Le mode par defaut continue d echantillonner pour affiner. Sur un animal qui
+    plonge, chaque seconde de recepteur allume est prise sur la fenetre de
+    surface: GNP30 existe pour couper des le premier point. S il ne coupe pas,
+    le budget d energie du deploiement est faux.
+    """
+    b = r.b
+    try:
+        _gnss_base(b, GNSS_SESSION_SINGLE_FIX=1)
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    time.sleep(3)
+    mk = b.mark()
+    b.inject_gps(43.1, 5.9)
+    vues = _attendre_trace(b, [r'SESSION_SINGLE_FIX', r'not rescheduling after first fix'],
+                           30, depuis=mk)
+    try:
+        b.enter_config(); b.write_params({'GNSS_SESSION_SINGLE_FIX': 0}); b.exit_config()
+    except Exception:
+        pass
+    trace = '\n'.join(vues[:5])
+    if vues:
+        r.record(case, 'PASS', 'la session ne se reprogramme pas apres le premier fix', trace)
+    else:
+        r.record(case, 'FAIL', 'GNP30=1 mais aucune trace d arret apres le premier fix', trace)
+
+def c_gnss_timeout_acquisition(r, case):
+    """GNSS_ACQ_TIMEOUT borne la session quand il n y a pas de fix.
+
+    Au banc, en interieur, le recepteur ne verra jamais le ciel: c est
+    exactement le cas nominal a eprouver. Sans cette borne le recepteur reste
+    allume indefiniment — le mode de defaillance le plus couteux du produit.
+
+    Le parametre est en NOMBRE D ECHANTILLONS de navigation, pas en secondes:
+    la trace de fin est GPSEventMaxNavSamples. On laisse une marge large.
+    """
+    b = r.b
+    try:
+        _gnss_base(b, GNSS_ACQ_TIMEOUT=10, GNSS_COLD_ACQ_TIMEOUT=10, GNSS_NTRY=1)
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    mk = b.mark()
+    vues = _attendre_trace(b, [r'acquisition timeout — no fix', r'MaxNavSamples',
+                               r'NO_FIX \| ntry'], 180, depuis=mk)
+    try:
+        b.enter_config()
+        b.write_params({'GNSS_ACQ_TIMEOUT': 120, 'GNSS_COLD_ACQ_TIMEOUT': 240, 'GNSS_NTRY': 3})
+        b.exit_config()
+    except Exception:
+        pass
+    trace = '\n'.join(vues[:5])
+    if vues:
+        r.record(case, 'PASS', 'la session sans fix se termine sur la borne GNP05', trace)
+    else:
+        r.record(case, 'FAIL',
+                 'aucune fin de session apres 180 s alors que GNP05=10 echantillons', trace)
+
+def c_gnss_ntry_backoff(r, case):
+    """GNSS_NTRY epuise: la cadence doit retomber sur DLOC_ARG_NOM.
+
+    Sans ce repli, une balise qui ne voit plus le ciel (animal en plongee
+    prolongee, antenne masquee) reessaie a la cadence rapide jusqu a vider la
+    batterie. La trace nomme le compteur ET la limite, donc on verifie les deux.
+    """
+    b = r.b
+    try:
+        _gnss_base(b, GNSS_NTRY=1, GNSS_ACQ_TIMEOUT=10, GNSS_COLD_ACQ_TIMEOUT=10,
+                   DLOC_ARG_NOM=600)
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    mk = b.mark()
+    vues = _attendre_trace(b, [r'NTRY limit reached', r'back-off to dloc_arg_nom',
+                               r'retry_counter'], 200, depuis=mk,
+                           exiger=[r'NTRY limit reached'])
+    try:
+        b.enter_config()
+        b.write_params({'GNSS_NTRY': 3, 'GNSS_ACQ_TIMEOUT': 120,
+                        'GNSS_COLD_ACQ_TIMEOUT': 240, 'DLOC_ARG_NOM': 3600})
+        b.exit_config()
+    except Exception:
+        pass
+    trace = '\n'.join(vues[:6])
+    limite = [l for l in vues if 'NTRY limit reached' in l]
+    if not limite:
+        return r.record(case, 'FAIL',
+                        'GNP04=1 mais la limite NTRY n est jamais annoncee apres 200 s', trace)
+    if not any('dloc_arg_nom' in l for l in vues):
+        return r.record(case, 'FAIL', 'limite NTRY atteinte sans repli sur dloc_arg_nom', trace)
+    r.record(case, 'PASS', 'limite NTRY annoncee et repli sur dloc_arg_nom', trace)
+
+def c_gnss_deep_idle(r, case):
+    """GNSS_DEEP_IDLE_AFTER_OFF_S: veille profonde plutot que coupure du rail.
+
+    C est un compromis mesure: garder le rail allume avec le M10Q en PMREQ
+    preserve l ephemeride (et donc le temps de premier fix suivant) au prix
+    d un courant de veille. Si la valeur configuree n est pas respectee, on
+    perd soit l ephemeride, soit l autonomie — et le symptome de terrain
+    (fix qui meurent au bout de deux jours) ressemble aux deux.
+    """
+    b = r.b
+    try:
+        _gnss_base(b, GNSS_DEEP_IDLE_AFTER_OFF_S=45)
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    time.sleep(3)
+    mk = b.mark()
+    b.inject_gps(43.2, 5.8)
+    vues = _attendre_trace(b, [r'deep-idle for (\d+) s', r'deep-idle engaged',
+                               r'never-poweroff', r'disabled — power_off'],
+                           60, depuis=mk)
+    try:
+        b.enter_config(); b.write_params({'GNSS_DEEP_IDLE_AFTER_OFF_S': 0}); b.exit_config()
+    except Exception:
+        pass
+    trace = '\n'.join(vues[:5])
+    duree = None
+    for l in vues:
+        m = re.search(r'deep-idle for (\d+) s', l)
+        if m:
+            duree = int(m.group(1)); break
+    if duree is None:
+        return r.record(case, 'FAIL',
+                        'GNP52=45 mais aucune entree en veille profonde apres le fix', trace)
+    if duree != 45:
+        return r.record(case, 'FAIL', f'veille profonde de {duree} s au lieu des 45 s configurees', trace)
+    r.record(case, 'PASS', 'veille profonde de 45 s, conforme a GNP52', trace)
+
+def c_gnss_cold_start(r, case):
+    """GNSS_COLD_START_AFTER_NTRY force un demarrage a froid apres N echecs.
+
+    Le mecanisme existe pour casser une ephemeride corrompue: on efface la BBR
+    et on repart de zero. C est le remede documente aux fix qui meurent apres
+    deux jours. Encore faut-il qu il se declenche.
+    """
+    b = r.b
+    try:
+        _gnss_base(b, GNSS_NTRY=1, GNSS_COLD_START_AFTER_NTRY=1,
+                   GNSS_ACQ_TIMEOUT=10, GNSS_COLD_ACQ_TIMEOUT=10)
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    mk = b.mark()
+    vues = _attendre_trace(b, [r'COLD START requested', r'BBR wipe'], 240, depuis=mk)
+    try:
+        b.enter_config()
+        b.write_params({'GNSS_NTRY': 3, 'GNSS_COLD_START_AFTER_NTRY': 0,
+                        'GNSS_ACQ_TIMEOUT': 120, 'GNSS_COLD_ACQ_TIMEOUT': 240})
+        b.exit_config()
+    except Exception:
+        pass
+    trace = '\n'.join(vues[:5])
+    if vues:
+        r.record(case, 'PASS', 'demarrage a froid demande apres epuisement de NTRY', trace)
+    else:
+        r.record(case, 'FAIL',
+                 'GNP54=1 et NTRY epuise, mais aucun demarrage a froid en 240 s', trace)
+
+# ---------------------------------------------------------------------
+#  Mode amarre (MOORED)
+# ---------------------------------------------------------------------
+
+def _moored(b, timeout=8.0):
+    """%MOORED -> dict des champs, ou None."""
+    mk = b.mark(); b._send('%MOORED\r')
+    m = b.expect(r'%MOORED en=\d+ state=\S+ ref=-?\d+ still=\d+/\d+ motion=\d+/\d+', timeout,
+                 from_idx=mk)
+    if not m:
+        return None
+    ligne = m.group(0)
+    d = {}
+    for cle, motif in (('en', r'en=(\d+)'), ('state', r'state=(\S+)'), ('ref', r'ref=(-?\d+)'),
+                       ('still', r'still=(\d+)/(\d+)'), ('motion', r'motion=(\d+)/(\d+)'),
+                       ('radius', r'radius=(\d+)')):
+        mm = re.search(motif, ligne)
+        if mm:
+            d[cle] = tuple(int(x) for x in mm.groups()) if mm.lastindex and mm.lastindex > 1 \
+                     else (mm.group(1) if cle == 'state' else int(mm.group(1)))
+    d['_ligne'] = ligne
+    return d
+
+def _reset_ancre(b):
+    """Efface l ancre amarrage en coupant puis rearmant MRP00.
+
+    L etat vit en .noinit et SURVIT au redemarrage: sans cette purge, un rejeu
+    partirait d une ancre posee par la passe precedente et le verdict ne
+    voudrait rien dire. La trace 'MRP00 cleared — forcing UNDERWAY' confirme.
+    """
+    b.enter_config(); b.write_params({'MOORED_DETECT_EN': 0}); b.exit_config()
+    time.sleep(3)
+
+def c_moored_entree(r, case):
+    """N fixes immobiles dans le rayon font passer en MOORED.
+
+    Le premier fix POSE l ancre et ne compte pas — un point isole ne porte
+    aucune information de deplacement. Il faut donc MRP02+1 injections. Ce
+    detail a sa place ici: un cas qui n injecterait que MRP02 fixes echouerait
+    en accusant un firmware correct.
+    """
+    b = r.b
+    try:
+        _reset_ancre(b)
+        _gnss_base(b, MOORED_DETECT_EN=1, MOORED_ENTER_FIXES=2, MOORED_RADIUS_M=50)
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    time.sleep(3)
+    mk = b.mark()
+    for k in range(3):
+        b.inject_gps(43.1000, 5.9000)
+        time.sleep(4)
+    vues = _attendre_trace(b, [r'reference anchor set', r'UNDERWAY -> MOORED'], 40,
+                           depuis=mk, exiger=[r'UNDERWAY -> MOORED'])
+    etat = _moored(b)
+    trace = '\n'.join(vues[:6]) + ('\n' + etat['_ligne'] if etat else '')
+    if not any('reference anchor set' in l for l in vues):
+        return r.record(case, 'ERROR', 'ancre jamais posee — injection non prise en compte', trace)
+    if not any('UNDERWAY -> MOORED' in l for l in vues):
+        return r.record(case, 'FAIL',
+                        '3 fixes immobiles (MRP02=2) mais pas de passage en MOORED', trace)
+    if etat and etat.get('state') not in ('MOORED', 'moored'):
+        return r.record(case, 'FAIL',
+                        f"trace de passage en MOORED mais %MOORED rapporte {etat.get('state')}", trace)
+    r.record(case, 'PASS', 'passage en MOORED apres MRP02 fixes immobiles', trace)
+
+def c_moored_sortie_deplacement(r, case):
+    """Un fix hors du rayon fait ressortir en UNDERWAY.
+
+    C est la moitie qui compte pour la donnee: rester bloque en MOORED ferait
+    passer un navire reparti pour un navire a quai, et la cadence reduite du
+    mode amarre ferait manquer le trajet.
+    """
+    b = r.b
+    try:
+        _reset_ancre(b)
+        _gnss_base(b, MOORED_DETECT_EN=1, MOORED_ENTER_FIXES=2, MOORED_RADIUS_M=50)
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    time.sleep(3)
+    mk = b.mark()
+    for _ in range(3):
+        b.inject_gps(43.1000, 5.9000); time.sleep(4)
+    entre = _attendre_trace(b, [r'UNDERWAY -> MOORED'], 30, depuis=mk)
+    if not entre:
+        return r.record(case, 'ERROR', 'jamais entre en MOORED — sortie non evaluable',
+                        '\n'.join(entre[:4]))
+    mk2 = b.mark()
+    # ~1,1 km au nord: sans ambiguite au-dela des 50 m du rayon.
+    b.inject_gps(43.1100, 5.9000)
+    vues = _attendre_trace(b, [r'MOORED -> UNDERWAY'], 40, depuis=mk2)
+    etat = _moored(b)
+    trace = '\n'.join(vues[:5]) + ('\n' + etat['_ligne'] if etat else '')
+    if not vues:
+        return r.record(case, 'FAIL', 'fix a ~1,1 km hors rayon mais toujours MOORED', trace)
+    m = re.search(r'd=([\d.]+) m radius=(\d+) m', vues[0])
+    if m and float(m.group(1)) <= float(m.group(2)):
+        return r.record(case, 'FAIL',
+                        f'sortie annoncee avec d={m.group(1)} m <= rayon {m.group(2)} m', trace)
+    r.record(case, 'PASS',
+             f"sortie en UNDERWAY sur deplacement{' (d=' + m.group(1) + ' m)' if m else ''}", trace)
+
+def c_moored_override_argos(r, case):
+    """En MOORED, les reglages Argos du mode remplacent les nominaux.
+
+    MRP06 (TR_NOM amarre) et MRP07 (GNSS amarre) n ont d interet que s ils
+    atteignent la configuration EFFECTIVE — celle que la salve consulte. C est
+    tout l objet du mode: a quai, moins emettre et moins chercher le ciel.
+    %ARGOSCFG lit cette configuration effective, seul endroit ou la cascade
+    est observable.
+    """
+    b = r.b
+    try:
+        _reset_ancre(b)
+        _gnss_base(b, MOORED_DETECT_EN=1, MOORED_ENTER_FIXES=2, MOORED_RADIUS_M=50,
+                   TR_NOM=60, MOORED_TR_NOM=900)
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    time.sleep(3)
+    avant = _argoscfg(b)
+    mk = b.mark()
+    for _ in range(3):
+        b.inject_gps(43.1000, 5.9000); time.sleep(4)
+    vues = _attendre_trace(b, [r'UNDERWAY -> MOORED'], 30, depuis=mk)
+    apres = _argoscfg(b)
+    try:
+        b.enter_config()
+        b.write_params({'MOORED_DETECT_EN': 0, 'TR_NOM': 60, 'MOORED_TR_NOM': 60})
+        b.exit_config()
+    except Exception:
+        pass
+    trace = f'avant={avant}\napres={apres}\n' + '\n'.join(vues[:3])
+    if not vues:
+        return r.record(case, 'ERROR', 'jamais entre en MOORED — surcharge non evaluable', trace)
+    if not apres:
+        return r.record(case, 'ERROR', '%ARGOSCFG sans reponse', trace)
+    tr = apres.get('tr_nom')
+    if tr != 900:
+        return r.record(case, 'FAIL',
+                        f'en MOORED, tr_nom effectif = {tr} au lieu des 900 s de MRP06', trace)
+    r.record(case, 'PASS', 'la configuration effective adopte MOORED_TR_NOM=900', trace)
+
+def c_moored_desactive(r, case):
+    """MRP00=0 doit forcer UNDERWAY, y compris depuis un etat MOORED persistant.
+
+    L etat amarrage vit en .noinit et survit au redemarrage: sans purge
+    explicite a la coupure du parametre, une balise resterait en cadence
+    reduite alors que l operateur a desactive la fonction. C est un piege de
+    configuration silencieux.
+    """
+    b = r.b
+    try:
+        _reset_ancre(b)
+        _gnss_base(b, MOORED_DETECT_EN=1, MOORED_ENTER_FIXES=2, MOORED_RADIUS_M=50)
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    time.sleep(3)
+    mk = b.mark()
+    for _ in range(3):
+        b.inject_gps(43.1000, 5.9000); time.sleep(4)
+    if not _attendre_trace(b, [r'UNDERWAY -> MOORED'], 30, depuis=mk):
+        return r.record(case, 'ERROR', 'jamais entre en MOORED — desactivation non evaluable')
+    mk2 = b.mark()
+    try:
+        b.enter_config(); b.write_params({'MOORED_DETECT_EN': 0}); b.exit_config()
+    except Exception as e:
+        return r.record(case, 'ERROR', f'ecriture MRP00=0 impossible: {type(e).__name__}: {e}')
+    vues = _attendre_trace(b, [r'MRP00 cleared', r'forcing UNDERWAY'], 30, depuis=mk2)
+    etat = _moored(b)
+    trace = '\n'.join(vues[:4]) + ('\n' + etat['_ligne'] if etat else '')
+    if etat and etat.get('state') in ('MOORED', 'moored'):
+        return r.record(case, 'FAIL', 'MRP00=0 mais %MOORED rapporte toujours MOORED', trace)
+    if not vues:
+        return r.record(case, 'FAIL',
+                        'aucune trace de purge a la desactivation (etat .noinit non nettoye)', trace)
+    r.record(case, 'PASS', 'MRP00=0 purge l etat et force UNDERWAY', trace)
+
+# ---------------------------------------------------------------------
+#  Mode plongee (DIVE)
+# ---------------------------------------------------------------------
+
+def c_dive_engagement(r, case):
+    """UW_DIVE_MODE_ENABLE: la plongee s engage apres UNP13 secondes sous l eau.
+
+    Le temporisateur existe pour ne pas basculer sur une vague: une immersion
+    breve ne doit pas reconfigurer la balise. On verifie les DEUX etapes —
+    l armement puis l engagement — parce qu un engagement immediat serait tout
+    aussi faux qu une absence d engagement.
+    """
+    b = r.b
+    try:
+        _gnss_base(b, UNDERWATER_EN=1, UW_DIVE_MODE_ENABLE=1, UW_DIVE_MODE_START_TIME=10)
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    time.sleep(2)
+    b._send('%SURFACE\r'); time.sleep(3)
+    mk = b.mark()
+    b._send('%DIVE\r')
+    vues = _attendre_trace(b, [r'dive mode start pending', r'dive mode engaged'], 60,
+                           depuis=mk, exiger=[r'dive mode start pending', r'dive mode engaged'])
+    try:
+        b._send('%SURFACE\r'); time.sleep(2)
+        b.enter_config()
+        b.write_params({'UW_DIVE_MODE_ENABLE': 0, 'UNDERWATER_EN': 0})
+        b.exit_config()
+    except Exception:
+        pass
+    trace = '\n'.join(vues[:5])
+    if not any('start pending' in l for l in vues):
+        return r.record(case, 'FAIL', 'immersion sans armement du temporisateur de plongee', trace)
+    if not any('engaged' in l for l in vues):
+        return r.record(case, 'FAIL',
+                        'temporisateur arme mais plongee jamais engagee apres 60 s (UNP13=10)', trace)
+    r.record(case, 'PASS', 'plongee armee puis engagee apres le delai UNP13', trace)
+
+def c_dive_annulation(r, case):
+    """Une emersion avant UNP13 doit ANNULER l engagement, pas le repousser.
+
+    C est le cas de la vague: on plonge, on ressort tout de suite. Si le
+    temporisateur survivait a l emersion, la balise basculerait en mode plongee
+    alors qu elle est en surface — et cesserait d emettre au pire moment.
+    """
+    b = r.b
+    try:
+        _gnss_base(b, UNDERWATER_EN=1, UW_DIVE_MODE_ENABLE=1, UW_DIVE_MODE_START_TIME=45)
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    time.sleep(2)
+    b._send('%SURFACE\r'); time.sleep(3)
+    mk = b.mark()
+    b._send('%DIVE\r')
+    if not _attendre_trace(b, [r'dive mode start pending'], 25, depuis=mk):
+        try:
+            b.enter_config(); b.write_params({'UW_DIVE_MODE_ENABLE': 0, 'UNDERWATER_EN': 0})
+            b.exit_config()
+        except Exception:
+            pass
+        return r.record(case, 'ERROR', 'temporisateur jamais arme — annulation non evaluable')
+    time.sleep(6)
+    mk2 = b.mark()
+    b._send('%SURFACE\r')
+    # 60 s: assez long pour couvrir les 45 s de UNP13 et donc voir un engagement
+    # tardif s il avait lieu malgre l emersion.
+    vues = _attendre_trace(b, [r'dive mode start cancelled', r'dive mode engaged',
+                               r'disengaged by surfacing'], 60, depuis=mk2)
+    try:
+        b.enter_config()
+        b.write_params({'UW_DIVE_MODE_ENABLE': 0, 'UNDERWATER_EN': 0,
+                        'UW_DIVE_MODE_START_TIME': 0})
+        b.exit_config()
+    except Exception:
+        pass
+    trace = '\n'.join(vues[:5])
+    if any('engaged' in l for l in vues):
+        return r.record(case, 'FAIL',
+                        'plongee engagee alors que la balise a emerge avant UNP13', trace)
+    if not any('cancelled' in l or 'disengaged' in l for l in vues):
+        return r.record(case, 'FAIL',
+                        'ni annulation ni desengagement apres emersion precoce', trace)
+    r.record(case, 'PASS', 'emersion precoce: temporisateur annule, plongee non engagee', trace)
+
+def c_dive_desengagement(r, case):
+    """Une emersion pendant une plongee ENGAGEE doit la desengager.
+
+    Symetrique du precedent, et le plus grave des deux s il manque: la balise
+    resterait en configuration de plongee une fois revenue en surface, donc
+    silencieuse alors qu elle a le satellite en vue.
+    """
+    b = r.b
+    try:
+        _gnss_base(b, UNDERWATER_EN=1, UW_DIVE_MODE_ENABLE=1, UW_DIVE_MODE_START_TIME=5)
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    time.sleep(2)
+    b._send('%SURFACE\r'); time.sleep(3)
+    mk = b.mark()
+    b._send('%DIVE\r')
+    if not _attendre_trace(b, [r'dive mode engaged'], 45, depuis=mk):
+        try:
+            b.enter_config(); b.write_params({'UW_DIVE_MODE_ENABLE': 0, 'UNDERWATER_EN': 0})
+            b.exit_config()
+        except Exception:
+            pass
+        return r.record(case, 'ERROR', 'plongee jamais engagee — desengagement non evaluable')
+    mk2 = b.mark()
+    b._send('%SURFACE\r')
+    vues = _attendre_trace(b, [r'disengaged by surfacing'], 45, depuis=mk2)
+    try:
+        b.enter_config()
+        b.write_params({'UW_DIVE_MODE_ENABLE': 0, 'UNDERWATER_EN': 0,
+                        'UW_DIVE_MODE_START_TIME': 0})
+        b.exit_config()
+    except Exception:
+        pass
+    trace = '\n'.join(vues[:4])
+    if not vues:
+        return r.record(case, 'FAIL',
+                        'plongee engagee toujours active apres emersion — balise muette en surface',
+                        trace)
+    r.record(case, 'PASS', 'l emersion desengage la plongee', trace)
+
+CASES_V16 = [
+    dict(id='GPS-01', risque='MAJEUR',   titre='GNSS_EN=0 supprime tout ordonnancement GNSS',
+         fn=c_gnss_desactive),
+    dict(id='GPS-02', risque='MAJEUR',   titre='SESSION_SINGLE_FIX arrete la session au premier fix',
+         fn=c_gnss_fix_unique),
+    dict(id='GPS-03', risque='BLOQUANT', titre='La session sans fix se termine sur GNSS_ACQ_TIMEOUT',
+         fn=c_gnss_timeout_acquisition),
+    dict(id='GPS-04', risque='MAJEUR',   titre='NTRY epuise: repli de cadence sur DLOC_ARG_NOM',
+         fn=c_gnss_ntry_backoff),
+    dict(id='GPS-05', risque='MAJEUR',   titre='La veille profonde respecte la duree configuree',
+         fn=c_gnss_deep_idle),
+    dict(id='GPS-06', risque='MAJEUR',   titre='Demarrage a froid apres epuisement de NTRY',
+         fn=c_gnss_cold_start),
+    dict(id='MOOR-01', risque='MAJEUR',  titre='Entree en MOORED apres N fixes immobiles',
+         fn=c_moored_entree),
+    dict(id='MOOR-02', risque='MAJEUR',  titre='Sortie de MOORED sur deplacement hors rayon',
+         fn=c_moored_sortie_deplacement),
+    dict(id='MOOR-03', risque='MAJEUR',  titre='Les reglages Argos du mode amarre sont effectifs',
+         fn=c_moored_override_argos),
+    dict(id='MOOR-04', risque='MAJEUR',  titre='MRP00=0 purge l etat persistant et force UNDERWAY',
+         fn=c_moored_desactive),
+    dict(id='DIVE-01', risque='MAJEUR',  titre='La plongee s engage apres le delai UNP13',
+         fn=c_dive_engagement),
+    dict(id='DIVE-02', risque='MAJEUR',  titre='Une emersion precoce annule l engagement',
+         fn=c_dive_annulation),
+    dict(id='DIVE-03', risque='BLOQUANT', titre='L emersion desengage une plongee active',
+         fn=c_dive_desengagement),
 ]

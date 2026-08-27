@@ -132,7 +132,12 @@ class Bench:
         while not self._stop.is_set():
             try:
                 chunk = self.ser.read(512)
-            except (OSError, serial.SerialException):
+            except (OSError, serial.SerialException, AttributeError, TypeError):
+                # TypeError/AttributeError, not just SerialException: when
+                # close() runs while this thread sits inside read(), pyserial
+                # has already set self.fd to None and os.read(None, ...) raises
+                # TypeError. Left uncaught it dumps a traceback over the
+                # campaign log and hides the real event -- a dead USB link.
                 break
             if not chunk:
                 continue

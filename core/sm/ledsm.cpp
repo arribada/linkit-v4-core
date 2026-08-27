@@ -88,24 +88,24 @@ static bool cert_tx_active() {
 	}
 }
 
-/// @name Signalisation LED d'une salve BLIND
+/// @name LED signalling for a BLIND burst
 /// @{
-/// En BLIND, la salve est cadencee par le module lui-meme et dure des minutes
-/// (mesure: 123 s pour retx_nb=3, period=60). Un MAGENTA continu resterait donc
-/// allume tout du long — pour rien, et au detriment de l'autonomie qu'on cherche
-/// justement a gagner en laissant le module dormir. On marque les deux BORDS de
-/// la sequence a la place: deux impulsions courtes a l'ouverture, une impulsion
-/// longue a la fermeture, visuellement distinctes l'une de l'autre.
-static constexpr unsigned int BLIND_BLINK_ON_MS  = 120;  ///< duree d'une impulsion d'ouverture
-static constexpr unsigned int BLIND_BLINK_GAP_MS = 150;  ///< silence entre les deux
-static constexpr unsigned int BLIND_BLINK_END_MS = 700;  ///< impulsion de fermeture
+/// In BLIND the burst is paced by the module itself and lasts minutes
+/// (measured: 123 s for retx_nb=3, period=60). A steady MAGENTA would stay lit
+/// for the whole of it -- for nothing, and against the very battery life we are
+/// trying to gain by letting the module sleep. Mark the two EDGES of the
+/// sequence instead: two short pulses when it opens, one long pulse when it
+/// closes, visually distinct from each other.
+static constexpr unsigned int BLIND_BLINK_ON_MS  = 120;  ///< length of one opening pulse
+static constexpr unsigned int BLIND_BLINK_GAP_MS = 150;  ///< silence between the two
+static constexpr unsigned int BLIND_BLINK_END_MS = 700;  ///< closing pulse
 
-/// @brief Le profil MAC BLIND est-il celui qui va reellement emettre ?
+/// @brief Is the BLIND MAC profile the one that will actually transmit?
 ///
-/// On interroge la configuration EFFECTIVE et non le parametre brut: elle tient
-/// compte des regimes (basse batterie, hors zone, remorquage) et remet blind_en a
-/// faux pour SURFACING_BURST et DOPPLER, qui cadencent leur salve cote nRF. Sans
-/// cela la LED annoncerait une salve module la ou il n'y en a pas.
+/// Query the EFFECTIVE configuration, not the raw parameter: the effective one
+/// accounts for the regimes (low battery, out of zone, hauled out) and clears
+/// blind_en for SURFACING_BURST and DOPPLER, which pace their burst on the nRF
+/// side. Without this the LED would announce a module burst where there is none.
 static bool blind_tx_active() {
 	if (!configuration_store) return false;
 	try {
@@ -337,13 +337,13 @@ void LEDGNSSOffWithFix::entry() {
 			}
 		}
 		system_timer->add_schedule([this]() {
-			// L etat a-t-il change depuis l armement ? ledsm.cpp ne definit AUCUN
-			// ::exit(), donc ce transit differe n est jamais annule: il tire quoi
-			// qu il arrive, y compris si la FSM est passee entre-temps sur un autre
-			// etat. Sur la sequence nominale de deploiement, l emission Argos suit
-			// immediatement le fix, donc l orphelin de fin de session GNSS venait
-			// eteindre l indication d emission en cours. On verifie plutot que de
-			// plomber la lifecycle de 28 etats.
+			// Has the state changed since this was armed? ledsm.cpp defines NO
+			// ::exit() anywhere, so a deferred transit is never cancelled: it fires no
+			// matter what, including when the FSM has moved to another state in the
+			// meantime. On the nominal deployment sequence the Argos transmission
+			// follows the fix immediately, so the orphan left by the end of the GNSS
+			// session was switching off the transmit indication. Check here rather
+			// than weigh down the lifecycle of 28 states.
 			if (!is_in_state<LEDGNSSOffWithFix>()) return;
 			if (is_in_state<LEDConfigNotConnected>())
 				transit<LEDConfigNotConnected>();
@@ -381,13 +381,13 @@ void LEDGNSSOffWithoutFix::entry() {
 			}
 		}
 		system_timer->add_schedule([this]() {
-			// L etat a-t-il change depuis l armement ? ledsm.cpp ne definit AUCUN
-			// ::exit(), donc ce transit differe n est jamais annule: il tire quoi
-			// qu il arrive, y compris si la FSM est passee entre-temps sur un autre
-			// etat. Sur la sequence nominale de deploiement, l emission Argos suit
-			// immediatement le fix, donc l orphelin de fin de session GNSS venait
-			// eteindre l indication d emission en cours. On verifie plutot que de
-			// plomber la lifecycle de 28 etats.
+			// Has the state changed since this was armed? ledsm.cpp defines NO
+			// ::exit() anywhere, so a deferred transit is never cancelled: it fires no
+			// matter what, including when the FSM has moved to another state in the
+			// meantime. On the nominal deployment sequence the Argos transmission
+			// follows the fix immediately, so the orphan left by the end of the GNSS
+			// session was switching off the transmit indication. Check here rather
+			// than weigh down the lifecycle of 28 states.
 			if (!is_in_state<LEDGNSSOffWithoutFix>()) return;
 			if (is_in_state<LEDConfigNotConnected>())
 				transit<LEDConfigNotConnected>();
@@ -422,13 +422,13 @@ void LEDGNSSDeepIdle::entry() {
 		}
 	}
 	system_timer->add_schedule([this]() {
-		// L etat a-t-il change depuis l armement ? ledsm.cpp ne definit AUCUN
-		// ::exit(), donc ce transit differe n est jamais annule: il tire quoi
-		// qu il arrive, y compris si la FSM est passee entre-temps sur un autre
-		// etat. Sur la sequence nominale de deploiement, l emission Argos suit
-		// immediatement le fix, donc l orphelin de fin de session GNSS venait
-		// eteindre l indication d emission en cours. On verifie plutot que de
-		// plomber la lifecycle de 28 etats.
+		// Has the state changed since this was armed? ledsm.cpp defines NO
+		// ::exit() anywhere, so a deferred transit is never cancelled: it fires no
+		// matter what, including when the FSM has moved to another state in the
+		// meantime. On the nominal deployment sequence the Argos transmission
+		// follows the fix immediately, so the orphan left by the end of the GNSS
+		// session was switching off the transmit indication. Check here rather
+		// than weigh down the lifecycle of 28 states.
 		if (!is_in_state<LEDGNSSDeepIdle>()) return;
 		if (is_in_state<LEDConfigNotConnected>())
 			transit<LEDConfigNotConnected>();
@@ -459,13 +459,13 @@ void LEDGNSSPowerOff::entry() {
 		}
 	}
 	system_timer->add_schedule([this]() {
-		// L etat a-t-il change depuis l armement ? ledsm.cpp ne definit AUCUN
-		// ::exit(), donc ce transit differe n est jamais annule: il tire quoi
-		// qu il arrive, y compris si la FSM est passee entre-temps sur un autre
-		// etat. Sur la sequence nominale de deploiement, l emission Argos suit
-		// immediatement le fix, donc l orphelin de fin de session GNSS venait
-		// eteindre l indication d emission en cours. On verifie plutot que de
-		// plomber la lifecycle de 28 etats.
+		// Has the state changed since this was armed? ledsm.cpp defines NO
+		// ::exit() anywhere, so a deferred transit is never cancelled: it fires no
+		// matter what, including when the FSM has moved to another state in the
+		// meantime. On the nominal deployment sequence the Argos transmission
+		// follows the fix immediately, so the orphan left by the end of the GNSS
+		// session was switching off the transmit indication. Check here rather
+		// than weigh down the lifecycle of 28 states.
 		if (!is_in_state<LEDGNSSPowerOff>()) return;
 		if (is_in_state<LEDConfigNotConnected>())
 			transit<LEDConfigNotConnected>();
@@ -502,13 +502,13 @@ void LEDGNSSCloudLocateReady::entry() {
 	// resume LEDGNSSOn so the operator sees the GPS is still acquiring.
 	// Otherwise go to LEDOff (the GNSS session ended).
 	system_timer->add_schedule([this]() {
-		// L etat a-t-il change depuis l armement ? ledsm.cpp ne definit AUCUN
-		// ::exit(), donc ce transit differe n est jamais annule: il tire quoi
-		// qu il arrive, y compris si la FSM est passee entre-temps sur un autre
-		// etat. Sur la sequence nominale de deploiement, l emission Argos suit
-		// immediatement le fix, donc l orphelin de fin de session GNSS venait
-		// eteindre l indication d emission en cours. On verifie plutot que de
-		// plomber la lifecycle de 28 etats.
+		// Has the state changed since this was armed? ledsm.cpp defines NO
+		// ::exit() anywhere, so a deferred transit is never cancelled: it fires no
+		// matter what, including when the FSM has moved to another state in the
+		// meantime. On the nominal deployment sequence the Argos transmission
+		// follows the fix immediately, so the orphan left by the end of the GNSS
+		// session was switching off the transmit indication. Check here rather
+		// than weigh down the lifecycle of 28 states.
 		if (!is_in_state<LEDGNSSCloudLocateReady>()) return;
 		if (m_is_gnss_on)
 			transit<LEDGNSSOn>();
@@ -547,11 +547,11 @@ void LEDArgosTXComplete::entry() {
 	if (m_is_magnet_engaged)
 		status_led->set(RGBLedColor::WHITE);
 	else {
-		// En BLIND, marquer la fermeture par une impulsion longue avant de rendre
-		// la main — elle se distingue ainsi des deux impulsions courtes d'ouverture.
-		// Le delai de sortie couvre l'impulsion, sinon la transition d'etat
-		// l'eteindrait avant qu'elle soit visible.
-		unsigned int hold_ms = 50;  // marge anti-course sur le tick, cas nominal
+		// In BLIND, mark the close with a long pulse before handing back -- that
+		// is what tells it apart from the two short opening pulses. The exit
+		// delay has to cover the pulse, otherwise the state transition would
+		// switch it off before it is visible.
+		unsigned int hold_ms = 50;  // anti-race margin on the tick, nominal case
 		bool blind = blind_tx_active();
 		if (blind) {
 			LED_MODE_GUARD {
@@ -564,13 +564,13 @@ void LEDArgosTXComplete::entry() {
 			status_led->off();
 		}
 		system_timer->add_schedule([this]() {
-			// L etat a-t-il change depuis l armement ? ledsm.cpp ne definit AUCUN
-			// ::exit(), donc ce transit differe n est jamais annule: il tire quoi
-			// qu il arrive, y compris si la FSM est passee entre-temps sur un autre
-			// etat. Sur la sequence nominale de deploiement, l emission Argos suit
-			// immediatement le fix, donc l orphelin de fin de session GNSS venait
-			// eteindre l indication d emission en cours. On verifie plutot que de
-			// plomber la lifecycle de 28 etats.
+			// Has the state changed since this was armed? ledsm.cpp defines NO
+			// ::exit() anywhere, so a deferred transit is never cancelled: it fires no
+			// matter what, including when the FSM has moved to another state in the
+			// meantime. On the nominal deployment sequence the Argos transmission
+			// follows the fix immediately, so the orphan left by the end of the GNSS
+			// session was switching off the transmit indication. Check here rather
+			// than weigh down the lifecycle of 28 states.
 			if (!is_in_state<LEDArgosTXComplete>()) return;
 			status_led->off();
 			if (m_is_gnss_on)
@@ -647,13 +647,13 @@ void LEDSurfaceDetected::entry() {
 		status_led->off();
 	}
 	system_timer->add_schedule([this]() {
-		// L etat a-t-il change depuis l armement ? ledsm.cpp ne definit AUCUN
-		// ::exit(), donc ce transit differe n est jamais annule: il tire quoi
-		// qu il arrive, y compris si la FSM est passee entre-temps sur un autre
-		// etat. Sur la sequence nominale de deploiement, l emission Argos suit
-		// immediatement le fix, donc l orphelin de fin de session GNSS venait
-		// eteindre l indication d emission en cours. On verifie plutot que de
-		// plomber la lifecycle de 28 etats.
+		// Has the state changed since this was armed? ledsm.cpp defines NO
+		// ::exit() anywhere, so a deferred transit is never cancelled: it fires no
+		// matter what, including when the FSM has moved to another state in the
+		// meantime. On the nominal deployment sequence the Argos transmission
+		// follows the fix immediately, so the orphan left by the end of the GNSS
+		// session was switching off the transmit indication. Check here rather
+		// than weigh down the lifecycle of 28 states.
 		if (!is_in_state<LEDSurfaceDetected>()) return;
 		transit<LEDOff>();
 	}, system_timer->get_counter() + 100);
@@ -668,13 +668,13 @@ void LEDDiveDetected::entry() {
 		status_led->off();
 	}
 	system_timer->add_schedule([this]() {
-		// L etat a-t-il change depuis l armement ? ledsm.cpp ne definit AUCUN
-		// ::exit(), donc ce transit differe n est jamais annule: il tire quoi
-		// qu il arrive, y compris si la FSM est passee entre-temps sur un autre
-		// etat. Sur la sequence nominale de deploiement, l emission Argos suit
-		// immediatement le fix, donc l orphelin de fin de session GNSS venait
-		// eteindre l indication d emission en cours. On verifie plutot que de
-		// plomber la lifecycle de 28 etats.
+		// Has the state changed since this was armed? ledsm.cpp defines NO
+		// ::exit() anywhere, so a deferred transit is never cancelled: it fires no
+		// matter what, including when the FSM has moved to another state in the
+		// meantime. On the nominal deployment sequence the Argos transmission
+		// follows the fix immediately, so the orphan left by the end of the GNSS
+		// session was switching off the transmit indication. Check here rather
+		// than weigh down the lifecycle of 28 states.
 		if (!is_in_state<LEDDiveDetected>()) return;
 		transit<LEDOff>();
 	}, system_timer->get_counter() + 100);

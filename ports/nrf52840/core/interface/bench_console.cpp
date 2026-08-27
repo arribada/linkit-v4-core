@@ -271,7 +271,7 @@ static const char *bench_etat_led() {
 }
 
 static void bench_led(const std::string& line) {
-    // %LED EVT <nom> injecte un evenement LED sans passer par le materiel.
+    // %LED EVT <name> injects a LED event without going through the hardware.
     if (line.find(" EVT") != std::string::npos) {
         auto a = [&](const char *n) { return line.find(n) != std::string::npos; };
         if      (a("GNSSON"))      led_handle::dispatch<SetLEDGNSSOn>({});
@@ -310,8 +310,8 @@ bool bench::handle_line(const std::string& raw) {
     } else if (cmd == "%STATE") {
         reply(std::string("%STATE ") + state_name());
     } else if (cmd == "%BLE") {
-        // %BLE        -> etat de l'advertising
-        // %BLE DISC   -> rejoue une deconnexion BLE (sans telephone)
+        // %BLE        -> advertising state
+        // %BLE DISC   -> replays a BLE disconnection (with no phone)
         if (!ble_service) {
             reply("%BLE ERR no-ble-service");
         } else if (line.find(" PROBE") != std::string::npos) {
@@ -334,8 +334,8 @@ bool bench::handle_line(const std::string& raw) {
             reply(buf);
         }
     } else if (cmd == "%FLASH") {
-        // %FLASH        -> statut du composant (WIP/QE) + etat d'init
-        // %FLASH SWRST  -> exerce RSTEN+RST sur silicium reel, non destructif
+        // %FLASH        -> part status (WIP/QE) plus the init state
+        // %FLASH SWRST  -> exercises RSTEN+RST on real silicon, non destructive
         if (!bench_flash) {
             reply("%FLASH ERR no-flash");
         } else if (line.find(" SWRST") != std::string::npos) {
@@ -357,23 +357,23 @@ bool bench::handle_line(const std::string& raw) {
             reply(buf);
         }
     } else if (cmd == "%PILE") {
-        // Contenu de la pile de profondeur: type et compteur de salve par
-        // entree. C est le seul moyen de voir une position CONSOMMEE sans avoir
-        // ete emise — retrieve() decremente avant que la salve decide quoi
-        // encoder, et une entree a 0 n est plus jamais eligible.
+        // Contents of the depth pile: type and burst counter per entry. This
+        // is the only way to watch the rotation at all -- retrieve() decrements
+        // before the burst decides what to encode, and an entry at 0 is never
+        // eligible again.
         if (!argos_tx_service_instance) {
             reply("%PILE ERR no-service");
         } else {
             std::string d = argos_tx_service_instance->bench_dump_pile();
-            reply(std::string("%PILE ") + (d.empty() ? "vide" : d));
+            reply(std::string("%PILE ") + (d.empty() ? "empty" : d));
         }
     } else if (cmd == "%LED") {
         bench_led(line);
     } else if (cmd == "%ARGOSCFG") {
-        // Configuration Argos EFFECTIVE (apres cascade LB/OoZ/HAULED). Sert
-        // notamment a prouver que sensor_tx_enable prend bien le bit AXL: c est
-        // ce masque qui choisit process_sensor_burst() plutot que
-        // process_gnss_burst(), et il ne peut pas s observer autrement.
+        // EFFECTIVE Argos configuration (after the LB/OoZ/HAULED cascade). It
+        // is what proves sensor_tx_enable really picks up the AXL bit: that
+        // mask is what selects process_sensor_burst() over process_gnss_burst(),
+        // and there is no other way to observe it.
         ArgosConfig ac;
         configuration_store->get_argos_configuration(ac);
         char buf[176];
@@ -385,9 +385,9 @@ bool bench::handle_line(const std::string& raw) {
                  ac.prepass_en ? 1 : 0);
         reply(buf);
     } else if (cmd == "%SCHEDQ") {
-        // Occupation des files de l ordonnanceur. Sert a prouver qu une tache
-        // auto-reprogrammee ne se duplique pas: un aller-retour
-        // configuration/operationnel doit laisser deferred= inchange.
+        // Scheduler queue occupancy. It is what proves a self-rescheduling task
+        // does not clone itself: a round trip through configuration and back to
+        // operational must leave deferred= unchanged.
         char buf[128];
         snprintf(buf, sizeof(buf),
                  "%%SCHEDQ imm=%u/%u(hw=%u) deferred=%u/%u(hw=%u)",
