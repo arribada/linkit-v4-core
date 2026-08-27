@@ -18,6 +18,11 @@
 #include "debug.hpp"
 #include "is25_flash.hpp"
 #include "config_store.hpp"
+#include "ledsm.hpp"
+#include "rgb_led.hpp"
+
+extern RGBLed *status_led;
+using led_handle = LEDState;   // meme alias que gentracker.cpp / ledsm.cpp
 #include "moored_mode_service.hpp"
 #include "ota_file_updater.hpp"
 #include "crc32.hpp"
@@ -234,6 +239,58 @@ static void bench_i2c_scan(const std::string& line) {
     reply(buf);
 }
 
+
+/// @brief Bench probe: which LED state is active, and what the LED is showing.
+///
+/// Exists because ledsm.cpp defines NO ::exit() at all, so its eight deferred
+/// transit<>() calls are never cancelled: one armed by a finishing GNSS session
+/// fires 500 ms later whatever state the FSM has reached by then, and on the
+/// nominal deployment sequence the Argos TX starts inside that window. Nothing
+/// else can observe which LED state is current, so the orphan is invisible from
+/// outside.
+static const char *bench_etat_led() {
+    if (LEDState::is_in_state<LEDOff>())                    return "Off";
+    if (LEDState::is_in_state<LEDBoot>())                   return "Boot";
+    if (LEDState::is_in_state<LEDError>())                  return "Error";
+    if (LEDState::is_in_state<LEDConfigNotConnected>())     return "ConfigNotConnected";
+    if (LEDState::is_in_state<LEDConfigConnected>())        return "ConfigConnected";
+    if (LEDState::is_in_state<LEDGNSSOn>())                 return "GNSSOn";
+    if (LEDState::is_in_state<LEDGNSSOffWithFix>())         return "GNSSOffWithFix";
+    if (LEDState::is_in_state<LEDGNSSOffWithoutFix>())      return "GNSSOffWithoutFix";
+    if (LEDState::is_in_state<LEDGNSSDeepIdle>())           return "GNSSDeepIdle";
+    if (LEDState::is_in_state<LEDGNSSPowerOff>())           return "GNSSPowerOff";
+    if (LEDState::is_in_state<LEDGNSSCloudLocateReady>())   return "GNSSCloudLocateReady";
+    if (LEDState::is_in_state<LEDArgosTX>())                return "ArgosTX";
+    if (LEDState::is_in_state<LEDArgosTXComplete>())        return "ArgosTXComplete";
+    if (LEDState::is_in_state<LEDBatteryCritical>())        return "BatteryCritical";
+    if (LEDState::is_in_state<LEDSurfaceDetected>())        return "SurfaceDetected";
+    if (LEDState::is_in_state<LEDDiveDetected>())           return "DiveDetected";
+    return "autre";
+}
+
+static void bench_led(const std::string& line) {
+    // %LED EVT <nom> injecte un evenement LED sans passer par le materiel.
+    if (line.find(" EVT") != std::string::npos) {
+        auto a = [&](const char *n) { return line.find(n) != std::string::npos; };
+        if      (a("GNSSON"))      led_handle::dispatch<SetLEDGNSSOn>({});
+        else if (a("GNSSFIX"))     led_handle::dispatch<SetLEDGNSSOffWithFix>({});
+        else if (a("GNSSNOFIX"))   led_handle::dispatch<SetLEDGNSSOffWithoutFix>({});
+        else if (a("GNSSIDLE"))    led_handle::dispatch<SetLEDGNSSDeepIdle>({});
+        else if (a("GNSSPOWEROFF"))led_handle::dispatch<SetLEDGNSSPowerOff>({});
+        else if (a("CLREADY"))     led_handle::dispatch<SetLEDGNSSCloudLocateReady>({});
+        else if (a("ARGOSTX"))     led_handle::dispatch<SetLEDArgosTX>({});
+        else if (a("OFF"))         led_handle::dispatch<SetLEDOff>({});
+        else { reply("%LED ERR evt inconnu (GNSSON|GNSSFIX|GNSSNOFIX|GNSSIDLE|"
+                     "GNSSPOWEROFF|CLREADY|ARGOSTX|OFF)"); return; }
+    }
+    char buf[96];
+    snprintf(buf, sizeof(buf), "%%LED etat=%s couleur=%u clignote=%u",
+             bench_etat_led(),
+             status_led ? (unsigned)status_led->get_state() : 99u,
+             status_led ? (unsigned)(status_led->is_flashing() ? 1 : 0) : 0u);
+    reply(buf);
+}
+
 bool bench::handle_line(const std::string& raw) {
     // Trim trailing CR/LF/space.
     std::string line = raw;
@@ -297,6 +354,8 @@ bool bench::handle_line(const std::string& raw) {
                      (status & 0x40) ? 1 : 0, (status & 0x01) ? 1 : 0);
             reply(buf);
         }
+    } else if (cmd == "%LED") {
+        bench_led(line);
     } else if (cmd == "%ARGOSCFG") {
         // Configuration Argos EFFECTIVE (apres cascade LB/OoZ/HAULED). Sert
         // notamment a prouver que sensor_tx_enable prend bien le bit AXL: c est

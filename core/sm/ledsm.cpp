@@ -337,6 +337,14 @@ void LEDGNSSOffWithFix::entry() {
 			}
 		}
 		system_timer->add_schedule([this]() {
+			// L etat a-t-il change depuis l armement ? ledsm.cpp ne definit AUCUN
+			// ::exit(), donc ce transit differe n est jamais annule: il tire quoi
+			// qu il arrive, y compris si la FSM est passee entre-temps sur un autre
+			// etat. Sur la sequence nominale de deploiement, l emission Argos suit
+			// immediatement le fix, donc l orphelin de fin de session GNSS venait
+			// eteindre l indication d emission en cours. On verifie plutot que de
+			// plomber la lifecycle de 28 etats.
+			if (!is_in_state<LEDGNSSOffWithFix>()) return;
 			if (is_in_state<LEDConfigNotConnected>())
 				transit<LEDConfigNotConnected>();
 			else
@@ -373,6 +381,14 @@ void LEDGNSSOffWithoutFix::entry() {
 			}
 		}
 		system_timer->add_schedule([this]() {
+			// L etat a-t-il change depuis l armement ? ledsm.cpp ne definit AUCUN
+			// ::exit(), donc ce transit differe n est jamais annule: il tire quoi
+			// qu il arrive, y compris si la FSM est passee entre-temps sur un autre
+			// etat. Sur la sequence nominale de deploiement, l emission Argos suit
+			// immediatement le fix, donc l orphelin de fin de session GNSS venait
+			// eteindre l indication d emission en cours. On verifie plutot que de
+			// plomber la lifecycle de 28 etats.
+			if (!is_in_state<LEDGNSSOffWithoutFix>()) return;
 			if (is_in_state<LEDConfigNotConnected>())
 				transit<LEDConfigNotConnected>();
 			else
@@ -406,6 +422,14 @@ void LEDGNSSDeepIdle::entry() {
 		}
 	}
 	system_timer->add_schedule([this]() {
+		// L etat a-t-il change depuis l armement ? ledsm.cpp ne definit AUCUN
+		// ::exit(), donc ce transit differe n est jamais annule: il tire quoi
+		// qu il arrive, y compris si la FSM est passee entre-temps sur un autre
+		// etat. Sur la sequence nominale de deploiement, l emission Argos suit
+		// immediatement le fix, donc l orphelin de fin de session GNSS venait
+		// eteindre l indication d emission en cours. On verifie plutot que de
+		// plomber la lifecycle de 28 etats.
+		if (!is_in_state<LEDGNSSDeepIdle>()) return;
 		if (is_in_state<LEDConfigNotConnected>())
 			transit<LEDConfigNotConnected>();
 		else
@@ -435,6 +459,14 @@ void LEDGNSSPowerOff::entry() {
 		}
 	}
 	system_timer->add_schedule([this]() {
+		// L etat a-t-il change depuis l armement ? ledsm.cpp ne definit AUCUN
+		// ::exit(), donc ce transit differe n est jamais annule: il tire quoi
+		// qu il arrive, y compris si la FSM est passee entre-temps sur un autre
+		// etat. Sur la sequence nominale de deploiement, l emission Argos suit
+		// immediatement le fix, donc l orphelin de fin de session GNSS venait
+		// eteindre l indication d emission en cours. On verifie plutot que de
+		// plomber la lifecycle de 28 etats.
+		if (!is_in_state<LEDGNSSPowerOff>()) return;
 		if (is_in_state<LEDConfigNotConnected>())
 			transit<LEDConfigNotConnected>();
 		else
@@ -470,6 +502,14 @@ void LEDGNSSCloudLocateReady::entry() {
 	// resume LEDGNSSOn so the operator sees the GPS is still acquiring.
 	// Otherwise go to LEDOff (the GNSS session ended).
 	system_timer->add_schedule([this]() {
+		// L etat a-t-il change depuis l armement ? ledsm.cpp ne definit AUCUN
+		// ::exit(), donc ce transit differe n est jamais annule: il tire quoi
+		// qu il arrive, y compris si la FSM est passee entre-temps sur un autre
+		// etat. Sur la sequence nominale de deploiement, l emission Argos suit
+		// immediatement le fix, donc l orphelin de fin de session GNSS venait
+		// eteindre l indication d emission en cours. On verifie plutot que de
+		// plomber la lifecycle de 28 etats.
+		if (!is_in_state<LEDGNSSCloudLocateReady>()) return;
 		if (m_is_gnss_on)
 			transit<LEDGNSSOn>();
 		else if (is_in_state<LEDConfigNotConnected>())
@@ -524,6 +564,14 @@ void LEDArgosTXComplete::entry() {
 			status_led->off();
 		}
 		system_timer->add_schedule([this]() {
+			// L etat a-t-il change depuis l armement ? ledsm.cpp ne definit AUCUN
+			// ::exit(), donc ce transit differe n est jamais annule: il tire quoi
+			// qu il arrive, y compris si la FSM est passee entre-temps sur un autre
+			// etat. Sur la sequence nominale de deploiement, l emission Argos suit
+			// immediatement le fix, donc l orphelin de fin de session GNSS venait
+			// eteindre l indication d emission en cours. On verifie plutot que de
+			// plomber la lifecycle de 28 etats.
+			if (!is_in_state<LEDArgosTXComplete>()) return;
 			status_led->off();
 			if (m_is_gnss_on)
 				transit<LEDGNSSOn>();
@@ -599,6 +647,14 @@ void LEDSurfaceDetected::entry() {
 		status_led->off();
 	}
 	system_timer->add_schedule([this]() {
+		// L etat a-t-il change depuis l armement ? ledsm.cpp ne definit AUCUN
+		// ::exit(), donc ce transit differe n est jamais annule: il tire quoi
+		// qu il arrive, y compris si la FSM est passee entre-temps sur un autre
+		// etat. Sur la sequence nominale de deploiement, l emission Argos suit
+		// immediatement le fix, donc l orphelin de fin de session GNSS venait
+		// eteindre l indication d emission en cours. On verifie plutot que de
+		// plomber la lifecycle de 28 etats.
+		if (!is_in_state<LEDSurfaceDetected>()) return;
 		transit<LEDOff>();
 	}, system_timer->get_counter() + 100);
 }
@@ -612,6 +668,14 @@ void LEDDiveDetected::entry() {
 		status_led->off();
 	}
 	system_timer->add_schedule([this]() {
+		// L etat a-t-il change depuis l armement ? ledsm.cpp ne definit AUCUN
+		// ::exit(), donc ce transit differe n est jamais annule: il tire quoi
+		// qu il arrive, y compris si la FSM est passee entre-temps sur un autre
+		// etat. Sur la sequence nominale de deploiement, l emission Argos suit
+		// immediatement le fix, donc l orphelin de fin de session GNSS venait
+		// eteindre l indication d emission en cours. On verifie plutot que de
+		// plomber la lifecycle de 28 etats.
+		if (!is_in_state<LEDDiveDetected>()) return;
 		transit<LEDOff>();
 	}, system_timer->get_counter() + 100);
 }

@@ -2327,3 +2327,111 @@ CASES_V13 = [
          titre='Les seuils batterie prennent effet sans redemarrage',
          fn=c_seuils_batterie_vivants),
 ]
+
+# =====================================================================
+#  Vague 14 — machine a etats des LED
+#  ledsm.cpp ne definit AUCUN ::exit(): ses huit transit<>() differes ne sont
+#  jamais annules. La sonde %LED est le seul moyen d observer quel etat LED est
+#  reellement actif.
+# =====================================================================
+
+def _led(b, evt=None, timeout=12.0):
+    """%LED [EVT <nom>] -> (etat, couleur)."""
+    cmd = f'%LED EVT {evt}' if evt else '%LED'
+    mk = b.mark(); b._send(cmd + '\r')
+    m = b.expect(r'%LED etat=(\w+) couleur=(\d+) clignote=(\d)', timeout, from_idx=mk)
+    # 'allumee' = couleur solide non noire OU motif clignotant actif: flash()
+    # ne met pas a jour m_color, donc la couleur seule ne suffit pas.
+    return (m.group(1), int(m.group(2)) or int(m.group(3))) if m else (None, None)
+
+def c_led_transit_orphelin(r, case):
+    """Un transit LED differe ne doit pas ecraser l etat suivant.
+
+    LEDGNSSPowerOff::entry() arme un transit<LEDOff>() a +500 ms et ne garde
+    aucun handle; son exit() n existe pas. Sur la sequence nominale de
+    deploiement l emission Argos demarre immediatement apres le fix, donc dans
+    cette fenetre de 500 ms: l orphelin venait alors eteindre l indication
+    d emission en cours. Huit transits differes sont dans ce cas dans le fichier.
+
+    On reproduit exactement: fin de session GNSS, puis emission Argos tout de
+    suite, puis on regarde ou en est la LED une fois la fenetre passee.
+    """
+    b = r.b
+    try:
+        b.enter_config(); b.write_params({'LED_MODE': 3, 'ARGOS_MODE': 0}); b.exit_config()   # 3 = ALWAYS
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    time.sleep(2)
+    if _led(b)[0] is None:
+        return r.record(case, 'ERROR', '%LED sans reponse (sonde absente du build ?)')
+
+    _led(b, 'GNSSON'); time.sleep(0.5)
+    _led(b, 'GNSSPOWEROFF')          # arme l orphelin a +500 ms
+    time.sleep(0.15)
+    juste_apres = _led(b, 'ARGOSTX')  # on entre en ArgosTX DANS la fenetre
+    time.sleep(1.2)                   # l orphelin a tire (ou non)
+    apres = _led(b)
+
+    try:
+        b.enter_config(); b.write_params({'LED_MODE': 3}); b.exit_config()
+    except Exception:
+        pass
+    trace = f'juste apres ARGOSTX: {juste_apres} | 1,2 s plus tard: {apres}'
+    if juste_apres[0] != 'ArgosTX':
+        r.record(case, 'ERROR', f"l etat ArgosTX n a pas ete atteint ({juste_apres[0]}) — non concluant", trace)
+    elif apres[0] != 'ArgosTX':
+        r.record(case, 'FAIL',
+                 f"l indication d emission a ete ecrasee par un transit orphelin "
+                 f"(etat devenu {apres[0]})", trace)
+    else:
+        r.record(case, 'PASS', "l indication d emission survit au transit differe de la session GNSS", trace)
+
+def c_led_mode_off(r, case):
+    """LED_MODE=OFF doit reellement eteindre, et ALWAYS reallumer.
+
+    Le garde LED_MODE_GUARD lit la configuration depuis l ISR RTC; il a ete rendu
+    non levant (read_param se terminait par `catch (...) { throw }`, ce qui
+    envoyait un throw a travers une trame d interruption). On verifie au passage
+    que le garde fait toujours son travail dans les deux sens.
+    """
+    b = r.b
+    try:
+        b.enter_config(); b.write_params({'LED_MODE': 0, 'ARGOS_MODE': 0}); b.exit_config()
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    # LEDGNSSOn fait un flash(CYAN, 1000): la couleur ALTERNE. Un echantillon
+    # unique tombe une fois sur deux dans la phase eteinte et ferait rougir un
+    # firmware parfaitement correct — on echantillonne sur plus d une periode.
+    def couleurs(secondes=3.0):
+        vues = []
+        fin = time.time() + secondes
+        while time.time() < fin:
+            _, c = _led(b)
+            if c is not None:
+                vues.append(c)
+            time.sleep(0.25)
+        return vues
+    time.sleep(2)
+    _led(b, 'GNSSON')
+    eteint = couleurs()
+    try:
+        b.enter_config(); b.write_params({'LED_MODE': 3}); b.exit_config()
+    except Exception as e:
+        return r.record(case, 'ERROR', f'reconfiguration impossible: {type(e).__name__}: {e}')
+    time.sleep(2)
+    _led(b, 'GNSSON')
+    allume = couleurs()
+    trace = f'LED_MODE=OFF(0): {eteint} | LED_MODE=ALWAYS(3): {allume}'
+    if not eteint or not allume:
+        r.record(case, 'ERROR', '%LED sans reponse', trace)
+    elif any(c != 0 for c in eteint):
+        r.record(case, 'FAIL', 'LED_MODE=OFF mais la LED s allume', trace)
+    elif all(c == 0 for c in allume):
+        r.record(case, 'FAIL', 'LED_MODE=ALWAYS mais la LED reste eteinte sur toute une periode', trace)
+    else:
+        r.record(case, 'PASS', 'le garde LED_MODE eteint et rallume correctement', trace)
+
+CASES_V14 = [
+    dict(id='LED-01', risque='BLOQUANT', titre='Un transit differe n ecrase pas l etat suivant', fn=c_led_transit_orphelin),
+    dict(id='LED-02', risque='MAJEUR',   titre='LED_MODE eteint et rallume',                      fn=c_led_mode_off),
+]
