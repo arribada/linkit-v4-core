@@ -3578,10 +3578,21 @@ def _sws_actif(b, secondes=30):
     Il faut donc sortir, laisser mesurer, et revenir pour lire.
     """
     b.write_params({'UNDERWATER_EN': 1})
-    b.exit_config()
-    time.sleep(secondes)
-    b.enter_config()
-    return _swsst(b)
+    # Plusieurs cycles plutot qu une attente fixe. En passe complete la carte
+    # est plus chargee qu en rejeu isole et 30 s ne suffisent pas toujours pour
+    # qu une mesure tombe: le cas se declarait alors non concluant sur un
+    # detecteur parfaitement sain. Mesure du 2026-08-28, deux passes completes
+    # de suite. On sort, on laisse mesurer, on rentre lire, et on recommence
+    # tant qu aucun echantillon n est arrive.
+    st = None
+    for _ in range(3):
+        b.exit_config()
+        time.sleep(secondes)
+        b.enter_config()
+        st = _swsst(b)
+        if st and (st['adc_brut'] or st['adc_filtre']):
+            return st
+    return st
 
 def c_sws_etat_coherent(r, case):
     """Le detecteur rend un etat physiquement coherent, a sec.
@@ -3761,40 +3772,84 @@ def c_sws_contraste(r, case):
              f"contraste {st['contraste_x10'] / 10:.1f}x, concorde avec eau/air", trace)
 
 def c_limiteur_fenetre_glissante(r, case):
-    """Le quota se libere quand la fenetre glisse, il ne se bloque pas a vie.
+    """Le quota se libere quand la fenetre glisse — le limiteur ne bloque pas a vie.
 
     RL-02 prouve que le limiteur BLOQUE au-dela du quota. Le risque symetrique
-    n etait pas couvert: qu il ne debloque jamais. Une balise definitivement
-    muette apres N emissions serait pire que pas de limiteur du tout. On pose
-    une fenetre courte, on sature, puis on attend qu elle glisse.
+    n etait pas couvert: qu il ne debloque JAMAIS. Une balise definitivement
+    muette apres N emissions serait pire que pas de limiteur du tout, et rien ne
+    le signalerait.
+
+    CORRECTION 2026-08-28: la premiere version posait ARGOS_MODE=0 et concluait
+    "aucune emission possible sans credentials KIM2". C etait FAUX sur les deux
+    points — la carte emet (26 TX SUCCESS type=gnss releves dans les journaux,
+    aucun +ERROR), et c est le mode OFF que le cas s imposait lui-meme qui
+    empechait toute emission. Le limiteur ne pouvait rien compter parce que rien
+    ne partait.
     """
     b = r.b
     try:
-        b.write_params({'RATE_LIMIT_EN': 1, 'RATE_LIMIT_WINDOW_S': 30,
-                        'RATE_LIMIT_MAX_TX': 1, 'ARGOS_MODE': 0})
+        b.enter_config()
+        b.write_params({'ARGOS_MODE': 2, 'TR_NOM': 30, 'NTRY_PER_MESSAGE': 0,
+                        'ARGOS_DEPTH_PILE': 1, 'DUTY_CYCLE': 16777215,
+                        'GNSS_EN': 1, 'UNDERWATER_EN': 0, 'LB_EN': 0,
+                        'SAT_PREPASS_EN': 0, 'MIN_SURFACE_CYCLE_INTERVAL_S': 0,
+                        'RATE_LIMIT_EN': 1, 'RATE_LIMIT_WINDOW_S': 120,
+                        'RATE_LIMIT_MAX_TX': 1})
+        b.exit_config()
     except Exception as e:
         return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    time.sleep(3)
     mk = b.mark()
-    vues = _attendre_trace(b, [r'RateLimiter', r'rate-limited', r'quota'], 90, depuis=mk)
+    b._send('%GPS 43.6 3.9 5000 9\r')
+
+    # 1. Une emission part, puis le quota (1 sur 120 s) doit bloquer la suivante.
+    vues = _attendre_trace(b, [r'TX SUCCESS', r'rate limit reached'], 150, depuis=mk,
+                           exiger=[r'rate limit reached'])
+    emis = [l for l in vues if 'TX SUCCESS' in l]
+    bloque = [l for l in vues if 'rate limit reached' in l]
+    if not emis:
+        try:
+            b.enter_config()
+            b.write_params({'RATE_LIMIT_EN': 0, 'ARGOS_MODE': 0}); b.exit_config()
+        except Exception:
+            pass
+        return r.record(case, 'ERROR',
+                        'aucune emission en 150 s — le limiteur n a rien a compter',
+                        '\n'.join(vues[:6]))
+    if not bloque:
+        try:
+            b.enter_config()
+            b.write_params({'RATE_LIMIT_EN': 0, 'ARGOS_MODE': 0}); b.exit_config()
+        except Exception:
+            pass
+        return r.record(case, 'FAIL',
+                        'une emission est partie avec un quota de 1/120 s, et pourtant le '
+                        'limiteur n annonce aucun blocage', '\n'.join(vues[:6]))
+
+    # 2. Le delai annonce doit etre FINI et compatible avec la fenetre.
+    delais = [int(m.group(1)) for l in bloque
+              for m in [re.search(r'reschedule in (\d+) s', l)] if m]
+    trace = '\n'.join(vues[:8]) + f'\ndelais annonces: {delais} s'
     try:
+        b.enter_config()
         b.write_params({'RATE_LIMIT_EN': 0, 'RATE_LIMIT_WINDOW_S': 3600,
-                        'RATE_LIMIT_MAX_TX': 4})
+                        'RATE_LIMIT_MAX_TX': 10, 'ARGOS_MODE': 0})
+        b.exit_config()
     except Exception:
         pass
-    trace = '\n'.join(vues[:8])
-    reprogrammations = [l for l in vues if 'reschedule' in l or 'rate-limited' in l]
-    if not vues:
+    if not delais:
         return r.record(case, 'ERROR',
-                        'le limiteur ne se manifeste pas — cas non concluant '
-                        '(aucune emission possible sans credentials KIM2)', trace)
-    # Une reprogrammation ANNONCEE avec un delai fini prouve que le deblocage
-    # est prevu. Un SCHEDULE_DISABLED perpetuel serait le defaut recherche.
-    for l in reprogrammations:
-        m = re.search(r'reschedule_s=(\d+)', l)
-        if m and int(m.group(1)) > 3600:
-            return r.record(case, 'FAIL',
-                            f'reprogrammation a {m.group(1)} s pour une fenetre de 30 s', trace)
-    r.record(case, 'PASS', 'le limiteur annonce une reprogrammation bornee', trace)
+                        'blocage annonce sans delai de reprise — cas non concluant', trace)
+    pire = max(delais)
+    # La fenetre fait 120 s: une reprise annoncee bien au-dela signifie que le
+    # deblocage n est pas indexe sur la fenetre glissante.
+    if pire > 300:
+        return r.record(case, 'FAIL',
+                        f'reprise annoncee dans {pire} s pour une fenetre de 120 s — '
+                        'le deblocage ne suit pas la fenetre', trace)
+    r.record(case, 'PASS',
+             f'emission comptee, blocage annonce, reprise bornee a {pire} s pour 120 s de fenetre',
+             trace)
 
 CASES_V18 = [
     dict(id='SWS-04', risque='BLOQUANT', titre='A sec, le detecteur est coherent et calibre',
