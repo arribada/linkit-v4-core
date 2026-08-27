@@ -150,7 +150,14 @@ static void blind_blink_sequence_start() {
 static bool led_24h_window_active() {
 #ifdef EXTERNAL_WAKEUP
 	if (rtc && rtc->is_set()) {
-		std::time_t led_cutoff = configuration_store->read_param<std::time_t>(ParamID::LED_HRS24_RTC_CUTOFF);
+		// Same reasoning as led_mode_allows_light(): reached from the RTC ISR,
+		// and read_param() always rethrows on a bad read.
+		std::time_t led_cutoff;
+		try {
+			led_cutoff = configuration_store->read_param<std::time_t>(ParamID::LED_HRS24_RTC_CUTOFF);
+		} catch (...) {
+			return false;
+		}
 		if (led_cutoff != 0) {
 			return rtc->gettime() < led_cutoff;
 		}
@@ -164,11 +171,34 @@ static bool led_24h_window_active() {
 }  // namespace
 
 
+/// @brief Are the LEDs allowed to light right now?
+///
+/// MUST NOT THROW. Every LED state's entry() can reach this, and those entry()
+/// handlers run in the RTC INTERRUPT: ledsm.cpp defers its blink and transition
+/// steps through system_timer->add_schedule(), and nrf_timer.cpp runs those
+/// callbacks straight from rtc_event_handler ("Schedule callbacks execute in
+/// this ISR context - keep them short"). ConfigurationStore::read_param() ends
+/// in `catch (...) { throw CONFIG_STORE_CORRUPTED; }`, so it ALWAYS rethrows on
+/// a bad read -- and a C++ throw crossing an interrupt frame reaches
+/// std::terminate, the same way the BMA400 callbacks did through the Bosch C
+/// library. Turning a recoverable config problem into a dead sealed device, for
+/// the sake of repainting an LED, is not a trade worth making: swallow it and
+/// keep the LEDs dark instead.
+static bool led_mode_allows_light() {
+	try {
+		BaseLEDMode mode = configuration_store->read_param<BaseLEDMode>(ParamID::LED_MODE);
+		if (mode == BaseLEDMode::ALWAYS)
+			return true;
+		if (mode == BaseLEDMode::HRS_24)
+			return led_24h_window_active();
+		return false;
+	} catch (...) {
+		return false;
+	}
+}
+
 // Macro for determining LED mode state
-#define LED_MODE_GUARD \
-	if (configuration_store->read_param<BaseLEDMode>(ParamID::LED_MODE) == BaseLEDMode::ALWAYS || \
-		(configuration_store->read_param<BaseLEDMode>(ParamID::LED_MODE) == BaseLEDMode::HRS_24 && \
-		 led_24h_window_active()))
+#define LED_MODE_GUARD if (led_mode_allows_light())
 
 
 void LEDOff::entry() {

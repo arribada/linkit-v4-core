@@ -860,7 +860,7 @@ def c_prepass_sans_gnss(r, case):
         b.write_params({'ARGOS_MODE': 1, 'GNSS_EN': 0})
         b.exit_config()
     except Exception as e:
-        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}')
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
     vues = _journal(r, 40, r'INCOMPATIBLE|incompatible|PASS_PREDICTION|SCHEDULE_DISABLED')
     try:
         b.enter_config(); b.write_params({'ARGOS_MODE': 0, 'GNSS_EN': 1})
@@ -920,7 +920,7 @@ def c_sws_gate(r, case):
                         'MIN_SURFACE_CYCLE_INTERVAL_S': 0, 'DRY_TIME_BEFORE_TX': 0})
         b.exit_config()
     except Exception as e:
-        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}')
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
     time.sleep(2); b._send('%GPS 43.6 3.9 5000 9\r'); time.sleep(10)
 
     # Deux preuves valables que la balise n'emettra pas sous l'eau:
@@ -967,7 +967,7 @@ def c_sws_dry_time(r, case):
                             'MIN_SURFACE_CYCLE_INTERVAL_S': 0, 'DRY_TIME_BEFORE_TX': dry})
             b.exit_config()
         except Exception as e:
-            return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}')
+            return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
         time.sleep(2); b._send('%GPS 43.6 3.9 5000 9\r'); time.sleep(8)
         b._send('%DIVE\r');    _attendre_raison(r, 'ARGOSTX', ('underwater',), 30)
         b._send('%SURFACE\r'); vu = _attendre_raison(r, 'ARGOSTX', ('scheduled', 'already-initiated'), 30)
@@ -998,7 +998,7 @@ def c_surfacing_burst(r, case):
                         'SURFACING_BURST_MAX_MSG': 3})
         b.exit_config()
     except Exception as e:
-        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}')
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
     time.sleep(2); b._send('%GPS 43.6 3.9 5000 9\r'); time.sleep(10)
     b._send('%DIVE\r'); _attendre_raison(r, 'ARGOSTX', ('underwater',), 30)
     mk = b.mark(); b._send('%SURFACE\r')
@@ -1052,7 +1052,7 @@ def c_fuite_taches_differees(r, case):
     try:
         b.enter_config(); b.write_params({'ARGOS_MODE': 0}); b.exit_config()
     except Exception as e:
-        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}')
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
     time.sleep(3)
     base = _schedq(b)
     if not base:
@@ -1115,7 +1115,7 @@ def c_axl_transmissible(r, case):
                         'ARGOS_MODE': 2})
         b.exit_config()
     except Exception as e:
-        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}')
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
     time.sleep(1.5)
     off = _argoscfg(b)
     if not off:
@@ -1165,7 +1165,7 @@ def c_limiteur_fenetre_enorme(r, case):
                         'MIN_SURFACE_CYCLE_INTERVAL_S': 0, 'SAT_PREPASS_EN': 0})
         b.exit_config()
     except Exception as e:
-        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}')
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
     time.sleep(2)
     b._send('%GPS 43.6 3.9 5000 9\r')
     time.sleep(20)
@@ -1221,7 +1221,7 @@ def c_duty_masque_nul(r, case):
                         'SAT_PREPASS_EN': 0, 'RATE_LIMIT_EN': 0})
         b.exit_config()
     except Exception as e:
-        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}')
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
     mk = b.mark()
     time.sleep(2); b._send('%GPS 43.6 3.9 5000 9\r')
     # On ATTEND la trace au lieu de dormir un temps fixe: la tentative de
@@ -1615,12 +1615,19 @@ CASES_V9 = [
 #  la DECISION d emettre et la cascade d etat, lues dans le journal.
 # =====================================================================
 
-def _attendre_trace(b, motifs, secondes, depuis=None):
-    """Attend qu une des traces apparaisse. Rend la liste des lignes vues.
+def _attendre_trace(b, motifs, secondes, depuis=None, exiger=None):
+    """Attend des traces dans le journal. Rend la liste des lignes vues.
 
     On ATTEND au lieu de dormir un temps fixe: la cascade d emersion enchaine
     des etapes de duree variable, et une fenetre figee produit de faux verdicts
     dans les deux sens.
+
+    `exiger` est la liste des motifs qui doivent TOUS avoir ete vus avant de
+    rendre la main. Sans lui, la fonction s arretait au PREMIER motif trouve —
+    ce qui suffit quand on guette un evenement unique, mais pas quand on attend
+    une SEQUENCE. SURF-01 en a fait les frais: il rendait la main sur
+    "Doppler limit reached" et concluait a l absence du "cooldown armed" qui
+    arrivait juste apres, accusant un firmware qui se comportait correctement.
     """
     mk = b.mark() if depuis is None else depuis
     fin = time.time() + secondes
@@ -1631,7 +1638,10 @@ def _attendre_trace(b, motifs, secondes, depuis=None):
             lignes = [l for _, l in b.history[mk:]]
         vues = [l.strip()[24:200] for l in lignes
                 if any(re.search(m, l) for m in motifs)]
-        if vues:
+        if exiger:
+            if all(any(re.search(m, v) for v in vues) for m in exiger):
+                return vues
+        elif vues:
             return vues
     return vues
 
@@ -1657,15 +1667,22 @@ def c_surface_limite_doppler(r, case):
     """
     b = r.b
     try:
+        # Ce cas n etait PAS idempotent: il arme lui-meme un refroidissement, et
+        # au rejeu l emersion suivante devenait passive — plus aucune trame
+        # Doppler, donc plus de limite atteinte, et un echec qui n avait rien a
+        # voir avec le firmware. On purge donc l etat en repassant par une
+        # fenetre nulle avant de poser la vraie configuration.
+        _config_surface(b, MIN_SURFACE_CYCLE_INTERVAL_S=0, COOLDOWN_TRIGGER_MODE=3)
+        time.sleep(2)
         # UNP30 vaut 3 (AFTER_LAST_TX) par defaut: l armement a la fin de la
         # phase Doppler n a lieu QUE si le declencheur est END_OF_DOPPLER. Sans
         # ce reglage le firmware a raison de ne rien armer, et le test avait
-        # tort de le lui reprocher. Et il faut une fenetre non nulle, sinon il
-        # n y a rien a refroidir.
+        # tort de le lui reprocher. Fenetre courte: juste assez pour qu il y ait
+        # quelque chose a refroidir, pas assez pour saboter le rejeu.
         _config_surface(b, SURFACING_BURST_MAX_MSG=2, COOLDOWN_TRIGGER_MODE=1,
-                        MIN_SURFACE_CYCLE_INTERVAL_S=120)
+                        MIN_SURFACE_CYCLE_INTERVAL_S=30)
     except Exception as e:
-        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}')
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
     time.sleep(2)
     b._send('%DIVE\r'); time.sleep(6)
     mk = b.mark()
@@ -1674,7 +1691,11 @@ def c_surface_limite_doppler(r, case):
     # l intervalle de salve, et le rejeu manuel du 2026-08-27 a montre que la
     # sequence complete (limite atteinte + refroidissement arme) tient en ~150 s.
     # Une fenetre trop courte faisait rougir un firmware qui se comportait bien.
-    vues = _attendre_trace(b, [r'Doppler limit reached', r'cooldown armed'], 170, depuis=mk)
+    # On surveille aussi 'passive surfacing': si l emersion est refusee par un
+    # refroidissement residuel, le cas doit le DIRE au lieu d accuser ARP43.
+    vues = _attendre_trace(b, [r'Doppler limit reached', r'cooldown armed',
+                               r'passive surfacing'], 170, depuis=mk,
+                           exiger=[r'Doppler limit reached', r'cooldown armed'])
     try:
         b.enter_config()
         b.write_params({'ARGOS_MODE': 0, 'UNDERWATER_EN': 0, 'COOLDOWN_TRIGGER_MODE': 3,
@@ -1684,7 +1705,13 @@ def c_surface_limite_doppler(r, case):
         pass
     limite = [l for l in vues if 'Doppler limit reached' in l]
     refroid = [l for l in vues if 'cooldown armed' in l]
+    passif = [l for l in vues if 'passive surfacing' in l]
     trace = '\n'.join(vues[:6])
+    if passif and not limite:
+        r.record(case, 'ERROR',
+                 'emersion rendue passive par un refroidissement residuel — cas non conclusif',
+                 trace)
+        return
     if not limite:
         r.record(case, 'FAIL', 'la phase Doppler ne s arrete pas a ARP43', trace)
     elif not refroid:
@@ -1705,7 +1732,7 @@ def c_surface_promotion_fix(r, case):
     try:
         _config_surface(b, SURFACING_BURST_MAX_MSG=8)
     except Exception as e:
-        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}')
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
     time.sleep(2)
     b._send('%DIVE\r'); time.sleep(6)
     mk = b.mark()
@@ -1740,12 +1767,13 @@ def c_surface_refroidissement(r, case):
         _config_surface(b, MIN_SURFACE_CYCLE_INTERVAL_S=90, SURFACING_BURST_MAX_MSG=1,
                         COOLDOWN_TRIGGER_MODE=1)
     except Exception as e:
-        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}')
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
     time.sleep(2)
     # premier cycle complet: il doit armer le refroidissement
     b._send('%DIVE\r'); time.sleep(6)
     mk = b.mark(); b._send('%SURFACE\r')
     arme = _attendre_trace(b, [r'cooldown started', r'cooldown armed'], 150, depuis=mk)
+    # (un seul evenement attendu ici: pas de `exiger`)
     # deuxieme emersion immediate: elle doit etre passive
     b._send('%DIVE\r'); time.sleep(6)
     mk2 = b.mark(); b._send('%SURFACE\r')
@@ -1783,7 +1811,7 @@ def c_surface_sans_sws(r, case):
         mk = b.mark()
         b.exit_config()
     except Exception as e:
-        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}')
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
     vues = _attendre_trace(b, [r'requires UNDERWATER_EN'], 45, depuis=mk)
     try:
         b.enter_config(); b.write_params({'ARGOS_MODE': 0}); b.exit_config()
@@ -1799,4 +1827,216 @@ CASES_V10 = [
     dict(id='SURF-02', risque='BLOQUANT', titre='Un fix frais promeut la salve en phase GNSS',            fn=c_surface_promotion_fix),
     dict(id='SURF-03', risque='BLOQUANT', titre='Refroidissement inter-cycles et emersion passive',       fn=c_surface_refroidissement),
     dict(id='SURF-04', risque='MAJEUR',   titre='SURFACING_BURST sans SWS est signale',                   fn=c_surface_sans_sws),
+]
+
+# =====================================================================
+#  Vague 11 — zone geographique (geofencing)
+#  is_zone_exclusion() calcule une distance haversine entre le dernier fix et
+#  (ZOP18, ZOP19), et compare a ZONE_RADIUS (ZOP20) exprime en METRES. Tout est
+#  pilotable en injectant des fix, et %ARGOSCFG rend la configuration EFFECTIVE
+#  apres cascade — c est le seul moyen d observer la substitution.
+# =====================================================================
+
+# Profils volontairement distincts sur TROIS champs independants: une bascule
+# fortuite sur un seul champ ne peut pas faire passer le test par hasard.
+_ZONE_CENTRE = (43.6, 3.9)          # (lat, lon)
+_ZONE_RAYON_M = 10000               # 10 km
+_DEDANS  = (43.60, 3.90)            # distance ~0
+_DEHORS  = (44.60, 3.90)            # ~111 km
+
+def _profil_zone(b, ooz_actif=True, **extra):
+    cfg = {'ARGOS_MODE': 2, 'TR_NOM': 60, 'ARGOS_DEPTH_PILE': 4,
+           'NTRY_PER_MESSAGE': 0, 'GNSS_EN': 1,
+           'ZONE_ENABLE_OUT_OF_ZONE_DETECTION_MODE': 1 if ooz_actif else 0,
+           'ZONE_TYPE': 1,   # BaseZoneType::CIRCLE = 1 (la valeur 0 n existe pas)
+           'ZONE_ENABLE_ACTIVATION_DATE': 0,
+           'ZONE_CENTER_LATITUDE': _ZONE_CENTRE[0],
+           'ZONE_CENTER_LONGITUDE': _ZONE_CENTRE[1],
+           'ZONE_RADIUS': _ZONE_RAYON_M,
+           'ZONE_ARGOS_MODE': 2, 'ZONE_ARGOS_REPETITION_SECONDS': 600,
+           'ZONE_ARGOS_DEPTH_PILE': 1, 'ZONE_ARGOS_NTRY_PER_MESSAGE': 2,
+           'LB_EN': 0, 'UNDERWATER_EN': 0, 'SAT_PREPASS_EN': 0,
+           'RATE_LIMIT_EN': 0, 'HAULED_DETECT_EN': 0}
+    cfg.update(extra)
+    b.enter_config(); b.write_params(cfg); b.exit_config()
+
+def _injecte_et_lit(b, lat, lon, attente=14):
+    """Injecte un fix puis rend la configuration Argos EFFECTIVE."""
+    time.sleep(1.5)
+    b._send(f'%GPS {lat} {lon} 5000 9\r')
+    time.sleep(attente)
+    return _argoscfg(b)
+
+def _est_profil_zone(c):
+    return c and c['tr_nom'] == 600 and c['depth'] == 1 and c['ntry'] == 2
+
+def _est_profil_normal(c):
+    return c and c['tr_nom'] == 60 and c['depth'] == 4 and c['ntry'] == 0
+
+def c_zone_substitution(r, case):
+    """Un fix hors du rayon doit substituer le profil ZONE, et lui seul.
+
+    C est toute la raison d etre du geofencing: hors de la zone d interet on
+    veut une cadence differente. Si la substitution n a pas lieu, la balise
+    continue a emettre au rythme nominal la ou ce n est pas voulu; si elle a
+    lieu a tort, elle ralentit la ou on l attendait rapide.
+    """
+    b = r.b
+    try:
+        _profil_zone(b)
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    dedans = _injecte_et_lit(b, *_DEDANS)
+    dehors = _injecte_et_lit(b, *_DEHORS)
+    try:
+        b.enter_config()
+        b.write_params({'ZONE_ENABLE_OUT_OF_ZONE_DETECTION_MODE': 0, 'ARGOS_MODE': 0})
+        b.exit_config()
+    except Exception:
+        pass
+    if not dedans or not dehors:
+        return r.record(case, 'ERROR', '%ARGOSCFG sans reponse')
+    trace = f'dedans: {dedans}\ndehors: {dehors}'
+    if not _est_profil_normal(dedans):
+        r.record(case, 'FAIL', 'un fix DANS la zone ne garde pas le profil nominal', trace)
+    elif not _est_profil_zone(dehors):
+        r.record(case, 'FAIL', 'un fix HORS zone ne substitue pas le profil ZONE', trace)
+    else:
+        r.record(case, 'PASS', 'profil nominal dedans, profil ZONE dehors', trace)
+
+def c_zone_frontiere(r, case):
+    """Le rayon est en METRES et la comparaison est stricte (d_km > rayon/1000).
+
+    Une erreur d unite d un facteur mille sur ce parametre est invisible en
+    lecture — le nombre reste plausible — et deplace la frontiere de 10 km a
+    10 m ou a 10 000 km. On l eprouve avec deux fix qui encadrent la limite.
+    """
+    b = r.b
+    try:
+        _profil_zone(b, ZONE_RADIUS=10000)   # 10 km
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    # ~5,6 km au nord du centre: DEDANS.  ~16,7 km: DEHORS.
+    proche = _injecte_et_lit(b, _ZONE_CENTRE[0] + 0.05, _ZONE_CENTRE[1])
+    loin   = _injecte_et_lit(b, _ZONE_CENTRE[0] + 0.15, _ZONE_CENTRE[1])
+    try:
+        b.enter_config()
+        b.write_params({'ZONE_ENABLE_OUT_OF_ZONE_DETECTION_MODE': 0, 'ARGOS_MODE': 0})
+        b.exit_config()
+    except Exception:
+        pass
+    if not proche or not loin:
+        return r.record(case, 'ERROR', '%ARGOSCFG sans reponse')
+    trace = f'a ~5,6 km: {proche}\na ~16,7 km: {loin}'
+    if not _est_profil_normal(proche):
+        r.record(case, 'FAIL', 'un fix a 5,6 km est traite comme hors zone (rayon 10 km)', trace)
+    elif not _est_profil_zone(loin):
+        r.record(case, 'FAIL', 'un fix a 16,7 km est traite comme dans la zone (rayon 10 km)', trace)
+    else:
+        r.record(case, 'PASS', 'la frontiere tombe bien entre 5,6 et 16,7 km pour un rayon de 10 km', trace)
+
+def c_zone_desactivee(r, case):
+    """ZOP04=0 doit neutraliser la substitution, meme tres loin du centre.
+
+    Un operateur qui desactive la detection hors-zone ne doit pas se retrouver
+    avec le profil ZONE applique parce que d anciennes coordonnees trainent
+    dans la configuration.
+    """
+    b = r.b
+    try:
+        _profil_zone(b, ooz_actif=False)
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    loin = _injecte_et_lit(b, *_DEHORS)
+    try:
+        b.enter_config(); b.write_params({'ARGOS_MODE': 0}); b.exit_config()
+    except Exception:
+        pass
+    if not loin:
+        return r.record(case, 'ERROR', '%ARGOSCFG sans reponse')
+    if _est_profil_zone(loin):
+        r.record(case, 'FAIL', 'profil ZONE applique alors que la detection est desactivee', str(loin))
+    elif _est_profil_normal(loin):
+        r.record(case, 'PASS', 'detection desactivee: le profil nominal est conserve', str(loin))
+    else:
+        r.record(case, 'FAIL', 'profil ni nominal ni ZONE', str(loin))
+
+def c_zone_batterie_prime(r, case):
+    """LOW_BATTERY doit primer sur hors-zone.
+
+    La cascade de get_argos_configuration() est
+    `if (lb_en && batterie basse) {...} else if (is_out_of_zone) {...}`: une
+    balise a la fois hors zone ET en batterie basse doit prendre le profil LB,
+    pas le profil ZONE. Se tromper d ordre ici fait emettre au rythme ZONE une
+    balise qui n a plus l energie pour le tenir.
+
+    LIMITE CONNUE DE CE CAS: BatteryMonitor recoit ses deux seuils par son
+    CONSTRUCTEUR (init_battery dans main.cpp) et ne les relit JAMAIS ensuite.
+    LB_THRESHOLD et LB_CRITICAL_THRESH ne prennent donc effet qu au redemarrage,
+    et remonter LB_THRESHOLD par DTE ne suffit pas a lever le drapeau batterie
+    basse dans la session en cours. Le cas tente un redemarrage logiciel, mais
+    il se declare NON CONCLUANT (ERROR, pas FAIL) si le drapeau ne monte pas:
+    accuser le firmware sur une precondition non remplie serait pire que ne rien
+    tester. Rendre ce cas concluant demande une injection de mesure batterie
+    (sonde %BATT <mv>), qui n existe pas encore.
+    """
+    b = r.b
+    try:
+        b.enter_config()
+        _, st = b.read_params(['LB_THRESHOLD'])
+        b.exit_config()
+    except Exception as e:
+        return r.record(case, 'ERROR', f'lecture impossible: {type(e).__name__}')
+    try:
+        _profil_zone(b, LB_EN=1, LB_THRESHOLD=99, LB_CRITICAL_THRESH=1,
+                     LB_ARGOS_MODE=2, LB_ARGOS_DEPTH_PILE=2,
+                     LB_NTRY_PER_MESSAGE=5, TR_LB=900)
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+
+    # BatteryMonitor recoit ses deux seuils par son CONSTRUCTEUR (init_battery
+    # dans main.cpp) et ne les relit JAMAIS. Changer LB_THRESHOLD par DTE ne
+    # deplace donc pas le seuil en vigueur tant que la carte n a pas redemarre:
+    # sans ce redemarrage le drapeau batterie basse ne se leve pas et le cas
+    # n eprouve rien du tout.
+    r.say('   redemarrage logiciel (les seuils batterie sont figes au boot)...')
+    try:
+        b.enter_config()
+        b._send('$RSTBW#000;\r')
+    except Exception:
+        pass
+    try: b.close()
+    except Exception: pass
+    r.b = None
+    time.sleep(16)
+    if not r.connect():
+        return r.record(case, 'ERROR', 'carte injoignable apres redemarrage')
+    b = r.b
+    time.sleep(3)
+    dehors = _injecte_et_lit(b, *_DEHORS, attente=18)
+    try:
+        b.enter_config()
+        b.write_params({'LB_EN': 0, 'LB_THRESHOLD': int(st.get('LBP02', 10)),
+                        'LB_CRITICAL_THRESH': 5,
+                        'ZONE_ENABLE_OUT_OF_ZONE_DETECTION_MODE': 0, 'ARGOS_MODE': 0})
+        b.exit_config()
+    except Exception:
+        pass
+    if not dehors:
+        return r.record(case, 'ERROR', '%ARGOSCFG sans reponse')
+    trace = f'hors zone + batterie basse: {dehors}'
+    if not dehors['lb']:
+        r.record(case, 'ERROR', "le drapeau batterie basse ne s est pas leve — cas non concluant", trace)
+    elif _est_profil_zone(dehors):
+        r.record(case, 'FAIL', 'le profil ZONE prime sur LOW_BATTERY', trace)
+    elif dehors['ntry'] == 5 and dehors['depth'] == 2:
+        r.record(case, 'PASS', 'LOW_BATTERY prime bien sur hors-zone', trace)
+    else:
+        r.record(case, 'FAIL', 'ni profil LB ni profil ZONE', trace)
+
+CASES_V11 = [
+    dict(id='ZONE-01', risque='BLOQUANT', titre='Hors zone substitue le profil ZONE',        fn=c_zone_substitution),
+    dict(id='ZONE-02', risque='MAJEUR',   titre='La frontiere du rayon est en metres',        fn=c_zone_frontiere),
+    dict(id='ZONE-03', risque='MAJEUR',   titre='Detection desactivee: aucune substitution',  fn=c_zone_desactivee),
+    dict(id='ZONE-04', risque='MAJEUR',   titre='LOW_BATTERY prime sur hors-zone',            fn=c_zone_batterie_prime),
 ]
