@@ -4542,3 +4542,193 @@ CASES_V23 = [
     dict(id='RSTV-01', risque='MAJEUR',   titre='RSTVW remet a zero et refuse un index inconnu',
          fn=c_rstvw_compteur_tx),
 ]
+
+
+# =====================================================================
+#  Vague 24 — integration PREPASS v4.0 / reception AOP Kineis
+#
+#  Trois choses a eprouver sur carte, qu aucun test hote ne peut couvrir:
+#  que les nouveaux parametres existent vraiment dans le binaire flashe, que
+#  le codec AOP refuse l ancien format SANS abimer la table stockee, et que la
+#  reception ne s arme pas quand elle ne doit pas.
+# =====================================================================
+
+# Capture reelle CLS retrieve-kineis-aop du 2026-08-27T18:31 UTC, 478 octets,
+# sha256 fcf7b67e...c332b1 — la meme que le test hote.
+_AOP_KINEIS_HEX = 'tests/data/kineis_aop_20260827.hex'
+
+def c_prepass_params_presents(r, case):
+    """Les trois parametres PREPASS v4.0 existent et sont bornes.
+
+    PPP10/11/12 remplacent des valeurs qui etaient en dur dans le code. Un
+    binaire flashe sans eux accepterait les ecritures en silence (cle inconnue
+    -> rejet nomme) ou, pire, les rejetterait sans qu on s en apercoive: la
+    balise resterait sur les valeurs d usine sans le dire.
+    """
+    b = r.b
+    defauts = []
+    try:
+        b.write_params({'PP_MIN_CULMINATION': 10, 'PP_RX_MIN_CULMINATION': 25,
+                        'PP_POSITION_MARGIN_KM': 5})
+        _, lus = b.read_params(['PP_MIN_CULMINATION', 'PP_RX_MIN_CULMINATION',
+                                'PP_POSITION_MARGIN_KM'])
+    except Exception as e:
+        return r.record(case, 'ERROR', f'ecriture/lecture impossible: {type(e).__name__}: {e}')
+    attendu = {'PPP10': '10', 'PPP11': '25', 'PPP12': '5'}
+    for cle, val in attendu.items():
+        if lus.get(cle) != val:
+            defauts.append(f'{cle}={lus.get(cle)} au lieu de {val}')
+    # Bornes: la culmination est un angle, 91 n a pas de sens.
+    for cle, hors in (('PP_MIN_CULMINATION', 91), ('PP_RX_MIN_CULMINATION', 91),
+                      ('PP_POSITION_MARGIN_KM', 101)):
+        try:
+            b.write_params({cle: hors}, strict=False)
+            _, apres = b.read_params([cle])
+            k = b._key(cle)
+            if apres.get(k) == str(hors):
+                defauts.append(f'{cle} accepte la valeur hors borne {hors}')
+        except Exception:
+            pass
+    try:
+        b.write_params({'PP_MIN_CULMINATION': 0, 'PP_RX_MIN_CULMINATION': 20,
+                        'PP_POSITION_MARGIN_KM': 0})
+    except Exception:
+        pass
+    trace = f'relus: {lus}'
+    if defauts:
+        return r.record(case, 'FAIL', '; '.join(defauts), trace)
+    r.record(case, 'PASS', 'PPP10/11/12 presents, ecrits, relus et bornes', trace)
+
+def c_aop_kineis_accepte(r, case):
+    """La carte accepte une vraie capture allcast Kineis et en tire 25 satellites.
+
+    Le test hote prouve le decodage; celui-ci prouve que le BINAIRE FLASHE fait
+    la meme chose, avec la meme table en flash externe. C est le seul endroit ou
+    l on verifie que l AOP survit reellement a l ecriture LittleFS.
+    """
+    b = r.b
+    import os
+    chemin = os.path.join(os.path.dirname(__file__), '..', '..', _AOP_KINEIS_HEX)
+    try:
+        with open(os.path.normpath(chemin)) as f:
+            hexa = f.read().strip()
+    except OSError as e:
+        return r.record(case, 'ERROR', f'vecteur introuvable: {e}')
+    binaire = bytes.fromhex(hexa)
+    # $PASPW#<len3hex>;<binaire brut>\r — la charge est BINAIRE, pas du texte.
+    trame = f'$PASPW#{len(binaire):03X};'.encode() + binaire + b'\r'
+    mk = b.mark()
+    try:
+        b.ser.write(trame)
+        b.ser.flush()
+    except Exception as e:
+        return r.record(case, 'ERROR', f'envoi impossible: {type(e).__name__}: {e}')
+    m = b.expect(r'\$([ON]);PASPW#', timeout=25.0, from_idx=mk)
+    if not m:
+        return r.record(case, 'ERROR', 'PASPW sans reponse')
+    if m.group(1) != 'O':
+        ligne = m.string if hasattr(m, 'string') else ''
+        return r.record(case, 'FAIL', f'capture Kineis REFUSEE: {ligne[:80]}', ligne[:200])
+    aop = _statr(b, ['PPT01', 'PPT02', 'ART03'])
+    trace = f'{len(binaire)} octets acceptes\nAOP: {aop}'
+    if aop.get('PPT01') != '1':
+        return r.record(case, 'FAIL',
+                        f"AOP acceptee mais declaree invalide (PPT01={aop.get('PPT01')})", trace)
+    date = aop.get('ART03', '')
+    if not date.startswith('27/08/2026'):
+        return r.record(case, 'FAIL',
+                        f'ART03={date!r}, attendu le bulletin du 27/08/2026', trace)
+    if date.endswith('00:00:00'):
+        return r.record(case, 'FAIL',
+                        'ART03 porte minuit: le firmware retombe sur la semantique de '
+                        'l ancien codec au lieu de l horodatage du bulletin', trace)
+    r.record(case, 'PASS', f'capture Kineis acceptee, AOP valide, ART03={date}', trace)
+
+def c_aop_ancien_format_refuse(r, case):
+    """L ancien format A-DCS est refuse SANS abimer la table stockee.
+
+    Ce qui compte n est pas l echec mais sa proprete: accepter a moitie une
+    trame illisible ecrirait des elements orbitaux faux, et la balise viserait
+    des satellites absents — panne silencieuse et durable, puisque plus rien ne
+    la corrigerait avant le prochain PASPW.
+    """
+    b = r.b
+    avant = _statr(b, ['PPT01', 'ART03'])
+    # Adresse allcast A-DCS (0x0BE5) suivie de remplissage: la forme suffit,
+    # le codec doit la rejeter sur l adresse.
+    faux = bytes.fromhex('00000BE5') + bytes(20)
+    trame = f'$PASPW#{len(faux):03X};'.encode() + faux + b'\r'
+    mk = b.mark()
+    try:
+        b.ser.write(trame); b.ser.flush()
+    except Exception as e:
+        return r.record(case, 'ERROR', f'envoi impossible: {type(e).__name__}: {e}')
+    m = b.expect(r'\$([ON]);PASPW#', timeout=20.0, from_idx=mk)
+    apres = _statr(b, ['PPT01', 'ART03'])
+    trace = f'avant={avant}\napres={apres}'
+    if not m:
+        return r.record(case, 'ERROR', 'PASPW sans reponse sur l ancien format', trace)
+    if m.group(1) != 'N':
+        return r.record(case, 'FAIL',
+                        'une trame A-DCS est ACCEPTEE — la table a pu etre ecrasee', trace)
+    if avant.get('ART03') and apres.get('ART03') != avant.get('ART03'):
+        return r.record(case, 'FAIL',
+                        f"refus annonce mais la table a bouge: ART03 {avant.get('ART03')} "
+                        f"-> {apres.get('ART03')}", trace)
+    r.record(case, 'PASS', 'ancien format refuse, table stockee intacte', trace)
+
+def c_rx_gate_batterie(r, case):
+    """La reception AOP ne s arme pas en batterie faible.
+
+    Une fenetre de reception coute jusqu a ARGOS_RX_MAX_WINDOW (15 min par
+    defaut) de recepteur alimente. Le profil batterie faible existe pour en
+    faire MOINS. La protection etait accidentelle — elle tenait au fait que
+    LB_ARGOS_MODE vaut LEGACY par defaut — et un operateur choisissant
+    PASS_PREDICTION en batterie faible la faisait disparaitre.
+
+    On observe l ordonnancement du service, seul temoin accessible au banc.
+    """
+    b = r.b
+    try:
+        b.enter_config()
+        b.write_params({'ARGOS_RX_EN': 1, 'ARGOS_MODE': 1, 'LB_EN': 1,
+                        'LB_ARGOS_MODE': 1, 'CERT_TX_ENABLE': 0})
+        b.exit_config()
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    time.sleep(4)
+    m, _ = r.raw_until('%SCHED\r', r'%SCHED ', timeout=20.0)
+    ligne = (m.string if m and hasattr(m, 'string') else '') or ''
+    mm = re.search(r'ARGOSRX=(none|\d+ms)\(([^)]*)\)', ligne)
+    try:
+        b.enter_config()
+        b.write_params({'LB_EN': 0, 'LB_ARGOS_MODE': 2, 'ARGOS_MODE': 0})
+        b.exit_config()
+    except Exception:
+        pass
+    if not mm:
+        return r.record(case, 'ERROR',
+                        '%SCHED ne rapporte pas le service ARGOSRX — sonde ou service absent',
+                        ligne[:200])
+    quand, raison = mm.group(1), mm.group(2)
+    trace = ligne[:220]
+    # La batterie du banc est pleine: LB_EN=1 seul ne declenche pas le profil.
+    # Ce cas est donc un GARDE de configuration, pas une preuve de terrain — il
+    # verifie qu on n arme pas la reception hors PASS_PREDICTION reel.
+    if quand != 'none' and 'not-enabled' not in raison and 'stopped' not in raison:
+        return r.record(case, 'ERROR',
+                        f'la carte est sur batterie pleine (LB inactif): ARGOSRX={quand} '
+                        f'({raison}) — cas non concluant sans alimentation pilotable',
+                        trace)
+    r.record(case, 'PASS', f'reception non armee (raison: {raison})', trace)
+
+CASES_V24 = [
+    dict(id='PP-01',  risque='MAJEUR',   titre='PPP10/11/12 presents, ecrits, relus et bornes',
+         fn=c_prepass_params_presents),
+    dict(id='AOP-01', risque='BLOQUANT', titre='Une vraie capture Kineis est acceptee et datee',
+         fn=c_aop_kineis_accepte),
+    dict(id='AOP-02', risque='BLOQUANT', titre='L ancien format est refuse sans abimer la table',
+         fn=c_aop_ancien_format_refuse),
+    dict(id='RX-01',  risque='MAJEUR',   titre='La reception AOP ne s arme pas sans raison',
+         fn=c_rx_gate_batterie),
+]
