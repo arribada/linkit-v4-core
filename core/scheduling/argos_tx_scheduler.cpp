@@ -187,7 +187,10 @@ std::time_t ArgosTxScheduler::next_pass_epoch(ArgosConfig& config, BasePassPredi
 		static_cast<float>(config.prepass_min_duration) / 60.0f,
 		config.prepass_max_passes,
 		static_cast<float>(config.prepass_linear_margin) / 60.0f,
-		config.prepass_comp_step
+		config.prepass_comp_step,
+		0, // minCulmination  // TODO : ADD DTE PARAMETER
+		0, // position error, // TODO : ADD DTE PARAMETER
+		true // includeCurrentPass
 	};
 	SatelliteNextPassPrediction_t next_pass;
 	if (PREVIPASS_compute_next_pass(&pp_config, pass_predict.records,
