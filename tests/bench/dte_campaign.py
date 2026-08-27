@@ -1249,10 +1249,20 @@ def c_limiteur_fenetre_enorme(r, case):
     except Exception as e:
         return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
     time.sleep(2)
+    mk = b.mark()
     b._send('%GPS 43.6 3.9 5000 9\r')
-    time.sleep(20)
+    # On n echantillonne QU APRES que le quota soit consomme. Avant, l emission
+    # est legitimement immediate — un fix vient de tomber — et un releve a 0 ms
+    # n a rien a voir avec un debordement.
+    #
+    # Mesure du 2026-08-28: [0, 4294967294, 4294967294, 4294967294, 4294967294,
+    # 4294967294]. Les cinq dernieres valeurs sont exactement MAX_RESCHEDULE_MS,
+    # donc la borne firmware tient; c est le premier releve, pris avant blocage,
+    # qui faisait echouer le cas. Il passait au rejeu isole simplement parce
+    # qu un lien lent decalait ce premier releve apres la consommation du quota.
+    bloque = _attendre_trace(b, [r'rate limit reached'], 90, depuis=mk)
     vus = []
-    for _ in range(6):
+    for _ in range(5):
         s = _sched_argos(r)
         if s and s[0] is not None:
             vus.append(s[0])
@@ -1264,10 +1274,14 @@ def c_limiteur_fenetre_enorme(r, case):
         b.exit_config()
     except Exception:
         pass
+    if not bloque:
+        return r.record(case, 'ERROR',
+                        'le limiteur n annonce jamais son blocage en 90 s — cas non concluant',
+                        f'delais observes: {vus} ms')
     if not vus:
-        return r.record(case, 'ERROR', 'aucune planification ARGOSTX observee')
+        return r.record(case, 'ERROR', 'aucune planification ARGOSTX observee apres blocage')
     mini = min(vus)
-    trace = f'delais observes: {vus} ms'
+    trace = f'blocage annonce, delais ensuite: {vus} ms'
     # Avec 1 TX autorise sur une fenetre de 49710 jours, une fois le quota
     # consomme le replanning doit etre ENORME. Un debordement le ramenerait
     # sous la minute.
@@ -5019,4 +5033,264 @@ CASES_V25 = [
     # En dernier: efface un journal.
     dict(id='ERAS-01', risque='MAJEUR',   titre='ERASE vide le journal et refuse un type inconnu',
          fn=c_erase_journal),
+]
+
+
+# =====================================================================
+#  Vague 26 — PLEIN AIR: ce qu aucune injection ne remplace
+#
+#  A LANCER ANTENNE VERS LE CIEL. Ces cas ne s executent pas sur la paillasse
+#  et se declarent non concluants plutot que rouges s ils ne voient pas de fix.
+#
+#  Pourquoi ils existent: %GPS injecte la position DIRECTEMENT dans GPSService
+#  et court-circuite le pilote M10Q. Or les filtres hAcc et HDOP vivent dans
+#  m10qasync.cpp, sur la trame NAV-PVT REELLE (lignes 1061 et 1085). Ils n ont
+#  donc JAMAIS ete eprouves — ni au banc, ni en simulation. Un filtre trop
+#  strict rejette toutes les positions et la balise se tait sans qu aucune
+#  erreur ne soit tracee; un filtre inoperant laisse passer des positions
+#  fausses que le segment sol prendra pour vraies. Les deux se paient
+#  entierement sur le terrain.
+# =====================================================================
+
+def _config_ciel(b, **extra):
+    """Configuration d acquisition reelle: aucune injection, aucune emission."""
+    cfg = {'GNSS_EN': 1, 'ARGOS_MODE': 0, 'UNDERWATER_EN': 0, 'LB_EN': 0,
+           'RATE_LIMIT_EN': 0, 'MOORED_DETECT_EN': 0, 'HAULED_DETECT_EN': 0,
+           'ZONE_ENABLE_OUT_OF_ZONE_DETECTION_MODE': 0,
+           'GNSS_ACQ_TIMEOUT': 240, 'GNSS_COLD_ACQ_TIMEOUT': 300,
+           'GNSS_HACCFILT_EN': 0, 'GNSS_HDOPFILT_EN': 0,
+           'GNSS_DEEP_IDLE_AFTER_OFF_S': 0, 'GNSS_SESSION_SINGLE_FIX': 1}
+    cfg.update(extra)
+    b.enter_config(); b.write_params(cfg); b.exit_config()
+
+def _attend_fix_reel(b, secondes=330, depuis=None):
+    """Attend une VRAIE position. Rend (lignes, hAcc_mm, numSV) ou (lignes, None, None).
+
+    On guette la trace de traitement du pilote, pas l injection de banc: c est
+    la seule qui prouve qu une trame NAV-PVT est reellement arrivee.
+    """
+    motifs = [r'task_process_gnss_data: lat=', r'timeout with degraded PVT',
+              r'acquisition timeout — no fix']
+    vues = _attendre_trace(b, motifs, secondes, depuis=depuis)
+    for l in vues:
+        m = re.search(r'hAcc=([\d.]+)', l)
+        n = re.search(r'numSV=(\d+)', l)
+        if m and 'task_process_gnss_data' in l:
+            return vues, float(m.group(1)), int(n.group(1)) if n else 0
+    return vues, None, None
+
+def c_ciel_premier_fix(r, case):
+    """Une vraie position tombe, avec une precision et un nombre de satellites plausibles.
+
+    C est LE cas qui prouve que le recepteur fonctionne. Tout le reste de la
+    campagne GNSS a ete valide par injection: rien n avait encore montre qu une
+    trame NAV-PVT reelle traverse le pilote jusqu au journal.
+    """
+    b = r.b
+    try:
+        _config_ciel(b)
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    mk = b.mark()
+    vues, hacc, numsv = _attend_fix_reel(b, 330, depuis=mk)
+    trace = '\n'.join(vues[:6])
+    if hacc is None:
+        degrade = any('degraded PVT' in l for l in vues)
+        return r.record(case, 'ERROR',
+                        'aucune position reelle en 5 min — antenne masquee ou ciel bouche'
+                        + (' (fixes degrades seulement)' if degrade else ''), trace)
+    defauts = []
+    # 50 m: au-dela, ce n est pas un fix utilisable pour du suivi animal.
+    if hacc > 50000:
+        defauts.append(f'hAcc={hacc/1000:.1f} m — precision inexploitable')
+    if numsv < 4:
+        defauts.append(f'numSV={numsv} — un fix 3D en demande au moins 4')
+    if defauts:
+        return r.record(case, 'FAIL', '; '.join(defauts), trace)
+    r.record(case, 'PASS', f'position reelle: hAcc={hacc/1000:.1f} m, {numsv} satellites', trace)
+
+def c_ciel_filtre_hacc(r, case):
+    """GNP20/21 rejette reellement une position trop imprecise.
+
+    Le chemin n a jamais ete couvert: il est dans le pilote, sur la trame reelle.
+    On serre le seuil sous ce que le ciel donne — la position doit alors etre
+    rejetee et la session se terminer sur un PVT degrade. Puis on desserre, et
+    la meme position doit passer. Les deux sens comptent: un filtre qui rejette
+    tout et un filtre inoperant echouent chacun a une moitie du test.
+    """
+    b = r.b
+    # 1. Reference: quelle precision le ciel donne-t-il ici ?
+    try:
+        _config_ciel(b)
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    mk = b.mark()
+    _, hacc, _ = _attend_fix_reel(b, 330, depuis=mk)
+    if hacc is None:
+        return r.record(case, 'ERROR', 'pas de position de reference — cas non evaluable')
+
+    # 2. Seuil impossible: 1 m alors que le ciel donne hacc. GNP21 est en METRES
+    #    (le pilote compare threshold * 1000 aux mm).
+    strict = 1
+    if hacc / 1000.0 <= 2.0:
+        return r.record(case, 'ERROR',
+                        f'ciel trop bon (hAcc={hacc/1000:.1f} m): aucun seuil strict '
+                        'ne peut le rejeter — cas non concluant')
+    try:
+        _config_ciel(b, GNSS_HACCFILT_EN=1, GNSS_HACCFILT_THR=strict)
+    except Exception as e:
+        return r.record(case, 'ERROR', f'reconfiguration impossible: {type(e).__name__}: {e}')
+    mk2 = b.mark()
+    vues_strict, hacc_strict, _ = _attend_fix_reel(b, 330, depuis=mk2)
+    rejete = any('degraded PVT' in l for l in vues_strict)
+
+    # 3. Seuil large: la meme position doit repasser.
+    try:
+        _config_ciel(b, GNSS_HACCFILT_EN=1, GNSS_HACCFILT_THR=200)
+    except Exception:
+        pass
+    mk3 = b.mark()
+    _, hacc_large, _ = _attend_fix_reel(b, 330, depuis=mk3)
+    try:
+        _config_ciel(b, GNSS_HACCFILT_EN=0)
+    except Exception:
+        pass
+
+    trace = (f'ciel: hAcc={hacc/1000:.1f} m\n'
+             f'seuil {strict} m -> {"REJETE (PVT degrade)" if rejete else f"accepte hAcc={hacc_strict}"}\n'
+             f'seuil 200 m -> {"accepte" if hacc_large is not None else "AUCUNE position"}')
+    if not rejete and hacc_strict is not None:
+        return r.record(case, 'FAIL',
+                        f'seuil a {strict} m mais une position a {hacc_strict/1000:.1f} m '
+                        'est acceptee — le filtre hAcc ne filtre pas', trace)
+    if hacc_large is None:
+        return r.record(case, 'FAIL',
+                        'seuil desserre a 200 m et pourtant aucune position acceptee — '
+                        'le filtre rejette tout', trace)
+    r.record(case, 'PASS', 'le filtre hAcc rejette au seuil strict et laisse passer au large',
+             trace)
+
+def c_ciel_fix_chaud(r, case):
+    """Le second fix est nettement plus rapide que le premier.
+
+    C est la contrepartie mesurable de la mort GNSS a deux jours: si
+    l ephemeride n est pas conservee entre deux sessions, chaque acquisition
+    repart de zero et la balise finit par ne plus jamais fixer dans sa fenetre.
+    """
+    b = r.b
+    try:
+        _config_ciel(b, GNSS_DEEP_IDLE_AFTER_OFF_S=30)
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    mk = b.mark(); t0 = time.time()
+    _, h1, _ = _attend_fix_reel(b, 330, depuis=mk)
+    t_froid = time.time() - t0
+    if h1 is None:
+        return r.record(case, 'ERROR', 'pas de premiere position — cas non evaluable')
+    time.sleep(45)
+    mk2 = b.mark(); t1 = time.time()
+    _, h2, _ = _attend_fix_reel(b, 330, depuis=mk2)
+    t_chaud = time.time() - t1
+    try:
+        _config_ciel(b, GNSS_DEEP_IDLE_AFTER_OFF_S=0)
+    except Exception:
+        pass
+    trace = f'premier fix: {t_froid:.0f} s\nsecond fix: {t_chaud:.0f} s'
+    if h2 is None:
+        return r.record(case, 'FAIL',
+                        'la seconde session ne fixe plus alors que la premiere a reussi — '
+                        'l ephemeride n est pas conservee', trace)
+    if t_chaud > t_froid:
+        return r.record(case, 'FAIL',
+                        f'le second fix ({t_chaud:.0f} s) est plus lent que le premier '
+                        f'({t_froid:.0f} s) — rien n est conserve entre sessions', trace)
+    r.record(case, 'PASS', f'premier fix {t_froid:.0f} s, second {t_chaud:.0f} s', trace)
+
+def c_ciel_emission_reelle(r, case):
+    """Une position reelle part reellement par satellite.
+
+    Bout en bout: ciel -> pilote -> pile de profondeur -> encodage -> KIM2 ->
+    antenne. Toute la campagne a valide des morceaux de cette chaine; ce cas est
+    le seul qui la parcourt entiere avec une vraie position.
+    """
+    b = r.b
+    try:
+        _config_ciel(b, ARGOS_MODE=2, TR_NOM=60, NTRY_PER_MESSAGE=1,
+                     ARGOS_DEPTH_PILE=1, DUTY_CYCLE=16777215, SAT_PREPASS_EN=0)
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    mk = b.mark()
+    _, hacc, _ = _attend_fix_reel(b, 330, depuis=mk)
+    if hacc is None:
+        return r.record(case, 'ERROR', 'pas de position reelle — emission non evaluable')
+    vues = _attendre_trace(b, [r'TX SUCCESS', r'\+ERROR=', r'TX START'], 180, depuis=mk)
+    try:
+        b.enter_config(); b.write_params({'ARGOS_MODE': 0}); b.exit_config()
+    except Exception:
+        pass
+    trace = '\n'.join(vues[:8])
+    succes = [l for l in vues if 'TX SUCCESS' in l]
+    erreurs = [l for l in vues if '+ERROR=' in l]
+    if not vues:
+        return r.record(case, 'FAIL',
+                        'position reelle acquise mais AUCUNE emission tentee en 3 min', trace)
+    if not succes and erreurs:
+        return r.record(case, 'FAIL', f'emission refusee par le module: {erreurs[0][:70]}', trace)
+    if not succes:
+        return r.record(case, 'ERROR', 'emission tentee sans verdict — cas non concluant', trace)
+    r.record(case, 'PASS', f'position reelle emise ({hacc/1000:.1f} m de precision)', trace)
+
+def c_ciel_prepasse_reelle(r, case):
+    """Avec une AOP fraiche et une vraie position, la prepasse calcule un passage.
+
+    ARG-04 ne prouve aujourd hui que le REPLI, faute d AOP exploitable. Ici la
+    table vient d etre chargee et la position est reelle: le firmware doit
+    calculer un passage plutot que retomber sur le periodique.
+    """
+    b = r.b
+    try:
+        _config_ciel(b, ARGOS_MODE=1, SAT_PREPASS_EN=1, TR_NOM=60,
+                     NTRY_PER_MESSAGE=0, DUTY_CYCLE=16777215)
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    mk = b.mark()
+    _, hacc, _ = _attend_fix_reel(b, 330, depuis=mk)
+    if hacc is None:
+        return r.record(case, 'ERROR', 'pas de position reelle — prepasse non evaluable')
+    vues = _attendre_trace(b, [r'prepass', r'next pass', r'repli periodique',
+                               r'emission periodique'], 150, depuis=mk)
+    aop = None
+    try:
+        b.enter_config(); aop = _statr(b, ['PPT01', 'PPT02']); b.exit_config()
+    except Exception:
+        pass
+    try:
+        b.enter_config(); b.write_params({'ARGOS_MODE': 0, 'SAT_PREPASS_EN': 0}); b.exit_config()
+    except Exception:
+        pass
+    trace = f'AOP: {aop}\n' + '\n'.join(vues[:6])
+    if aop and aop.get('PPT01') != '1':
+        return r.record(case, 'ERROR',
+                        'AOP invalide sur la carte — charger la capture Kineis avant ce cas',
+                        trace)
+    repli = [l for l in vues if 'periodique' in l]
+    if repli:
+        return r.record(case, 'FAIL',
+                        'AOP valide et position reelle, et pourtant repli periodique: '
+                        'aucun passage calcule', trace)
+    if not vues:
+        return r.record(case, 'ERROR', 'aucune trace de prepasse en 150 s', trace)
+    r.record(case, 'PASS', 'un passage satellite est calcule sur AOP fraiche', trace)
+
+CASES_V26 = [
+    dict(id='OUT-01', risque='BLOQUANT', titre='Une vraie position tombe, precise et plausible',
+         fn=c_ciel_premier_fix),
+    dict(id='OUT-02', risque='BLOQUANT', titre='Le filtre hAcc rejette au strict, laisse passer au large',
+         fn=c_ciel_filtre_hacc),
+    dict(id='OUT-03', risque='MAJEUR',   titre='Le second fix est plus rapide que le premier',
+         fn=c_ciel_fix_chaud),
+    dict(id='OUT-04', risque='BLOQUANT', titre='Une position reelle part reellement par satellite',
+         fn=c_ciel_emission_reelle),
+    dict(id='OUT-05', risque='MAJEUR',   titre='La prepasse calcule un passage sur AOP fraiche',
+         fn=c_ciel_prepasse_reelle),
 ]
