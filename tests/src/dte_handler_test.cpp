@@ -307,14 +307,24 @@ TEST(DTEHandler, DUMPM_REQ)
 	STRCMP_EQUAL("$O;DUMPM#2AC;AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn+AgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq+wsbKztLW2t7i5uru8vb6/wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t/g4eLj5OXm5+jp6uvs7e7v8PHy8/T19vf4+fr7/P3+/wABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4fICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj9AQUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVpbXF1eX2BhYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ent8fX5/gIGCg4SFhoeIiYqLjI2Oj5CRkpOUlZaXmJmam5ydnp+goaKjpKWmp6ipqqusra6vsLGys7S1tre4ubq7vL2+v8DBwsPExcbHyMnKy8zNzs/Q0dLT1NXW19jZ2tvc3d7f4OHi4+Tl5ufo6err7O3u7/Dx8vP09fb3+Pn6+/z9/v8=\r", resp.c_str());
 }
 
-TEST(DTEHandler, PASPW_REQ_DecodeDayOfYearWiderThan8Bits)
+TEST(DTEHandler, PASPW_REQ_KineisAllcastAop)
 {
-	// Supplied by CLS
-	std::string allcast_ref = read_paspw_file("data/incorrect_aop.json");
-	std::string allcast_binary;
-
-	// Transcode to binary
-	allcast_binary = Binascii::unhexlify(allcast_ref);
+	/*
+	 * Real capture, not a synthetic frame: CLS retrieve-kineis-aop
+	 * (api.groupcls.com/telemetry/api/v1), taken 2026-08-27T18:31 UTC.
+	 * 478 bytes, sha256
+	 * fcf7b67e06a33e9c3836cac208ad4f74ea0754cdcff5a3db709a423e92c332b1.
+	 *
+	 * Sixteen packets, each prefixed by the 8-bit transmitting satellite
+	 * address: ten AOP monosat (0x26C, 25 bytes), four AOP multisat (0x35A,
+	 * 38 bytes) and two long constellation status (0x62F, 38 bytes). The
+	 * whole 478 bytes are consumed with nothing left over, which is the
+	 * first thing worth asserting -- a codec that stops early would still
+	 * look like it worked.
+	 */
+	std::string allcast_binary = Binascii::unhexlify(
+			read_file_into_string("data/kineis_aop_20260827.hex"));
+	CHECK_EQUAL(478U, allcast_binary.length());
 
 	BaseRawData paspw_raw = {0, 0, allcast_binary };
 
@@ -323,99 +333,179 @@ TEST(DTEHandler, PASPW_REQ_DecodeDayOfYearWiderThan8Bits)
 	CHECK_TRUE(DTEAction::NONE == dte_handler->handle_dte_message(req, resp));
 	STRCMP_EQUAL("$O;PASPW#000;\r", resp.c_str());
 
-	// Get last AOP date
+	/*
+	 * ART03 carries the timestamp of the NEWEST bulletin in the frame, here
+	 * satellite 0x62 at 05:43:36 -- not a date at midnight as the old A-DCS
+	 * codec stored. Worth knowing on the GUI side: the field now has a
+	 * meaningful time of day, which is what makes the AOP age computable to
+	 * better than a day.
+	 */
 	req = "$PARMR#005;ART03\r";
 	CHECK_TRUE(DTEAction::NONE == dte_handler->handle_dte_message(req, resp));
-	STRCMP_EQUAL("$O;PARMR#019;ART03=18/09/2021 23:09:10\r", resp.c_str());
-}
-
-TEST(DTEHandler, PASPW_REQ_NewArgos4Satellites)
-{
-	// Supplied by CLS
-	std::string allcast_ref = read_paspw_file("data/20230308105834.json");
-	std::string allcast_binary;
-
-	// Transcode to binary
-	allcast_binary = Binascii::unhexlify(allcast_ref);
-
-	BaseRawData paspw_raw = {0, 0, allcast_binary };
-
-	std::string resp;
-	std::string req = DTEEncoder::encode(DTECommand::PASPW_REQ, paspw_raw);
-	CHECK_TRUE(DTEAction::NONE == dte_handler->handle_dte_message(req, resp));
-	STRCMP_EQUAL("$O;PASPW#000;\r", resp.c_str());
-
-	// Get last AOP date
-	req = "$PARMR#005;ART03\r";
-	CHECK_TRUE(DTEAction::NONE == dte_handler->handle_dte_message(req, resp));
-	STRCMP_EQUAL("$O;PARMR#019;ART03=07/03/2023 23:22:51\r", resp.c_str());
-}
-
-TEST(DTEHandler, PASPW_REQ_NewTypeCSatelliteAOP)
-{
-	// Supplied by CLS
-	std::string allcast_ref = read_paspw_file("data/allcast.2.117.06.json");
-	std::string allcast_binary;
-
-	// Transcode to binary
-	allcast_binary = Binascii::unhexlify(allcast_ref);
-
-	BaseRawData paspw_raw = {0, 0, allcast_binary };
-
-	std::string resp;
-	std::string req = DTEEncoder::encode(DTECommand::PASPW_REQ, paspw_raw);
-	CHECK_TRUE(DTEAction::NONE == dte_handler->handle_dte_message(req, resp));
-	STRCMP_EQUAL("$O;PASPW#000;\r", resp.c_str());
-
-	// Get last AOP date
-	req = "$PARMR#005;ART03\r";
-	CHECK_TRUE(DTEAction::NONE == dte_handler->handle_dte_message(req, resp));
-	STRCMP_EQUAL("$O;PARMR#019;ART03=14/02/2024 00:00:00\r", resp.c_str());
+	STRCMP_EQUAL("$O;PARMR#019;ART03=27/08/2026 05:43:36\r", resp.c_str());
 
 	BasePassPredict pp = configuration_store->read_pass_predict();
-	CHECK_EQUAL(9U, pp.num_records);
+	CHECK_EQUAL(25U, pp.num_records);
 
-	// CS (0x1) Format Type C AOP
-    //"semiMajorAxis" : 7131.4802650250485,
-    //"semiMajorAxisDrift" : -1.8773441215638673,
-    //"inclination" : 98.34399241298725,
-    //"ascendantNodeLongitude" : 87.6911,
-    //"ascendantNodeDrift" : -24.98042710052248,
-    //"orbitalPeriod" : 99.91929259380959
-	DEBUG_TRACE("semiMajorAxisKm=%g", (double)pp.records[0].semiMajorAxisKm);
-	DEBUG_TRACE("semiMajorAxisDriftMeterPerDay=%g", (double)pp.records[0].semiMajorAxisDriftMeterPerDay);
-	DEBUG_TRACE("inclinationDeg=%g", (double)pp.records[0].inclinationDeg);
-	DEBUG_TRACE("ascNodeLongitudeDeg=%g", (double)pp.records[0].ascNodeLongitudeDeg);
-	DEBUG_TRACE("ascNodeDriftDeg=%g", (double)pp.records[0].ascNodeDriftDeg);
-	DEBUG_TRACE("orbitPeriodMin=%g", (double)pp.records[0].orbitPeriodMin);
-	CHECK_EQUAL(1, pp.records[0].satHexId);
-	CHECK_TRUE(std::abs(7131.4802650250485f - pp.records[0].semiMajorAxisKm) < 0.001f);
-	CHECK_TRUE(std::abs(-1.8773441215638673f - pp.records[0].semiMajorAxisDriftMeterPerDay) < 0.1f);
-	CHECK_TRUE(std::abs(98.34399241298725f - pp.records[0].inclinationDeg) < 0.001f);
-	CHECK_TRUE(std::abs(87.6911f - pp.records[0].ascNodeLongitudeDeg) < 0.001f);
-	CHECK_TRUE(std::abs(-24.98042710052248f - pp.records[0].ascNodeDriftDeg) < 0.001f);
-	CHECK_TRUE(std::abs(99.91929259380959f - pp.records[0].orbitPeriodMin) < 0.001f);
+	/*
+	 * Spot checks on four satellites chosen for what each one proves, rather
+	 * than the first four in the table:
+	 *   0x0B  a monosat record, decoded end to end;
+	 *   0x1D  downlink OFF -- the flag is per satellite, and a codec that
+	 *         defaulted it to ON would still pass every other check here;
+	 *   0xAD  reached through a MULTISAT record, i.e. an address plus a delta
+	 *         date relative to a reference satellite, not a full bulletin;
+	 *   0xF1  uplink Argos 4 while most of the constellation is Kineis V1,
+	 *         so the payload type really is read and not assumed.
+	 */
+	CHECK_EQUAL(0x0BU, pp.records[0].satHexId);
+	CHECK_EQUAL(1U, pp.records[0].downlinkStatus);
+	CHECK_EQUAL(SAT_UPLK_ON_KINEIS_V1, pp.records[0].uplinkStatus);
+	CHECK_EQUAL(2026U, pp.records[0].bulletin.year);
+	CHECK_EQUAL(8U, pp.records[0].bulletin.month);
+	CHECK_EQUAL(27U, pp.records[0].bulletin.day);
+	DOUBLES_EQUAL(7006.593, pp.records[0].semiMajorAxisKm, 0.001);
+	DOUBLES_EQUAL(97.8970, pp.records[0].inclinationDeg, 0.0001);
+	DOUBLES_EQUAL(203.946, pp.records[0].ascNodeLongitudeDeg, 0.001);
+	DOUBLES_EQUAL(-24.328, pp.records[0].ascNodeDriftDeg, 0.001);
+	DOUBLES_EQUAL(97.3098, pp.records[0].orbitPeriodMin, 0.0001);
 
-	// O3 (0x2) Format Type C AOP
-    //"semiMajorAxis" : 7115.020730404127,
-    //"semiMajorAxisDrift" : 0.0,
-    //"inclination" : 98.35391884172172,
-    //"ascendantNodeLongitude" : 174.0282,
-    //"ascendantNodeDrift" : -24.89342498744658,
-    //"orbitalPeriod" : 99.57388979678635
-	DEBUG_TRACE("semiMajorAxisKm=%g", (double)pp.records[1].semiMajorAxisKm);
-	DEBUG_TRACE("semiMajorAxisDriftMeterPerDay=%g", (double)pp.records[1].semiMajorAxisDriftMeterPerDay);
-	DEBUG_TRACE("inclinationDeg=%g", (double)pp.records[1].inclinationDeg);
-	DEBUG_TRACE("ascNodeLongitudeDeg=%g", (double)pp.records[1].ascNodeLongitudeDeg);
-	DEBUG_TRACE("ascNodeDriftDeg=%g", (double)pp.records[1].ascNodeDriftDeg);
-	DEBUG_TRACE("orbitPeriodMin=%g", (double)pp.records[1].orbitPeriodMin);
-	CHECK_EQUAL(2, pp.records[1].satHexId);
-	CHECK_TRUE(std::abs(7115.020730404127f - pp.records[1].semiMajorAxisKm) < 0.001f);
-	CHECK_TRUE(std::abs(0.0f - pp.records[1].semiMajorAxisDriftMeterPerDay) < 0.1f);
-	CHECK_TRUE(std::abs(98.35391884172172f - pp.records[1].inclinationDeg) < 0.001f);
-	CHECK_TRUE(std::abs(174.0282f - pp.records[1].ascNodeLongitudeDeg) < 0.001f);
-	CHECK_TRUE(std::abs(-24.89342498744658f - pp.records[1].ascNodeDriftDeg) < 0.001f);
-	CHECK_TRUE(std::abs(99.57388979678635f - pp.records[1].orbitPeriodMin) < 0.001f);
+	CHECK_EQUAL(0x1DU, pp.records[2].satHexId);
+	CHECK_EQUAL(SAT_DNLK_OFF, pp.records[2].downlinkStatus);
+
+	CHECK_EQUAL(0xADU, pp.records[17].satHexId);
+	CHECK_EQUAL(2026U, pp.records[17].bulletin.year);
+	CHECK_EQUAL(4U, pp.records[17].bulletin.hour);
+	CHECK_EQUAL(3U, pp.records[17].bulletin.minute);
+	DOUBLES_EQUAL(7032.996, pp.records[17].semiMajorAxisKm, 0.001);
+	DOUBLES_EQUAL(0.154, pp.records[17].ascNodeLongitudeDeg, 0.001);
+
+	CHECK_EQUAL(0xF1U, pp.records[20].satHexId);
+	CHECK_EQUAL(SAT_UPLK_ON_ARGOS_4, pp.records[20].uplinkStatus);
+	DOUBLES_EQUAL(7129.166, pp.records[20].semiMajorAxisKm, 0.001);
+	DOUBLES_EQUAL(-1.00, pp.records[20].semiMajorAxisDriftMeterPerDay, 0.01);
+
+	/*
+	 * Orbital sanity over the whole table. These bounds are physics, not
+	 * fitted values: a sun-synchronous Argos/Kineis orbit sits near 7000 km
+	 * and 98 deg. A decoder that shifted a field by one bit would still
+	 * produce a plausible-looking record here and there, but not 25 of them.
+	 */
+	for (unsigned int i = 0; i < pp.num_records; i++) {
+		CHECK_TRUE(pp.records[i].satHexId != 0x00);
+		CHECK_EQUAL(2026U, pp.records[i].bulletin.year);
+		CHECK_EQUAL(8U, pp.records[i].bulletin.month);
+		CHECK_EQUAL(27U, pp.records[i].bulletin.day);
+		CHECK_TRUE(pp.records[i].semiMajorAxisKm > 6900.0f);
+		CHECK_TRUE(pp.records[i].semiMajorAxisKm < 7300.0f);
+		CHECK_TRUE(pp.records[i].inclinationDeg > 97.0f);
+		CHECK_TRUE(pp.records[i].inclinationDeg < 99.5f);
+		CHECK_TRUE(pp.records[i].ascNodeLongitudeDeg >= 0.0f);
+		CHECK_TRUE(pp.records[i].ascNodeLongitudeDeg < 360.0f);
+		CHECK_TRUE(pp.records[i].orbitPeriodMin > 95.0f);
+		CHECK_TRUE(pp.records[i].orbitPeriodMin < 105.0f);
+		CHECK_TRUE(pp.records[i].downlinkStatus <= SAT_DNLK_ON);
+		CHECK_TRUE(pp.records[i].uplinkStatus <= SAT_UPLK_ON_KINEIS_V1);
+	}
+
+	/* Satellite addresses are unique: a decode that restarted mid-table
+	 * would duplicate one rather than lose it. */
+	for (unsigned int i = 0; i < pp.num_records; i++)
+		for (unsigned int j = i + 1; j < pp.num_records; j++)
+			CHECK_TRUE(pp.records[i].satHexId != pp.records[j].satHexId);
+}
+
+TEST(DTEHandler, PASPW_REQ_LegacyAdcsFormatIsRefused_DayOfYear)
+{
+	/*
+	 * Legacy A-DCS allcast vector, supplied by CLS: the day-of-year wider than 8 bits case.
+	 *
+	 * Kept on purpose rather than deleted. The PREPASS v4.0 migration made the
+	 * codec accept the KINEIS allcast set only -- addresses 0x136, 0x26C,
+	 * 0x35A, 0x443, 0x575, 0x62F -- and this file carries the old A-DCS
+	 * service addresses (0x0137, 0x0BE5, 0x0D45...). What matters is HOW it is
+	 * refused: cleanly, with VALUE_OUT_OF_RANGE, and without touching the
+	 * stored table. Silently accepting it would write garbage orbital elements
+	 * and the beacon would aim at satellites that are not there.
+	 */
+	std::string allcast_ref = read_paspw_file("data/incorrect_aop.json");
+	std::string allcast_binary = Binascii::unhexlify(allcast_ref);
+
+	BasePassPredict avant = configuration_store->read_pass_predict();
+
+	BaseRawData paspw_raw = {0, 0, allcast_binary };
+	std::string resp;
+	std::string req = DTEEncoder::encode(DTECommand::PASPW_REQ, paspw_raw);
+	CHECK_TRUE(DTEAction::NONE == dte_handler->handle_dte_message(req, resp));
+	STRCMP_EQUAL("$N;PASPW#001;5\r", resp.c_str());
+
+	/* The stored table is untouched by a refused upload. */
+	BasePassPredict apres = configuration_store->read_pass_predict();
+	CHECK_EQUAL(avant.num_records, apres.num_records);
+	for (unsigned int i = 0; i < avant.num_records; i++)
+		CHECK_EQUAL(avant.records[i].satHexId, apres.records[i].satHexId);
+}
+
+TEST(DTEHandler, PASPW_REQ_LegacyAdcsFormatIsRefused_Argos4)
+{
+	/*
+	 * Legacy A-DCS allcast vector, supplied by CLS: the Argos 4 satellites case.
+	 *
+	 * Kept on purpose rather than deleted. The PREPASS v4.0 migration made the
+	 * codec accept the KINEIS allcast set only -- addresses 0x136, 0x26C,
+	 * 0x35A, 0x443, 0x575, 0x62F -- and this file carries the old A-DCS
+	 * service addresses (0x0137, 0x0BE5, 0x0D45...). What matters is HOW it is
+	 * refused: cleanly, with VALUE_OUT_OF_RANGE, and without touching the
+	 * stored table. Silently accepting it would write garbage orbital elements
+	 * and the beacon would aim at satellites that are not there.
+	 */
+	std::string allcast_ref = read_paspw_file("data/20230308105834.json");
+	std::string allcast_binary = Binascii::unhexlify(allcast_ref);
+
+	BasePassPredict avant = configuration_store->read_pass_predict();
+
+	BaseRawData paspw_raw = {0, 0, allcast_binary };
+	std::string resp;
+	std::string req = DTEEncoder::encode(DTECommand::PASPW_REQ, paspw_raw);
+	CHECK_TRUE(DTEAction::NONE == dte_handler->handle_dte_message(req, resp));
+	STRCMP_EQUAL("$N;PASPW#001;5\r", resp.c_str());
+
+	/* The stored table is untouched by a refused upload. */
+	BasePassPredict apres = configuration_store->read_pass_predict();
+	CHECK_EQUAL(avant.num_records, apres.num_records);
+	for (unsigned int i = 0; i < avant.num_records; i++)
+		CHECK_EQUAL(avant.records[i].satHexId, apres.records[i].satHexId);
+}
+
+TEST(DTEHandler, PASPW_REQ_LegacyAdcsFormatIsRefused_TypeC)
+{
+	/*
+	 * Legacy A-DCS allcast vector, supplied by CLS: the type C satellite AOP case.
+	 *
+	 * Kept on purpose rather than deleted. The PREPASS v4.0 migration made the
+	 * codec accept the KINEIS allcast set only -- addresses 0x136, 0x26C,
+	 * 0x35A, 0x443, 0x575, 0x62F -- and this file carries the old A-DCS
+	 * service addresses (0x0137, 0x0BE5, 0x0D45...). What matters is HOW it is
+	 * refused: cleanly, with VALUE_OUT_OF_RANGE, and without touching the
+	 * stored table. Silently accepting it would write garbage orbital elements
+	 * and the beacon would aim at satellites that are not there.
+	 */
+	std::string allcast_ref = read_paspw_file("data/allcast.2.117.06.json");
+	std::string allcast_binary = Binascii::unhexlify(allcast_ref);
+
+	BasePassPredict avant = configuration_store->read_pass_predict();
+
+	BaseRawData paspw_raw = {0, 0, allcast_binary };
+	std::string resp;
+	std::string req = DTEEncoder::encode(DTECommand::PASPW_REQ, paspw_raw);
+	CHECK_TRUE(DTEAction::NONE == dte_handler->handle_dte_message(req, resp));
+	STRCMP_EQUAL("$N;PASPW#001;5\r", resp.c_str());
+
+	/* The stored table is untouched by a refused upload. */
+	BasePassPredict apres = configuration_store->read_pass_predict();
+	CHECK_EQUAL(avant.num_records, apres.num_records);
+	for (unsigned int i = 0; i < avant.num_records; i++)
+		CHECK_EQUAL(avant.records[i].satHexId, apres.records[i].satHexId);
 }
 
 TEST(DTEHandler, DUMPD_REQ_SensorLog)
@@ -531,11 +621,17 @@ TEST(DTEHandler, WritingOutOfRangeValue)
 
 TEST(DTEHandler, GenerateDefaultPassPredictFile)
 {
-	std::string allcast_ref = read_paspw_file("data/default_aop.json");
-	std::string allcast_binary;
-
-	// Transcode to binary
-	allcast_binary = Binascii::unhexlify(allcast_ref);
+	/*
+	 * Developer utility, not an assertion: it prints the decoded table in the
+	 * exact form ConfigurationStore::default_prepass expects, so the built-in
+	 * AOP can be refreshed by pasting the output.
+	 *
+	 * It now reads the KINEIS capture. data/default_aop.json is an A-DCS
+	 * vector and the codec refuses it, which is correct -- but it left the
+	 * only tool for regenerating the default table unusable.
+	 */
+	std::string allcast_binary = Binascii::unhexlify(
+			read_file_into_string("data/kineis_aop_20260827.hex"));
 
 	BaseRawData paspw_raw = {0, 0, allcast_binary };
 
