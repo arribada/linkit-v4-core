@@ -53,6 +53,33 @@ LOGDIR = os.path.join(HERE, "logs")
 # --- drift from the build under test: { "FRIENDLY_NAME", "KEY", ... }
 _PARAM_RE = re.compile(r'\{\s*"([A-Z0-9_]+)"\s*,\s*"([A-Z0-9]+)"')
 
+# Some parameters are not written as a raw value but as an INDEX into a code
+# table: DLOC_ARG_NOM=4 means "1 hour", not "4 seconds". Writing seconds gets
+# the WHOLE PARMW frame rejected -- the board names the offending key and
+# applies the other ones, so the case's precondition silently never lands and
+# the verdict that follows is meaningless. Measured on 2026-08-27 with
+# DLOC_ARG_NOM=600. Parse the permitted set from the firmware source too, so
+# this check cannot drift from the build under test.
+_CODED_RE = re.compile(
+    r'\{\s*"([A-Z0-9_]+)"\s*,\s*"([A-Z0-9]+)"\s*,\s*BaseEncoding::'
+    r'(AQPERIOD|DEPTHPILE|ARGOSPOWER|ARGOSMODE|GNSSFIXMODE|GNSSDYNMODEL)\s*,'
+    r'[^{}]*\{([^}]*)\}')
+
+
+def load_coded_params(path=DTE_PARAMS):
+    """{ NAME: (encoding, {permitted codes}) } for code-table parameters."""
+    out = {}
+    try:
+        src = open(path).read()
+    except OSError:
+        return out
+    for m in _CODED_RE.finditer(src):
+        nom, _cle, enc, valeurs = m.groups()
+        codes = {int(x) for x in re.findall(r'(\d+)U?', valeurs)}
+        if codes:
+            out[nom] = (enc, codes)
+    return out
+
 
 def load_param_map(path=DTE_PARAMS):
     name2key, key2name = {}, {}
@@ -81,6 +108,7 @@ class Bench:
         self._reader_thread = None
         self._buf = b""
         self.name2key, self.key2name = load_param_map()
+        self._coded = load_coded_params()
         os.makedirs(LOGDIR, exist_ok=True)
         stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         self.logpath = os.path.join(LOGDIR, f"{stamp}.log")
@@ -290,6 +318,25 @@ class Bench:
                     parsed[k] = v
         return m.group(0), parsed
 
+    def check_coded(self, kv):
+        """Raise before sending if a code-table parameter got a raw value.
+
+        Catching this here rather than in the reply saves a whole case: the
+        board's partial rejection still applies the other keys, so the run
+        continues on a half-established precondition.
+        """
+        if not self._coded:
+            return
+        for nom, val in kv.items():
+            info = self._coded.get(nom)
+            if not info or not isinstance(val, int):
+                continue
+            enc, codes = info
+            if val not in codes:
+                raise ValueError(
+                    f"{nom} is a {enc} code table, not a raw value: {val} is not "
+                    f"one of {sorted(codes)}")
+
     def write_params(self, kv, timeout=6.0, strict=True):
         """PARMW a dict of {name_or_key: value}. Returns the response match.
 
@@ -305,6 +352,7 @@ class Bench:
         strict=True raises on any rejected key. Pass strict=False only when a
         rejection is what the case is deliberately provoking.
         """
+        self.check_coded(kv)
         toks = [f"{self._key(k)}={v}" for k, v in kv.items()]
         payload = ",".join(toks)
         mk = self.mark()

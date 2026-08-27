@@ -144,12 +144,28 @@ class Runner:
         return False
 
     def recover(self):
-        """Carte muette: reset materiel, puis reconnexion."""
-        self.say("!! carte muette — reset materiel")
+        """Carte muette: reparer le LIEN d abord, ne redemarrer qu en dernier.
+
+        L ordre compte. Le `nrfjprog --reset` venait en premier et redemarrait
+        la carte a chaque hoquet USB — or le hoquet est le cas le plus frequent,
+        et le redemarrage detruit l etat .noinit (ancre amarrage, compteurs
+        hors-eau, calibration SWS) dont plusieurs cas dependent. On perdait donc
+        la premisse du cas en cours pour reparer quelque chose qui n etait pas
+        casse. On tente le rattachement, et on ne sort le SWD que si la carte
+        reste muette avec un lien pourtant retabli.
+        """
+        self.say("!! carte muette")
         if self.b:
             try: self.b.close()
             except Exception: pass
             self.b = None
+        try:
+            if self.relink() and self.connect(tries=6):
+                self.say("   lien repare sans redemarrer la carte")
+                return True
+        except Exception as e:
+            self.say(f"!! reparation du lien: {type(e).__name__}: {e}")
+        self.say("   la carte reste muette — reset materiel")
         try:
             subprocess.run(['nrfjprog','--reset'], capture_output=True, timeout=60)
         except Exception as e:
@@ -2710,8 +2726,11 @@ def c_gnss_ntry_backoff(r, case):
     """
     b = r.b
     try:
+        # ARP11 est un CODE de table (0..15), pas des secondes: 13 = 5 min,
+        # 1 = 10 min (le defaut). Ecrire 600 fait rejeter la trame entiere —
+        # mesure du 2026-08-27, "PARMW rejected: ARP11".
         _gnss_base(b, GNSS_NTRY=1, GNSS_ACQ_TIMEOUT=10, GNSS_COLD_ACQ_TIMEOUT=10,
-                   DLOC_ARG_NOM=600)
+                   DLOC_ARG_NOM=13)
     except Exception as e:
         return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
     mk = b.mark()
@@ -2721,7 +2740,7 @@ def c_gnss_ntry_backoff(r, case):
     try:
         b.enter_config()
         b.write_params({'GNSS_NTRY': 3, 'GNSS_ACQ_TIMEOUT': 120,
-                        'GNSS_COLD_ACQ_TIMEOUT': 240, 'DLOC_ARG_NOM': 3600})
+                        'GNSS_COLD_ACQ_TIMEOUT': 240, 'DLOC_ARG_NOM': 1})
         b.exit_config()
     except Exception:
         pass
