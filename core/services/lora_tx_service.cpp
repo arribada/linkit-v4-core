@@ -12,6 +12,7 @@
 #include "timeutils.hpp"
 #include "binascii.hpp"
 #include "debug.hpp"
+#include "moored_mode_service.hpp"
 
 extern ConfigurationStore *configuration_store;
 extern Scheduler *system_scheduler;
@@ -851,7 +852,23 @@ void LoRaTxService::process_status_burst() {
 	// "Most recent wins" comparison uses LogHeader UTC timestamp set at entry
 	// creation (service_set_log_header_time). build_sensor_packet handles
 	// FASTLOC vs FIX transparently via gps->info.event_type.
-	if (m_status_burst_count > 0) {
+	//
+	// `m_status_burst_count > 0` gates the legacy LEGACY/DUTY_CYCLE/DOPPLER
+	// modes, where the counter is never incremented (it only advances inside a
+	// SURFACING_BURST phase-1) — so on a periodic tracker this branch was
+	// unreachable and every heartbeat fell through to STATUS-PURE, i.e. battery
+	// volts and nothing else.
+	//
+	// That is exactly wrong for a moored vessel: the depth pile is empty
+	// precisely BECAUSE the GNSS cadence was stretched, and the one thing the
+	// operator wants from an hourly heartbeat is "still here, at this position".
+	// So allow the cached position through when the moored classifier is
+	// engaged and MOORED_TX_LAST_POS is set. Both are false by default, so no
+	// existing LoRa deployment changes behaviour, and the frame is the same
+	// SENSOR packet the backend already decodes.
+	bool moored_heartbeat = MooredModeService::is_moored() &&
+	                        configuration_store->read_param<bool>(ParamID::MOORED_TX_LAST_POS);
+	if (m_status_burst_count > 0 || moored_heartbeat) {
 		const GPSLogEntry& cached_gps = configuration_store->get_last_gps_entry();
 		const GPSLogEntry& cached_fl  = configuration_store->get_last_fastloc_entry();
 		bool gps_ok = (cached_gps.info.valid && cached_gps.info.event_type == GPSEventType::FIX);

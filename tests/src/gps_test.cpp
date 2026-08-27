@@ -11,6 +11,7 @@
 #include "dte_protocol.hpp"
 #include "mock_comparators.hpp"
 #include "axl_sensor_service.hpp"
+#include "moored_mode_service.hpp"
 
 
 extern Timer *system_timer;
@@ -51,9 +52,14 @@ TEST_GROUP(GPSService)
 
 		// Initialise configuration store (applies defaults)
 		configuration_store->init();
+		// The moored classifier is static and consulted by every
+		// get_gnss_configuration(); a state leaked from another test would
+		// silently rewrite dloc_arg_nom here.
+		MooredModeService::reset_for_tests();
 	}
 
 	void teardown() {
+		MooredModeService::reset_for_tests();
 		delete system_scheduler;
 		delete fake_timer;
 		delete fake_rtc; rtc = nullptr;
@@ -985,4 +991,140 @@ TEST(GPSService, SingleFixModeStopsAfterFirstFix)
 	// Wait well past DLOC period — GPS should NOT power on again
 	increment_time_s(1200);
 	mock().checkExpectations(); // No power_on expected
+}
+
+
+// === MOORED mode end-to-end (2026-08) =====================================
+//
+// The unit tests in moored_mode_test.cpp prove the classifier's logic and
+// config_store_test.cpp proves the parameter substitution, but neither shows
+// that a stationary vessel actually gets a slower GNSS cadence. This one does,
+// through the REAL path: a fix broadcast on the peer bus, picked up by the
+// funnel in ServiceManager::notify_peer_event, feeding the classifier, whose
+// state is then read back by get_gnss_configuration() inside the very same
+// service_complete() that reschedules.
+//
+// It also pins the timing: service_complete() calls service_log() (which
+// broadcasts, hence updates the classifier) BEFORE reschedule(), so the new
+// cadence takes effect on the same session that engages MOORED — not one
+// session later.
+TEST(GPSService, MooredModeStretchesAcquisitionPeriodEndToEnd)
+{
+	const unsigned int dloc_under_way = 600;    // 10 min
+	const unsigned int dloc_moored    = 3600;   // 1 h
+
+	fake_config_store->write_param(ParamID::LB_EN, false);
+	fake_config_store->write_param(ParamID::GNSS_EN, true);
+	fake_config_store->write_param(ParamID::DLOC_ARG_NOM, dloc_under_way);
+	fake_config_store->write_param(ParamID::GNSS_ACQ_TIMEOUT, 60U);
+	fake_config_store->write_param(ParamID::GNSS_COLD_ACQ_TIMEOUT, 60U);
+	fake_config_store->write_param(ParamID::GNSS_HDOPFILT_EN, false);
+	fake_config_store->write_param(ParamID::GNSS_HACCFILT_EN, false);
+	fake_config_store->write_param(ParamID::UNDERWATER_EN, false);
+	BaseGNSSFixMode fix_mode = BaseGNSSFixMode::FIX_2D;
+	fake_config_store->write_param(ParamID::GNSS_FIX_MODE, fix_mode);
+	BaseGNSSDynModel dyn_model = BaseGNSSDynModel::SEA;
+	fake_config_store->write_param(ParamID::GNSS_DYN_MODEL, dyn_model);
+
+	fake_config_store->write_param(ParamID::MOORED_DETECT_EN, true);
+	fake_config_store->write_param(ParamID::MOORED_ENTER_FIXES, 2U);
+	fake_config_store->write_param(ParamID::MOORED_RADIUS_M, 150U);
+	fake_config_store->write_param(ParamID::MOORED_DLOC, dloc_moored);
+	fake_config_store->write_param(ParamID::MOORED_GNSS_EN, true);
+
+	// 27/01/2020 00:00:00 — divisible by 30, 600 and 3600, so every UTC-aligned
+	// schedule below is exact arithmetic rather than an approximation.
+	fake_rtc->settime(1580083200);
+
+	GPSService s(*mock_m10q, fake_log);
+	// Start with the production notification callback so the fix actually
+	// travels the peer bus and reaches the moored funnel. s.start() with no
+	// argument leaves m_data_notification_callback null and nothing is
+	// broadcast at all — the funnel would never run.
+	s.start([](ServiceEvent& e) { ServiceManager::notify_peer_event(e); });
+
+	// --- Session 1: first schedule, plants the reference anchor -------------
+	mock().expectOneCall("power_on").onObject(mock_m10q).ignoreOtherParameters();
+	increment_time_s(FIRST_AQPERIOD);
+	mock().expectOneCall("power_off").onObject(mock_m10q);
+	mock_m10q->notify_gnss_data(fake_rtc->gettime(), 10, 10);
+	CHECK_TRUE(MooredModeService::has_reference());
+	CHECK_FALSE(MooredModeService::is_moored());
+
+	// --- Session 2: one stationary fix, still under way ---------------------
+	mock().expectOneCall("power_on").onObject(mock_m10q).ignoreOtherParameters();
+	increment_time_s(dloc_under_way - FIRST_AQPERIOD);   // UTC-aligned: 570 s
+	mock().expectOneCall("power_off").onObject(mock_m10q);
+	mock_m10q->notify_gnss_data(fake_rtc->gettime(), 10, 10);
+	CHECK_EQUAL(1U, MooredModeService::stationary_fixes());
+	CHECK_FALSE(MooredModeService::is_moored());
+
+	// --- Session 3: second stationary fix -> MOORED engages -----------------
+	mock().expectOneCall("power_on").onObject(mock_m10q).ignoreOtherParameters();
+	increment_time_s(dloc_under_way);
+	mock().expectOneCall("power_off").onObject(mock_m10q);
+	mock_m10q->notify_gnss_data(fake_rtc->gettime(), 10, 10);
+	CHECK_TRUE(MooredModeService::is_moored());
+
+	// The reschedule that just ran must have used MOORED_DLOC. Time is now
+	// 1580084400, i.e. 1200 s past the 3600 s UTC boundary, so the next
+	// acquisition is due at +2400 s — NOT at the 600 s under-way cadence.
+	//
+	// No expectation is armed here on purpose: if power_on fires inside this
+	// window CppUTest reports it as an unexpected call and the test fails. That
+	// is the actual assertion — "the old cadence is gone".
+	increment_time_s(dloc_under_way);
+	mock().checkExpectations();
+	CHECK_TRUE(MooredModeService::is_moored());
+
+	// And it does fire once the moored period elapses.
+	mock().expectOneCall("power_on").onObject(mock_m10q).ignoreOtherParameters();
+	increment_time_s(1800);   // 600 + 1800 = 2400
+	mock().checkExpectations();
+}
+
+// Same setup, master switch off: the cadence must stay at DLOC_ARG_NOM however
+// stationary the vessel is. This is the non-regression guarantee for every
+// deployment that never enables the feature.
+TEST(GPSService, MooredModeDisabledLeavesAcquisitionPeriodUntouched)
+{
+	const unsigned int dloc_under_way = 600;
+
+	fake_config_store->write_param(ParamID::LB_EN, false);
+	fake_config_store->write_param(ParamID::GNSS_EN, true);
+	fake_config_store->write_param(ParamID::DLOC_ARG_NOM, dloc_under_way);
+	fake_config_store->write_param(ParamID::GNSS_ACQ_TIMEOUT, 60U);
+	fake_config_store->write_param(ParamID::GNSS_COLD_ACQ_TIMEOUT, 60U);
+	fake_config_store->write_param(ParamID::GNSS_HDOPFILT_EN, false);
+	fake_config_store->write_param(ParamID::GNSS_HACCFILT_EN, false);
+	fake_config_store->write_param(ParamID::UNDERWATER_EN, false);
+	BaseGNSSFixMode fix_mode = BaseGNSSFixMode::FIX_2D;
+	fake_config_store->write_param(ParamID::GNSS_FIX_MODE, fix_mode);
+	BaseGNSSDynModel dyn_model = BaseGNSSDynModel::SEA;
+	fake_config_store->write_param(ParamID::GNSS_DYN_MODEL, dyn_model);
+
+	// MOORED_DETECT_EN left at its false default; MOORED_DLOC deliberately set
+	// to a value that would be glaringly visible if it ever leaked through.
+	fake_config_store->write_param(ParamID::MOORED_DLOC, 3600U);
+	fake_config_store->write_param(ParamID::MOORED_ENTER_FIXES, 2U);
+
+	fake_rtc->settime(1580083200);
+
+	GPSService s(*mock_m10q, fake_log);
+	s.start([](ServiceEvent& e) { ServiceManager::notify_peer_event(e); });
+
+	mock().expectOneCall("power_on").onObject(mock_m10q).ignoreOtherParameters();
+	increment_time_s(FIRST_AQPERIOD);
+	mock().expectOneCall("power_off").onObject(mock_m10q);
+	mock_m10q->notify_gnss_data(fake_rtc->gettime(), 10, 10);
+
+	unsigned int offset = FIRST_AQPERIOD;
+	for (int i = 0; i < 3; i++) {
+		mock().expectOneCall("power_on").onObject(mock_m10q).ignoreOtherParameters();
+		increment_time_s(dloc_under_way - offset);
+		mock().expectOneCall("power_off").onObject(mock_m10q);
+		mock_m10q->notify_gnss_data(fake_rtc->gettime(), 10, 10);
+		offset = 0;
+	}
+	CHECK_FALSE(MooredModeService::is_moored());
 }

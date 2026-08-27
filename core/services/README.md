@@ -13,6 +13,7 @@ Long-running services that orchestrate tracker behavior. Each service inherits f
 | **Underwater** | `uwdetector_service.{cpp,hpp}`, `sws_analog_*.{cpp,hpp}` |
 | **Sensors** | `*_sensor_service.hpp` (axl, pressure, thermistor, sea_temp, als, ph, cdt) |
 | **Mortality** | `mortality_service.{cpp,hpp}` (RSPB) |
+| **Mode classifiers** | `hauled_mode_service.{cpp,hpp}` (hauled-out animal), `moored_mode_service.{cpp,hpp}` (stationary vessel), `rate_limiter.{cpp,hpp}` — static classes, not `Service` subclasses: state in `.noinit` RAM + CRC16, fed from the `ServiceManager::notify_peer_event` funnel, consumed by the `ConfigurationStore` override cascade |
 | **Cloudlocate** | `cloudlocate_*.{cpp,hpp}` |
 | **Power / Cam** | `low_battery_service.hpp`, `cam_service.hpp` |
 

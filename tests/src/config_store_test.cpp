@@ -3,6 +3,8 @@
 #include "dte_protocol.hpp"
 #include "fake_battery_mon.hpp"
 #include "calibration.hpp"
+#include "hauled_mode_service.hpp"
+#include "moored_mode_service.hpp"
 
 #include "CppUTest/TestHarness.h"
 #include "CppUTestExt/MockSupport.h"
@@ -17,6 +19,7 @@ using namespace std::string_literals;
 
 extern FileSystem *main_filesystem;
 extern BatteryMonitor *battery_monitor;
+extern ConfigurationStore *configuration_store;
 static LFSFileSystem *ram_filesystem;
 
 using namespace std::literals::string_literals;
@@ -40,6 +43,13 @@ TEST_GROUP(ConfigStore)
 	}
 
 	void teardown() {
+		// The mode classifiers are static and read the GLOBAL configuration
+		// store. Leaving either behind would leak a moored/hauled state — and a
+		// dangling store pointer — into whichever group runs next, where it
+		// would quietly rewrite the GNSS period and TX interval.
+		MooredModeService::reset_for_tests();
+		HauledModeService::reset_for_tests();
+		configuration_store = nullptr;
 		delete store;
 		store = nullptr;
 		ram_filesystem->umount();
@@ -1528,4 +1538,164 @@ TEST(ConfigStore, TxJitterSeedFallsBackToDeviceIdWhenNothingProvisioned)
 	// Must be unique-per-chip, never 0.
 	CHECK_EQUAL((unsigned int)PMU::device_identifier(), store->get_tx_jitter_seed());
 	CHECK(store->get_tx_jitter_seed() != 0U);
+}
+
+// === MOORED override in the configuration cascade (2026-08) ===============
+//
+// The classifier itself is covered by moored_mode_test.cpp; what matters here
+// is that it plugs into ConfigurationStore without disturbing the existing
+// LOW_BATTERY / HAULED / OUT_OF_ZONE / NORMAL precedence.
+
+TEST(ConfigStore, MooredDisabledLeavesConfigurationUntouched)
+{
+	store = new LFSConfigurationStore(*main_filesystem);
+	store->init();
+	configuration_store = store;   // the classifiers read the global
+	MooredModeService::reset_for_tests();
+	HauledModeService::reset_for_tests();
+
+	store->write_param(ParamID::DLOC_ARG_NOM, 60U);
+	store->write_param(ParamID::TR_NOM, 60U);
+	store->write_param(ParamID::GNSS_EN, (bool)true);
+
+	GNSSConfig gnss; ArgosConfig argos;
+	store->get_gnss_configuration(gnss);
+	store->get_argos_configuration(argos);
+	unsigned int base_dloc = gnss.dloc_arg_nom;
+	unsigned int base_tr   = argos.tx_interval_s;
+
+	// Feed enough evidence that the classifier WOULD engage were it enabled.
+	for (unsigned int i = 0; i < 10; i++)
+		MooredModeService::on_gnss_fix(34.75, 33.03, 0, 1000 + i);
+	CHECK_FALSE(MooredModeService::is_moored());
+
+	store->get_gnss_configuration(gnss);
+	store->get_argos_configuration(argos);
+	CHECK_EQUAL(base_dloc, gnss.dloc_arg_nom);
+	CHECK_EQUAL(base_tr,   argos.tx_interval_s);
+	CHECK_TRUE(gnss.enable);
+}
+
+TEST(ConfigStore, MooredSubstitutesGnssPeriodAndTxInterval)
+{
+	store = new LFSConfigurationStore(*main_filesystem);
+	store->init();
+	configuration_store = store;   // the classifiers read the global
+	MooredModeService::reset_for_tests();
+	HauledModeService::reset_for_tests();
+
+	store->write_param(ParamID::DLOC_ARG_NOM, 60U);
+	store->write_param(ParamID::TR_NOM, 60U);
+	store->write_param(ParamID::GNSS_EN, (bool)true);
+	store->write_param(ParamID::MOORED_DETECT_EN, (bool)true);
+	store->write_param(ParamID::MOORED_ENTER_FIXES, 2U);
+	store->write_param(ParamID::MOORED_DLOC, 7200U);      // 2 h
+	store->write_param(ParamID::MOORED_TR_NOM, 10800U);   // 3 h
+	store->write_param(ParamID::MOORED_GNSS_EN, (bool)true);
+
+	for (unsigned int i = 0; i < 3; i++)
+		MooredModeService::on_gnss_fix(34.75, 33.03, 0, 1000 + i);
+	CHECK_TRUE(MooredModeService::is_moored());
+
+	GNSSConfig gnss; ArgosConfig argos;
+	store->get_gnss_configuration(gnss);
+	store->get_argos_configuration(argos);
+	CHECK_EQUAL(7200U,  gnss.dloc_arg_nom);
+	CHECK_EQUAL(10800U, argos.tx_interval_s);
+	CHECK_TRUE(gnss.enable);
+
+	// Under way again -> straight back to the base cadence.
+	MooredModeService::on_gnss_fix(34.76, 33.03, 0, 2000);
+	store->get_gnss_configuration(gnss);
+	store->get_argos_configuration(argos);
+	CHECK_EQUAL(60U, gnss.dloc_arg_nom);
+	CHECK_EQUAL(60U, argos.tx_interval_s);
+}
+
+TEST(ConfigStore, MooredGnssEnCanOnlyNarrowNeverWiden)
+{
+	// A deployment running GNSS_EN=0 must not be switched back on by the
+	// moored branch, whatever MOORED_GNSS_EN says.
+	store = new LFSConfigurationStore(*main_filesystem);
+	store->init();
+	configuration_store = store;   // the classifiers read the global
+	MooredModeService::reset_for_tests();
+	HauledModeService::reset_for_tests();
+
+	store->write_param(ParamID::GNSS_EN, (bool)false);
+	store->write_param(ParamID::MOORED_DETECT_EN, (bool)true);
+	store->write_param(ParamID::MOORED_ENTER_FIXES, 2U);
+	store->write_param(ParamID::MOORED_GNSS_EN, (bool)true);
+
+	for (unsigned int i = 0; i < 3; i++)
+		MooredModeService::on_gnss_fix(34.75, 33.03, 0, 1000 + i);
+	CHECK_TRUE(MooredModeService::is_moored());
+
+	GNSSConfig gnss;
+	store->get_gnss_configuration(gnss);
+	CHECK_FALSE(gnss.enable);
+
+	// And the converse: MOORED_GNSS_EN=0 turns GNSS off while moored.
+	store->write_param(ParamID::GNSS_EN, (bool)true);
+	store->write_param(ParamID::MOORED_GNSS_EN, (bool)false);
+	store->get_gnss_configuration(gnss);
+	CHECK_FALSE(gnss.enable);
+}
+
+TEST(ConfigStore, HauledTakesPriorityOverMoored)
+{
+	// Priority cascade is LOW_BATTERY > HAULED > MOORED > OUT_OF_ZONE > NORMAL.
+	// A hauled-out animal that is also stationary must keep the HAULED values.
+	store = new LFSConfigurationStore(*main_filesystem);
+	store->init();
+	configuration_store = store;   // the classifiers read the global
+	MooredModeService::reset_for_tests();
+	HauledModeService::reset_for_tests();
+
+	store->write_param(ParamID::TR_NOM, 60U);
+	store->write_param(ParamID::MOORED_DETECT_EN, (bool)true);
+	store->write_param(ParamID::MOORED_ENTER_FIXES, 2U);
+	store->write_param(ParamID::MOORED_TR_NOM, 10800U);
+	store->write_param(ParamID::HAULED_DETECT_EN, (bool)true);
+	store->write_param(ParamID::HAULED_IDLE_THRESHOLD_H, 1U);
+	store->write_param(ParamID::HAULED_TR_NOM, 1800U);
+	store->write_param(ParamID::HAULED_ARGOS_MODE, BaseArgosMode::LEGACY);
+
+	for (unsigned int i = 0; i < 3; i++)
+		MooredModeService::on_gnss_fix(34.75, 33.03, 0, 1000 + i);
+	CHECK_TRUE(MooredModeService::is_moored());
+
+	HauledModeService::on_underwater_event(true, 1000);
+	HauledModeService::evaluate(1000 + 2 * 3600);
+	CHECK_TRUE(HauledModeService::is_hauled());
+
+	ArgosConfig argos;
+	store->get_argos_configuration(argos);
+	CHECK_EQUAL(1800U, argos.tx_interval_s);   // HAULED wins
+}
+
+TEST(ConfigStore, LowBatteryTakesPriorityOverMoored)
+{
+	store = new LFSConfigurationStore(*main_filesystem);
+	store->init();
+	configuration_store = store;   // the classifiers read the global
+	MooredModeService::reset_for_tests();
+	HauledModeService::reset_for_tests();
+
+	store->write_param(ParamID::TR_LB, 900U);
+	store->write_param(ParamID::LB_EN, (bool)true);
+	store->write_param(ParamID::MOORED_DETECT_EN, (bool)true);
+	store->write_param(ParamID::MOORED_ENTER_FIXES, 2U);
+	store->write_param(ParamID::MOORED_TR_NOM, 10800U);
+
+	for (unsigned int i = 0; i < 3; i++)
+		MooredModeService::on_gnss_fix(34.75, 33.03, 0, 1000 + i);
+	CHECK_TRUE(MooredModeService::is_moored());
+
+	fake_battery_monitor->set_values(5, 3300, /*is_low*/true, /*is_critical*/false);
+
+	ArgosConfig argos;
+	store->get_argos_configuration(argos);
+	CHECK_TRUE(argos.is_lb);
+	CHECK_EQUAL(900U, argos.tx_interval_s);    // LOW_BATTERY wins
 }

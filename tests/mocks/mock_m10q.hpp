@@ -8,7 +8,11 @@
 class MockM10Q : public GPSDevice {
 public:
     void notify_gnss_data(std::time_t time, double lat=0, double lon=0, double hdop = 0, double hacc = 0, bool valid = 1) {
-    	GNSSData gnss_data;
+    	// Value-initialised, like notify_degraded_gnss_data below. Without the
+    	// braces every field this helper does not set (gSpeed, numSV, velN/E/D,
+    	// ttff, fixType, flags...) is stack garbage, which stayed harmless only
+    	// as long as no test read one of them.
+    	GNSSData gnss_data{};
     	gnss_data.lat = lat;
     	gnss_data.lon = lon;
     	gnss_data.valid = valid;

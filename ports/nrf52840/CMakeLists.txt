@@ -554,6 +554,7 @@ target_sources(${TARGET_NAME} PRIVATE
     ${CORE_DIR}/services/depth_pile.cpp
     ${CORE_DIR}/services/rate_limiter.cpp
     ${CORE_DIR}/services/hauled_mode_service.cpp
+    ${CORE_DIR}/services/moored_mode_service.cpp
     ${CORE_DIR}/services/argos_rx_service.cpp
     ${CORE_DIR}/scheduling/argos_tx_scheduler.cpp
     ${CORE_DIR}/services/uwdetector_service.cpp

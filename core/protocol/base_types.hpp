@@ -453,8 +453,28 @@ enum class ParamID {
 	SAT_AOP_AGE_S                            = 250,  // uint: age of the AOP data, in seconds
 	SAT_NEXT_PASS_TS                         = 251,  // uint: epoch of the next AOS (0 = unknown)
 	SAT_LAST_PASS_TS                         = 252,  // uint: epoch of the last pass used
+	// === Moored-vs-underway mode (slots 253-262, 2026-08, Cyprus boat tracker) ===
+	// Detection: UNDERWAY -> MOORED after MOORED_ENTER_FIXES consecutive fixes
+	// inside MOORED_RADIUS_M of a fixed reference anchor. MOORED -> UNDERWAY on
+	// one fix outside the radius, on gSpeed above MooredModeService::
+	// UNDERWAY_SPEED_MMS, or on MOORED_EXIT_EVENTS accelerometer wake-ups
+	// (debounced by MOORED_AXL_HOLDOFF_S).
+	// MOORED_* override the base ARP/GNP params (clones the HAULED pattern).
+	// Priority: LOW_BATTERY > HAULED > MOORED > OUT_OF_ZONE > NORMAL.
+	// Disabled by default: MOORED_DETECT_EN=false leaves every existing
+	// deployment byte-identical.
+	MOORED_DETECT_EN                         = 253,  // bool: master enable
+	MOORED_RADIUS_M                          = 254,  // uint metres: stationarity radius around the reference anchor
+	MOORED_ENTER_FIXES                       = 255,  // uint: consecutive stationary fixes before MOORED engages
+	MOORED_EXIT_EVENTS                       = 256,  // uint: accelerometer wake-ups needed to leave MOORED
+	MOORED_AXL_HOLDOFF_S                     = 257,  // uint seconds: minimum interval between two wake-up-driven exits (anti-flapping; 0 = no hold-off)
+	MOORED_DLOC                              = 258,  // AQPERIOD seconds: GNSS acquisition period while moored (substitutes DLOC_ARG_NOM)
+	MOORED_TR_NOM                            = 259,  // uint seconds: TX interval while moored (substitutes TR_NOM)
+	MOORED_GNSS_EN                           = 260,  // bool: keep acquiring GNSS while moored. true is strongly recommended — GNSS is what confirms the vessel is still there and what detects a slow drift. false makes the accelerometer the only movement oracle.
+	MOORED_TX_LAST_POS                       = 261,  // bool: the moored heartbeat carries the last known position instead of a battery-only STATUS frame (LoRa)
+	MOORED_STATE                             = 262,  // uint 0/1: read-only mirror of the classifier state, written by MooredModeService
 	// === Sentinel (fixed regardless of #ifdef combinations) ===
-	__PARAM_SIZE                             = 253,
+	__PARAM_SIZE                             = 263,
 	__NULL_PARAM                             = 0xFFFF
 };
 

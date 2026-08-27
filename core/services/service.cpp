@@ -16,6 +16,10 @@
 #include "pmu.hpp"
 #include "rate_limiter.hpp"
 #include "hauled_mode_service.hpp"
+#include "moored_mode_service.hpp"
+#if ENABLE_AXL_SENSOR
+#include "axl_sensor_service.hpp"   // AXLSensorPort::WAKEUP_TRIGGERED
+#endif
 #include <cstddef>
 #ifdef BENCH_TEST
 #include <cstdio>
@@ -88,6 +92,7 @@ void ServiceManager::startall(std::function<void(ServiceEvent&)> data_notificati
 	restore_cooldown_state();
 	RateLimiter::restore_state();
 	HauledModeService::restore_state();
+	MooredModeService::restore_state();
 	for (auto const& p : m_map) {
 		DEBUG_TRACE("ServiceManager::startall: starting %s id=%u", p.second.get_name(), p.first);
 		p.second.start(data_notification_callback);
@@ -150,6 +155,42 @@ void ServiceManager::notify_peer_event(ServiceEvent& event) {
 			HauledModeService::on_underwater_event(std::get<bool>(event.event_data), now);
 		}
 	}
+
+	// MooredModeService funnel (2026-08) — same rationale, two sources of
+	// evidence. Both are no-ops unless MOORED_DETECT_EN is set, so a build that
+	// never enables the feature pays one enum compare per event.
+	//
+	// Only GPSEventType::FIX feeds the classifier: FASTLOC / CLOUDLOCATE /
+	// degraded PVT carry accuracy far coarser than a sensible MOORED_RADIUS_M
+	// (hundreds of metres to kilometres), and would read as movement on a
+	// vessel that never left its berth.
+	if (event.event_source == ServiceIdentifier::GNSS_SENSOR &&
+	    event.event_type == ServiceEventType::SERVICE_LOG_UPDATED) {
+		if (auto *gps = std::get_if<GPSLogEntry>(&event.event_data)) {
+			if (gps->info.valid && gps->info.event_type == GPSEventType::FIX) {
+				std::time_t now = (rtc && rtc->is_set()) ? rtc->gettime() : 0;
+				MooredModeService::on_gnss_fix(gps->info.lat, gps->info.lon,
+				                               gps->info.gSpeed, now);
+			}
+		}
+	}
+#if ENABLE_AXL_SENSOR
+	// Accelerometer wake-up: the cheap movement oracle between two GNSS points.
+	// Needs a real RTC — the hold-off that keeps swell from burning the budget
+	// is measured in wall-clock seconds, and running it against the virtual
+	// pre-fix epoch would make the debounce meaningless.
+	if (event.event_source == ServiceIdentifier::AXL_SENSOR &&
+	    event.event_type == ServiceEventType::SERVICE_LOG_UPDATED) {
+		if (auto *sensor = std::get_if<ServiceSensorData>(&event.event_data)) {
+			if (sensor->port[AXLSensorPort::WAKEUP_TRIGGERED]) {
+				std::time_t now = (rtc && rtc->is_set()) ? rtc->gettime() : 0;
+				if (now > 0)
+					MooredModeService::on_motion_event(now);
+			}
+		}
+	}
+#endif
+
 	for (auto const& p : m_map) {
 		if (p.first != event.event_originator_unique_id)
 			p.second.notify_peer_event(event);

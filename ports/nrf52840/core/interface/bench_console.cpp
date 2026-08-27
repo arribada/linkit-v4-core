@@ -18,6 +18,7 @@
 #include "debug.hpp"
 #include "is25_flash.hpp"
 #include "config_store.hpp"
+#include "moored_mode_service.hpp"
 #include "ota_file_updater.hpp"
 #include "crc32.hpp"
 #include "nrf_i2c.hpp"
@@ -347,6 +348,32 @@ bool bench::handle_line(const std::string& raw) {
         // watching the console for it can never see it, and a looser pattern just
         // matches unrelated services and passes without verifying anything.
         reply(std::string("%SCHED ") + ServiceManager::bench_schedule_report());
+    } else if (cmd == "%MOORED") {
+        // Everything needed to tune MOORED_RADIUS_M and the AXP03/AXP04
+        // accelerometer threshold without guessing: the classifier's own view
+        // plus the live distance from the reference anchor. `d` is -1 until the
+        // first valid FIX plants the anchor.
+        char buf[192];
+        double d = -1.0;
+        if (MooredModeService::has_reference() && gps_service) {
+            const GPSLogEntry& last = configuration_store->get_last_gps_entry();
+            if (last.info.valid)
+                d = MooredModeService::distance_to_reference_m(last.info.lat, last.info.lon);
+        }
+        snprintf(buf, sizeof(buf),
+                 "%%MOORED en=%u state=%s ref=%d still=%u/%u motion=%u/%u "
+                 "radius=%u m holdoff=%u s d_last_fix=%.1f m",
+                 (unsigned)configuration_store->read_param<bool>(ParamID::MOORED_DETECT_EN),
+                 MooredModeService::is_moored() ? "MOORED" : "UNDERWAY",
+                 (int)MooredModeService::has_reference(),
+                 MooredModeService::stationary_fixes(),
+                 configuration_store->read_param<unsigned int>(ParamID::MOORED_ENTER_FIXES),
+                 MooredModeService::motion_events(),
+                 configuration_store->read_param<unsigned int>(ParamID::MOORED_EXIT_EVENTS),
+                 configuration_store->read_param<unsigned int>(ParamID::MOORED_RADIUS_M),
+                 configuration_store->read_param<unsigned int>(ParamID::MOORED_AXL_HOLDOFF_S),
+                 d);
+        reply(buf);
     } else if (cmd == "%CFG") {
         if (GenTracker::is_in_state<ConfigurationState>()) {
             reply("%CFG OK already-config");

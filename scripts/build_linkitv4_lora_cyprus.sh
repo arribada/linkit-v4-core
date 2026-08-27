@@ -8,33 +8,49 @@
 # change to the shared LoRa script is inherited here automatically — except for
 # the values pinned below, which is the whole point of having this file.
 #
-# Exactly ONE firmware option genuinely differs from the standard LoRa build:
+# FIVE firmware options differ from the standard LoRa build. Every one of them
+# is load-bearing; none may change silently if someone edits the defaults in
+# build_linkitv4_lora.sh. Each line below states the shared default it overrides.
 #
-#   BATTERY_CHEMISTRY — Cyprus runs solar + 1S LiPo, whose discharge curve spans
-#   3200-4200 mV. The LoRa/SMD default (BATT_CHEM_LS17500_2P) is the Li-SOCl2
-#   LUT for the turtle trackers, 2700-3700 mV. Using it on a LiPo saturates the
-#   gauge at 100 % on a charged pack and puts the LB_THRESHOLD / LB_CRITICAL
-#   trip points on the wrong part of the curve. See core/hardware/nrf_battery_mon.cpp.
+#   BATTERY_CHEMISTRY  (shared default: BATT_CHEM_LS17500_2P)
+#   Cyprus runs solar + 1S LiPo, whose discharge curve spans 3200-4200 mV. The
+#   shared default is the Li-SOCl2 LUT for the turtle trackers, 2700-3700 mV.
+#   Using it on a LiPo saturates the gauge at 100 % on a charged pack and puts
+#   the LB_THRESHOLD / LB_CRITICAL trip points on the wrong part of the curve.
+#   See core/hardware/nrf_battery_mon.cpp.
 #
-# The other three are already the shared defaults. They are restated explicitly
-# because they are load-bearing for this deployment and must not change silently
-# if someone edits the defaults in build_linkitv4_lora.sh:
+#   LORA_DCS_ENABLE=ON  (shared default: OFF)
+#   ETSI EN 300 220 duty-cycle enforcement (AT+DCS=1). Cyprus is in the EU;
+#   shipping with DCS off is not legal. The shared script keeps OFF only to stay
+#   byte-identical for the existing LoRa turtles, and points here for the
+#   deployments that must opt in.
 #
-#   LORA_DCS_ENABLE=ON       -> ETSI EN 300 220 duty-cycle
-#                               enforcement. Cyprus is in the EU; shipping with
-#                               DCS off is not legal.
-#   GNSS_HAS_BACKUP_BATTERY  -> OFF. The Cyprus boards have no V_BCKP coin cell,
-#                               so the M10Q BBR fast-path reconfigure would fail
-#                               its baud probe every session and fall back to a
-#                               full configure anyway. Set ON only on a variant
-#                               that actually fits the backup supply.
-#   LORA_TX_ERROR_SUSPEND_S  -> 0 for commissioning (see the block below); the
-#                               boat has no surface events, so the probe is its
-#                               only recovery from a device-error suspension.
-#   ENABLE_AXL_SENSOR=OFF    -> Step 1 and step 2 do not use the BMA400, and
-#                               leaving it out keeps the largest sensor packet at
-#                               14 B so the driver's DR auto-bump never overrides
-#                               LORA_DR. Set ON for the step-3 movement work.
+#   GNSS_HAS_BACKUP_BATTERY=OFF  (shared default: ON)
+#   The Cyprus boards have no V_BCKP coin cell, so the M10Q BBR fast-path
+#   reconfigure would fail its baud probe every session and fall back to a full
+#   configure anyway. Set ON only on a variant that actually fits the backup
+#   supply.
+#
+#   LORA_TX_ERROR_SUSPEND_S=0  (shared default: 3600)
+#   Commissioning value, see the block further down. The boat has no surface
+#   events, so the probe is its only recovery from a device-error suspension.
+#
+#   ENABLE_AXL_SENSOR=ON  (shared default: OFF)
+#   Required by moored-vs-underway mode. The BMA400 is the cheap sentinel
+#   between two GNSS points: ~3.5 uA with a hardware GEN1 wake-on-motion
+#   interrupt, feeding MooredModeService and, via GNP26, an immediate GNSS
+#   acquisition when the vessel gets under way. This flag is NOT cosmetic — it
+#   compiles in the accelerometer branch of the peer-event funnel in
+#   ServiceManager::notify_peer_event, the GNP26 trigger in
+#   GPSService::service_is_triggered_on_event, and the AXP* parameters
+#   themselves (is_implemented). With it OFF, moored mode still works but has no
+#   sentinel: the only way out is the next scheduled fix, up to MOORED_DLOC away.
+#
+#   Checked, since the step-1/2 comment used to warn about it: enabling the AXL
+#   takes the largest sensor packet from 106 bits (14 B) to 173 bits (22 B),
+#   still far below the 51 B threshold at which lora_rak3172.cpp bumps the data
+#   rate. LORA_DR is NOT overridden. Keep AXP05 (AXL_SENSOR_ENABLE_TX_MODE) at
+#   OFF: the accelerometer is a sentinel here, not a payload.
 #
 # Runtime configuration (ARGOS_MODE, ARP11, GNP52, LoRaWAN credentials, DR, ...)
 # is NOT set here — it is provisioned device-side over DTE. See the deployment
@@ -61,7 +77,7 @@ export LORA_BUILD_SUBDIR=LINKIT_CYPRUS
 export BATTERY_CHEMISTRY=BATT_CHEM_NCR18650_3100_3400
 export LORA_DCS_ENABLE=ON
 export GNSS_HAS_BACKUP_BATTERY=OFF
-export ENABLE_AXL_SENSOR=OFF
+export ENABLE_AXL_SENSOR=ON
 
 # TX suspension after DEVICE_ERROR_MAX_CONSECUTIVE consecutive device errors.
 #

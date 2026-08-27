@@ -463,6 +463,52 @@ const BaseMap param_map[] = {
 	{ "SAT_AOP_AGE_S", "PPT02", BaseEncoding::UINT, 0U, 0xFFFFFFFFU, {}, true, false },
 	{ "SAT_NEXT_PASS_TS", "PPT03", BaseEncoding::UINT, 0U, 0xFFFFFFFFU, {}, true, false },
 	{ "SAT_LAST_PASS_TS", "PPT04", BaseEncoding::UINT, 0U, 0xFFFFFFFFU, {}, true, false },
+	// [253..262] Moored-vs-underway mode (2026-08, Cyprus boat tracker).
+	// Detection params (MRP00..04), override params (MRP05..08), read-only
+	// status (MRT01). Disabled by default — MOORED_* substitutes the GNSS
+	// period / TX interval / GNSS enable only while the classifier is engaged.
+	{ "MOORED_DETECT_EN",     "MRP00", BaseEncoding::BOOLEAN, 0, 0, {}, true, true },
+	// MRP01 floor is 10 m and MooredModeService clamps to the same value: below
+	// that, GNSS noise alone on a stationary receiver reads as movement and the
+	// tracker never settles. 150 m suits a vessel swinging on its mooring.
+	{ "MOORED_RADIUS_M",      "MRP01", BaseEncoding::UINT, 10U, 10000U, {}, true, true },
+	{ "MOORED_ENTER_FIXES",   "MRP02", BaseEncoding::UINT, 1U, 0xFFU, {}, true, true },
+	{ "MOORED_EXIT_EVENTS",   "MRP03", BaseEncoding::UINT, 1U, 0xFFU, {}, true, true },
+	// MRP04 = 0 disables the anti-flapping hold-off entirely. Only sane on a
+	// bench: on the water, swell trips the accelerometer and every trip costs a
+	// GNSS acquisition, which is exactly the expense this feature exists to avoid.
+	// Capped at 24 h — a hold-off longer than the moored GNSS period is pointless,
+	// the scheduled acquisition catches the movement first.
+	{ "MOORED_AXL_HOLDOFF_S", "MRP04", BaseEncoding::UINT, 0U, 86400U, {}, true, true },
+	// MRP05 uses the same AQPERIOD code table as DLOC_ARG_NOM (ARP11), which
+	// already offers 1 h / 2 h / 3 h / 4 h / 6 h / 12 h / 24 h.
+	{ "MOORED_DLOC",          "MRP05", BaseEncoding::AQPERIOD, 0, 0, { 0U, 1U, 2U, 3U, 4U, 5U, 6U, 7U, 8U, 9U, 10U, 11U, 12U, 13U, 14U, 15U }, true, true },
+	// MRP06 shares TR_NOM's 30 s floor (a shorter TX interval is meaningless
+	// here) but not its 1200 s ceiling — the whole point is to go well beyond it.
+	//
+	// The 86400 s (24 h) ceiling is NOT cosmetic. LoRaTxScheduler::schedule_periodic
+	// walks forward in period_ms steps under `elapsed_time <= 24 h`, so with a
+	// period above 24 h a single step overshoots the budget and the search exits
+	// through the "no schedule found" throw -> INVALID_SCHEDULE -> no TX planned
+	// at all. That path is only reachable when the candidate start time lands in
+	// the past (an RTC jump forward on GNSS sync is the realistic trigger), and it
+	// could never happen before because TR_NOM's own DTE maximum is 1200 s. This
+	// ceiling keeps the widened range on the safe side of that loop. It also bounds
+	// the worst-case silence of a sealed tracker to one day, which is a property
+	// worth having on its own.
+	{ "MOORED_TR_NOM",        "MRP06", BaseEncoding::UINT, 30U, 86400U, {}, true, true },
+	// MRP07=false makes the accelerometer the ONLY way out of MOORED: a vessel
+	// under tow, or drifting on a failed mooring with little vibration, would
+	// keep reporting "moored" from its last anchor. Leave true unless the
+	// battery budget genuinely cannot afford one fix per MRP05.
+	{ "MOORED_GNSS_EN",       "MRP07", BaseEncoding::BOOLEAN, 0, 0, {}, true, true },
+	// MRP08: LoRa only. Sends the cached position in the moored heartbeat
+	// instead of a battery-only STATUS frame — same SENSOR packet format, no
+	// backend change.
+	{ "MOORED_TX_LAST_POS",   "MRP08", BaseEncoding::BOOLEAN, 0, 0, {}, (LORA_RAK3172 == 1), true },
+	// MRT01: read-only status (STATR filters on key[2]=='T'). The only way to
+	// ask a sealed tracker whether it believes it is moored.
+	{ "MOORED_STATE",         "MRT01", BaseEncoding::UINT, 0U, 1U, {}, true, false },
 };
 
 const size_t param_map_size = sizeof(param_map) / sizeof(param_map[0]);

@@ -20,6 +20,7 @@
 #include "sensor.hpp"
 #include "service_scheduler.hpp"
 #include "hauled_mode_service.hpp"
+#include "moored_mode_service.hpp"
 
 #if VALIDATION_LOG_ENABLE
 // The [VAL-*] traces in this header timestamp using the global RTC. Without
@@ -129,7 +130,8 @@ enum class ConfigMode {
 	NORMAL,
 	LOW_BATTERY,
 	OUT_OF_ZONE,
-	HAULED               // Plan 1 step 3 — substitutes HAULED_* override params
+	HAULED,              // Plan 1 step 3 — substitutes HAULED_* override params
+	MOORED               // 2026-08 — substitutes MOORED_* override params (vessel stationary)
 	// (Plan 2 will add AT_SEA_SEQUENCED below this, between HAULED and base.)
 };
 
@@ -155,6 +157,13 @@ protected:
 	// value and CONTINUES (it does not stop), then reserializes.
 	// The bump stays mandatory if an existing slot is REMOVED or MOVED:
 	// that is what shifted all the following ones with ARP36/37 in 2026-06.
+	// 0x20 KEPT again in 2026-08 for slots 253-262 (moored-vs-underway mode,
+	// MRP00..MRP08 + MRT01), same reasoning: pure append, no slot moves. It
+	// matters more here than usual — the LoRa builds keep their LoRaWAN
+	// credentials (LORA_DEVEUI/APPKEY/DEVADDR/APPSKEY/NWKSKEY) in this file, and
+	// the recovery path preserves only ARGOS_DECID/ARGOS_HEXID. A needless bump
+	// would leave every provisioned LoRa unit unable to rejoin its network, with
+	// nothing in the logs to say why.
 	static inline const unsigned int m_config_version_code = 0x1c07e800 | 0x20;
 	static inline const unsigned int m_config_version_code_aop = 0x1c07e800 | 0x03;
 	static inline const std::array<BaseType,MAX_CONFIG_ITEMS> default_params { {
@@ -416,6 +425,16 @@ protected:
 		/* [250] SAT_AOP_AGE_S */ 0U,
 		/* [251] SAT_NEXT_PASS_TS */ 0U,
 		/* [252] SAT_LAST_PASS_TS */ 0U,
+		/* [253] MOORED_DETECT_EN */ (bool)false,   // off by default: no behaviour change for turtle / RSPB deployments
+		/* [254] MOORED_RADIUS_M */ 150U,           // a vessel swinging on its mooring stays well inside 150 m
+		/* [255] MOORED_ENTER_FIXES */ 3U,          // 3 consecutive stationary fixes before believing it
+		/* [256] MOORED_EXIT_EVENTS */ 2U,          // 2 accelerometer wake-ups to leave (1 would trip on a single wave)
+		/* [257] MOORED_AXL_HOLDOFF_S */ 900U,      // 15 min: bounds wake-up-driven GNSS acquisitions in swell
+		/* [258] MOORED_DLOC */ 3600U,              // 1 h GNSS acquisition period while moored (AQPERIOD code table)
+		/* [259] MOORED_TR_NOM */ 3600U,            // 1 h TX interval while moored
+		/* [260] MOORED_GNSS_EN */ (bool)true,      // keep fixing: GNSS is what detects a slow drift off the mooring
+		/* [261] MOORED_TX_LAST_POS */ (bool)true,  // moored heartbeat carries the last known position (LoRa)
+		/* [262] MOORED_STATE */ 0U,                // read-only mirror, written by MooredModeService
 	}};
 	static inline const BasePassPredict default_prepass = {
 		/* version_code */ m_config_version_code_aop,
@@ -453,6 +472,7 @@ protected:
 			DEBUG_INFO("ConfigurationStore: HAULED mode EXITED -> %s",
 			           new_mode == ConfigMode::LOW_BATTERY ? "LOW_BATTERY" :
 			           new_mode == ConfigMode::OUT_OF_ZONE ? "OUT_OF_ZONE" :
+			           new_mode == ConfigMode::MOORED      ? "MOORED" :
 			           new_mode == ConfigMode::NORMAL      ? "NORMAL" : "?");
 #if VALIDATION_LOG_ENABLE
 			DEBUG_INFO("[VAL-HAULED] mode_exit t=%u to=%d",
@@ -465,6 +485,7 @@ protected:
 			case ConfigMode::OUT_OF_ZONE: DEBUG_INFO("ConfigurationStore: OUT_OF_ZONE mode detected"); break;
 			case ConfigMode::NORMAL:      DEBUG_INFO("ConfigurationStore: NORMAL mode detected"); break;
 			case ConfigMode::HAULED:      /* logged inline as "engaged (GNSS)" / "engaged (Argos)" */ break;
+			case ConfigMode::MOORED:      /* logged inline as "engaged (GNSS)" / "engaged (Argos)" */ break;
 			default: break;
 		}
 		m_last_config_mode = new_mode;
@@ -856,6 +877,15 @@ public:
 		                             HauledModeService::is_hauled() &&
 		                             read_param<bool>(ParamID::HAULED_DETECT_EN);
 
+		// Same prediction for the MOORED override (2026-08). Priority sits below
+		// HAULED and above OUT_OF_ZONE: a vessel lying still far from its zone
+		// should stay economical, so MOORED wins over the zone variant.
+		MooredModeService::evaluate();
+		bool moored_will_override = !(lb_en && m_is_battery_level_low) &&
+		                            !hauled_will_override &&
+		                             MooredModeService::is_moored() &&
+		                             read_param<bool>(ParamID::MOORED_DETECT_EN);
+
 		if (lb_en && m_is_battery_level_low) {
 			// Use LB mode which takes priority
 			gnss_config.is_lb = true;
@@ -906,7 +936,7 @@ public:
 			gnss_config.min_elev = read_param<unsigned int>(ParamID::GNSS_MIN_ELEV);
 			gnss_config.ano_stale_days = read_param<unsigned int>(ParamID::GNSS_ANO_STALE_DAYS);
 
-			if (!hauled_will_override) mark_config_mode(ConfigMode::OUT_OF_ZONE);
+			if (!hauled_will_override && !moored_will_override) mark_config_mode(ConfigMode::OUT_OF_ZONE);
 
 		} else {
 			// Use default params
@@ -932,7 +962,7 @@ public:
 			gnss_config.min_elev = read_param<unsigned int>(ParamID::GNSS_MIN_ELEV);
 			gnss_config.ano_stale_days = read_param<unsigned int>(ParamID::GNSS_ANO_STALE_DAYS);
 
-			if (!hauled_will_override) mark_config_mode(ConfigMode::NORMAL);
+			if (!hauled_will_override && !moored_will_override) mark_config_mode(ConfigMode::NORMAL);
 		}
 
 		// HAULED override (Plan 1 step 3) — applied after the LB/OoZ/NORMAL
@@ -956,6 +986,28 @@ public:
 				           rtc && rtc->is_set() ? (unsigned int)rtc->gettime() : 0U);
 #endif
 				m_last_config_mode = ConfigMode::HAULED;
+			}
+		}
+
+		// MOORED override (2026-08) — same post-cascade shape as HAULED above:
+		// rewrites only the two fields that actually differ rather than
+		// duplicating the 25-line parameter block a fifth time.
+		//
+		// `enable` is ANDed, never assigned: MOORED_GNSS_EN can only narrow the
+		// GNSS enable, so a deployment running GNSS_EN=0 (or certification mode)
+		// can never be switched back on by the moored branch.
+		if (moored_will_override) {
+			gnss_config.dloc_arg_nom = read_param<unsigned int>(ParamID::MOORED_DLOC);
+			gnss_config.enable = gnss_config.enable && read_param<bool>(ParamID::MOORED_GNSS_EN);
+			if (m_last_config_mode != ConfigMode::MOORED) {
+				DEBUG_INFO("ConfigurationStore: MOORED mode engaged (GNSS) — acquisition period %u s",
+				           gnss_config.dloc_arg_nom);
+#if VALIDATION_LOG_ENABLE
+				DEBUG_INFO("[VAL-MOORED] mode_enter t=%u src=GNSS dloc=%u",
+				           rtc && rtc->is_set() ? (unsigned int)rtc->gettime() : 0U,
+				           gnss_config.dloc_arg_nom);
+#endif
+				m_last_config_mode = ConfigMode::MOORED;
 			}
 		}
 
@@ -1040,6 +1092,13 @@ public:
 		                             HauledModeService::is_hauled() &&
 		                             read_param<bool>(ParamID::HAULED_DETECT_EN);
 
+		// Same prediction for the MOORED override — see get_gnss_configuration().
+		MooredModeService::evaluate();
+		bool moored_will_override = !(lb_en && m_is_battery_level_low) &&
+		                            !hauled_will_override &&
+		                             MooredModeService::is_moored() &&
+		                             read_param<bool>(ParamID::MOORED_DETECT_EN);
+
 		// Power and frequency are controlled by RADIOCONF on SMD devices.
 		// These fields are kept for legacy (non-SMD) scheduler compatibility.
 		argos_config.power = BaseArgosPower::POWER_350_MW;
@@ -1111,7 +1170,7 @@ public:
 			argos_config.surfacing_burst_step_s = read_param<unsigned int>(ParamID::SURFACING_BURST_STEP_S);
 			argos_config.surfacing_burst_max_s = read_param<unsigned int>(ParamID::SURFACING_BURST_MAX_S);
 
-			if (!hauled_will_override) mark_config_mode(ConfigMode::OUT_OF_ZONE);
+			if (!hauled_will_override && !moored_will_override) mark_config_mode(ConfigMode::OUT_OF_ZONE);
 		} else {
 			// Use default params
 			argos_config.gnss_en = read_param<bool>(ParamID::GNSS_EN);
@@ -1145,7 +1204,7 @@ public:
 			argos_config.surfacing_burst_init_s = read_param<unsigned int>(ParamID::SURFACING_BURST_INIT_S);
 			argos_config.surfacing_burst_step_s = read_param<unsigned int>(ParamID::SURFACING_BURST_STEP_S);
 			argos_config.surfacing_burst_max_s = read_param<unsigned int>(ParamID::SURFACING_BURST_MAX_S);
-			if (!hauled_will_override) mark_config_mode(ConfigMode::NORMAL);
+			if (!hauled_will_override && !moored_will_override) mark_config_mode(ConfigMode::NORMAL);
 		}
 
 		// HAULED override (Plan 1) — see matching logic in
@@ -1202,6 +1261,31 @@ public:
 					           strat == (unsigned int)BaseGnssStrategy::REUSE_LAST ? "REUSE_LAST" : "OFF");
 				}
 				m_last_config_mode = ConfigMode::HAULED;
+			}
+		}
+
+		// MOORED override (2026-08) — see matching logic in
+		// get_gnss_configuration() above. Stretches the TX interval and mirrors
+		// the GNSS enable; deliberately does NOT touch `mode`.
+		//
+		// Not offering a MOORED_ARGOS_MODE is a decision, not an omission: the
+		// only thing a stationary vessel needs is a longer interval, and a mode
+		// override is a well-known way to silence a tracker by accident (set it
+		// to OFF, or to SURFACING_BURST on a hull that never dives, and the
+		// boat goes quiet with no error anywhere). The interval alone cannot do
+		// that — MRP06's floor is 30 s and the heartbeat always fires.
+		if (moored_will_override) {
+			argos_config.tx_interval_s = read_param<unsigned int>(ParamID::MOORED_TR_NOM);
+			argos_config.gnss_en = argos_config.gnss_en && read_param<bool>(ParamID::MOORED_GNSS_EN);
+			if (m_last_config_mode != ConfigMode::MOORED) {
+				DEBUG_INFO("ConfigurationStore: MOORED mode engaged (Argos/LoRa) — TX interval %u s",
+				           argos_config.tx_interval_s);
+#if VALIDATION_LOG_ENABLE
+				DEBUG_INFO("[VAL-MOORED] mode_enter t=%u src=Argos tr=%u",
+				           rtc && rtc->is_set() ? (unsigned int)rtc->gettime() : 0U,
+				           argos_config.tx_interval_s);
+#endif
+				m_last_config_mode = ConfigMode::MOORED;
 			}
 		}
 
