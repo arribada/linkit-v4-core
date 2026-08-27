@@ -2231,3 +2231,74 @@ CASES_V12 = [
     dict(id='HAULED-01',risque='BLOQUANT', titre='Le profil hors-eau se substitue au nominal', fn=c_hauled_substitution),
     dict(id='RL-02',    risque='MAJEUR',   titre='Le limiteur bloque au-dela du quota',        fn=c_limiteur_bloque),
 ]
+
+def c_seuils_batterie_vivants(r, case):
+    """Les seuils batterie doivent prendre effet SANS redemarrage.
+
+    BatteryMonitor recevait LB_THRESHOLD et LB_CRITICAL_THRESH par son seul
+    CONSTRUCTEUR (init_battery, au boot) et ne les relisait jamais: dans tout
+    l arbre, m_low_level et m_critical_level n apparaissaient qu a la
+    declaration, dans la liste d initialisation, et dans des comparaisons en
+    lecture seule. Les ecrire par DTE ne changeait donc rien jusqu au prochain
+    redemarrage — or un tag scelle ne se redemarre pas a la demande, et c est
+    exactement le moment ou l on veut reajuster le point de bascule.
+
+    Pire: check_battery_thresholds() lit le couple STOCKE, donc il pouvait
+    annoncer un ordre sain pendant que le moniteur appliquait encore l ancien.
+
+    On eprouve les deux sens: seuil au-dessus de la charge -> le profil LB doit
+    se substituer; seuil ramene sous la charge -> retour au nominal. Aucun
+    redemarrage entre les deux.
+    """
+    b = r.b
+    try:
+        b.enter_config()
+        _, av = b.read_params(['LB_THRESHOLD', 'LB_CRITICAL_THRESH'])
+        b.write_params({'ARGOS_MODE': 2, 'TR_NOM': 60, 'GNSS_EN': 1, 'LB_EN': 1,
+                        'LB_THRESHOLD': 99, 'LB_CRITICAL_THRESH': 1,
+                        'LB_ARGOS_MODE': 2, 'LB_ARGOS_DEPTH_PILE': 2,
+                        'LB_NTRY_PER_MESSAGE': 5, 'TR_LB': 900,
+                        'ARGOS_DEPTH_PILE': 4, 'NTRY_PER_MESSAGE': 0,
+                        'UNDERWATER_EN': 0, 'HAULED_DETECT_EN': 0,
+                        'ZONE_ENABLE_OUT_OF_ZONE_DETECTION_MODE': 0,
+                        'SAT_PREPASS_EN': 0, 'RATE_LIMIT_EN': 0})
+        b.exit_config()
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    time.sleep(3); b._send('%GPS 43.6 3.9 5000 9\r'); time.sleep(14)
+    haut = _argoscfg(b)
+    try:
+        b.enter_config(); b.write_params({'LB_THRESHOLD': 10}); b.exit_config()
+    except Exception as e:
+        return r.record(case, 'ERROR', f'abaissement impossible: {type(e).__name__}: {e}')
+    time.sleep(3); b._send('%GPS 43.6 3.9 5000 9\r'); time.sleep(14)
+    bas = _argoscfg(b)
+    try:
+        b.enter_config()
+        b.write_params({'LB_EN': 0, 'ARGOS_MODE': 0,
+                        'LB_THRESHOLD': int(av.get('LBP02', 10)),
+                        'LB_CRITICAL_THRESH': int(av.get('LBP12', 5))})
+        b.exit_config()
+    except Exception:
+        pass
+    if not haut or not bas:
+        return r.record(case, 'ERROR', '%ARGOSCFG sans reponse')
+    trace = f'seuil 99: {haut}\nseuil 10: {bas}'
+    if not haut['lb']:
+        r.record(case, 'FAIL',
+                 'seuil releve au-dessus de la charge: le drapeau batterie basse ne monte pas '
+                 '(seuils encore figes au boot ?)', trace)
+    elif haut['tr_nom'] != 900 or haut['ntry'] != 5:
+        r.record(case, 'FAIL', 'drapeau leve mais le profil LB ne se substitue pas', trace)
+    elif bas['lb']:
+        r.record(case, 'FAIL', 'seuil rabaisse: le drapeau batterie basse ne redescend pas', trace)
+    elif bas['tr_nom'] != 60:
+        r.record(case, 'FAIL', 'drapeau retombe mais le profil nominal ne revient pas', trace)
+    else:
+        r.record(case, 'PASS', 'les deux seuils prennent effet sans redemarrage, dans les deux sens', trace)
+
+CASES_V13 = [
+    dict(id='BATT-R2', risque='BLOQUANT',
+         titre='Les seuils batterie prennent effet sans redemarrage',
+         fn=c_seuils_batterie_vivants),
+]

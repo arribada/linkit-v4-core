@@ -99,7 +99,12 @@ const BaseMap param_map[] = {
 	//////////////////////////
 	// ZONE FILE
 	//////////////////////////
-	{ "ZONE_TYPE", "ZOP01", BaseEncoding::ZONETYPE, 0, 0, { 0U, 1U }, true, true },
+		// BaseZoneType has exactly one member, CIRCLE = 1, and decode_zone_type()
+	// throws on anything else. Listing 0 as permitted advertised a zone type
+	// that does not exist: a host reading this table would offer it, and the
+	// write would then be rejected by the decoder for no reason the operator
+	// can see.
+	{ "ZONE_TYPE", "ZOP01", BaseEncoding::ZONETYPE, 0, 0, { 1U }, true, true },
 	{ "ZONE_ENABLE_OUT_OF_ZONE_DETECTION_MODE", "ZOP04", BaseEncoding::BOOLEAN, 0, 0, {}, true, true },
 	{ "ZONE_ENABLE_ACTIVATION_DATE", "ZOP05", BaseEncoding::BOOLEAN, 0, 0, {}, true, true },
 	{ "ZONE_ACTIVATION_DATE", "ZOP06", BaseEncoding::DATESTRING, 0, 0, {}, true, true },
