@@ -1608,3 +1608,195 @@ CASES_V9 = [
     dict(id='SENS-R4', risque='MAJEUR',   titre='Parametres de basse consommation bornes', fn=c_capteur_basse_conso),
     dict(id='BATT-R1', risque='MAJEUR',   titre='SENSR et STATR concordent sur la batterie', fn=c_batterie_coherence),
 ]
+
+# =====================================================================
+#  Vague 10 — Argos en surface, pilote par le SWS
+#  Aucune emission radio n est possible (pas de credentials KIM2): on eprouve
+#  la DECISION d emettre et la cascade d etat, lues dans le journal.
+# =====================================================================
+
+def _attendre_trace(b, motifs, secondes, depuis=None):
+    """Attend qu une des traces apparaisse. Rend la liste des lignes vues.
+
+    On ATTEND au lieu de dormir un temps fixe: la cascade d emersion enchaine
+    des etapes de duree variable, et une fenetre figee produit de faux verdicts
+    dans les deux sens.
+    """
+    mk = b.mark() if depuis is None else depuis
+    fin = time.time() + secondes
+    vues = []
+    while time.time() < fin:
+        time.sleep(1.5)
+        with b._lock:
+            lignes = [l for _, l in b.history[mk:]]
+        vues = [l.strip()[24:200] for l in lignes
+                if any(re.search(m, l) for m in motifs)]
+        if vues:
+            return vues
+    return vues
+
+def _config_surface(b, **extra):
+    """Configuration de reference d une salve d emersion."""
+    cfg = {'ARGOS_MODE': 5, 'GNSS_EN': 1, 'NTRY_PER_MESSAGE': 0,
+           'DUTY_CYCLE': 16777215, 'UNDERWATER_EN': 1,
+           'MIN_SURFACE_CYCLE_INTERVAL_S': 0, 'DRY_TIME_BEFORE_TX': 0,
+           'SURFACING_BURST_MAX_MSG': 3, 'SURFACING_BURST_INIT_S': 5,
+           'SURFACING_BURST_STEP_S': 0, 'SURFACING_BURST_MAX_S': 30,
+           'SAT_PREPASS_EN': 0, 'RATE_LIMIT_EN': 0, 'LB_EN': 0}
+    cfg.update(extra)
+    b.enter_config(); b.write_params(cfg); b.exit_config()
+
+def c_surface_limite_doppler(r, case):
+    """SURFACING_BURST_MAX_MSG borne la phase Doppler et arme le refroidissement.
+
+    ARP43 est la seule borne de la sequence Doppler. A 0 elle est illimitee, ce
+    que le wiki interdit en mode DOPPLER (emission continue jusqu a vider la
+    batterie). Ici on verifie la borne HAUTE: apres N messages Doppler la salve
+    doit s arreter d elle-meme ET armer le refroidissement, sans quoi un animal
+    qui reste en surface emet sans fin.
+    """
+    b = r.b
+    try:
+        # UNP30 vaut 3 (AFTER_LAST_TX) par defaut: l armement a la fin de la
+        # phase Doppler n a lieu QUE si le declencheur est END_OF_DOPPLER. Sans
+        # ce reglage le firmware a raison de ne rien armer, et le test avait
+        # tort de le lui reprocher. Et il faut une fenetre non nulle, sinon il
+        # n y a rien a refroidir.
+        _config_surface(b, SURFACING_BURST_MAX_MSG=2, COOLDOWN_TRIGGER_MODE=1,
+                        MIN_SURFACE_CYCLE_INTERVAL_S=120)
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}')
+    time.sleep(2)
+    b._send('%DIVE\r'); time.sleep(6)
+    mk = b.mark()
+    b._send('%SURFACE\r')
+    # 150 s et non 120: avec ARP43=2 il faut DEUX emissions Doppler espacees par
+    # l intervalle de salve, et le rejeu manuel du 2026-08-27 a montre que la
+    # sequence complete (limite atteinte + refroidissement arme) tient en ~150 s.
+    # Une fenetre trop courte faisait rougir un firmware qui se comportait bien.
+    vues = _attendre_trace(b, [r'Doppler limit reached', r'cooldown armed'], 170, depuis=mk)
+    try:
+        b.enter_config()
+        b.write_params({'ARGOS_MODE': 0, 'UNDERWATER_EN': 0, 'COOLDOWN_TRIGGER_MODE': 3,
+                        'MIN_SURFACE_CYCLE_INTERVAL_S': 0})
+        b.exit_config()
+    except Exception:
+        pass
+    limite = [l for l in vues if 'Doppler limit reached' in l]
+    refroid = [l for l in vues if 'cooldown armed' in l]
+    trace = '\n'.join(vues[:6])
+    if not limite:
+        r.record(case, 'FAIL', 'la phase Doppler ne s arrete pas a ARP43', trace)
+    elif not refroid:
+        r.record(case, 'FAIL', 'limite atteinte mais refroidissement non arme', trace)
+    else:
+        r.record(case, 'PASS', 'phase Doppler bornee et refroidissement arme', trace)
+
+def c_surface_promotion_fix(r, case):
+    """Un fix frais pendant la phase Doppler doit promouvoir en phase GNSS.
+
+    C est le coeur du mode: tant qu il n y a pas de position on emet du Doppler
+    (le segment sol reconstruit par effet Doppler), et des qu une position
+    tombe on doit basculer sur des trames GNSS, bien plus precises. Si la
+    promotion n a pas lieu, la balise gaspille sa fenetre de surface en Doppler
+    alors qu elle a mieux a dire.
+    """
+    b = r.b
+    try:
+        _config_surface(b, SURFACING_BURST_MAX_MSG=8)
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}')
+    time.sleep(2)
+    b._send('%DIVE\r'); time.sleep(6)
+    mk = b.mark()
+    b._send('%SURFACE\r'); time.sleep(8)
+    b._send('%GPS 43.6 3.9 5000 9\r')
+    vues = _attendre_trace(b, [r'promoting to GNSS phase', r'promoting Doppler slot to GNSS TX',
+                               r'switching to GNSS phase', r'GNSS TX #1'], 120, depuis=mk)
+    try:
+        b.enter_config(); b.write_params({'ARGOS_MODE': 0, 'UNDERWATER_EN': 0}); b.exit_config()
+    except Exception:
+        pass
+    if vues:
+        r.record(case, 'PASS', 'le fix promeut la salve en phase GNSS', '\n'.join(vues[:5]))
+    else:
+        r.record(case, 'FAIL', 'aucune promotion en phase GNSS apres un fix frais')
+
+def c_surface_refroidissement(r, case):
+    """MIN_SURFACE_CYCLE_INTERVAL_S: une emersion trop rapprochee doit etre PASSIVE.
+
+    Sans ce garde-fou, un animal qui fait des sauts repetes declenche un cycle
+    complet (GPS + salve) a chaque fois et vide la batterie. Le firmware doit
+    signaler ces emersions comme passives, puis reprendre normalement une fois
+    la fenetre ecoulee. C est aussi le chemin qui, en 2026-05, avait laisse un
+    tag dormant: le SWS etait desactive pendant le refroidissement et rien ne le
+    rearmait.
+    """
+    b = r.b
+    try:
+        # Aucune emission n aboutit sur ce banc (pas de credentials KIM2), donc
+        # "cycle complete" ne peut jamais se produire: on arme le
+        # refroidissement par END_OF_DOPPLER, qui n exige pas de TX reussie.
+        _config_surface(b, MIN_SURFACE_CYCLE_INTERVAL_S=90, SURFACING_BURST_MAX_MSG=1,
+                        COOLDOWN_TRIGGER_MODE=1)
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}')
+    time.sleep(2)
+    # premier cycle complet: il doit armer le refroidissement
+    b._send('%DIVE\r'); time.sleep(6)
+    mk = b.mark(); b._send('%SURFACE\r')
+    arme = _attendre_trace(b, [r'cooldown started', r'cooldown armed'], 150, depuis=mk)
+    # deuxieme emersion immediate: elle doit etre passive
+    b._send('%DIVE\r'); time.sleep(6)
+    mk2 = b.mark(); b._send('%SURFACE\r')
+    passif = _attendre_trace(b, [r'passive surfacing'], 60, depuis=mk2)
+    # le SWS doit rester vivant pendant le refroidissement (chemin du blocage
+    # de 2026-05: le SWS etait desactive et plus rien ne le rearmait)
+    sws = (_sched_tous(r) or {}).get('SWSAnalog')
+    try:
+        b.enter_config()
+        b.write_params({'ARGOS_MODE': 0, 'UNDERWATER_EN': 0,
+                        'MIN_SURFACE_CYCLE_INTERVAL_S': 0, 'COOLDOWN_TRIGGER_MODE': 3})
+        b.exit_config()
+    except Exception:
+        pass
+    trace = 'arme: ' + '; '.join(arme[:2]) + '\npassif: ' + '; '.join(passif[:2]) + f'\nSWS: {sws}'
+    if not arme:
+        r.record(case, 'FAIL', 'le refroidissement n est pas arme apres un cycle complet', trace)
+    elif not passif:
+        r.record(case, 'FAIL', 'une emersion pendant le refroidissement n est pas signalee passive', trace)
+    else:
+        r.record(case, 'PASS', 'refroidissement arme et emersion rapprochee rendue passive', trace)
+
+def c_surface_sans_sws(r, case):
+    """SURFACING_BURST sans UNDERWATER_EN doit etre SIGNALE, pas subi.
+
+    Le mode est entierement pilote par les transitions du SWS: sans capteur
+    actif, aucune salve ne peut jamais partir. Le silence serait indiagnosticable
+    sur le terrain, donc le firmware doit le dire au demarrage du service.
+    """
+    b = r.b
+    try:
+        b.enter_config()
+        b.write_params({'ARGOS_MODE': 5, 'GNSS_EN': 1, 'UNDERWATER_EN': 0,
+                        'NTRY_PER_MESSAGE': 0, 'SAT_PREPASS_EN': 0})
+        mk = b.mark()
+        b.exit_config()
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}')
+    vues = _attendre_trace(b, [r'requires UNDERWATER_EN'], 45, depuis=mk)
+    try:
+        b.enter_config(); b.write_params({'ARGOS_MODE': 0}); b.exit_config()
+    except Exception:
+        pass
+    if vues:
+        r.record(case, 'PASS', 'la combinaison impossible est signalee au demarrage', '\n'.join(vues[:2]))
+    else:
+        r.record(case, 'FAIL', 'SURFACING_BURST sans SWS: aucun avertissement')
+
+CASES_V10 = [
+    dict(id='SURF-01', risque='BLOQUANT', titre='La phase Doppler est bornee et arme le refroidissement', fn=c_surface_limite_doppler),
+    dict(id='SURF-02', risque='BLOQUANT', titre='Un fix frais promeut la salve en phase GNSS',            fn=c_surface_promotion_fix),
+    dict(id='SURF-03', risque='BLOQUANT', titre='Refroidissement inter-cycles et emersion passive',       fn=c_surface_refroidissement),
+    dict(id='SURF-04', risque='MAJEUR',   titre='SURFACING_BURST sans SWS est signale',                   fn=c_surface_sans_sws),
+]
