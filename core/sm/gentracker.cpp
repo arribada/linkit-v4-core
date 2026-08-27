@@ -289,6 +289,21 @@ static void bootfail_increment() {
 	           static_cast<unsigned int>(s_bootfail_noinit.factory_reset_attempted));
 }
 
+#ifdef BENCH_TEST
+/// @brief Read the boot-fail state for the bench console.
+///
+/// Exposed because this counter is on the path to the worst failure a sealed
+/// tag has: BOOT_RETRY_BEFORE_FACTORY consecutive failed boots trigger a
+/// factory reset, and that wipes the Argos credentials. If the counter ever
+/// stopped clearing on a healthy boot, three reboots would brick the device --
+/// and nothing outside .noinit RAM would show it coming.
+void bench_bootfail_read(unsigned int& failures, unsigned int& factory_attempted) {
+	bootfail_load();
+	failures          = s_bootfail_noinit.consecutive_failures;
+	factory_attempted = s_bootfail_noinit.factory_reset_attempted;
+}
+#endif
+
 /// @brief Reset the boot-fail counter — called from OperationalState::entry
 /// to mark that a successful boot has occurred.
 static void bootfail_reset() {

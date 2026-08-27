@@ -4418,3 +4418,127 @@ CASES_V22 = [
     dict(id='ARG-05', risque='MAJEUR',   titre='Le statut AOP annonce est coherent',
          fn=c_aop_statut_coherent),
 ]
+
+
+# =====================================================================
+#  Vague 23 — le compte a rebours vers le brick
+#
+#  BOOT_RETRY_BEFORE_FACTORY = 3 (gentracker.cpp:252): trois demarrages
+#  consecutifs rates declenchent un reset usine, et le reset usine efface les
+#  identifiants Argos. Sur une balise scellee, c est definitif — plus aucun
+#  moyen de la reprogrammer sur le terrain.
+#
+#  Le compteur vit en .noinit et n est efface QUE par un demarrage reussi
+#  (bootfail_reset(), appele depuis OperationalState::entry). S il cessait de
+#  s effacer, rien ne le montrerait: le compte a rebours serait entierement
+#  silencieux jusqu au troisieme redemarrage. La sonde %BOOT est le seul point
+#  d observation.
+# =====================================================================
+
+def _boot(b, timeout=10.0, essais=4):
+    """%BOOT -> (echecs, tentatives de reset usine), ou (None, None)."""
+    for _ in range(essais):
+        mk = b.mark(); b._send('%BOOT\r')
+        m = b.expect(r'%BOOT failures=(\d+) factory_attempted=(\d+)', timeout, from_idx=mk)
+        if m:
+            return int(m.group(1)), int(m.group(2))
+        time.sleep(2)
+    return None, None
+
+def c_boot_compteur_efface(r, case):
+    """Un demarrage reussi remet le compteur d echecs a zero.
+
+    C est la seule chose qui empeche le compte a rebours d avancer. La carte a
+    redemarre des dizaines de fois pendant la campagne — chaque reparation de
+    lien, chaque reflashage — donc si l effacement ne marchait pas, le compteur
+    serait deja bien au-dela de trois et le reset usine aurait eu lieu.
+    Le lire a zero apres une session entiere est une preuve de terrain, pas une
+    verification de principe.
+    """
+    b = r.b
+    echecs, usine = _boot(b)
+    if echecs is None:
+        return r.record(case, 'ERROR', '%BOOT sans reponse (sonde absente du build ?)')
+    trace = f'failures={echecs} factory_attempted={usine}'
+    if echecs > 0:
+        return r.record(case, 'FAIL',
+                        f'le compteur d echecs vaut {echecs} sur une carte en marche: '
+                        'un demarrage reussi ne l efface pas, le reset usine approche', trace)
+    if usine:
+        return r.record(case, 'FAIL',
+                        'une tentative de reset usine est enregistree — les identifiants '
+                        'Argos ont pu etre effaces', trace)
+    r.record(case, 'PASS', 'compteur d echecs a zero, aucune tentative de reset usine', trace)
+
+def c_boot_survit_redemarrage(r, case):
+    """Le compteur est TOUJOURS a zero apres un redemarrage volontaire.
+
+    Le cas precedent constate un etat; celui-ci exerce la boucle complete.
+    RSTBW redemarre la carte (DTEAction::RESET); si l effacement n avait lieu
+    qu au tout premier demarrage apres flashage, ce cas le verrait.
+
+    Le redemarrage fait re-enumerer le CDC et coupe le lien: la reconnexion
+    fait partie du cas, pas d un incident.
+    """
+    b = r.b
+    avant = _boot(b)
+    try:
+        b.enter_config()
+        b.dte('RSTBW', '', timeout=8.0)
+    except Exception as e:
+        return r.record(case, 'ERROR', f'RSTBW impossible: {type(e).__name__}: {e}')
+    time.sleep(6)
+    if not r.connect():
+        return r.record(case, 'ERROR', 'la carte ne revient pas apres RSTBW')
+    b = r.b
+    if not b.wait_state('OPERATIONAL', timeout=90):
+        return r.record(case, 'ERROR', 'la carte ne repasse pas en OPERATIONAL apres RSTBW')
+    apres = _boot(b)
+    trace = f'avant: failures={avant[0]} usine={avant[1]}\napres: failures={apres[0]} usine={apres[1]}'
+    if apres[0] is None:
+        return r.record(case, 'ERROR', '%BOOT sans reponse apres redemarrage', trace)
+    if apres[0] > 0:
+        return r.record(case, 'FAIL',
+                        f'apres un redemarrage volontaire le compteur vaut {apres[0]}: '
+                        'le demarrage reussi ne l efface pas', trace)
+    r.record(case, 'PASS',
+             'le compteur revient a zero apres un redemarrage volontaire', trace)
+
+def c_rstvw_compteur_tx(r, case):
+    """RSTVW remet le compteur d emissions a zero, et refuse un index inconnu.
+
+    Le compteur d emissions sert au suivi de consommation du quota satellite.
+    Un RSTVW qui accepterait n importe quel index ecraserait une autre variable
+    de comptage sans le dire.
+    """
+    b = r.b
+    try:
+        b.enter_config()
+        m = b.dte('RSTVW', '1', timeout=10.0)
+        apres = _statr(b, ['ART02'])
+        mauvais = b.dte('RSTVW', '9', timeout=10.0)
+        b.exit_config()
+    except Exception as e:
+        return r.record(case, 'ERROR', f'RSTVW impossible: {type(e).__name__}: {e}')
+    trace = f'apres RSTVW 1: {apres}\nRSTVW 9: {(mauvais.string if mauvais and hasattr(mauvais, "string") else "")[:80]}'
+    if not m or m.group(1) != 'O':
+        return r.record(case, 'FAIL', 'RSTVW 1 (compteur d emissions) refuse', trace)
+    valeur = apres.get('ART02', '')
+    if valeur.isdigit() and int(valeur) != 0:
+        return r.record(case, 'FAIL',
+                        f'le compteur d emissions vaut {valeur} apres remise a zero', trace)
+    if not mauvais:
+        return r.record(case, 'ERROR', 'aucune reponse a un index inconnu', trace)
+    if mauvais.group(1) != 'N':
+        return r.record(case, 'FAIL', 'RSTVW accepte un index inconnu (9)', trace)
+    r.record(case, 'PASS',
+             'le compteur d emissions est remis a zero, l index inconnu est refuse', trace)
+
+CASES_V23 = [
+    dict(id='BOOT-01', risque='BLOQUANT', titre='Un demarrage reussi efface le compteur d echecs',
+         fn=c_boot_compteur_efface),
+    dict(id='BOOT-02', risque='BLOQUANT', titre='Le compteur reste a zero apres un redemarrage',
+         fn=c_boot_survit_redemarrage),
+    dict(id='RSTV-01', risque='MAJEUR',   titre='RSTVW remet a zero et refuse un index inconnu',
+         fn=c_rstvw_compteur_tx),
+]

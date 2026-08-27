@@ -44,6 +44,9 @@ extern Is25Flash *bench_flash;
 extern Scheduler  *system_scheduler;
 extern GPSService *gps_service;
 extern RTC        *rtc;
+#ifdef BENCH_TEST
+void bench_bootfail_read(unsigned int&, unsigned int&);
+#endif
 extern BLEService *ble_service;
 
 namespace {
@@ -486,6 +489,18 @@ bool bench::handle_line(const std::string& raw) {
                      configuration_store->read_param<unsigned int>(ParamID::HAULED_IDLE_THRESHOLD_H));
             reply(buf);
         }
+    } else if (cmd == "%BOOT") {
+        // Boot-failure counter, straight out of .noinit RAM. Three consecutive
+        // failed boots trigger a factory reset, which wipes the Argos
+        // credentials -- the sealed-device brick. A counter that stops clearing
+        // on a healthy boot is therefore a silent countdown, and this is the
+        // only way to see it.
+        unsigned int echecs = 0, usine = 0;
+        bench_bootfail_read(echecs, usine);
+        char buf[112];
+        snprintf(buf, sizeof(buf), "%%BOOT failures=%u factory_attempted=%u",
+                 echecs, usine);
+        reply(buf);
     } else if (cmd == "%CFG") {
         if (GenTracker::is_in_state<ConfigurationState>()) {
             reply("%CFG OK already-config");
