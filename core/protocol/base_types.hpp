@@ -473,8 +473,16 @@ enum class ParamID {
 	MOORED_GNSS_EN                           = 260,  // bool: keep acquiring GNSS while moored. true is strongly recommended — GNSS is what confirms the vessel is still there and what detects a slow drift. false makes the accelerometer the only movement oracle.
 	MOORED_TX_LAST_POS                       = 261,  // bool: the moored heartbeat carries the last known position instead of a battery-only STATUS frame (LoRa)
 	MOORED_STATE                             = 262,  // uint 0/1: read-only mirror of the classifier state, written by MooredModeService
+
+	// 2026-08 — PREPASS v4.0 exposes two filters the v3.4 engine did not have.
+	// They were hardcoded at the three call sites when the engine was imported
+	// (0 for TX, 20 for RX, "TODO : ADD DTE PARAMETER"); these make them
+	// configurable, which is what the RX window actually needs tuning on.
+	PP_MIN_CULMINATION                       = 263,  // uint deg: reject grazing passes (0 = disabled). TX path.
+	PP_RX_MIN_CULMINATION                    = 264,  // uint deg: same for the AOP downlink window, where a poor pass wastes a whole RX slot
+	PP_POSITION_MARGIN_KM                    = 265,  // uint km: beacon position uncertainty, widens the visibility circle
 	// === Sentinel (fixed regardless of #ifdef combinations) ===
-	__PARAM_SIZE                             = 263,
+	__PARAM_SIZE                             = 266,
 	__NULL_PARAM                             = 0xFFFF
 };
 

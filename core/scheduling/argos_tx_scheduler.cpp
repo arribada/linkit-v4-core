@@ -188,8 +188,8 @@ std::time_t ArgosTxScheduler::next_pass_epoch(ArgosConfig& config, BasePassPredi
 		config.prepass_max_passes,
 		static_cast<float>(config.prepass_linear_margin) / 60.0f,
 		config.prepass_comp_step,
-		0, // minCulmination  // TODO : ADD DTE PARAMETER
-		0, // position error, // TODO : ADD DTE PARAMETER
+		static_cast<float>(config.prepass_min_culmination),   // PPP10
+		static_cast<float>(config.prepass_position_margin_km), // PPP12
 		true // includeCurrentPass
 	};
 	SatelliteNextPassPrediction_t next_pass;
@@ -249,8 +249,8 @@ unsigned int ArgosTxScheduler::schedule_prepass(ArgosConfig& config, BasePassPre
 		config.prepass_max_passes,
 		static_cast<float>(config.prepass_linear_margin) / 60.0f,
 		config.prepass_comp_step,
-		0, // minCulmination  // TODO : ADD DTE PARAMETER
-		0, // position error, // TODO : ADD DTE PARAMETER
+		static_cast<float>(config.prepass_min_culmination),   // PPP10
+		static_cast<float>(config.prepass_position_margin_km), // PPP12
 		true // includeCurrentPass
 	};
 	SatelliteNextPassPrediction_t next_pass;

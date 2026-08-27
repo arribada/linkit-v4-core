@@ -19,7 +19,13 @@ namespace BSP
 		// open-drain → no contention), so STM32WL firmware flashing is unaffected.
 		/* GPIO_SAT_RESET       */ {NRF_GPIO_PIN_MAP(0, 31), NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_S0D1, NRF_GPIO_PIN_NOSENSE, {}},
 		/* GPIO_SAT_EN          */ {NRF_GPIO_PIN_MAP(1, 15), NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_PULLDOWN, NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE, {}},
-        /* GPIO_SAT_WKUP        */ {NRF_GPIO_PIN_MAP(0, 30), NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE, {}},
+        // PULLDOWN, not NOPULL: this line drives the KIM2 external wake-up, and the
+        // pin is high-Z whenever the nRF is in reset or System OFF. Floating, it can
+        // sit at whatever the module's input leakage decides -- holding the radio
+        // awake and burning the budget, or bouncing it. The pull-down defines the
+        // idle state as 'asleep' even when nothing is driving it.
+        // From dev/kineis_blind_wakeup; the rest of that branch is already superseded.
+        /* GPIO_SAT_WKUP        */ {NRF_GPIO_PIN_MAP(0, 30), NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_PULLDOWN, NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE, {}},
         /* GPIO_KIM_PWR_ON      */ {NRF_GPIO_PIN_MAP(0,  5), NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE, {}},
         // KIM_INT (broche 5 du module) — sortie du module vers nRF P0.29, donc
         // ENTREE ici. Tirage BAS: le module la relache quand il est eteint, et une

@@ -514,6 +514,14 @@ const BaseMap param_map[] = {
 	// MRT01: read-only status (STATR filters on key[2]=='T'). The only way to
 	// ask a sealed tracker whether it believes it is moored.
 	{ "MOORED_STATE",         "MRT01", BaseEncoding::UINT, 0U, 1U, {}, true, false },
+	// Culmination is the HIGHEST elevation a pass reaches, at its middle; it
+	// says how good the pass is, where PP_MIN_ELEVATION (PPP01) only says when
+	// the satellite becomes visible. Bounded at 90 because that is the zenith.
+	{ "PP_MIN_CULMINATION",    "PPP10", BaseEncoding::UINT, 0U, 90U, {}, true, true },
+	{ "PP_RX_MIN_CULMINATION", "PPP11", BaseEncoding::UINT, 0U, 90U, {}, true, true },
+	// 100 km ceiling: past that the widened visibility circle predicts passes
+	// the beacon cannot actually use.
+	{ "PP_POSITION_MARGIN_KM", "PPP12", BaseEncoding::UINT, 0U, 100U, {}, true, true },
 };
 
 const size_t param_map_size = sizeof(param_map) / sizeof(param_map[0]);

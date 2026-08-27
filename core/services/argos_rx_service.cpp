@@ -374,8 +374,10 @@ unsigned int ArgosRxScheduler::schedule(ArgosConfig& argos_config, BasePassPredi
 			argos_config.prepass_max_passes,                  //< Maximum number of passes per satellite (#)
 			(float)argos_config.prepass_linear_margin / 60.0f, //< Linear time margin (in minutes/6months)
 			argos_config.prepass_comp_step,                    //< Computation step (seconds)
-			20, // minCulmination  // TODO : ADD DTE PARAMETER
-			0, // position error, // TODO : ADD DTE PARAMETER
+			// PPP11, default 20 deg: the downlink window is a fixed cost, and a
+			// grazing pass spends it for a link that will not close.
+			(float)argos_config.prepass_rx_min_culmination,
+			(float)argos_config.prepass_position_margin_km,   // PPP12
 			true // includeCurrentPass
 		};
 		return cfg;

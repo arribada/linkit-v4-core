@@ -90,6 +90,12 @@ struct ArgosConfig {
 	unsigned int prepass_max_passes;
 	unsigned int prepass_linear_margin;
 	unsigned int prepass_comp_step;
+	/// @name PREPASS v4.0 filters, hardcoded when the engine was imported
+	/// @{
+	unsigned int prepass_min_culmination;     ///< deg, TX path (0 = off)
+	unsigned int prepass_rx_min_culmination;  ///< deg, AOP downlink window
+	unsigned int prepass_position_margin_km;  ///< km, beacon position uncertainty
+	/// @}
 	bool is_out_of_zone;
 	bool is_lb;
 	bool time_sync_burst_en;
@@ -435,6 +441,9 @@ protected:
 		/* [260] MOORED_GNSS_EN */ (bool)true,      // keep fixing: GNSS is what detects a slow drift off the mooring
 		/* [261] MOORED_TX_LAST_POS */ (bool)true,  // moored heartbeat carries the last known position (LoRa)
 		/* [262] MOORED_STATE */ 0U,                // read-only mirror, written by MooredModeService
+		/* [263] PP_MIN_CULMINATION */ 0U,         // TX: keep every pass the elevation filter accepted (previous hardcoded value)
+		/* [264] PP_RX_MIN_CULMINATION */ 20U,     // RX: a downlink needs a good pass — a grazing one wastes the whole window (previous hardcoded value)
+		/* [265] PP_POSITION_MARGIN_KM */ 0U,      // no position uncertainty by default
 	}};
 	static inline const BasePassPredict default_prepass = {
 		/* version_code */ m_config_version_code_aop,
@@ -1148,6 +1157,9 @@ public:
 			argos_config.prepass_max_passes = read_param<unsigned int>(ParamID::PP_MAX_PASSES);
 			argos_config.prepass_linear_margin = read_param<unsigned int>(ParamID::PP_LINEAR_MARGIN);
 			argos_config.prepass_comp_step = read_param<unsigned int>(ParamID::PP_COMP_STEP);
+			argos_config.prepass_min_culmination = read_param<unsigned int>(ParamID::PP_MIN_CULMINATION);
+			argos_config.prepass_rx_min_culmination = read_param<unsigned int>(ParamID::PP_RX_MIN_CULMINATION);
+			argos_config.prepass_position_margin_km = read_param<unsigned int>(ParamID::PP_POSITION_MARGIN_KM);
 			unsigned int delta_time_loc = read_param<unsigned int>(ParamID::DLOC_ARG_LB);
 			argos_config.delta_time_loc = calc_delta_time_loc(delta_time_loc);
 			argos_config.shutdown_ntime_sat = read_param<unsigned int>(ParamID::LB_SHUTDOWN_NTIME_SAT);
@@ -1181,6 +1193,9 @@ public:
 			argos_config.prepass_max_passes = read_param<unsigned int>(ParamID::PP_MAX_PASSES);
 			argos_config.prepass_linear_margin = read_param<unsigned int>(ParamID::PP_LINEAR_MARGIN);
 			argos_config.prepass_comp_step = read_param<unsigned int>(ParamID::PP_COMP_STEP);
+			argos_config.prepass_min_culmination = read_param<unsigned int>(ParamID::PP_MIN_CULMINATION);
+			argos_config.prepass_rx_min_culmination = read_param<unsigned int>(ParamID::PP_RX_MIN_CULMINATION);
+			argos_config.prepass_position_margin_km = read_param<unsigned int>(ParamID::PP_POSITION_MARGIN_KM);
 			argos_config.delta_time_loc = calc_delta_time_loc(read_param<unsigned int>(ParamID::ZONE_GNSS_DELTA_ARG_LOC_ARGOS_SECONDS));
 			argos_config.shutdown_ntime_sat = read_param<unsigned int>(ParamID::SHUTDOWN_NTIME_SAT);
 			argos_config.surfacing_burst_init_s = read_param<unsigned int>(ParamID::SURFACING_BURST_INIT_S);
@@ -1215,6 +1230,9 @@ public:
 			argos_config.prepass_max_passes = read_param<unsigned int>(ParamID::PP_MAX_PASSES);
 			argos_config.prepass_linear_margin = read_param<unsigned int>(ParamID::PP_LINEAR_MARGIN);
 			argos_config.prepass_comp_step = read_param<unsigned int>(ParamID::PP_COMP_STEP);
+			argos_config.prepass_min_culmination = read_param<unsigned int>(ParamID::PP_MIN_CULMINATION);
+			argos_config.prepass_rx_min_culmination = read_param<unsigned int>(ParamID::PP_RX_MIN_CULMINATION);
+			argos_config.prepass_position_margin_km = read_param<unsigned int>(ParamID::PP_POSITION_MARGIN_KM);
 			unsigned int delta_time_loc = read_param<unsigned int>(ParamID::DLOC_ARG_NOM);
 			argos_config.delta_time_loc = calc_delta_time_loc(delta_time_loc);
 			argos_config.shutdown_ntime_sat = read_param<unsigned int>(ParamID::SHUTDOWN_NTIME_SAT);
