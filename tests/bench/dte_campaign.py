@@ -3175,24 +3175,82 @@ CASES_V16 = [
 #  appele que depuis le pilote M10Q, sur une vraie synchro GNSS
 #  (m10qasync.cpp:1051). Sauter l horloge de deux heures fait donc exactement
 #  ce qu aurait fait l attente.
+#
+#  INVARIANT paye au prix de deux cas rouges: les commandes DTE ne repondent
+#  QU EN MODE CONFIGURATION. C est ConfigurationState::process_usb_data() qui
+#  alimente l analyseur (gentracker.cpp:1238), et sa scrutation est armee par
+#  ConfigurationState::schedule_usb_poll(). En operationnel la carte repond
+#  encore a %PING — la console banc, elle, est servie partout — mais un
+#  $STATR reste sans reponse indefiniment: mesure du 2026-08-27, quatre
+#  requetes ignorees en 48 s sur une carte parfaitement vivante. baseline()
+#  laisse justement la carte EN configuration; un cas qui en sort doit y
+#  revenir avant toute trame DTE.
 # =====================================================================
 
-def _rtc_now(b, timeout=6.0):
-    """Lit l horloge de la carte via STATR, ou None."""
+def _rtc_now(b, timeout=10.0, essais=4):
+    """Lit l horloge de la carte via STATR, ou None.
+
+    Plusieurs tentatives, et pas par superstition: juste apres une sortie de
+    configuration la console rend la main avec 3 a 4 secondes de retard — le
+    firmware ne consomme qu une ligne par tick et l init (RCONF KIM2, BMA400,
+    Argos) sature le tour de boucle. Mesure du 2026-08-27: un %DIVE emis a
+    19:06:32 a recu son accuse a 19:06:36, et le STATR qui suivait est reste
+    sans reponse dans sa fenetre de 6 s. Ce n etait pas un defaut, seulement
+    une carte occupee.
+    """
     # SYT01 = RTC_CURRENT_TIME, rafraichi a chaque lecture STATR
     # (dte_params.cpp: "Current RTC time (live, refreshed on STATR read)").
-    m = b.dte('STATR', 'SYT01', timeout=timeout)
+    for k in range(essais):
+        m = b.dte('STATR', 'SYT01', timeout=timeout)
+        ligne = (m.string if m and hasattr(m, 'string') else '') or ''
+        mm = re.search(r'SYT01=(\d+)', ligne)
+        if mm:
+            return int(mm.group(1))
+        time.sleep(2)
+    return None
+
+def _hauled(b, timeout=10.0):
+    """%HAULED -> dict, ou None. Sonde ajoutee le 2026-08-27.
+
+    Sans elle ces cas n etaient pas idempotents: l etat hors-eau vit en .noinit
+    et survit au redemarrage, donc au rejeu la carte etait DEJA en HAULED,
+    aucune ligne AT_SEA -> HAULED n etait emise, et le cas accusait un firmware
+    qui n avait rien fait de mal. On lit l etat au lieu de le deviner.
+    """
+    # Plusieurs tentatives: apres une sortie de configuration la console rend
+    # la main avec plusieurs secondes de retard (cf. _rtc_now), et une seule
+    # fenetre trop courte fait conclure a une sonde absente du build.
+    m = None
+    for _ in range(4):
+        mk = b.mark(); b._send('%HAULED\r')
+        m = b.expect(r'%HAULED en=\d+ state=\S+ last_uw=\d+ dry_s=-?\d+ '
+                     r'returns=\d+/\d+ threshold_h=\d+', timeout, from_idx=mk)
+        if m:
+            break
+        time.sleep(2)
     if not m:
         return None
-    ligne = m.string if hasattr(m, 'string') else ''
-    mm = re.search(r'SYT01=(\d+)', ligne)
-    return int(mm.group(1)) if mm else None
+    l = m.group(0)
+    d = {'_ligne': l}
+    for cle, motif in (('en', r'en=(\d+)'), ('state', r'state=(\S+)'),
+                       ('last_uw', r'last_uw=(\d+)'), ('dry_s', r'dry_s=(-?\d+)'),
+                       ('threshold_h', r'threshold_h=(\d+)')):
+        mm = re.search(motif, l)
+        if mm:
+            d[cle] = mm.group(1) if cle == 'state' else int(mm.group(1))
+    mm = re.search(r'returns=(\d+)/(\d+)', l)
+    if mm:
+        d['returns'] = (int(mm.group(1)), int(mm.group(2)))
+    return d
 
-def _hauled(b, timeout=8.0):
-    """Etat hors-eau lu dans le journal au prochain reveil du service."""
-    mk = b.mark(); b._send('%SCHED\r')
-    m = b.expect(r'%SCHED ', timeout, from_idx=mk)
-    return m.group(0) if m else ''
+def _hauled_reset(b, timeout=10.0):
+    """Repart d un AT_SEA propre: efface in_hauled ET last_uw_event_rtc."""
+    for _ in range(4):
+        mk = b.mark(); b._send('%HAULED RESET\r')
+        if b.expect(r'%HAULED OK reset', timeout, from_idx=mk):
+            return True
+        time.sleep(2)
+    return False
 
 def c_hauled_entree(r, case):
     """Une secheresse superieure au seuil fait passer AT_SEA -> HAULED.
@@ -3215,19 +3273,37 @@ def c_hauled_entree(r, case):
     except Exception as e:
         return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
     time.sleep(2)
+    if not _hauled_reset(b):
+        return r.record(case, 'ERROR', '%HAULED RESET sans reponse (sonde absente du build ?)')
+    time.sleep(1)
     # Un evenement d immersion ancre la derniere trace d eau a maintenant.
+    # La console banc repond dans tous les etats, contrairement au DTE.
     b._send('%DIVE\r'); time.sleep(3)
     b._send('%SURFACE\r'); time.sleep(3)
-    t0 = _rtc_now(b)
-    if not t0:
-        return r.record(case, 'ERROR', 'STATR ne rend pas l horloge — saut impossible')
+    # Le repere est pose AVANT d entrer en configuration: evaluate() est appele
+    # a CHAQUE lecture de parametre par ConfigurationStore, donc la transition
+    # peut tomber pendant le traitement du RTCW lui-meme. Un repere pose apres
+    # la sortie de configuration la manquait — et le cas concluait a l absence
+    # d une transition qui avait bien eu lieu.
     mk = b.mark()
-    saut = t0 + 2 * 3600
-    m = b.dte('RTCW', str(saut), timeout=8.0)
-    if not m or ';RTCW' not in (m.string if hasattr(m, 'string') else ''):
-        return r.record(case, 'ERROR', f'RTCW refuse (t={saut})')
-    vues = _attendre_trace(b, [r'AT_SEA . HAULED', r'HAULED', r'dry for (\d+) s'],
-                           120, depuis=mk)
+    try:
+        b.enter_config()
+        t0 = _rtc_now(b)
+        if not t0:
+            b.exit_config()
+            return r.record(case, 'ERROR', 'STATR ne rend pas l horloge — saut impossible')
+        saut = t0 + 2 * 3600
+        m = b.dte('RTCW', str(saut), timeout=10.0)
+        b.exit_config()
+    except Exception as e:
+        return r.record(case, 'ERROR', f'saut d horloge impossible: {type(e).__name__}: {e}')
+    if not m:
+        return r.record(case, 'ERROR', f'RTCW sans reponse (t={saut})')
+    vues = _attendre_trace(b, [r'AT_SEA . HAULED', r'dry for (\d+) s'], 120, depuis=mk)
+    # Lire l etat AVANT de restaurer: HMP00=0 efface in_hauled (evaluate() le
+    # remet a zero des que la detection est coupee), donc restaurer d abord
+    # detruit la preuve qu on vient de chercher.
+    etat = _hauled(b)
     try:
         b.enter_config()
         b.write_params({'HAULED_DETECT_EN': 0, 'HAULED_IDLE_THRESHOLD_H': 24,
@@ -3235,12 +3311,18 @@ def c_hauled_entree(r, case):
         b.exit_config()
     except Exception:
         pass
-    trace = '\n'.join(vues[:6])
+    trace = '\n'.join(vues[:6]) + ('\n' + etat['_ligne'] if etat else '')
     entree = [l for l in vues if 'HAULED' in l and 'AT_SEA' in l]
-    if not entree:
+    if not entree and not (etat and etat.get('state') == 'HAULED'):
         return r.record(case, 'FAIL',
                         'deux heures de secheresse pour un seuil d une heure, '
-                        'mais aucun passage en HAULED', trace)
+                        'mais ni trace de passage ni etat HAULED', trace)
+    if etat and etat.get('state') != 'HAULED':
+        return r.record(case, 'FAIL',
+                        f"trace de passage mais %HAULED rapporte {etat.get('state')}", trace)
+    if not entree:
+        return r.record(case, 'PASS',
+                        'etat HAULED atteint sur depassement du seuil de secheresse', trace)
     m2 = re.search(r'dry for (\d+) s, threshold (\d+) h', entree[0])
     if m2 and int(m2.group(1)) < int(m2.group(2)) * 3600:
         return r.record(case, 'FAIL',
@@ -3264,14 +3346,24 @@ def c_hauled_retour(r, case):
     except Exception as e:
         return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
     time.sleep(2)
+    if not _hauled_reset(b):
+        return r.record(case, 'ERROR', '%HAULED RESET sans reponse (sonde absente du build ?)')
+    time.sleep(1)
     b._send('%DIVE\r'); time.sleep(3)
     b._send('%SURFACE\r'); time.sleep(3)
-    t0 = _rtc_now(b)
-    if not t0:
-        return r.record(case, 'ERROR', 'STATR ne rend pas l horloge')
-    mk = b.mark()
-    b.dte('RTCW', str(t0 + 2 * 3600), timeout=8.0)
-    if not _attendre_trace(b, [r'AT_SEA . HAULED'], 120, depuis=mk):
+    mk = b.mark()   # avant la configuration: cf. HAUL-02
+    try:
+        b.enter_config()
+        t0 = _rtc_now(b)
+        if not t0:
+            b.exit_config()
+            return r.record(case, 'ERROR', 'STATR ne rend pas l horloge')
+        b.dte('RTCW', str(t0 + 2 * 3600), timeout=10.0)
+        b.exit_config()
+    except Exception as e:
+        return r.record(case, 'ERROR', f'saut d horloge impossible: {type(e).__name__}: {e}')
+    entre = _attendre_trace(b, [r'AT_SEA . HAULED'], 120, depuis=mk)
+    if not entre and not ((_hauled(b) or {}).get('state') == 'HAULED'):
         try:
             b.enter_config()
             b.write_params({'HAULED_DETECT_EN': 0, 'HAULED_IDLE_THRESHOLD_H': 24,
@@ -3287,6 +3379,7 @@ def c_hauled_retour(r, case):
     mk2 = b.mark()
     b._send('%DIVE\r'); time.sleep(4); b._send('%SURFACE\r')
     second = _attendre_trace(b, [r'HAULED . AT_SEA'], 40, depuis=mk2)
+    etat = _hauled(b)   # avant la restauration: HMP00=0 effacerait in_hauled
     try:
         b.enter_config()
         b.write_params({'HAULED_DETECT_EN': 0, 'HAULED_IDLE_THRESHOLD_H': 24,
@@ -3295,12 +3388,13 @@ def c_hauled_retour(r, case):
     except Exception:
         pass
     trace = 'apres 1 immersion: ' + '|'.join(premier[:2]) + \
-            '\napres 2 immersions: ' + '|'.join(second[:2])
+            '\napres 2 immersions: ' + '|'.join(second[:2]) + \
+            ('\n' + etat['_ligne'] if etat else '')
     if premier:
         return r.record(case, 'FAIL',
                         'une seule immersion suffit a quitter HAULED alors que '
                         'HMP02=2 — une vague relancerait la cadence de mer', trace)
-    if not second:
+    if not second and not (etat and etat.get('state') == 'AT_SEA'):
         return r.record(case, 'FAIL',
                         'deux immersions ne suffisent pas a quitter HAULED (HMP02=2)', trace)
     r.record(case, 'PASS', 'une immersion ne suffit pas, deux ramenent en AT_SEA', trace)
@@ -3313,6 +3407,7 @@ def c_rtc_ecriture(r, case):
     avec une tolerance de quelques secondes — le temps de la trame.
     """
     b = r.b
+    # baseline() laisse la carte en configuration, seul etat ou le DTE repond.
     avant = _rtc_now(b)
     if not avant:
         return r.record(case, 'ERROR', 'STATR ne rend pas SYT01 (horloge)')

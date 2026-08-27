@@ -26,6 +26,8 @@ using led_handle = LEDState;   // meme alias que gentracker.cpp / ledsm.cpp
 #include "argos_tx_service.hpp"
 extern ArgosTxService *argos_tx_service_instance;
 #include "moored_mode_service.hpp"
+#include "hauled_mode_service.hpp"
+#include "rtc.hpp"
 #include "ota_file_updater.hpp"
 #include "crc32.hpp"
 #include "nrf_i2c.hpp"
@@ -41,6 +43,7 @@ extern Is25Flash *bench_flash;
 
 extern Scheduler  *system_scheduler;
 extern GPSService *gps_service;
+extern RTC        *rtc;
 extern BLEService *ble_service;
 
 namespace {
@@ -446,6 +449,43 @@ bool bench::handle_line(const std::string& raw) {
                  configuration_store->read_param<unsigned int>(ParamID::MOORED_AXL_HOLDOFF_S),
                  d);
         reply(buf);
+    } else if (cmd == "%HAULED") {
+        // The hauled state lives in .noinit and SURVIVES a reboot, which makes
+        // every case that drives it non-idempotent: the second run finds the
+        // board already HAULED, no AT_SEA -> HAULED line is emitted, and the
+        // case blames firmware that did nothing wrong. That is exactly what
+        // happened on 2026-08-27, and there was no way to even SEE the state.
+        //
+        // HMP00=0 does clear in_hauled (evaluate() resets it when detection is
+        // disabled), but it leaves last_uw_event_rtc standing -- and the dry
+        // time is measured from there, so the next enable can engage HAULED
+        // immediately. RESET clears both, which is what a case needs to start
+        // from a known AT_SEA.
+        //
+        // %HAULED       -> classifier state, plus the dry time it is comparing
+        //                  against HMP01. A fresh board reads last_uw=0, and
+        //                  evaluate() deliberately stays AT_SEA there: never
+        //                  having been in the water is not being hauled out.
+        // %HAULED RESET -> clear the state so a case can start from AT_SEA.
+        if (line.find(" RESET") != std::string::npos) {
+            HauledModeService::reset_for_tests();
+            reply("%HAULED OK reset");
+        } else {
+            char buf[176];
+            long dry = -1;
+            if (rtc && rtc->is_set())
+                dry = (long)(rtc->gettime() - HauledModeService::last_uw_event_rtc());
+            snprintf(buf, sizeof(buf),
+                     "%%HAULED en=%u state=%s last_uw=%u dry_s=%ld returns=%u/%u threshold_h=%u",
+                     (unsigned)configuration_store->read_param<bool>(ParamID::HAULED_DETECT_EN),
+                     HauledModeService::is_hauled() ? "HAULED" : "AT_SEA",
+                     (unsigned)HauledModeService::last_uw_event_rtc(),
+                     dry,
+                     HauledModeService::uw_events_since_hauled(),
+                     configuration_store->read_param<unsigned int>(ParamID::HAULED_RETURN_EVENTS),
+                     configuration_store->read_param<unsigned int>(ParamID::HAULED_IDLE_THRESHOLD_H));
+            reply(buf);
+        }
     } else if (cmd == "%CFG") {
         if (GenTracker::is_in_state<ConfigurationState>()) {
             reply("%CFG OK already-config");
