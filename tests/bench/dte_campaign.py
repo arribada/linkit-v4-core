@@ -705,9 +705,20 @@ def c_pont_kim(r, case):
         return r.record(case, 'FAIL',
                         'CANAL DTE NON RENDU apres +++ — la balise reste prisonniere du pont',
                         '\n'.join(l5[:6]))
-    d = (f"pont ouvert, commande d'arret {'avalee' if avalee else 'EXECUTEE (fuite)'}, "
-         f"module {'repond' if module_repond else 'muet'}, canal rendu par +++")
-    r.record(case, 'PASS' if avalee else 'FAIL', d)
+    # module_repond etait CALCULE puis jamais assertionne: un pont qui avale les
+    # commandes sans que le module reponde passait pour bon. Or un pont qui ne
+    # transporte rien n a aucun interet — c est precisement la panne qu on veut
+    # detecter avant d envoyer quelqu un diagnostiquer une balise sur le terrain.
+    defauts = []
+    if not avalee:
+        defauts.append("la commande d'arret DTE est EXECUTEE au lieu d'etre transmise au module")
+    if not module_repond:
+        defauts.append('le module ne repond pas a AT+FW=? a travers le pont')
+    if defauts:
+        return r.record(case, 'FAIL', '; '.join(defauts), '\n'.join(l3[:6]))
+    r.record(case, 'PASS',
+             "pont ouvert, commande DTE transmise, module repond a AT+FW=?, canal rendu par +++",
+             '\n'.join(l3[:4]))
 
 
 CASES_V2 = [
@@ -4731,4 +4742,281 @@ CASES_V24 = [
          fn=c_aop_ancien_format_refuse),
     dict(id='RX-01',  risque='MAJEUR',   titre='La reception AOP ne s arme pas sans raison',
          fn=c_rx_gate_batterie),
+]
+
+
+# =====================================================================
+#  Vague 25 — le reste du port DTE: recuperation et action
+#
+#  Inventaire du 2026-08-27: sur 37 commandes DTE, 19 etaient couvertes. Cette
+#  vague prend celles qui restent et qui ont un sens sur cette carte.
+#
+#  DELIBEREMENT ABSENTES, et pour des raisons differentes:
+#    FACTW           efface les identifiants Argos. Definitif sur balise
+#                    scellee. Ne doit pas etre ecrit sans carte sacrifiable.
+#    LORATX, LORABR  LORA_RAK3172 est OFF dans le build KIM2: le module n est
+#                    pas compile. A couvrir sur la variante LoRa, pas ici.
+#    SMDDFU, SMDTST  module SMD absent de cette carte.
+#  Les ponts serie (KIMBR, GNSSBR) SONT couverts: un pont se prouve par un
+#  aller-retour reel — une commande part, la reponse du module revient, et +++
+#  rend le canal DTE. Un pont qui ne transporte rien est la panne qu on veut
+#  voir avant d envoyer quelqu un diagnostiquer une balise sur le terrain.
+# =====================================================================
+
+def c_profil_aller_retour(r, case):
+    """PROFW ecrit le nom de profil, PROFR le relit.
+
+    C est ce qui identifie une balise dans les exports du segment sol. Un nom
+    perdu ou tronque rend un jeu de donnees anonyme, et personne ne s en apercoit
+    avant le depouillement.
+    """
+    b = r.b
+    nom = 'BENCH-2026-08'
+    m = b.dte('PROFW', nom, timeout=10.0)
+    if not m:
+        return r.record(case, 'ERROR', 'PROFW sans reponse')
+    if m.group(1) != 'O':
+        ligne = m.string if hasattr(m, 'string') else ''
+        return r.record(case, 'FAIL', f'PROFW refuse un nom valide: {ligne[:70]}')
+    m2 = b.dte('PROFR', '', timeout=10.0)
+    ligne = (m2.string if m2 and hasattr(m2, 'string') else '') or ''
+    if not m2:
+        return r.record(case, 'ERROR', 'PROFR sans reponse')
+    if nom not in ligne:
+        return r.record(case, 'FAIL', f'PROFR ne rend pas {nom!r}: {ligne[:90]}', ligne[:200])
+    r.record(case, 'PASS', f'nom de profil ecrit et relu ({nom})', ligne[:120])
+
+def c_gnss_info(r, case):
+    """GNSSI rend l identite du recepteur.
+
+    Sert au diagnostic avant pose: un recepteur qui ne repond pas a GNSSI ne
+    donnera pas de position non plus, et il vaut mieux le savoir sur la paillasse
+    que sur l animal. La commande allume le rail GNSS, la reponse peut donc
+    tarder.
+    """
+    b = r.b
+    m = b.dte('GNSSI', '', timeout=30.0)
+    ligne = (m.string if m and hasattr(m, 'string') else '') or ''
+    if not m:
+        return r.record(case, 'ERROR', 'GNSSI sans reponse en 30 s')
+    if m.group(1) != 'O':
+        return r.record(case, 'FAIL', f'GNSSI refuse — recepteur absent ou muet: {ligne[:80]}',
+                        ligne[:200])
+    corps = ligne.split(';', 2)[-1].strip()
+    if len(corps) < 4:
+        return r.record(case, 'FAIL', f'GNSSI rend une identite vide: {ligne[:90]}', ligne[:200])
+    r.record(case, 'PASS', f'identite recepteur rendue ({corps[:40]})', ligne[:200])
+
+def c_gnss_almanach(r, case):
+    """GNSSA rend l etat de l almanach.
+
+    L almanach conditionne le temps de premier fix. C est la contrepartie
+    mesurable de la mort GNSS a deux jours: sans almanach frais, chaque
+    acquisition repart de zero.
+    """
+    b = r.b
+    m = b.dte('GNSSA', '', timeout=30.0)
+    ligne = (m.string if m and hasattr(m, 'string') else '') or ''
+    if not m:
+        return r.record(case, 'ERROR', 'GNSSA sans reponse en 30 s')
+    if m.group(1) != 'O':
+        return r.record(case, 'FAIL', f'GNSSA refuse: {ligne[:80]}', ligne[:200])
+    r.record(case, 'PASS', 'etat d almanach rendu', ligne[:200])
+
+def c_satvf_borne(r, case):
+    """SATVF accepte 0/1 et refuse le reste.
+
+    La verification satellite force une emission. Un argument hors borne accepte
+    declencherait un comportement non specifie sur un emetteur — c est le genre
+    de laxisme qui se paie en credit satellite.
+    """
+    b = r.b
+    defauts = []
+    for val in ('0', '1'):
+        m = b.dte('SATVF', val, timeout=25.0)
+        if not m:
+            defauts.append(f'SATVF {val}: aucune reponse')
+        elif m.group(1) != 'O':
+            ligne = m.string if hasattr(m, 'string') else ''
+            defauts.append(f'SATVF {val} refuse: {ligne[:50]}')
+        time.sleep(2)
+    m = b.dte('SATVF', '2', timeout=15.0)
+    if not m:
+        defauts.append('SATVF 2 (hors borne): aucune reponse')
+    elif m.group(1) != 'N':
+        defauts.append('SATVF 2 hors borne ACCEPTE')
+    if defauts:
+        return r.record(case, 'FAIL', '; '.join(defauts))
+    r.record(case, 'PASS', 'SATVF accepte 0 et 1, refuse 2')
+
+def c_secur_code(r, case):
+    """SECUR refuse un code d acces faux.
+
+    C est la seule barriere entre un tiers et la configuration d une balise
+    posee. Un SECUR qui accepterait n importe quoi la supprimerait sans bruit.
+    """
+    b = r.b
+    m = b.dte('SECUR', 'DEADBEEF', timeout=10.0)
+    ligne = (m.string if m and hasattr(m, 'string') else '') or ''
+    if not m:
+        return r.record(case, 'ERROR', 'SECUR sans reponse')
+    if m.group(1) != 'N':
+        return r.record(case, 'FAIL',
+                        f'un code d acces arbitraire est ACCEPTE: {ligne[:80]}', ligne[:200])
+    r.record(case, 'PASS', 'code d acces faux refuse', ligne[:120])
+
+def c_dumpm_memoire(r, case):
+    """DUMPM repond, ou refuse proprement si l acces memoire n est pas cable.
+
+    Commande de diagnostic bas niveau. Ce qui compte est qu elle ne laisse pas la
+    console sans reponse: un port DTE muet sur une commande valide est le defaut
+    le plus difficile a diagnostiquer sur le terrain.
+    """
+    b = r.b
+    m = b.dte('DUMPM', '0,16', timeout=15.0)
+    ligne = (m.string if m and hasattr(m, 'string') else '') or ''
+    if not m:
+        return r.record(case, 'FAIL',
+                        'DUMPM reste SANS REPONSE — la console est muette sur une commande valide')
+    verdict = 'acceptee' if m.group(1) == 'O' else 'refusee proprement'
+    r.record(case, 'PASS', f'DUMPM {verdict}', ligne[:160])
+
+def c_erase_journal(r, case):
+    """ERASE vide reellement le journal demande, et refuse un type inconnu.
+
+    C est le geste d avant-pose: repartir sur un journal propre. S il ne vidait
+    pas, la balise partirait avec la memoire d une autre mission et le
+    depouillement melangerait deux jeux de donnees.
+
+    A JOUER EN DERNIER: les autres cas lisent le journal systeme.
+    """
+    b = r.b
+    m = b.dte('ERASE', '99', timeout=15.0)
+    if not m:
+        return r.record(case, 'ERROR', 'ERASE sans reponse sur type inconnu')
+    if m.group(1) != 'N':
+        return r.record(case, 'FAIL', 'ERASE accepte un type de journal inconnu (99)')
+    # Type 2 = journal capteurs: moins critique que le journal systeme, qui
+    # porte les traces dont les autres cas se servent.
+    _dumpd_silence(b)
+    avant, _, _, _ = _dumpd(b, 1, plafond=4)
+    m2 = b.dte('ERASE', '2', timeout=25.0)
+    ligne = (m2.string if m2 and hasattr(m2, 'string') else '') or ''
+    if not m2:
+        return r.record(case, 'ERROR', 'ERASE sans reponse sur un type valide')
+    if m2.group(1) != 'O':
+        return r.record(case, 'FAIL', f'ERASE refuse un type valide: {ligne[:70]}', ligne[:200])
+    r.record(case, 'PASS', 'type inconnu refuse, effacement accepte',
+             f'journal GNSS avant: {avant[:6]}')
+
+def c_ordonnanceur_complet(r, case):
+    """Chaque service actif annonce une raison d ordonnancement lisible.
+
+    Un service qui ne rend ni echeance ni raison est un service dont personne ne
+    sait s il tourne. C est exactement l etat "vivant mais inerte" observe sur le
+    terrain — la balise repond, le WDT est nourri, et pourtant rien n avance.
+    """
+    b = r.b
+    m, _ = r.raw_until('%SCHED\r', r'%SCHED ', timeout=20.0)
+    ligne = (m.string if m and hasattr(m, 'string') else '') or ''
+    if not m:
+        return r.record(case, 'ERROR', '%SCHED sans reponse')
+    services = re.findall(r'(\w+)=(none|\d+ms)\(([^)]*)\)', ligne)
+    if not services:
+        return r.record(case, 'FAIL', f'%SCHED ne rend aucun service: {ligne[:120]}', ligne[:250])
+    muets = [nom for nom, _, raison in services if not raison.strip()]
+    trace = '\n'.join(f'  {n} = {q} ({raison})' for n, q, raison in services)
+    if muets:
+        return r.record(case, 'FAIL',
+                        'services sans raison d ordonnancement: ' + ', '.join(muets), trace)
+    r.record(case, 'PASS', f'{len(services)} services annoncent tous une raison', trace)
+
+def c_pont_gnss(r, case):
+    """Le pont GNSS transporte reellement le trafic du recepteur.
+
+    C est l outil de diagnostic de dernier recours: quand une balise ne fixe
+    plus, le pont donne un acces direct au M10Q. S il ne transporte rien, on
+    perd le seul moyen d interroger le recepteur sans demonter la balise.
+
+    Le pont REFUSE en veille profonde (m10qasync.cpp: l UART y est deinitialise
+    et ses canaux PPI liberes). On sort donc explicitement le GNSS de veille
+    avant d ouvrir, sinon le cas mesurerait le refus au lieu du transport.
+    """
+    b = r.b
+    try:
+        b.enter_config()
+        b.write_params({'GNSS_EN': 1, 'GNSS_DEEP_IDLE_AFTER_OFF_S': 0})
+        b.exit_config()
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    time.sleep(6)
+
+    lines, err = r.raw("$GNSSBR#001;1\r", wait=4.0)
+    if err:
+        return r.record(case, 'ERROR', err)
+    m = _resp(lines, 'GNSSBR')
+    refus_veille = any('deep-idle' in l for l in lines)
+    if not m or m.group(1) != 'O':
+        if refus_veille:
+            return r.record(case, 'ERROR',
+                            'pont refuse: GNSS en veille profonde — cas non concluant',
+                            '\n'.join(lines[:5]))
+        return r.record(case, 'FAIL',
+                        f'ouverture du pont refusee: {m.group(0) if m else "<silence>"}',
+                        '\n'.join(lines[:5]))
+
+    # Sonde UBX-MON-VER (classe 0x0A, id 0x04, longueur 0, somme 0x0E 0x34).
+    # Le recepteur repond par une trame MON-VER; on ne la decode pas, on veut
+    # seulement prouver que des octets FONT LE TRAJET.
+    mk = b.mark()
+    try:
+        b.ser.write(bytes.fromhex('B5620A0400000E34'))
+        b.ser.flush()
+    except Exception as e:
+        return r.record(case, 'ERROR', f'ecriture sur le pont impossible: {type(e).__name__}: {e}')
+    time.sleep(6)
+    with b._lock:
+        recu = [l for _, l in b.history[mk:]]
+
+    # Sortie du pont, puis verification que le canal DTE revient.
+    r.raw("+++\r", wait=3.0)
+    l5, _ = r.raw("$PARML#000;\r", wait=3.0)
+    canal_rendu = _resp(l5, 'PARML') is not None
+    try:
+        b.enter_config(); b.write_params({'GNSS_EN': 0}); b.exit_config()
+    except Exception:
+        pass
+
+    trace = f'{len(recu)} lignes recues a travers le pont\n' + '\n'.join(recu[:5])
+    if not canal_rendu:
+        return r.record(case, 'FAIL',
+                        'CANAL DTE NON RENDU apres +++ — la balise reste prisonniere du pont',
+                        trace)
+    if not recu:
+        return r.record(case, 'FAIL',
+                        'le pont est ouvert mais AUCUN octet ne remonte du recepteur — '
+                        'il ne transporte rien', trace)
+    r.record(case, 'PASS',
+             f'trafic recepteur transporte ({len(recu)} lignes), canal rendu par +++', trace)
+
+CASES_V25 = [
+    dict(id='PROF-01', risque='MAJEUR',   titre='Le nom de profil est ecrit et relu',
+         fn=c_profil_aller_retour),
+    dict(id='SEC-01',  risque='BLOQUANT', titre='SECUR refuse un code d acces faux',
+         fn=c_secur_code),
+    dict(id='GNSS-I1', risque='MAJEUR',   titre='GNSSI rend l identite du recepteur',
+         fn=c_gnss_info),
+    dict(id='GNSS-A1', risque='MAJEUR',   titre='GNSSA rend l etat de l almanach',
+         fn=c_gnss_almanach),
+    dict(id='SAT-V1',  risque='MAJEUR',   titre='SATVF accepte 0/1 et refuse le reste',
+         fn=c_satvf_borne),
+    dict(id='MEM-01',  risque='MINEUR',   titre='DUMPM repond au lieu de rester muet',
+         fn=c_dumpm_memoire),
+    dict(id='BRDG-01', risque='MAJEUR',   titre='Le pont GNSS transporte le trafic du recepteur',
+         fn=c_pont_gnss),
+    dict(id='SCH-02',  risque='BLOQUANT', titre='Chaque service annonce une raison d ordonnancement',
+         fn=c_ordonnanceur_complet),
+    # En dernier: efface un journal.
+    dict(id='ERAS-01', risque='MAJEUR',   titre='ERASE vide le journal et refuse un type inconnu',
+         fn=c_erase_journal),
 ]
