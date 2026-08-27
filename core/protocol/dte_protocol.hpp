@@ -23,239 +23,511 @@
 
 class PassPredictCodec {
 private:
-	enum class AopFormat {
-		A,
-		B,
-		C
+	/* 32-bit Allcast addresses, Figure 3 of the NT */
+	static const uint32_t ALLCAST_UTC_TIME    = 0x00000136u;
+	static const uint32_t ALLCAST_AOP_MONOSAT = 0x0000026Cu;
+	static const uint32_t ALLCAST_AOP_MULTISAT = 0x0000035Au;
+	static const uint32_t ALLCAST_CS_SHORT    = 0x00000443u;	/* 2 satellites  */
+	static const uint32_t ALLCAST_CS_MEDIUM   = 0x00000575u;	/* 10 satellites */
+	static const uint32_t ALLCAST_CS_LONG     = 0x0000062Fu;	/* 17 satellites */
+
+	/* Useful part of a message, in bits (N blocks of 99 bits). Each message is
+	 * then zero padded up to the next byte boundary.
+	 */
+	static const unsigned int BITS_1_BLOCK  = 99;
+	static const unsigned int BITS_2_BLOCKS = 198;
+	static const unsigned int BITS_3_BLOCKS = 297;
+
+	static const unsigned int HEADER_BITS        = 40;	/* 8 transmitter + 32 address */
+	static const unsigned int FCS_BITS           = 16;
+	static const unsigned int AOP_SAT_FIELD_BITS = 141;	/* one full AOP block          */
+	static const unsigned int AOP_REL_FIELD_BITS = 25;	/* 8 address + 17 delta date   */
+	static const unsigned int CS_SAT_FIELD_BITS  = 13;	/* 8 + 3 + 1 + 1               */
+	static const unsigned int AOP_MULTISAT_NB_REL = 4;
+
+	static const uint16_t CRC16_POLY = 0x1021u;	/* X^16 + X^12 + X^5 + 1 */
+
+	/* Scaling of the coded fields, Figures 12, 13 and 16 */
+	static const uint32_t TICKS_PER_SECOND        = 8;	/* 125 ms resolution        */
+	static const int32_t  DELTA_DATE_OFFSET_TICKS = 65600;	/* -8200 s / 0.125 s        */
+	static const int32_t  AN_DRIFT_OFFSET         = 28000;	/* -28.000 deg / 0.001 deg  */
+	static const int32_t  NODAL_PERIOD_OFFSET     = 844890;	/* 84.4890 min / 0.0001 min */
+	static const int32_t  SEMI_MAJOR_AXIS_OFFSET  = 6378137;/* metres                   */
+
+	/* Bulletin epoch T0 = 01/01/2020 00:00:00 UTC */
+	static const uint16_t BULLETIN_EPOCH_YEAR = 2020;
+
+	/** Raw AOP fields of one satellite, before scaling. */
+	struct AopFields {
+		uint8_t  sat_hex_id;
+		uint64_t date_ticks;	/* 35 bits, 125 ms steps since T0        */
+		uint32_t an_longitude;	/* 19 bits, 0.001 deg                    */
+		uint32_t an_drift;	/* 13 bits, 0.001 deg, offset -28.000    */
+		uint32_t nodal_period;	/* 18 bits, 0.0001 min, offset 84.4890   */
+		uint32_t semi_major_axis;/* 20 bits, 1 m, offset 6378137         */
+		uint32_t sma_decay;	/* 10 bits, 1 dm/day, absolute value     */
+		uint32_t inclination;	/* 18 bits, 0.001 deg                    */
 	};
 
-	static SatDownlinkStatus_t convert_dl_operating_status(uint8_t status, bool type_a, enum SatUplinkStatus_t ul_status) {
-		if (type_a) {
-			switch (status) {
-			case 3:
-				return SAT_DNLK_ON_WITH_A3;
-			default:
-				return SAT_DNLK_OFF;
-			}
-		} else {
-			switch (status) {
-			case 1:
-				return (ul_status == SAT_UPLK_ON_WITH_A3) ? SAT_DNLK_ON_WITH_A3 : SAT_DNLK_OFF;
-			default:
-				return SAT_DNLK_OFF;
-			}
+	/* ------------------------------------------------------------------
+	 * Bit level helpers
+	 *
+	 * EXTRACT_BITS is not used here: the bulletin date field is 35 bits
+	 * wide, so extraction is done through a 64-bit accessor. Bit order is
+	 * the same (MSB first).
+	 * ------------------------------------------------------------------ */
+
+	static uint64_t peek_bits(const std::string& data, unsigned int pos, unsigned int nbits) {
+		uint64_t value = 0;
+		for (unsigned int i = 0; i < nbits; i++) {
+			unsigned int p = pos + i;
+			uint8_t byte = static_cast<uint8_t>(data[p >> 3]);
+			value = (value << 1) | ((byte >> (7 - (p & 7))) & 1u);
+		}
+		return value;
+	}
+
+	static uint64_t extract_bits(const std::string& data, unsigned int& pos, unsigned int nbits) {
+		uint64_t value = peek_bits(data, pos, nbits);
+		pos += nbits;
+		return value;
+	}
+
+	/**
+	 * Frame Check Sequence, Figures 7, 14, 17 and 23: CRC16 with polynomial
+	 * X^16+X^12+X^5+1, initialised to 0, no final XOR, MSB first. Computed
+	 * over "Allcast address + data", the transmitting satellite address being
+	 * excluded, so the range is not byte aligned.
+	 */
+	static uint16_t crc16_bits(const std::string& data, unsigned int pos, unsigned int nbits) {
+		uint16_t crc = 0;
+		for (unsigned int i = 0; i < nbits; i++) {
+			unsigned int p = pos + i;
+			uint8_t byte = static_cast<uint8_t>(data[p >> 3]);
+			uint16_t bit = (byte >> (7 - (p & 7))) & 1u;
+			uint16_t msb = (crc >> 15) & 1u;
+			crc = static_cast<uint16_t>(crc << 1);
+			if (msb ^ bit)
+				crc ^= CRC16_POLY;
+		}
+		return crc;
+	}
+
+	/* ------------------------------------------------------------------
+	 * Date helpers
+	 * ------------------------------------------------------------------ */
+
+	static bool is_leap_year(uint16_t year) {
+		return ((year % 4) == 0 && (year % 100) != 0) || ((year % 400) == 0);
+	}
+
+	/** 35-bit bulletin date (125 ms steps since T0) to calendar date, UTC. */
+	static void convert_bulletin_date(uint64_t date_ticks, CalendarDateTime_t& date) {
+		uint64_t seconds = date_ticks / TICKS_PER_SECOND;	/* truncated to the second */
+		uint32_t days = static_cast<uint32_t>(seconds / 86400);
+		uint32_t sec_of_day = static_cast<uint32_t>(seconds % 86400);
+		uint16_t year = BULLETIN_EPOCH_YEAR;
+
+		for (;;) {
+			uint32_t days_in_year = is_leap_year(year) ? 366 : 365;
+			if (days < days_in_year)
+				break;
+			days -= days_in_year;
+			year++;
+		}
+
+		date.year = year;
+		convert_day_of_year(date.year, days + 1, date.month, date.day);
+		date.hour = static_cast<uint8_t>(sec_of_day / 3600);
+		date.minute = static_cast<uint8_t>((sec_of_day % 3600) / 60);
+		date.second = static_cast<uint8_t>(sec_of_day % 60);
+	}
+
+	/** true when @p candidate is strictly more recent than @p current. */
+	static bool is_newer(const CalendarDateTime_t& candidate, const CalendarDateTime_t& current) {
+		if (candidate.year != current.year)
+			return candidate.year > current.year;
+		if (candidate.month != current.month)
+			return candidate.month > current.month;
+		if (candidate.day != current.day)
+			return candidate.day > current.day;
+		if (candidate.hour != current.hour)
+			return candidate.hour > current.hour;
+		if (candidate.minute != current.minute)
+			return candidate.minute > current.minute;
+		return candidate.second > current.second;
+	}
+
+	/* ------------------------------------------------------------------
+	 * Operating status conversion
+	 *
+	 * Constellation Status records carry a 3-bit payload type plus one uplink
+	 * and one downlink mission bit (Figure 22). The uplink status names the
+	 * payload generation, the downlink one is a plain on/off: a KIM2 can only
+	 * receive Kineis satellites, so the generation carries no decision there.
+	 * ------------------------------------------------------------------ */
+
+	static uint8_t convert_ul_operating_status(uint8_t payload_type, bool operational) {
+		if (!operational)
+			return static_cast<uint8_t>(SAT_UPLK_OFF);
+		return PREVIPASS_UPLINK_STATUS(payload_type);
+	}
+
+	static uint8_t convert_dl_operating_status(bool operational) {
+		return operational ? static_cast<uint8_t>(SAT_DNLK_ON)
+				   : static_cast<uint8_t>(SAT_DNLK_OFF);
+	}
+
+	/* ------------------------------------------------------------------
+	 * Message decoding
+	 * ------------------------------------------------------------------ */
+
+	static void extract_aop_fields(const std::string& data, unsigned int& pos, AopFields& fields) {
+		fields.sat_hex_id     = static_cast<uint8_t>(extract_bits(data, pos, 8));
+		fields.date_ticks     = extract_bits(data, pos, 35);
+		fields.an_longitude   = static_cast<uint32_t>(extract_bits(data, pos, 19));
+		fields.an_drift       = static_cast<uint32_t>(extract_bits(data, pos, 13));
+		fields.nodal_period   = static_cast<uint32_t>(extract_bits(data, pos, 18));
+		fields.semi_major_axis = static_cast<uint32_t>(extract_bits(data, pos, 20));
+		fields.sma_decay      = static_cast<uint32_t>(extract_bits(data, pos, 10));
+		fields.inclination    = static_cast<uint32_t>(extract_bits(data, pos, 18));
+	}
+
+	/**
+	 * Build one orbit params entry and insert it, keeping the most recent
+	 * bulletin when the satellite is already known.
+	 *
+	 * @param an_longitude_millideg ascending node longitude in milli-degrees:
+	 *        the raw field for a reference satellite, the value computed from
+	 *        the drift for a relative one.
+	 */
+	static void store_orbit_params(std::map<uint8_t, AopSatelliteEntry_t>& orbit_params,
+			uint8_t hex_id, uint64_t date_ticks, double an_longitude_millideg,
+			const AopFields& ref) {
+		AopSatelliteEntry_t aop_entry = {};
+
+		/* 0x00 is a forbidden satellite address, it marks zero padding */
+		if (hex_id == 0x00)
+			return;
+
+		aop_entry.satHexId = hex_id;
+		convert_bulletin_date(date_ticks, aop_entry.bulletin);
+		aop_entry.ascNodeLongitudeDeg = static_cast<float>(an_longitude_millideg / 1000.0);
+		aop_entry.ascNodeDriftDeg =
+			static_cast<float>((static_cast<double>(ref.an_drift) - AN_DRIFT_OFFSET) / 1000.0);
+		aop_entry.orbitPeriodMin =
+			static_cast<float>((static_cast<double>(ref.nodal_period) + NODAL_PERIOD_OFFSET) / 10000.0);
+		aop_entry.semiMajorAxisKm =
+			static_cast<float>((static_cast<double>(ref.semi_major_axis) + SEMI_MAJOR_AXIS_OFFSET) / 1000.0);
+		/* The coded field is an absolute decay value ("75 means -75 dm/day",
+		 * Figure 12), the entry carries the signed, negative drift.
+		 */
+		aop_entry.semiMajorAxisDriftMeterPerDay =
+			(ref.sma_decay == 0) ? 0.0f : static_cast<float>(-0.1 * static_cast<double>(ref.sma_decay));
+		aop_entry.inclinationDeg = static_cast<float>(static_cast<double>(ref.inclination) / 1000.0);
+
+		DEBUG_TRACE("allcast_sat_orbit_params_decode: hex_id=%02x dd/mm/yy=%u/%u/%u hh:mm:ss=%u:%u:%u "
+					"a=%f i=%f an=%f",
+					aop_entry.satHexId, aop_entry.bulletin.day, aop_entry.bulletin.month,
+					aop_entry.bulletin.year, aop_entry.bulletin.hour, aop_entry.bulletin.minute,
+					aop_entry.bulletin.second, (double)aop_entry.semiMajorAxisKm,
+					(double)aop_entry.inclinationDeg, (double)aop_entry.ascNodeLongitudeDeg);
+
+		std::map<uint8_t, AopSatelliteEntry_t>::iterator it = orbit_params.find(hex_id);
+		if (it != orbit_params.end() && !is_newer(aop_entry.bulletin, it->second.bulletin))
+			return;		/* an equal or more recent bulletin is already held */
+
+		orbit_params[hex_id] = aop_entry;
+	}
+
+	/**
+	 * AOP MonoSat and AOP MultiSat messages. A MultiSat message holds the full
+	 * orbit params of a reference satellite plus, for up to 4 relative
+	 * satellites of the same orbital plane, an address and a delta date: every
+	 * other parameter is shared with the reference, only the ascending node
+	 * longitude has to be propagated (Annex A).
+	 */
+	static void allcast_sat_orbit_params_decode(const std::string& data, unsigned int& pos,
+			bool multisat, std::map<uint8_t, AopSatelliteEntry_t>& orbit_params) {
+		AopFields ref;
+
+		extract_aop_fields(data, pos, ref);
+		store_orbit_params(orbit_params, ref.sat_hex_id, ref.date_ticks,
+				static_cast<double>(ref.an_longitude), ref);
+
+		if (!multisat)
+			return;
+
+		/* Ascending node longitude drift, in milli-degrees per 125 ms step */
+		double drift_coefficient =
+			(((static_cast<double>(ref.an_drift) - AN_DRIFT_OFFSET) * 0.001) /
+			 ((static_cast<double>(ref.nodal_period) + NODAL_PERIOD_OFFSET) * 0.0001))
+			/ 0.001 / 60.0 * 0.125;
+
+		for (unsigned int i = 0; i < AOP_MULTISAT_NB_REL; i++) {
+			uint8_t hex_id = static_cast<uint8_t>(extract_bits(data, pos, 8));
+			uint32_t delta_date = static_cast<uint32_t>(extract_bits(data, pos, 17));
+
+			/* A null address is zero padding: nothing usable afterwards */
+			if (hex_id == 0x00)
+				break;
+
+			int32_t delta_ticks = static_cast<int32_t>(delta_date) - DELTA_DATE_OFFSET_TICKS;
+			int64_t date_ticks = static_cast<int64_t>(ref.date_ticks) + delta_ticks;
+			if (date_ticks < 0)
+				date_ticks = 0;
+
+			double an_longitude = static_cast<double>(ref.an_longitude)
+					      + drift_coefficient * static_cast<double>(delta_ticks);
+			while (an_longitude < 0.0)
+				an_longitude += 360000.0;
+			while (an_longitude >= 360000.0)
+				an_longitude -= 360000.0;
+
+			store_orbit_params(orbit_params, hex_id, static_cast<uint64_t>(date_ticks),
+					an_longitude, ref);
 		}
 	}
 
-	static SatUplinkStatus_t convert_ul_operating_status(uint8_t status, uint8_t hex_id) {
-		// For NK and NN satellites (Satellite identification 5 or 8), values ‘00’, ‘01’ and ‘10’
-		// means ARGOS-2 payload.  Refer to pg 56 of A4-SYS-IF-0086-CNES.
-		if (hex_id == 0x5 || hex_id == 0x8) {
-			switch (status) {
-			case 0:
-			case 1:
-			case 2:
-				return SAT_UPLK_ON_WITH_A2;
-			default:
-				return SAT_UPLK_OFF;
-			}
-		} else {
-			switch (status) {
-			case 0:
-				return SAT_UPLK_ON_WITH_A3;
-			case 1:
-				return SAT_UPLK_ON_WITH_NEO;
-			case 2:
-				return SAT_UPLK_ON_WITH_A4;
-			default:
-				return SAT_UPLK_OFF;
-			}
-		}
-	}
+	/**
+	 * Constellation Status messages, in their 2, 10 or 17 satellites version.
+	 * The counter, index and total number of messages let a receiver tell a new
+	 * status set from an incomplete one; they are decoded for tracing only.
+	 */
+	static void allcast_constellation_status_decode(const std::string& data, unsigned int& pos,
+			unsigned int num_satellites,
+			std::map<uint8_t, AopSatelliteEntry_t>& constellation_params,
+			AllcastStatusTracking *tracking) {
+		uint8_t counter = static_cast<uint8_t>(extract_bits(data, pos, 6) + 1);
+		uint8_t index = static_cast<uint8_t>(extract_bits(data, pos, 3) + 1);
+		uint8_t total = static_cast<uint8_t>(extract_bits(data, pos, 3) + 1);
 
-	static void allcast_constellation_status_decode(const std::string& data, unsigned int &pos, bool type_a, std::map<uint8_t, AopSatelliteEntry_t> &constellation_params, uint8_t a_dcs) {
-		uint8_t num_operational_satellites;
-		AopSatelliteEntry_t aop_entry;
-		EXTRACT_BITS(num_operational_satellites, data, pos, 4);
-		DEBUG_TRACE("allcast_constellation_status_decode: type_a=%u num_operational_satellites=%u", type_a, num_operational_satellites);
-		for (uint8_t i = 0; i < num_operational_satellites; i++) {
-			uint8_t hex_id;
-			uint8_t a_dcs_1;
-			uint8_t dl_status;
-			uint8_t ul_status;
-			EXTRACT_BITS(hex_id, data, pos, 4);
-			EXTRACT_BITS(a_dcs_1, data, pos, 4);
-			(void)a_dcs_1;
-			if (type_a) {
-				EXTRACT_BITS(dl_status, data, pos, 2);
-				EXTRACT_BITS(ul_status, data, pos, 2);
-			} else {
-				EXTRACT_BITS(dl_status, data, pos, 1);
-				EXTRACT_BITS(ul_status, data, pos, 3);
+		DEBUG_TRACE("allcast_constellation_status_decode: counter=%u index=%u/%u num_satellites=%u",
+					counter, index, total, num_satellites);
+
+		if (tracking != nullptr) {
+			/* A new counter value means a new status set: the Kineis service
+			 * centre increments it on every constellation change. The previous
+			 * set is stale and must be DROPPED, not merged with the new one —
+			 * a satellite that has been decommissioned simply stops being
+			 * listed, and the NT states that its absence from the current CS
+			 * messages is how a device learns it is no longer operational.
+			 * Keeping its entry would leave the merged table waiting forever
+			 * for an orbit bulletin that will never be broadcast again.
+			 */
+			if (tracking->counter != counter) {
+				if (tracking->counter != 0) {
+					DEBUG_INFO("allcast_constellation_status_decode: constellation "
+								"status set changed (%u -> %u), dropping the previous "
+								"%u satellite status entries",
+								tracking->counter, counter,
+								(unsigned int)constellation_params.size());
+					constellation_params.clear();
+				}
+				tracking->counter = counter;
+				tracking->index_mask = 0;
 			}
-			(void)a_dcs;
-			DEBUG_TRACE("allcast_constellation_status_decode: sat=%u hex_id=%01x dl_status=%01x ul_status=%01x", i,
-						hex_id, dl_status, ul_status);
+			tracking->total = total;
+			if (index >= 1 && index <= 8)
+				tracking->index_mask |= static_cast<uint8_t>(1u << (index - 1));
+		}
+
+		for (unsigned int i = 0; i < num_satellites; i++) {
+			AopSatelliteEntry_t aop_entry = {};
+			uint8_t hex_id = static_cast<uint8_t>(extract_bits(data, pos, 8));
+			uint8_t payload_type = static_cast<uint8_t>(extract_bits(data, pos, 3));
+			bool ul_operational = extract_bits(data, pos, 1) != 0;
+			bool dl_operational = extract_bits(data, pos, 1) != 0;
+
+			/* A null address is zero padding up to the FCS */
+			if (hex_id == 0x00)
+				break;
+
+			DEBUG_TRACE("allcast_constellation_status_decode: sat=%u hex_id=%02x payload=%01x "
+						"dl_status=%u ul_status=%u", i, hex_id, payload_type,
+						(unsigned)dl_operational, (unsigned)ul_operational);
+
 			aop_entry.satHexId = hex_id;
-			aop_entry.satDcsId = a_dcs;
-			aop_entry.uplinkStatus = convert_ul_operating_status(ul_status, hex_id);
-			aop_entry.downlinkStatus = convert_dl_operating_status(dl_status, type_a, aop_entry.uplinkStatus);
+			aop_entry.uplinkStatus = convert_ul_operating_status(payload_type, ul_operational);
+			aop_entry.downlinkStatus = convert_dl_operating_status(dl_operational);
+
 			uint8_t key = aop_entry.satHexId;
 			constellation_params[key] = aop_entry;
 		}
-
-		// The messages supplied by CLS are incorrectly encoded and are not a multiple of 8 bits; the only reason
-		// their messages work is because they always send both type A and type B constellation status messages, meaning
-		// that the two messages together add up to an integer number of bytes.  If the encoding ever gets fixed
-		// then the following define should be taken out of the software build.
-#ifndef WORKAROUND_ALLCAST_CONSTELLATION_STATUS_ENCODING_BUG
-		// Skip reserved field if number of status words is even
-		if ((num_operational_satellites & 1) == 0) {
-			uint8_t reserved;
-			EXTRACT_BITS(reserved, data, pos, 4);
-			(void)reserved;
-		}
-#endif
 	}
 
-	static void allcast_sat_orbit_params_decode(const std::string& data, unsigned int &pos, AopFormat format, std::map<uint8_t, AopSatelliteEntry_t> &orbit_params, uint8_t a_dcs) {
-		uint32_t working, day_of_year;
-		AopSatelliteEntry_t aop_entry;
-
-		// Set DCS ID
-		aop_entry.satDcsId = a_dcs;
-
-		// 4 bits sat hex ID
-		EXTRACT_BITS(aop_entry.satHexId, data, pos, 4);
-
-		// 2 bites bulletin type (not used)
-		EXTRACT_BITS(working, data, pos, 2); // Type of bulletin
-
-		// 44 bits of date
-		aop_entry.bulletin.year = 2000;
-		EXTRACT_BITS(working, data, pos, 4); // 10s of year
-		aop_entry.bulletin.year += 10 * working;
-		EXTRACT_BITS(working, data, pos, 4); // Units of year
-		aop_entry.bulletin.year += working;
-		EXTRACT_BITS(working, data, pos, 4); // 100s of day
-		day_of_year = 100 * working;
-		EXTRACT_BITS(working, data, pos, 4); // 10s of day
-		day_of_year += 10 * working;
-		EXTRACT_BITS(working, data, pos, 4); // Units of day
-		day_of_year += working;
-		EXTRACT_BITS(working, data, pos, 4); // 10s of hour
-		aop_entry.bulletin.hour = 10 * working;
-		EXTRACT_BITS(working, data, pos, 4); // Units of hour
-		aop_entry.bulletin.hour += working;
-		EXTRACT_BITS(working, data, pos, 4); // 10s of minute
-		aop_entry.bulletin.minute = 10 * working;
-		EXTRACT_BITS(working, data, pos, 4); // Units of minute
-		aop_entry.bulletin.minute += working;
-		EXTRACT_BITS(working, data, pos, 4); // 10s of second
-		aop_entry.bulletin.second = 10 * working;
-		EXTRACT_BITS(working, data, pos, 4); // Units of second
-		aop_entry.bulletin.second += working;
-
-		// Compute the actual day of month and month from the day of year
-		convert_day_of_year(aop_entry.bulletin.year, day_of_year, aop_entry.bulletin.month, aop_entry.bulletin.day);
-
-		DEBUG_TRACE("allcast_sat_orbit_params_decode: a_dcs=%01x hex_id=%01x doy=%u dd/mm/yy=%u/%u/%u hh:mm:ss=%u:%u:%u",
-				a_dcs, aop_entry.satHexId, day_of_year, aop_entry.bulletin.day, aop_entry.bulletin.month, aop_entry.bulletin.year,
-				aop_entry.bulletin.hour, aop_entry.bulletin.minute, aop_entry.bulletin.second);
-
-		// 86 bits of bulletin
-		if (format == AopFormat::A) {
-			EXTRACT_BITS(working, data, pos, 19); // Longitude of the ascending node
-			aop_entry.ascNodeLongitudeDeg = working / 1000.f;
-			EXTRACT_BITS(working, data, pos, 10); // angular separation between two successive ascending nodes
-			aop_entry.ascNodeDriftDeg = (working / 1000.f) - 26;
-			EXTRACT_BITS(working, data, pos, 14); // nodal period
-			aop_entry.orbitPeriodMin = (working / 1000.f) + 95;
-			EXTRACT_BITS(working, data, pos, 19); // semi-major axis
-			aop_entry.semiMajorAxisKm = (working / 1000.f) + 7000;
-			EXTRACT_BITS(working, data, pos, 8); // semi-major axis decay
-			aop_entry.semiMajorAxisDriftMeterPerDay = working * -0.1f;
-			EXTRACT_BITS(working, data, pos, 16); // inclination
-			aop_entry.inclinationDeg = (working / 10000.f) + 97;
-		} else if (format == AopFormat::B) {
-			EXTRACT_BITS(working, data, pos, 19); // Longitude of the ascending node
-			aop_entry.ascNodeLongitudeDeg = working / 1000.f;
-			EXTRACT_BITS(working, data, pos, 10); // angular separation between two successive ascending nodes
-			aop_entry.ascNodeDriftDeg = (working / 1000.f) - 24;
-			EXTRACT_BITS(working, data, pos, 14); // nodal period
-			aop_entry.orbitPeriodMin = (working / 1000.f) + 85;
-			EXTRACT_BITS(working, data, pos, 19); // semi-major axis
-			aop_entry.semiMajorAxisKm = (working / 1000.f) + 6500;
-			EXTRACT_BITS(working, data, pos, 8); // semi-major axis decay
-			aop_entry.semiMajorAxisDriftMeterPerDay = working * -0.1f;
-			EXTRACT_BITS(working, data, pos, 16); // inclination
-			aop_entry.inclinationDeg = (working / 10000.f) + 95;
-		} else if (format == AopFormat::C) {
-			EXTRACT_BITS(working, data, pos, 19); // Longitude of the ascending node
-			aop_entry.ascNodeLongitudeDeg = working / 1000.f;
-			EXTRACT_BITS(working, data, pos, 10); // angular separation between two successive ascending nodes
-			aop_entry.ascNodeDriftDeg = (working / 1000.f) - 25.012f;
-			EXTRACT_BITS(working, data, pos, 14); // nodal period
-			aop_entry.orbitPeriodMin = (working / 1000.f) + 90;
-			EXTRACT_BITS(working, data, pos, 19); // semi-major axis
-			aop_entry.semiMajorAxisKm = (working / 1000.f) + 6750;
-			EXTRACT_BITS(working, data, pos, 8); // semi-major axis decay
-			aop_entry.semiMajorAxisDriftMeterPerDay = working * -0.1f;
-			EXTRACT_BITS(working, data, pos, 16); // inclination
-			aop_entry.inclinationDeg = (working / 10000.f) + 96;
-		}
-
-		uint8_t key = aop_entry.satHexId;
-		orbit_params[key] = aop_entry;
+	/**
+	 * Decode one Allcast message. @p pos is advanced by the whole message,
+	 * zero padding included, so that a caller can walk a stream of concatenated
+	 * messages.
+	 */
+	static bool is_known_allcast_address(uint32_t address) {
+		return address == ALLCAST_AOP_MONOSAT || address == ALLCAST_AOP_MULTISAT
+		    || address == ALLCAST_CS_SHORT || address == ALLCAST_CS_MEDIUM
+		    || address == ALLCAST_CS_LONG || address == ALLCAST_UTC_TIME;
 	}
 
-	static void allcast_packet_decode(
-			const std::string& data, unsigned int &pos,
-			std::map<uint8_t, AopSatelliteEntry_t> &orbit_params, std::map<uint8_t, AopSatelliteEntry_t> &constellation_status) {
-		uint32_t addressee_identification;
-		uint8_t  a_dcs;
-		uint8_t  service;
+	static void allcast_packet_decode(const std::string& data, unsigned int& pos,
+			std::map<uint8_t, AopSatelliteEntry_t>& orbit_params,
+			std::map<uint8_t, AopSatelliteEntry_t>& constellation_status,
+			AllcastStatusTracking *tracking) {
+		unsigned int start = pos;
+		unsigned int available = static_cast<unsigned int>(8 * data.length()) - start;
+		unsigned int address_offset;
+		unsigned int useful_bits;
+		unsigned int message_bits;
+		unsigned int num_satellites = 0;
+		uint32_t allcast_address;
+		uint16_t fcs, computed_fcs;
 
-		//DEBUG_TRACE("allcast_packet_decode: pos: %u", pos);
-
-		EXTRACT_BITS(addressee_identification, data, pos, 28);
-		EXTRACT_BITS(a_dcs, data, pos, 4);
-		EXTRACT_BITS(service, data, pos, 8);
-
-		//DEBUG_TRACE("allcast_packet_decode: addressee_identification: %08x", addressee_identification);
-		//DEBUG_TRACE("allcast_packet_decode: a_dcs: %01x", a_dcs);
-		//DEBUG_TRACE("allcast_packet_decode: service: %02x", service);
-
-		if (service != 0) {
-			DEBUG_TRACE("allcast_packet_decode: message service is not allcast (0x00)");
+		if (available < 32) {
+			DEBUG_ERROR("allcast_packet_decode: truncated message");
 			throw DTE_PROTOCOL_VALUE_OUT_OF_RANGE;
 		}
 
-		switch (addressee_identification) {
-		case 0xC7: // Constellation Satellite Status Version A
-			allcast_constellation_status_decode(data, pos, true, constellation_status, a_dcs);
+		/* The useful part of a message starts with the 8-bit address of the
+		 * transmitting satellite (0x00 when served by the API). Some receivers
+		 * hand over the frame without it, so both layouts are accepted: the
+		 * known 32-bit Allcast addresses are all below 0x1000, which makes the
+		 * detection unambiguous.
+		 */
+		allcast_address = static_cast<uint32_t>(peek_bits(data, start, 32));
+		if (is_known_allcast_address(allcast_address)) {
+			address_offset = 0;
+		} else if (available >= HEADER_BITS) {
+			address_offset = 8;
+			allcast_address = static_cast<uint32_t>(peek_bits(data, start + 8, 32));
+		} else {
+			DEBUG_ERROR("allcast_packet_decode: truncated message");
+			throw DTE_PROTOCOL_VALUE_OUT_OF_RANGE;
+		}
+
+		switch (allcast_address) {
+		case ALLCAST_AOP_MONOSAT:
+			useful_bits = BITS_2_BLOCKS;
 			break;
-		case 0x5F: // Constellation Satellite Status Version B
-			allcast_constellation_status_decode(data, pos, false, constellation_status, a_dcs);
+		case ALLCAST_AOP_MULTISAT:
+			useful_bits = BITS_3_BLOCKS;
 			break;
-		case 0xBE: // Satellite Orbit Parameters Type A
-			allcast_sat_orbit_params_decode(data, pos, AopFormat::A, orbit_params, a_dcs);
+		case ALLCAST_CS_SHORT:
+			useful_bits = BITS_1_BLOCK;
+			num_satellites = 2;
 			break;
-		case 0xD4: // Satellite Orbit Parameters Type B
-			allcast_sat_orbit_params_decode(data, pos, AopFormat::B, orbit_params, a_dcs);
+		case ALLCAST_CS_MEDIUM:
+			useful_bits = BITS_2_BLOCKS;
+			num_satellites = 10;
 			break;
-		case 0x13: // Satellite Orbit Parameters Type C
-			allcast_sat_orbit_params_decode(data, pos, AopFormat::C, orbit_params, a_dcs);
+		case ALLCAST_CS_LONG:
+			useful_bits = BITS_3_BLOCKS;
+			num_satellites = 17;
+			break;
+		case ALLCAST_UTC_TIME:
+			useful_bits = BITS_1_BLOCK;
 			break;
 		default:
-			DEBUG_ERROR("allcast_packet_decode: unrecognised allcast packet ID (%08x)", addressee_identification);
+			DEBUG_ERROR("allcast_packet_decode: unrecognised allcast address (%08x)",
+						allcast_address);
 			throw DTE_PROTOCOL_VALUE_OUT_OF_RANGE;
 		}
 
-		uint16_t fcs;
-		EXTRACT_BITS(fcs, data, pos, 16);
-		(void)fcs;
-		//DEBUG_TRACE("allcast_packet_decode: fcs: %04x", fcs);
+		/* Every message spans a whole number of bytes: 99, 198 or 297 useful
+		 * bits padded with 5, 2 or 7 zero bits. A frame handed over without
+		 * the transmitting satellite address is 8 bits shorter.
+		 */
+		useful_bits = useful_bits - 8 + address_offset;
+		message_bits = 8 * ((useful_bits + 7) / 8);
+		if (available < message_bits) {
+			DEBUG_ERROR("allcast_packet_decode: truncated message (%u bits available, %u needed)",
+						available, message_bits);
+			throw DTE_PROTOCOL_VALUE_OUT_OF_RANGE;
+		}
+
+		fcs = static_cast<uint16_t>(peek_bits(data, start + useful_bits - FCS_BITS, FCS_BITS));
+		computed_fcs = crc16_bits(data, start + address_offset,
+					  useful_bits - FCS_BITS - address_offset);
+		if (fcs != computed_fcs) {
+			DEBUG_ERROR("allcast_packet_decode: bad FCS (%04x, expected %04x)", fcs, computed_fcs);
+			pos = start + message_bits;	/* frame boundary is known, skip it */
+			throw DTE_PROTOCOL_VALUE_OUT_OF_RANGE;
+		}
+
+		pos = start + address_offset + 32;
+		switch (allcast_address) {
+		case ALLCAST_AOP_MONOSAT:
+			allcast_sat_orbit_params_decode(data, pos, false, orbit_params);
+			break;
+		case ALLCAST_AOP_MULTISAT:
+			allcast_sat_orbit_params_decode(data, pos, true, orbit_params);
+			break;
+		case ALLCAST_UTC_TIME:
+			DEBUG_TRACE("allcast_packet_decode: UTC time message skipped");
+			break;
+		default:
+			allcast_constellation_status_decode(data, pos, num_satellites, constellation_status,
+					tracking);
+			break;
+		}
+
+		pos = start + message_bits;
+	}
+
+	/**
+	 * Merge the two maps into the output table. A record is emitted for every
+	 * satellite of the constellation status map; its orbit params are copied
+	 * when they are known and the satellite is operational, otherwise the
+	 * bulletin year is left at 0 to flag a missing AOP.
+	 */
+	static void merge(const std::map<uint8_t, AopSatelliteEntry_t>& orbit_params,
+			const std::map<uint8_t, AopSatelliteEntry_t>& constellation_status,
+			BasePassPredict& pass_predict) {
+		unsigned int num_records = 0;
+		unsigned int with_aop = 0;
+		unsigned int not_operational = 0;
+
+		pass_predict.num_records = 0;
+
+		/* No per-satellite tracing here on purpose: merge() runs on EVERY
+		 * received packet, so one line per satellite means ~25 log lines per
+		 * second during a pass. On a flash-backed logger that blocks the main
+		 * loop for several seconds, the UART RX buffer overflows, allcast lines
+		 * get truncated and merged, and the module's answers are lost. One
+		 * summary line at the end instead.
+		 */
+		for (const auto& it : constellation_status) {
+			if (num_records >= MAX_AOP_SATELLITE_ENTRIES) {
+				DEBUG_WARN("PassPredictCodec::merge: discard entry hex_id=%02x as full",
+						   it.second.satHexId);
+				continue;
+			}
+
+			pass_predict.records[num_records] = AopSatelliteEntry_t();
+
+			/* Don't expect an AOP unless either downlink or uplink is operational */
+			if (it.second.downlinkStatus || it.second.uplinkStatus) {
+				std::map<uint8_t, AopSatelliteEntry_t>::const_iterator aop =
+					orbit_params.find(it.first);
+
+				if (aop != orbit_params.end()) {
+					pass_predict.records[num_records] = aop->second;
+					with_aop++;
+				} else {
+					pass_predict.records[num_records].bulletin.year = 0;
+				}
+			} else {
+				pass_predict.records[num_records].bulletin.year = 0;
+				not_operational++;
+			}
+
+			pass_predict.records[num_records].satHexId = it.second.satHexId;
+			pass_predict.records[num_records].downlinkStatus = it.second.downlinkStatus;
+			pass_predict.records[num_records].uplinkStatus = it.second.uplinkStatus;
+			num_records++;
+		}
+
+		pass_predict.num_records = num_records;
+
+		DEBUG_TRACE("PassPredictCodec::merge: %u declared, %u with AOP, %u out of service",
+					num_records, with_aop, not_operational);
 	}
 
 public:
@@ -265,104 +537,57 @@ public:
 			std::map<uint8_t, AopSatelliteEntry_t>& orbit_params,
 			std::map<uint8_t, AopSatelliteEntry_t>& constellation_status,
 			std::string const& data,
-		BasePassPredict& pass_predict) {
-		unsigned int num_records = 0;
-		pass_predict.num_records = 0;
+			BasePassPredict& pass_predict) {
+		decode(orbit_params, constellation_status, nullptr, data, pass_predict);
+	}
 
-		// Build two maps of AopSatelliteEntry_t entries; one containing orbit params
-		// and the other constellation status.  We then merge the two together into BasePassPredict
-		// for entries whose satellite hex ID matches.
+	// Same, keeping track of the constellation status set: tracking.is_complete()
+	// tells whether every CS message of the current set has been received, which
+	// is what says the constellation picture is whole.
+	static void decode(
+			std::map<uint8_t, AopSatelliteEntry_t>& orbit_params,
+			std::map<uint8_t, AopSatelliteEntry_t>& constellation_status,
+			AllcastStatusTracking *tracking,
+			std::string const& data,
+			BasePassPredict& pass_predict) {
+		// The two maps are the caller's persistent state: an AOP message only
+		// updates orbit_params, a constellation status message only updates
+		// constellation_status, so both can be refreshed independently as the
+		// KIM2 receives them, in any order.
 		try {
 			unsigned int base_pos = 0;
-			allcast_packet_decode(data, base_pos, orbit_params, constellation_status);
+			allcast_packet_decode(data, base_pos, orbit_params, constellation_status, tracking);
 		} catch (...) {
 			// Ignore any errors decoding the packet and just move onto the next
 		}
 
-		// Go through constellation_status and try to find a matching entry (by hex/dcs ID) in the
-		// orbit_params
-		for ( const auto &it : constellation_status ) {
-			if (num_records < MAX_AOP_SATELLITE_ENTRIES) {
-				DEBUG_TRACE("PassPredictCodec::decode: STATUS entry %u a_dcs = %01x hex_id=%01x", num_records, it.second.satDcsId, it.second.satHexId);
-
-				// Don't expect a AOP unless either downlink or uplink is operational
-				if (it.second.downlinkStatus || it.second.uplinkStatus) {
-					// AOP must be present for this record to be counted
-					if (orbit_params.count(it.first)) {
-						DEBUG_TRACE("PassPredictCodec::decode: AOP exists: hex_id=%01x", orbit_params[it.first].satHexId);
-						pass_predict.records[num_records] = orbit_params[it.first];
-					}
-					else {
-						DEBUG_TRACE("PassPredictCodec::decode: AOP missing");
-						pass_predict.records[num_records].bulletin.year = 0;
-					}
-				} else {
-					// Ignore AOP params if out of service
-					DEBUG_TRACE("PassPredictCodec::decode: not operational");
-					pass_predict.records[num_records].bulletin.year = 0;
-				}
-				pass_predict.records[num_records].satHexId = it.second.satHexId;
-				pass_predict.records[num_records].downlinkStatus = it.second.downlinkStatus;
-				pass_predict.records[num_records].uplinkStatus = it.second.uplinkStatus;
-				num_records++;
-			} else {
-				DEBUG_WARN("PassPredictCodec::decode: Discard paspw entry a_dcs = %01x hex_id=%01x as full", it.second.satDcsId, it.second.satHexId);
-			}
-		}
-
-		// Set the number of records
-		pass_predict.num_records = num_records;
+		merge(orbit_params, constellation_status, pass_predict);
 	}
 
-	// This decode variant does not know where the packet boundaries exist and so can't
-	// recover from any decoding errors
-
-	static void decode(const std::string& data, BasePassPredict& pass_predict) {
-		unsigned int base_pos = 0, num_records = 0;
-		pass_predict.num_records = 0;
+	// This decode variant walks a buffer of concatenated messages, as served by
+	// the Kineis API. Message boundaries are known from the Allcast address, so
+	// a corrupted message is skipped instead of aborting the whole buffer.
+	static void decode(const std::string& data, BasePassPredict& pass_predict,
+			AllcastStatusTracking *tracking = nullptr) {
+		unsigned int base_pos = 0;
 		std::map<uint8_t, AopSatelliteEntry_t> orbit_params;
 		std::map<uint8_t, AopSatelliteEntry_t> constellation_status;
 
-		// Build two maps of AopSatelliteEntry_t entries; one containing orbit params
-		// and the other constellation status.  We then merge the two together into BasePassPredict
-		// for entries whose satellite hex ID matches.
-		while (base_pos < (8 * data.length())) {
-			allcast_packet_decode(data, base_pos, orbit_params, constellation_status);
-		}
+		while (base_pos + HEADER_BITS <= (8 * data.length())) {
+			unsigned int previous_pos = base_pos;
 
-		// Go through constellation_status and try to find a matching entry (by hex/dcs ID) in the
-		// orbit_params
-		for ( const auto &it : constellation_status ) {
-			if (num_records < MAX_AOP_SATELLITE_ENTRIES) {
-				DEBUG_TRACE("PassPredictCodec::decode: New paspw entry %u a_dcs = %01x hex_id=%01x", num_records, it.second.satDcsId, it.second.satHexId);
-
-				// Don't expect a AOP unless either downlink or uplink is operational
-				if (it.second.downlinkStatus || it.second.uplinkStatus) {
-					// AOP must be present for this record to be counted
-					if (orbit_params.count(it.first)) {
-						DEBUG_TRACE("PassPredictCodec::decode: AOP exists: hex_id=%01x", orbit_params[it.first].satHexId);
-						pass_predict.records[num_records] = orbit_params[it.first];
-					}
-					else {
-						DEBUG_TRACE("PassPredictCodec::decode: AOP missing");
-						pass_predict.records[num_records].bulletin.year = 0;
-					}
-				} else {
-					DEBUG_TRACE("PassPredictCodec::decode: not operational");
-					pass_predict.records[num_records].bulletin.year = 0;
-				}
-
-				pass_predict.records[num_records].satHexId = it.second.satHexId;
-				pass_predict.records[num_records].downlinkStatus = it.second.downlinkStatus;
-				pass_predict.records[num_records].uplinkStatus = it.second.uplinkStatus;
-				num_records++;
-			} else {
-				DEBUG_WARN("PassPredictCodec::decode: Discard paspw entry a_dcs = %01x hex_id=%01x as full", it.second.satDcsId, it.second.satHexId);
+			try {
+				allcast_packet_decode(data, base_pos, orbit_params, constellation_status,
+						tracking);
+			} catch (...) {
+				// Unknown address or bad FCS: stop unless the frame length was
+				// known, in which case allcast_packet_decode already moved past it
+				if (base_pos == previous_pos)
+					break;
 			}
 		}
 
-		// Set the number of records
-		pass_predict.num_records = num_records;
+		merge(orbit_params, constellation_status, pass_predict);
 	}
 };
 

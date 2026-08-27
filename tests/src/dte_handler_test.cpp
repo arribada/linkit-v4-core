@@ -548,9 +548,8 @@ TEST(DTEHandler, GenerateDefaultPassPredictFile)
 	BasePassPredict pp;
 	pp = configuration_store->read_pass_predict();
 	for (unsigned int i = 0; i < pp.num_records; i++) {
-		printf("{ 0x%1x, %u, (SatDownlinkStatus_t)%u, (SatUplinkStatus_t)%u, { %u, %u, %u, %u, %u, %u }, %f, %f, %f, %f, %f, %f },\n",
+		printf("{ 0x%1x, (SatDownlinkStatus_t)%u, (SatUplinkStatus_t)%u, { %u, %u, %u, %u, %u, %u }, %f, %f, %f, %f, %f, %f },\n",
 				pp.records[i].satHexId,
-				pp.records[i].satDcsId,
 				pp.records[i].downlinkStatus,
 				pp.records[i].uplinkStatus,
 				pp.records[i].bulletin.year,

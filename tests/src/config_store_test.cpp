@@ -318,7 +318,11 @@ TEST(ConfigStore, CheckDefaultPassPredictIsAvailable)
 	store->init();
 
 	BasePassPredict pp = store->read_pass_predict();
-	CHECK_EQUAL(8, pp.num_records);
+	// 25 satellites: the Kineis constellation replaced the 8-satellite Argos
+		// table with the PREPASS v4.0 migration. Must track num_records in
+		// ConfigurationStore::default_prepass (config_store.hpp), which is
+		// protected and so cannot be referenced from here.
+		CHECK_EQUAL(25, pp.num_records);
 
 }
 
@@ -372,7 +376,11 @@ TEST(ConfigStore, CheckPassPredictVersionCodeMismatch)
 	{
 		store->init();
 		BasePassPredict pp = store->read_pass_predict();
-		CHECK_EQUAL(8, pp.num_records);
+		// 25 satellites: the Kineis constellation replaced the 8-satellite Argos
+		// table with the PREPASS v4.0 migration. Must track num_records in
+		// ConfigurationStore::default_prepass (config_store.hpp), which is
+		// protected and so cannot be referenced from here.
+		CHECK_EQUAL(25, pp.num_records);
 	}
 
 }

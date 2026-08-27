@@ -178,7 +178,8 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     "${ROOT_DIR}/libraries/etl-20.27.3/include"
     "${ROOT_DIR}/libraries/inplace_function"
     "${ROOT_DIR}/libraries/littlefs"
-    "${ROOT_DIR}/libraries/prepass/prepass_package_code-PREPAS_V3.4"
+    "${ROOT_DIR}/libraries/prepass/previpass-PREPASS_V4.0"
+    "${ROOT_DIR}/libraries/prepass/previpass_compat_layer"
     "${ROOT_DIR}/core/hardware"
     "${ROOT_DIR}/core/sm"
     "${ROOT_DIR}/core/ble_services"
@@ -203,8 +204,9 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 target_sources(${PROJECT_NAME} PRIVATE
     "${ROOT_DIR}/libraries/littlefs/lfs_util.c"
     "${ROOT_DIR}/libraries/littlefs/lfs.c"
-    "${ROOT_DIR}/libraries/prepass/prepass_package_code-PREPAS_V3.4/previpass.c"
-    "${ROOT_DIR}/libraries/prepass/prepass_package_code-PREPAS_V3.4/previpass_util.c"
+    "${ROOT_DIR}/libraries/prepass/previpass-PREPASS_V4.0/prepas.c"
+    "${ROOT_DIR}/libraries/prepass/previpass-PREPASS_V4.0/utils.c"
+    "${ROOT_DIR}/libraries/prepass/previpass_compat_layer/previpass.c"
     "${ROOT_DIR}/core/util/haversine.cpp"
 
     "${ROOT_DIR}/core/services/argos_rx_service.cpp"
@@ -291,7 +293,12 @@ target_sources(${PROJECT_NAME} PRIVATE
     "mocks/mock_dfu.cpp"
 )
 
-set_source_files_properties(${ROOT_DIR}/libraries/prepass/prepass_package_code-PREPAS_V3.4/previpass.c PROPERTIES COMPILE_FLAGS "-Wno-unused-parameter -Wno-switch-enum -Wno-switch")
+# Vendor code: the host build is stricter than the firmware one, and these
+# three files are imported as-is. Same waivers as ports/nrf52840/CMakeLists.txt
+# plus the host-only warnings.
+set_source_files_properties(${ROOT_DIR}/libraries/prepass/previpass-PREPASS_V4.0/prepas.c PROPERTIES COMPILE_FLAGS "-Wno-unused-parameter -Wno-switch-enum -Wno-switch -Wno-double-promotion -Wno-conversion -Wno-sign-conversion -Wno-float-conversion -Wno-cast-align -Wno-missing-field-initializers")
+set_source_files_properties(${ROOT_DIR}/libraries/prepass/previpass-PREPASS_V4.0/utils.c PROPERTIES COMPILE_FLAGS "-Wno-unused-parameter -Wno-switch-enum -Wno-switch -Wno-double-promotion -Wno-conversion -Wno-sign-conversion -Wno-float-conversion -Wno-cast-align -Wno-missing-field-initializers")
+set_source_files_properties(${ROOT_DIR}/libraries/prepass/previpass_compat_layer/previpass.c PROPERTIES COMPILE_FLAGS "-Wno-unused-parameter -Wno-switch-enum -Wno-switch -Wno-double-promotion -Wno-conversion -Wno-sign-conversion -Wno-float-conversion -Wno-cast-align -Wno-missing-field-initializers")
 
 target_link_libraries(${PROJECT_NAME} PRIVATE CppUTest CppUTestExt ${CMAKE_THREAD_LIBS_INIT})
 
@@ -373,7 +380,8 @@ target_include_directories(${TURTLE_SIM_NAME} PRIVATE
     "${ROOT_DIR}/libraries/etl-20.27.3/include"
     "${ROOT_DIR}/libraries/inplace_function"
     "${ROOT_DIR}/libraries/littlefs"
-    "${ROOT_DIR}/libraries/prepass/prepass_package_code-PREPAS_V3.4"
+    "${ROOT_DIR}/libraries/prepass/previpass-PREPASS_V4.0"
+    "${ROOT_DIR}/libraries/prepass/previpass_compat_layer"
     "${ROOT_DIR}/core/hardware"
     "${ROOT_DIR}/core/sm"
     "${ROOT_DIR}/core/ble_services"
@@ -398,8 +406,9 @@ target_include_directories(${TURTLE_SIM_NAME} PRIVATE
 target_sources(${TURTLE_SIM_NAME} PRIVATE
     "${ROOT_DIR}/libraries/littlefs/lfs_util.c"
     "${ROOT_DIR}/libraries/littlefs/lfs.c"
-    "${ROOT_DIR}/libraries/prepass/prepass_package_code-PREPAS_V3.4/previpass.c"
-    "${ROOT_DIR}/libraries/prepass/prepass_package_code-PREPAS_V3.4/previpass_util.c"
+    "${ROOT_DIR}/libraries/prepass/previpass-PREPASS_V4.0/prepas.c"
+    "${ROOT_DIR}/libraries/prepass/previpass-PREPASS_V4.0/utils.c"
+    "${ROOT_DIR}/libraries/prepass/previpass_compat_layer/previpass.c"
     "${ROOT_DIR}/core/util/haversine.cpp"
 
     "${ROOT_DIR}/core/services/argos_rx_service.cpp"
@@ -450,8 +459,8 @@ target_sources(${TURTLE_SIM_NAME} PRIVATE
     "mocks/mock_dfu.cpp"
 )
 
-set_source_files_properties(${ROOT_DIR}/libraries/prepass/prepass_package_code-PREPAS_V3.4/previpass.c
-    PROPERTIES COMPILE_FLAGS "-Wno-unused-parameter -Wno-switch-enum -Wno-switch")
+set_source_files_properties(${ROOT_DIR}/libraries/prepass/previpass-PREPASS_V4.0/prepas.c ${ROOT_DIR}/libraries/prepass/previpass-PREPASS_V4.0/utils.c ${ROOT_DIR}/libraries/prepass/previpass_compat_layer/previpass.c
+    PROPERTIES COMPILE_FLAGS "-Wno-unused-parameter -Wno-switch-enum -Wno-switch -Wno-double-promotion -Wno-conversion -Wno-sign-conversion -Wno-float-conversion -Wno-cast-align -Wno-missing-field-initializers")
 
 target_link_libraries(${TURTLE_SIM_NAME} PRIVATE CppUTest CppUTestExt ${CMAKE_THREAD_LIBS_INIT})
 
@@ -536,7 +545,8 @@ target_include_directories(${RSPB_SIM_NAME} PRIVATE
     "${ROOT_DIR}/libraries/etl-20.27.3/include"
     "${ROOT_DIR}/libraries/inplace_function"
     "${ROOT_DIR}/libraries/littlefs"
-    "${ROOT_DIR}/libraries/prepass/prepass_package_code-PREPAS_V3.4"
+    "${ROOT_DIR}/libraries/prepass/previpass-PREPASS_V4.0"
+    "${ROOT_DIR}/libraries/prepass/previpass_compat_layer"
     "${ROOT_DIR}/core/hardware"
     "${ROOT_DIR}/core/sm"
     "${ROOT_DIR}/core/ble_services"
@@ -561,8 +571,9 @@ target_include_directories(${RSPB_SIM_NAME} PRIVATE
 target_sources(${RSPB_SIM_NAME} PRIVATE
     "${ROOT_DIR}/libraries/littlefs/lfs_util.c"
     "${ROOT_DIR}/libraries/littlefs/lfs.c"
-    "${ROOT_DIR}/libraries/prepass/prepass_package_code-PREPAS_V3.4/previpass.c"
-    "${ROOT_DIR}/libraries/prepass/prepass_package_code-PREPAS_V3.4/previpass_util.c"
+    "${ROOT_DIR}/libraries/prepass/previpass-PREPASS_V4.0/prepas.c"
+    "${ROOT_DIR}/libraries/prepass/previpass-PREPASS_V4.0/utils.c"
+    "${ROOT_DIR}/libraries/prepass/previpass_compat_layer/previpass.c"
     "${ROOT_DIR}/core/util/haversine.cpp"
 
     "${ROOT_DIR}/core/services/argos_rx_service.cpp"
@@ -611,7 +622,7 @@ target_sources(${RSPB_SIM_NAME} PRIVATE
     "mocks/mock_dfu.cpp"
 )
 
-set_source_files_properties(${ROOT_DIR}/libraries/prepass/prepass_package_code-PREPAS_V3.4/previpass.c
-    PROPERTIES COMPILE_FLAGS "-Wno-unused-parameter -Wno-switch-enum -Wno-switch")
+set_source_files_properties(${ROOT_DIR}/libraries/prepass/previpass-PREPASS_V4.0/prepas.c ${ROOT_DIR}/libraries/prepass/previpass-PREPASS_V4.0/utils.c ${ROOT_DIR}/libraries/prepass/previpass_compat_layer/previpass.c
+    PROPERTIES COMPILE_FLAGS "-Wno-unused-parameter -Wno-switch-enum -Wno-switch -Wno-double-promotion -Wno-conversion -Wno-sign-conversion -Wno-float-conversion -Wno-cast-align -Wno-missing-field-initializers")
 
 target_link_libraries(${RSPB_SIM_NAME} PRIVATE CppUTest CppUTestExt ${CMAKE_THREAD_LIBS_INIT})

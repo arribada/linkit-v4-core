@@ -31,16 +31,21 @@ TEST(Previpass, BasicTest)
                         //< 1000)
         5,                            //< Linear time margin (in minutes/6months) (default
                         //< 5 minutes/6months)
-        30                            //< Computation step (default 30s)
+        30,                           //< Computation step (IGNORED by the v4.0 engine)
+        0.0f,                         //< minCulmination: 0 disables the grazing-pass filter
+        0.0f,                         //< beaconPositionMarginKm: no position uncertainty
+        true                          //< includeCurrentPass: v3.4 ALWAYS reported the pass
+                                      //  in progress, and leaving this false silently drops
+                                      //  it -- see the warning in previpass.h
     };
     struct AopSatelliteEntry_t aopTable[] = {
-    		{ 0xA, 5, SAT_DNLK_ON_WITH_A3, SAT_UPLK_ON_WITH_A3, { 2020, 1, 26, 22, 59, 44 }, 7195.550f, 98.5444f, 327.835f, -25.341f, 101.3587f, 0.00f },
-			{ 0x9, 3, SAT_DNLK_OFF, SAT_UPLK_ON_WITH_A3, { 2020, 1, 26, 22, 33, 39 }, 7195.632f, 98.7141f, 344.177f, -25.340f, 101.3600f, 0.00f },
-			{ 0xB, 7, SAT_DNLK_ON_WITH_A3, SAT_UPLK_ON_WITH_A3, { 2020, 1, 26, 23, 29, 29 }, 7194.917f, 98.7183f, 330.404f, -25.336f, 101.3449f, 0.00f },
-			{ 0x5, 0, SAT_DNLK_OFF, SAT_UPLK_ON_WITH_A2, { 2020, 1, 26, 23, 50, 6 }, 7180.549f, 98.7298f, 289.399f, -25.260f, 101.0419f, -1.78f },
-			{ 0x8, 0, SAT_DNLK_OFF, SAT_UPLK_ON_WITH_A2, { 2020, 1, 26, 22, 12, 6 }, 7226.170f, 99.0661f, 343.180f, -25.499f, 102.0039f, -1.80f },
-			{ 0xC, 6, SAT_DNLK_OFF, SAT_UPLK_ON_WITH_A3, { 2020, 1, 26, 22, 3, 52 }, 7226.509f, 99.1913f, 291.936f, -25.500f, 102.0108f, -1.98f },
-			{ 0xD, 4, SAT_DNLK_ON_WITH_A3, SAT_UPLK_ON_WITH_A3, { 2020, 1, 26, 22, 3, 53 }, 7160.246f, 98.5358f, 118.029f, -25.154f, 100.6148f, 0.00f }
+    		{ 0xA, SAT_DNLK_ON,  SAT_UPLK_ON_ARGOS_3, { 2020, 1, 26, 22, 59, 44 }, 7195.550f, 98.5444f, 327.835f, -25.341f, 101.3587f, 0.00f },
+			{ 0x9, SAT_DNLK_OFF, SAT_UPLK_ON_ARGOS_3, { 2020, 1, 26, 22, 33, 39 }, 7195.632f, 98.7141f, 344.177f, -25.340f, 101.3600f, 0.00f },
+			{ 0xB, SAT_DNLK_ON,  SAT_UPLK_ON_ARGOS_3, { 2020, 1, 26, 23, 29, 29 }, 7194.917f, 98.7183f, 330.404f, -25.336f, 101.3449f, 0.00f },
+			{ 0x5, SAT_DNLK_OFF, SAT_UPLK_ON_ARGOS_3, { 2020, 1, 26, 23, 50, 6 }, 7180.549f, 98.7298f, 289.399f, -25.260f, 101.0419f, -1.78f },
+			{ 0x8, SAT_DNLK_OFF, SAT_UPLK_ON_ARGOS_3, { 2020, 1, 26, 22, 12, 6 }, 7226.170f, 99.0661f, 343.180f, -25.499f, 102.0039f, -1.80f },
+			{ 0xC, SAT_DNLK_OFF, SAT_UPLK_ON_ARGOS_3, { 2020, 1, 26, 22, 3, 52 }, 7226.509f, 99.1913f, 291.936f, -25.500f, 102.0108f, -1.98f },
+			{ 0xD, SAT_DNLK_ON,  SAT_UPLK_ON_ARGOS_3, { 2020, 1, 26, 22, 3, 53 }, 7160.246f, 98.5358f, 118.029f, -25.154f, 100.6148f, 0.00f }
     };
 
     uint8_t nbSatsInAopTable = 7;

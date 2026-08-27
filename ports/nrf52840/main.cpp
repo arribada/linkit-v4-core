@@ -1105,6 +1105,7 @@ static void init_communication(LFSFileSystem& lfs_file_system)
 #ifdef BENCH_TEST
 		argos_tx_service_instance = &argos_tx_service;
 #endif
+		static ArgosRxService argos_rx_service(kim2);
 	} catch (...) {
 		DEBUG_INFO("KIM2 not detected");
 		kineis_device_instance = nullptr;

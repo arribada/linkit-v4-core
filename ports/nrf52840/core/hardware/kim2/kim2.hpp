@@ -14,6 +14,8 @@
 #include "nrfx_uarte.h"
 #include "scheduler.hpp"
 #include <atomic>
+#include <list>
+#include <string>
 
 class KIM2Device : public KIM2CommEventListener, public KineisDevice {
 private:
@@ -33,12 +35,29 @@ public:
 	/// @brief Cancel any pending TX.
 	void stop_send() override;
 
-	/// @brief Not implemented on KIM2.
+	/// @brief Start continuous downlink reception (AT+DL=1, runtime mode).
+	/// Powers the module on if needed; reception actually starts once the state
+	/// machine reaches the @c receive state. Runtime mode reports only decoded
+	/// downlink messages: +DL_ALLCAST= lines are dispatched as
+	/// KineisEventRxPacket, +DL_USERBC= is traced and dropped. No raw frame nor
+	/// detection diagnostic is emitted by the module in this mode.
+	/// @param mode  Ignored: the downlink frequency is managed by the module's
+	///              stack, the RCONF band only covers the uplink.
+	/// @note Refused with a KineisEventDeviceError when the module firmware is
+	///       older than the RX gate (see kim2_firmware.hpp).
 	void start_receive(const KineisModulation mode) override;
 
-	/// @brief Not implemented on KIM2.
-	/// @return Always false.
+	/// @brief Stop reception (AT+DL=0), sent from the state machine context.
+	/// @return true when a reception was pending or running.
 	bool stop_receive() override;
+
+	/// @brief True from start_receive() until the RX session is closed, i.e.
+	///        while the module cannot accept an AT+TX. Covers the stop sequence
+	///        as well: the module is still in DL mode until it answers or is
+	///        power cycled.
+	bool is_receiving() const override {
+		return m_rx_requested || m_rx_active || m_state == receive;
+	}
 
 	/// @brief No-op — KIM2 frequency is set via RCONF.
 	void set_frequency(double freq_mhz) override;
@@ -65,6 +84,14 @@ public:
 	/// Module must be powered on. Returns empty string on failure.
 	std::string get_firmware_version();
 
+	/// @brief Raw AT+FW=? build string read at state_init (empty until then).
+	const std::string& get_module_firmware() const { return m_fw_version; }
+
+	/// @brief True when the module firmware is recent enough for downlink
+	///        reception (build date gate, see kim2_firmware.hpp). False until
+	///        state_init has queried AT+FW=?.
+	bool is_rx_supported() const { return m_rx_supported; }
+
 private:
 	/// @brief KIM2 state machine states.
 	enum KIM2ManagerState {
@@ -73,6 +100,7 @@ private:
 		init,
 		idle,
 		transmit,
+		receive,
 		error
 	};
 
@@ -104,6 +132,25 @@ private:
 	KineisModulation m_current_rconf_mode;   ///< Last RCONF modulation written
 	std::atomic<bool> m_tx_done;             ///< Set by ISR on +TX= response
 	unsigned int m_tx_poll_counter;          ///< Remaining TX poll ticks before timeout
+	/// @}
+
+	/// @name RX state
+	/// @{
+	bool m_rx_requested = false;             ///< start_receive() called, not yet stopped
+	bool m_rx_stop_requested = false;        ///< stop_receive() called, AT+DL=0 pending
+	bool m_rx_active = false;                ///< AT+DL=1 accepted by the module
+	std::atomic<bool> m_rx_window_ended;     ///< Set on the empty +DL= end-of-window line
+	uint64_t m_rx_start_ms = 0;              ///< Wall clock at RX start, for rx_time
+	std::string m_fw_version;                ///< AT+FW=? build string (empty before init)
+	bool m_fw_checked = false;               ///< AT+FW=? already queried this session
+	bool m_rx_supported = false;             ///< Firmware recent enough for AT+DL
+	/// @brief Allcast payloads received since the last state machine tick.
+	///        Filled from react(KIM2CommEventAllcast) — which runs in
+	///        process_rx() context, possibly from inside a blocking send_AT() —
+	///        and drained by state_receive() so listeners are never notified
+	///        from within an AT command wait. Bounded: the module emits about
+	///        one message per second, a tick runs every KIM2_RX_TICK_MS.
+	std::list<std::string> m_rx_allcast_queue;
 
 	/// @brief Two-phase async AT+TX progress (replaces the old 5 s busy-wait for +OK).
 	///        AWAIT_ACK: AT+TX sent, state_transmit() polls for the +OK ACK
@@ -133,6 +180,7 @@ private:
 	void state_init();            void state_init_enter();        void state_init_exit();
 	void state_idle();            void state_idle_enter();        void state_idle_exit();
 	void state_transmit();        void state_transmit_enter();    void state_transmit_exit();
+	void state_receive();         void state_receive_enter();     void state_receive_exit();
 	void state_error();           void state_error_enter();       void state_error_exit();
 	/// @}
 
@@ -142,6 +190,23 @@ private:
 	void react(const KIM2CommEventTxDone&) override;
 	void react(const KIM2CommEventRespError&) override;
 	void react(const KIM2CommEventUartError&) override;
+	void react(const KIM2CommEventAllcast&) override;
+	void react(const KIM2CommEventRxWindowEnd&) override;
+	/// @}
+
+	/// @name RX helpers
+	/// @{
+	/// @brief Query AT+FW=? once per session and evaluate the RX gate.
+	void check_rx_firmware_support();
+	/// @brief Dispatch every queued allcast payload as a KineisEventRxPacket.
+	void dispatch_allcast_queue();
+	/// @brief Close an RX session: notify KineisEventRxStopped with the elapsed
+	///        RX-on time and clear the RX flags. Idempotent.
+	void finish_rx_session();
+	/// @brief Take the module out of DL mode and leave the receive state.
+	///        Callable outside the state machine so a stop requested by the
+	///        service takes effect before the caller blocks on flash writes.
+	void perform_rx_stop();
 	/// @}
 
 	/// @name Runtime modulation switching (KineisDevice interface)

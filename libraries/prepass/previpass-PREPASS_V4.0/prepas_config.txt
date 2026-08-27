@@ -1,0 +1,12 @@
+43.55                          ! latitude de la balise (deg.)
+1.485                          ! longitude Est de la balise (deg.) [0, 360]
+2025 09 20 00 00 00        ! date debut prevision (A/M/J, hh:mm:ss)
+2025 09 21 00 00 00        ! date fin de prevision (A/M/J, hh:mm:ss)
+5.000                        ! elevation minimale du passage [deg]
+90.000                       ! maximum pour l'elevation maximale (mid-elevation) [deg]
+5.000                        ! minimum pour l'elevation maximale (mid-elevation) [deg]
+0.0                          ! duree minimale de passage (minutes)
+5.0                          ! marge temporelle unite (minutes/6mois)
+30.0                          ! marge de position balise (km)
+0                          ! nombre de passages en sortie (0=tous)
+1                          ! inclure les visibilités en cours à la date de début (1/0)
