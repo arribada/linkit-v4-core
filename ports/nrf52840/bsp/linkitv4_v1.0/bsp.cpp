@@ -27,9 +27,9 @@ namespace BSP
         // From dev/kineis_blind_wakeup; the rest of that branch is already superseded.
         /* GPIO_SAT_WKUP        */ {NRF_GPIO_PIN_MAP(0, 30), NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_PULLDOWN, NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE, {}},
         /* GPIO_KIM_PWR_ON      */ {NRF_GPIO_PIN_MAP(0,  5), NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE, {}},
-        // KIM_INT (broche 5 du module) — sortie du module vers nRF P0.29, donc
-        // ENTREE ici. Tirage BAS: le module la relache quand il est eteint, et une
-        // entree flottante consomme et bruite. Non exploitee pour l'instant.
+        // KIM_INT (module pin 5) -- an output of the module into nRF P0.29, so an
+        // INPUT here. Pull-down: the module releases it when powered off, and a
+        // floating input both burns current and picks up noise. Unused so far.
         /* GPIO_SAT_INT         */ {NRF_GPIO_PIN_MAP(0, 29), NRF_GPIO_PIN_DIR_INPUT, NRF_GPIO_PIN_INPUT_CONNECT, NRF_GPIO_PIN_PULLDOWN, NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE, {}},
 		/* GPIO_GPS_PWR_EN      */ {NRF_GPIO_PIN_MAP(1,  6), NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_PULLDOWN, NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE, {}},
 		/* GPIO_GPS_RST         */ {NRF_GPIO_PIN_MAP(1, 13), NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_S0D1, NRF_GPIO_PIN_NOSENSE, {}},
@@ -40,13 +40,13 @@ namespace BSP
 		// powered-off M10Q. Sense fields kept for legacy compat (ignored when
 		// configured as OUTPUT).
 		/* GPIO_GPS_EXT_INT     */ {NRF_GPIO_PIN_MAP(1, 11), NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE, {NRF_GPIOTE_POLARITY_HITOLO, NRF_GPIO_PIN_NOPULL, false, true, false}},
-        // GPOI_GPS_PPS: aucun consommateur dans tout le firmware (verifie 2026-08).
-        // Le buffer d'entree etait CONNECT sans pull, sur une broche que le M10Q
-        // ne pilote que lorsque son rail est allume — c'est-a-dire une entree
-        // flottante a buffer connecte le reste du temps, donc un courant de
-        // traversee permanent sur un appareil scelle. C'etait la seule broche GPS
-        // qui n'etait pas INPUT_DISCONNECT. Sans consommateur, la deconnecter est
-        // sans risque, que la piste soit routee ou non.
+        // GPOI_GPS_PPS: nothing in the whole firmware consumes it (checked
+        // 2026-08). The input buffer was CONNECT with no pull, on a pin the M10Q
+        // only drives while its rail is powered -- that is, a floating input with
+        // a connected buffer the rest of the time, so permanent shoot-through
+        // current on a sealed device. It was the only GPS pin that was not
+        // INPUT_DISCONNECT. With no consumer, disconnecting it is safe whether
+        // the track is routed or not.
         /* GPOI_GPS_PPS         */ {NRF_GPIO_PIN_MAP(1,  5), NRF_GPIO_PIN_DIR_INPUT,  NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE, {}},
 		/* GPIO_LED_GREEN       */ {NRF_GPIO_PIN_MAP(1, 10), NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE, {}},
 		/* GPIO_LED_RED         */ {NRF_GPIO_PIN_MAP(1,  7), NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE, {}},
@@ -401,16 +401,15 @@ namespace BSP
                 .hwfc = NRF_UARTE_HWFC_DISABLED,
                 .parity = NRF_UARTE_PARITY_EXCLUDED,
                 .baudrate = NRF_UARTE_BAUDRATE_9600,
-                // Tirage au niveau haut sur la ligne de reception. Le module
-                // satellite relache sa broche TX des qu'il descend en basse
-                // consommation (KIM2 en STANDBY pendant une salve BLIND, SMD en
-                // STANDBY/SHUTDOWN): sans tirage la ligne FLOTTE, l'etat de repos
-                // de l'UART n'est plus garanti, et le recepteur nRF leve des
-                // erreurs de trame puis ne se resynchronise pas au reveil du
-                // module. Mesure au banc le 2026-08-25: erreur type=04 a chaque
-                // reveil, puis silence total — le +TX= de fin de salve n'arrivait
-                // jamais. Le tirage interne (~13 kOhm) maintient la ligne au repos
-                // pendant le sommeil du module. nrf_libuarte_drv.c:466.
+                // Pull-up on the receive line. The satellite module releases its
+                // TX pin as soon as it drops into low power (KIM2 in STANDBY
+                // during a BLIND burst, SMD in STANDBY/SHUTDOWN): with no pull the
+                // line FLOATS, the UART idle state is no longer guaranteed, and
+                // the nRF receiver raises framing errors then fails to resync when
+                // the module wakes. Measured on the bench 2026-08-25: a type=04
+                // error at every wake-up, then total silence -- the end-of-burst
+                // +TX= never arrived. The internal pull-up (~13 kOhm) holds the
+                // line idle while the module sleeps. nrf_libuarte_drv.c:466.
                 .pullup_rx = true,
                 .int_prio = INTERRUPT_PRIORITY_UART_1,
             }

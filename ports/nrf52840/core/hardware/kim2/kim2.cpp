@@ -61,18 +61,19 @@ static constexpr uint16_t KIM2_TX_ACK_TIMEOUT_MS    = 5000;
 ///        so budget its full power-on figure rather than the STANDBY one. Only
 ///        paid when the burst ended without the module talking to us.
 static constexpr uint16_t KIM2_DELAY_WKUP_RESUME_MS  = 500;
-/// @brief Avance avec laquelle SAT_EXTWAKEUP est remontee avant la DERNIERE
-///        retransmission d'une salve BLIND.
+/// @brief How early SAT_EXTWAKEUP is raised before the LAST retransmission of a
+///        BLIND burst.
 ///
-///        Mesure au banc le 2026-08-25: pin relachee pendant toute la salve, le
-///        +TX= de cloture n'arrive JAMAIS — la fenetre de 240 s expire, le TX est
-///        compte en echec et le rail du module coupe. Une erreur de trame
-///        (type=04) est relevee 57 s apres le relachement, c'est-a-dire au reveil
-///        du module pour sa deuxieme emission: notre RX perd le fil quand la ligne
-///        TX du module bascule en entrant/sortant de basse consommation.
-///        Remonter la pin avant la derniere emission laisse le module eveille et
-///        son UART stable au moment ou il emet la cloture, tout en lui laissant
-///        dormir les intervalles precedents — l'essentiel de l'economie.
+///        Measured on the bench 2026-08-25: with the pin released for the whole
+///        burst, the closing +TX= NEVER arrives -- the 240 s window expires, the
+///        TX is counted as failed and the module rail is cut. A framing error
+///        (type=04) shows up 57 s after the release, that is when the module
+///        wakes for its second transmission: our RX loses sync when the module's
+///        TX line swings as it enters and leaves low power.
+///        Raising the pin before the last transmission keeps the module awake
+///        with a stable UART at the moment it emits the closing message, while
+///        still letting it sleep through the earlier intervals -- which is where
+///        nearly all the saving is.
 /// @brief Poll interval of the receive state. The module emits about one
 ///        allcast message per second during a pass, so a 100 ms tick drains
 ///        the queue with a wide margin.
@@ -205,9 +206,9 @@ bool KIM2Device::start_bridge(KIM2Comm::PassthroughCallback rx_callback)
     if (was_off) {
         GPIOPins::set(SAT_PWR_EN);
         // USR_NRST (broche 2): "Should not be left floating" (datasheet v0.4
-        // §4.2). Aucun tirage externe sur cette carte: on relache le reset vers
-        // le tirage INTERNE, ce qui donne un niveau haut defini tout en laissant
-        // une sonde SWD tirer le reset sans conflit.
+        // §4.2). There is no external pull-up on this board: the reset is
+        // released onto the INTERNAL pull-up, which gives a defined high level
+        // while still letting an SWD probe drive reset without fighting it.
         GPIOPins::release_to_pullup(SAT_RESET);
         GPIOPins::set(SAT_EXTWAKEUP);
     }
@@ -564,9 +565,9 @@ void KIM2Device::read_credentials(unsigned int *dec_id, unsigned int *address,
 
         GPIOPins::set(SAT_PWR_EN);
         // USR_NRST (broche 2): "Should not be left floating" (datasheet v0.4
-        // §4.2). Aucun tirage externe sur cette carte: on relache le reset vers
-        // le tirage INTERNE, ce qui donne un niveau haut defini tout en laissant
-        // une sonde SWD tirer le reset sans conflit.
+        // §4.2). There is no external pull-up on this board: the reset is
+        // released onto the INTERNAL pull-up, which gives a defined high level
+        // while still letting an SWD probe drive reset without fighting it.
         GPIOPins::release_to_pullup(SAT_RESET);
         GPIOPins::set(SAT_EXTWAKEUP);
         m_kim2_comm.init();
@@ -578,8 +579,8 @@ void KIM2Device::read_credentials(unsigned int *dec_id, unsigned int *address,
             m_kim2_comm.unsubscribe(*this);
             m_kim2_comm.deinit();
             GPIOPins::clear(SAT_EXTWAKEUP);
-            // Reset asserte AVANT de couper l'alimentation, et tenu bas ensuite: une
-            // ligne de reset flottante sur un module eteint est ce que la datasheet
+            // Reset asserted BEFORE cutting the supply, and held low afterwards: a
+            // floating reset line on a powered-down module is what the datasheet
             // proscrit explicitement.
             GPIOPins::init_pin(SAT_RESET);
             GPIOPins::clear(SAT_RESET);
@@ -640,8 +641,8 @@ void KIM2Device::read_credentials(unsigned int *dec_id, unsigned int *address,
         m_kim2_comm.unsubscribe(*this);
         m_kim2_comm.deinit();
         GPIOPins::clear(SAT_EXTWAKEUP);
-        // Reset asserte AVANT de couper l'alimentation, et tenu bas ensuite: une
-        // ligne de reset flottante sur un module eteint est ce que la datasheet
+        // Reset asserted BEFORE cutting the supply, and held low afterwards: a
+        // floating reset line on a powered-down module is what the datasheet
         // proscrit explicitement.
         GPIOPins::init_pin(SAT_RESET);
         GPIOPins::clear(SAT_RESET);
@@ -672,9 +673,9 @@ bool KIM2Device::resync_rconf_cache()
         system_scheduler->cancel_task(m_task);
         GPIOPins::set(SAT_PWR_EN);
         // USR_NRST (broche 2): "Should not be left floating" (datasheet v0.4
-        // §4.2). Aucun tirage externe sur cette carte: on relache le reset vers
-        // le tirage INTERNE, ce qui donne un niveau haut defini tout en laissant
-        // une sonde SWD tirer le reset sans conflit.
+        // §4.2). There is no external pull-up on this board: the reset is
+        // released onto the INTERNAL pull-up, which gives a defined high level
+        // while still letting an SWD probe drive reset without fighting it.
         GPIOPins::release_to_pullup(SAT_RESET);
         GPIOPins::set(SAT_EXTWAKEUP);
         m_kim2_comm.init();
@@ -685,8 +686,8 @@ bool KIM2Device::resync_rconf_cache()
             m_kim2_comm.unsubscribe(*this);
             m_kim2_comm.deinit();
             GPIOPins::clear(SAT_EXTWAKEUP);
-            // Reset asserte AVANT de couper l'alimentation, et tenu bas ensuite: une
-            // ligne de reset flottante sur un module eteint est ce que la datasheet
+            // Reset asserted BEFORE cutting the supply, and held low afterwards: a
+            // floating reset line on a powered-down module is what the datasheet
             // proscrit explicitement.
             GPIOPins::init_pin(SAT_RESET);
             GPIOPins::clear(SAT_RESET);
@@ -723,8 +724,8 @@ bool KIM2Device::resync_rconf_cache()
         m_kim2_comm.unsubscribe(*this);
         m_kim2_comm.deinit();
         GPIOPins::clear(SAT_EXTWAKEUP);
-        // Reset asserte AVANT de couper l'alimentation, et tenu bas ensuite: une
-        // ligne de reset flottante sur un module eteint est ce que la datasheet
+        // Reset asserted BEFORE cutting the supply, and held low afterwards: a
+        // floating reset line on a powered-down module is what the datasheet
         // proscrit explicitement.
         GPIOPins::init_pin(SAT_RESET);
         GPIOPins::clear(SAT_RESET);
@@ -980,9 +981,9 @@ void KIM2Device::state_power_off_enter()
     DEBUG_INFO("KIM2Device::state_power_off_enter");
     m_kim2_comm.deinit();
     GPIOPins::clear(SAT_EXTWAKEUP);
-    // Reset asserte AVANT de couper l'alimentation, et tenu bas ensuite: une
-    // ligne de reset flottante sur un module eteint est ce que la datasheet
-    // proscrit explicitement.
+    // Reset asserted BEFORE cutting the supply, and held low afterwards: a
+    // floating reset line on a powered-down module is exactly what the datasheet
+    // forbids.
     GPIOPins::init_pin(SAT_RESET);
     GPIOPins::clear(SAT_RESET);
     GPIOPins::clear(SAT_PWR_EN);
@@ -1013,9 +1014,9 @@ void KIM2Device::state_power_on_enter()
 {
     GPIOPins::set(SAT_PWR_EN);
     // USR_NRST (broche 2): "Should not be left floating" (datasheet v0.4
-    // §4.2). Aucun tirage externe sur cette carte: on relache le reset vers
-    // le tirage INTERNE, ce qui donne un niveau haut defini tout en laissant
-    // une sonde SWD tirer le reset sans conflit.
+    // §4.2). There is no external pull-up on this board: the reset is released
+    // onto the INTERNAL pull-up, which gives a defined high level while still
+    // letting an SWD probe drive reset without fighting it.
     GPIOPins::release_to_pullup(SAT_RESET);
     GPIOPins::set(SAT_EXTWAKEUP);
     m_kim2_comm.init();
@@ -1529,35 +1530,35 @@ void KIM2Device::release_wkup_for_burst()
     unsigned int rn = 0, period = 0;
     if (m_tx_wkup_lowered || !kim2_blind_active(rn, period))
         return;
-    // Une seule emission: le +TX= suit immediatement, il n'y a aucun intervalle
-    // a dormir. Relacher la pin ne gagnerait rien et couterait un reveil.
+    // A single transmission: the +TX= follows immediately, there is no interval
+    // to sleep through. Releasing the pin would gain nothing and cost a wake-up.
     if (rn <= 1)
         return;
 
-    // Les emissions tombent a t+0, t+period, ... t+(rn-1)*period. On rend la main
-    // au module pour les intervalles intermediaires, et on reprend la pin avant la
-    // DERNIERE, celle qui est suivie du +TX= de cloture.
-    // Une fois AT+TX acquitte, le module cadence lui-meme ses retransmissions et
-    // se reveille seul pour ses propres echeances — le manuel d'integration est
-    // explicite: "will be able to wakeup automatically when some frame
-    // scheduling/processing will be needed by KIM2 itself. Its RTC is still
-    // running, and any RAM configuration is kept in this low power mode". On lui
-    // rend donc la main jusqu'au +TX= de cloture, sans rien cadencer.
+    // Transmissions land at t+0, t+period, ... t+(rn-1)*period. We hand control
+    // back to the module for the intermediate intervals and take the pin back
+    // before the LAST one, the transmission followed by the closing +TX=.
+    // Once AT+TX is acknowledged the module paces its own retransmissions and
+    // wakes itself for its own deadlines -- the integration manual is explicit:
+    // "will be able to wakeup automatically when some frame scheduling/processing
+    // will be needed by KIM2 itself. Its RTC is still running, and any RAM
+    // configuration is kept in this low power mode". So we hand it back until the
+    // closing +TX=, pacing nothing ourselves.
     GPIOPins::clear(SAT_EXTWAKEUP);
     m_tx_wkup_lowered = true;
-    DEBUG_INFO("KIM2Device: SAT_EXTWAKEUP LOW — le module cadence sa salve (retx_nb=%u periode=%us)",
+    DEBUG_INFO("KIM2Device: SAT_EXTWAKEUP LOW - module paces its own burst (retx_nb=%u period=%us)",
                rn, period);
 #endif
 }
 
 /// @brief Raise SAT_EXTWAKEUP again at the end of a BLIND burst.
 ///
-/// @param wait_for_wake bloque KIM2_DELAY_WKUP_RESUME_MS apres avoir remonte la
-///        pin. A poser quand une commande AT peut suivre immediatement et que
-///        l'etat du module est inconnu (sortie sur erreur ou sur timeout). Inutile
-///        quand on se contente d'ecouter — remontee anticipee avant la derniere
-///        retransmission, ou cloture sur un +TX= qui prouve deja le reveil.
-/// @param reason libelle porte dans la trace, pour distinguer les trois chemins.
+/// @param wait_for_wake blocks for KIM2_DELAY_WKUP_RESUME_MS after raising the
+///        pin. Set it when an AT command may follow immediately and the module
+///        state is unknown (exit on error or on timeout). Not needed when we are
+///        only listening -- an early raise before the last retransmission, or a
+///        close on a +TX= that already proves the module is awake.
+/// @param reason label carried in the trace, to tell the three paths apart.
 void KIM2Device::resume_wkup_after_burst(bool wait_for_wake, const char *reason)
 {
     if (!m_tx_wkup_lowered)

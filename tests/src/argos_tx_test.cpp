@@ -481,16 +481,16 @@ TEST(ArgosTxService, BuildLongGNSSPacketUniformKeepsLegacyLayout)
 }
 
 // First-message gate (non-RSPB): without a valid GPS fix yet this session, the
-// 2026-08 — INTENTION INVERSEE. Le verrou du premier message tenait TOUTE
-// emission tant qu'aucun fix GPS n'etait tombe depuis la mise sous tension,
-// heartbeat de presence compris. Une balise qui redemarrait sans jamais
-// retrouver de fix (recepteur en panne, ciel bouche) disparaissait donc
-// definitivement des ecrans. En LEGACY la balise emet a sa periode et c'est le
-// segment sol qui reconstruit la position: son horloge n'entre pas dans le
-// calcul, rien ne justifie de la faire taire. RSPB en etait deja exempte.
+// 2026-08 -- INTENT REVERSED. The first-message lock used to hold back EVERY
+// transmission until a GPS fix had landed since power-up, presence heartbeat
+// included. A beacon that restarted and never regained a fix (dead receiver,
+// blocked sky) therefore vanished from the screens for good. In LEGACY the
+// beacon transmits on its period and the ground segment reconstructs the
+// position: its own clock plays no part in that computation, so nothing
+// justifies silencing it. RSPB was already exempt.
 //
-// Ce test verifie desormais le contraire de son ancetre: le heartbeat 0xFF
-// DOIT partir meme si aucun fix n'est jamais tombe.
+// This test now asserts the opposite of its ancestor: the 0xFF heartbeat MUST
+// go out even if no fix ever lands.
 TEST(ArgosTxService, LegacyNoFixHeartbeatSentWithoutAnyFix)
 {
 	fake_config_store->write_param(ParamID::ARGOS_MODE, BaseArgosMode::LEGACY);
@@ -508,8 +508,8 @@ TEST(ArgosTxService, LegacyNoFixHeartbeatSentWithoutAnyFix)
 	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
 	serv.start();
 
-	// Uniquement des NO_FIX, aucun fix reel: le heartbeat doit tout de meme
-	// etre emis (SHORT, 96 bits) — la balise signale sa presence.
+	// NO_FIX only, no real fix at all: the heartbeat must still be transmitted
+	// (SHORT, 96 bits) -- the beacon signals that it is there.
 	inject_gps_nofix(t/1000);
 	mock().expectOneCall("send").onObject(mock_kineis).withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2).
 			withUnsignedIntParameter("size_bits", 96);
@@ -582,9 +582,9 @@ TEST(ArgosTxService, LegacyNoFixFillerKeptAfterRealFix)
 	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
 	serv.start();
 
-	// Cycle GPS 1: pas de fix -> le heartbeat est mis en cache ET emis (SHORT,
-	// 96 bits). Avant 2026-08 le verrou du premier message imposait le silence
-	// ici; il a ete supprime, une balise sans fix doit continuer a se signaler.
+	// GPS cycle 1: no fix -> the heartbeat is cached AND transmitted (SHORT,
+	// 96 bits). Before 2026-08 the first-message lock forced silence here; it
+	// was removed, a beacon with no fix must keep signalling itself.
 	inject_gps_nofix(t/1000);
 	mock().expectOneCall("send").onObject(mock_kineis).withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2).
 			withUnsignedIntParameter("size_bits", 96);
@@ -2139,20 +2139,19 @@ TEST(ArgosTxService, BuildDopplerPacket) {
 	CHECK_FALSE(x.empty());
 }
 
-// Regression 2026-08 — PASS_PREDICTION ignorait la modulation configuree.
+// Regression 2026-08 -- PASS_PREDICTION ignored the configured modulation.
 //
-// Le service resout pourtant correctement `adaptive ? LDA2 :
-// resolve_non_adaptive_modulation()` juste avant d'appeler l'ordonnanceur — le
-// correctif de modulation du 2026-05-25 l'affirme meme dans son commentaire.
-// Mais schedule_prepass recevait m_scheduled_mode par REFERENCE et l'ecrasait
-// sans condition avec LDA2 une poignee de lignes plus loin. Resultat: une
-// configuration LDK + adaptatif desactive partait en LDA2, la trame etait
-// dimensionnee pour la mauvaise modulation, et ensure_modulation reecrivait le
-// RCONF maitre a chaque emission (usure flash + configuration utilisateur
-// silencieusement annulee).
+// The service does resolve `adaptive ? LDA2 : resolve_non_adaptive_modulation()`
+// correctly, right before calling the scheduler -- the 2026-05-25 modulation fix
+// even says so in its own comment. But schedule_prepass took m_scheduled_mode by
+// REFERENCE and overwrote it unconditionally with LDA2 a handful of lines later.
+// The result: a configuration of LDK with adaptive disabled went out as LDA2,
+// the frame was sized for the wrong modulation, and ensure_modulation rewrote the
+// master RCONF on every transmission (flash wear, plus the user's configuration
+// silently undone).
 //
-// Le parametre de sortie a ete supprime: choisir la modulation est une decision
-// de politique, elle appartient au service.
+// The output parameter is gone: choosing the modulation is a policy decision and
+// it belongs to the service.
 TEST(ArgosTxService, PassPredictHonoursConfiguredModulation)
 {
 	fake_config_store->write_param(ParamID::ARGOS_MODE, BaseArgosMode::PASS_PREDICTION);
@@ -2163,11 +2162,11 @@ TEST(ArgosTxService, PassPredictHonoursConfiguredModulation)
 	fake_config_store->write_param(ParamID::TR_NOM, (unsigned int)10);
 	fake_config_store->write_param(ParamID::ARGOS_TIME_SYNC_BURST_EN, false);
 
-	// Le module porte LDK dans son RCONF maitre — c'est ce que
-	// resolve_non_adaptive_modulation() doit renvoyer.
+	// The module carries LDK in its master RCONF -- that is what
+	// resolve_non_adaptive_modulation() must return.
 	mock_kineis->test_set_current_modulation(KineisModulation::LDK);
 
-	// Un passage satellite tres large, pour que la fenetre soit forcement trouvee.
+	// A very wide satellite pass, so the window is certain to be found.
 	BasePassPredict pass_predict = {
 		/* version_code */ 0,
 		1,

@@ -117,7 +117,7 @@ static bool blind_tx_active() {
 	}
 }
 
-/// @brief Deux impulsions courtes — la salve demarre, le module prend la main.
+/// @brief Two short pulses -- the burst starts, the module takes over.
 static void blind_blink_sequence_start() {
 	status_led->set(RGBLedColor::MAGENTA);
 	system_timer->add_schedule([]() {

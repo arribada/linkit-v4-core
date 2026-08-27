@@ -24,13 +24,12 @@ namespace KIM2 {
 /// @note  Per KIM2 Integration Manual v0.8: RCONF is kept in RAM and
 ///        reapplied on every power-on, so SAVE_RCONF is not used. KMAC=1
 ///        (basic MAC profile) must be called after RCONF and before any AT+TX.
-/// @note  CORRECTION 2026-08-25: ce commentaire affirmait que LPM n'etait pas
-///        une commande supportee. C'est FAUX — AT+LPM figure dans le tableau
-///        officiel des commandes AT (KnsStack_AtCmds_APIs) de la v0.4 a la V1.0,
-///        en lecture (AT+LPM=?) comme en ecriture (AT+LPM=0x<bitmap>), et le
-///        handler existe bien dans le binaire du module. Cette affirmation nous
-///        a masque le seul levier permettant de borner la profondeur du sommeil
-///        du module pendant une salve BLIND.
+/// @note  CORRECTION 2026-08-25: this comment used to claim LPM was not a
+///        supported command. That is WRONG -- AT+LPM appears in the official AT
+///        command table (KnsStack_AtCmds_APIs) from v0.4 through V1.0, for read
+///        (AT+LPM=?) as well as write (AT+LPM=0x<bitmap>), and the handler is
+///        present in the module binary. The claim hid the only lever we have for
+///        bounding how deeply the module sleeps during a BLIND burst.
 enum ATCmd {
 	AT_PING = 0,
 	AT_GET_ID,
@@ -70,15 +69,15 @@ static constexpr const char *RCONF_RESPONSE = "+RCONF=";
 static constexpr const char *TX_RESPONSE   = "+TX=";
 static constexpr const char *ERR_RESPONSE  = "+ERROR=";
 static constexpr const char *HDLR_RESPONSE = "+HDLR=";   // new-stack AT+TX immediate ack (before +OK)
-/// @brief Banniere de version que le module imprime SPONTANEMENT a chaque
-///        demarrage. Le manuel d'integration prevoit ce genre de ligne (§3.A:
-///        "Spontaneous notifications can also be sent from the module with the
-///        format +CMD=<parameter>"), mais nous ne la reconnaissions pas: elle
-///        tombait dans RESP_UNKNOWN et etait jetee. Or c'est le seul temoin d'un
-///        REDEMARRAGE du module — mesure du 2026-08-25: pin relachee pendant une
-///        salve BLIND, le module se reinitialise a sa propre echeance de
-///        retransmission et reimprime cette ligne, sans que le firmware puisse le
-///        voir. On la reconnait pour pouvoir en tirer les consequences.
+/// @brief Version banner the module prints SPONTANEOUSLY at every start-up. The
+///        integration manual allows for lines like this (§3.A: "Spontaneous
+///        notifications can also be sent from the module with the format
+///        +CMD=<parameter>"), but we did not recognise it: it fell into
+///        RESP_UNKNOWN and was discarded. Yet it is the only evidence of a module
+///        RESTART -- measured 2026-08-25: with the pin released during a BLIND
+///        burst, the module resets itself on its own retransmission deadline and
+///        reprints this line, with no way for the firmware to see it. We
+///        recognise it so we can act on it.
 static constexpr const char *FW_RESPONSE   = "+FW=";
 /// @name RX-side unsolicited lines (firmware built with USE_RX_STACK)
 /// The driver drives reception in RUNTIME mode (AT+DL), where the module only
