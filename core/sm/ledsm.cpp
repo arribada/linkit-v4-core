@@ -57,14 +57,15 @@ static Timer::TimerHandle s_led_freeze_handle;
 
 static void arm_led_freeze_safety() {
 	if (!system_timer || !status_led) return;
-	if (s_led_freeze_handle.has_value())
-		system_timer->cancel_schedule(s_led_freeze_handle);
-	s_led_freeze_handle = system_timer->add_schedule([]() {
-		DEBUG_WARN("LED freeze safety: %llu s without FSM transition — forcing LED off",
-		           (unsigned long long)(LED_FREEZE_TIMEOUT_MS / 1000));
-		if (status_led) status_led->off();
-		s_led_freeze_handle.reset();
-	}, system_timer->get_counter() + LED_FREEZE_TIMEOUT_MS);
+	if (s_led_freeze_handle.has_value()) system_timer->cancel_schedule(s_led_freeze_handle);
+	s_led_freeze_handle = system_timer->add_schedule(
+	    []() {
+		    DEBUG_WARN("LED freeze safety: %llu s without FSM transition — forcing LED off",
+			           (unsigned long long)(LED_FREEZE_TIMEOUT_MS / 1000));
+		    if (status_led) status_led->off();
+		    s_led_freeze_handle.reset();
+	    },
+	    system_timer->get_counter() + LED_FREEZE_TIMEOUT_MS);
 }
 
 static void disarm_led_freeze_safety() {
@@ -96,7 +97,7 @@ static bool cert_tx_active() {
 /// trying to gain by letting the module sleep. Mark the two EDGES of the
 /// sequence instead: two short pulses when it opens, one long pulse when it
 /// closes, visually distinct from each other.
-static constexpr unsigned int BLIND_BLINK_ON_MS  = 120;  ///< length of one opening pulse
+static constexpr unsigned int BLIND_BLINK_ON_MS = 120;   ///< length of one opening pulse
 static constexpr unsigned int BLIND_BLINK_GAP_MS = 150;  ///< silence between the two
 static constexpr unsigned int BLIND_BLINK_END_MS = 700;  ///< closing pulse
 
@@ -120,15 +121,18 @@ static bool blind_tx_active() {
 /// @brief Two short pulses -- the burst starts, the module takes over.
 static void blind_blink_sequence_start() {
 	status_led->set(RGBLedColor::MAGENTA);
-	system_timer->add_schedule([]() {
-		status_led->off();
-		system_timer->add_schedule([]() {
-			status_led->set(RGBLedColor::MAGENTA);
-			system_timer->add_schedule([]() {
-				status_led->off();
-			}, system_timer->get_counter() + BLIND_BLINK_ON_MS);
-		}, system_timer->get_counter() + BLIND_BLINK_GAP_MS);
-	}, system_timer->get_counter() + BLIND_BLINK_ON_MS);
+	system_timer->add_schedule(
+	    []() {
+		    status_led->off();
+		    system_timer->add_schedule(
+		        []() {
+			        status_led->set(RGBLedColor::MAGENTA);
+			        system_timer->add_schedule([]() { status_led->off(); },
+					                           system_timer->get_counter() + BLIND_BLINK_ON_MS);
+		        },
+		        system_timer->get_counter() + BLIND_BLINK_GAP_MS);
+	    },
+	    system_timer->get_counter() + BLIND_BLINK_ON_MS);
 }
 /// @}
 
@@ -187,10 +191,8 @@ static bool led_24h_window_active() {
 static bool led_mode_allows_light() {
 	try {
 		BaseLEDMode mode = configuration_store->read_param<BaseLEDMode>(ParamID::LED_MODE);
-		if (mode == BaseLEDMode::ALWAYS)
-			return true;
-		if (mode == BaseLEDMode::HRS_24)
-			return led_24h_window_active();
+		if (mode == BaseLEDMode::ALWAYS) return true;
+		if (mode == BaseLEDMode::HRS_24) return led_24h_window_active();
 		return false;
 	} catch (...) {
 		return false;
@@ -317,7 +319,8 @@ void LEDGNSSOn::entry() {
 	else {
 		LED_MODE_GUARD {
 			status_led->flash(RGBLedColor::CYAN, 1000);
-		} else {
+		}
+		else {
 			status_led->off();
 		}
 	}
@@ -332,24 +335,27 @@ void LEDGNSSOffWithFix::entry() {
 		if (m_is_gnss_on) {
 			LED_MODE_GUARD {
 				status_led->set(RGBLedColor::GREEN);
-			} else {
+			}
+			else {
 				status_led->off();
 			}
 		}
-		system_timer->add_schedule([this]() {
-			// Has the state changed since this was armed? ledsm.cpp defines NO
-			// ::exit() anywhere, so a deferred transit is never cancelled: it fires no
-			// matter what, including when the FSM has moved to another state in the
-			// meantime. On the nominal deployment sequence the Argos transmission
-			// follows the fix immediately, so the orphan left by the end of the GNSS
-			// session was switching off the transmit indication. Check here rather
-			// than weigh down the lifecycle of 28 states.
-			if (!is_in_state<LEDGNSSOffWithFix>()) return;
-			if (is_in_state<LEDConfigNotConnected>())
-				transit<LEDConfigNotConnected>();
-			else
-				transit<LEDOff>();
-		}, system_timer->get_counter() + 3000);
+		system_timer->add_schedule(
+		    [this]() {
+			    // Has the state changed since this was armed? ledsm.cpp defines NO
+			    // ::exit() anywhere, so a deferred transit is never cancelled: it fires no
+			    // matter what, including when the FSM has moved to another state in the
+			    // meantime. On the nominal deployment sequence the Argos transmission
+			    // follows the fix immediately, so the orphan left by the end of the GNSS
+			    // session was switching off the transmit indication. Check here rather
+			    // than weigh down the lifecycle of 28 states.
+			    if (!is_in_state<LEDGNSSOffWithFix>()) return;
+			    if (is_in_state<LEDConfigNotConnected>())
+				    transit<LEDConfigNotConnected>();
+			    else
+				    transit<LEDOff>();
+		    },
+		    system_timer->get_counter() + 3000);
 	}
 	m_is_gnss_on = false;
 }
@@ -365,9 +371,8 @@ void LEDGNSSOffWithoutFix::entry() {
 	// from 3000 ms → 1500 ms per operator feedback "current red too long".
 	if (is_in_state<LEDGNSSCloudLocateReady>()) {
 		DEBUG_TRACE("LEDGNSSOffWithoutFix: deferring 500ms — CloudLocateReady CYAN double-blink in progress");
-		system_timer->add_schedule([]() {
-			led_handle::dispatch<SetLEDGNSSOffWithoutFix>({});
-		}, system_timer->get_counter() + 500);
+		system_timer->add_schedule([]() { led_handle::dispatch<SetLEDGNSSOffWithoutFix>({}); },
+		                           system_timer->get_counter() + 500);
 		return;
 	}
 	if (m_is_magnet_engaged)
@@ -376,24 +381,27 @@ void LEDGNSSOffWithoutFix::entry() {
 		if (m_is_gnss_on) {
 			LED_MODE_GUARD {
 				status_led->set(RGBLedColor::RED);
-			} else {
+			}
+			else {
 				status_led->off();
 			}
 		}
-		system_timer->add_schedule([this]() {
-			// Has the state changed since this was armed? ledsm.cpp defines NO
-			// ::exit() anywhere, so a deferred transit is never cancelled: it fires no
-			// matter what, including when the FSM has moved to another state in the
-			// meantime. On the nominal deployment sequence the Argos transmission
-			// follows the fix immediately, so the orphan left by the end of the GNSS
-			// session was switching off the transmit indication. Check here rather
-			// than weigh down the lifecycle of 28 states.
-			if (!is_in_state<LEDGNSSOffWithoutFix>()) return;
-			if (is_in_state<LEDConfigNotConnected>())
-				transit<LEDConfigNotConnected>();
-			else
-				transit<LEDOff>();
-		}, system_timer->get_counter() + 1500);
+		system_timer->add_schedule(
+		    [this]() {
+			    // Has the state changed since this was armed? ledsm.cpp defines NO
+			    // ::exit() anywhere, so a deferred transit is never cancelled: it fires no
+			    // matter what, including when the FSM has moved to another state in the
+			    // meantime. On the nominal deployment sequence the Argos transmission
+			    // follows the fix immediately, so the orphan left by the end of the GNSS
+			    // session was switching off the transmit indication. Check here rather
+			    // than weigh down the lifecycle of 28 states.
+			    if (!is_in_state<LEDGNSSOffWithoutFix>()) return;
+			    if (is_in_state<LEDConfigNotConnected>())
+				    transit<LEDConfigNotConnected>();
+			    else
+				    transit<LEDOff>();
+		    },
+		    system_timer->get_counter() + 1500);
 	}
 	m_is_gnss_on = false;
 }
@@ -414,27 +422,29 @@ void LEDGNSSDeepIdle::entry() {
 		status_led->set(RGBLedColor::WHITE);
 	} else {
 		LED_MODE_GUARD {
-			RGBLedColor color = m_last_gnss_fix_valid ? RGBLedColor::GREEN
-			                                          : RGBLedColor::RED;
+			RGBLedColor color = m_last_gnss_fix_valid ? RGBLedColor::GREEN : RGBLedColor::RED;
 			status_led->flash_alternate(color, RGBLedColor::BLACK, 120);
-		} else {
+		}
+		else {
 			status_led->off();
 		}
 	}
-	system_timer->add_schedule([this]() {
-		// Has the state changed since this was armed? ledsm.cpp defines NO
-		// ::exit() anywhere, so a deferred transit is never cancelled: it fires no
-		// matter what, including when the FSM has moved to another state in the
-		// meantime. On the nominal deployment sequence the Argos transmission
-		// follows the fix immediately, so the orphan left by the end of the GNSS
-		// session was switching off the transmit indication. Check here rather
-		// than weigh down the lifecycle of 28 states.
-		if (!is_in_state<LEDGNSSDeepIdle>()) return;
-		if (is_in_state<LEDConfigNotConnected>())
-			transit<LEDConfigNotConnected>();
-		else
-			transit<LEDOff>();
-	}, system_timer->get_counter() + 500);
+	system_timer->add_schedule(
+	    [this]() {
+		    // Has the state changed since this was armed? ledsm.cpp defines NO
+		    // ::exit() anywhere, so a deferred transit is never cancelled: it fires no
+		    // matter what, including when the FSM has moved to another state in the
+		    // meantime. On the nominal deployment sequence the Argos transmission
+		    // follows the fix immediately, so the orphan left by the end of the GNSS
+		    // session was switching off the transmit indication. Check here rather
+		    // than weigh down the lifecycle of 28 states.
+		    if (!is_in_state<LEDGNSSDeepIdle>()) return;
+		    if (is_in_state<LEDConfigNotConnected>())
+			    transit<LEDConfigNotConnected>();
+		    else
+			    transit<LEDOff>();
+	    },
+	    system_timer->get_counter() + 500);
 	m_is_gnss_on = false;
 }
 
@@ -451,27 +461,29 @@ void LEDGNSSPowerOff::entry() {
 		status_led->set(RGBLedColor::WHITE);
 	} else {
 		LED_MODE_GUARD {
-			RGBLedColor color = m_last_gnss_fix_valid ? RGBLedColor::GREEN
-			                                          : RGBLedColor::RED;
+			RGBLedColor color = m_last_gnss_fix_valid ? RGBLedColor::GREEN : RGBLedColor::RED;
 			status_led->flash(color, 50);
-		} else {
+		}
+		else {
 			status_led->off();
 		}
 	}
-	system_timer->add_schedule([this]() {
-		// Has the state changed since this was armed? ledsm.cpp defines NO
-		// ::exit() anywhere, so a deferred transit is never cancelled: it fires no
-		// matter what, including when the FSM has moved to another state in the
-		// meantime. On the nominal deployment sequence the Argos transmission
-		// follows the fix immediately, so the orphan left by the end of the GNSS
-		// session was switching off the transmit indication. Check here rather
-		// than weigh down the lifecycle of 28 states.
-		if (!is_in_state<LEDGNSSPowerOff>()) return;
-		if (is_in_state<LEDConfigNotConnected>())
-			transit<LEDConfigNotConnected>();
-		else
-			transit<LEDOff>();
-	}, system_timer->get_counter() + 500);
+	system_timer->add_schedule(
+	    [this]() {
+		    // Has the state changed since this was armed? ledsm.cpp defines NO
+		    // ::exit() anywhere, so a deferred transit is never cancelled: it fires no
+		    // matter what, including when the FSM has moved to another state in the
+		    // meantime. On the nominal deployment sequence the Argos transmission
+		    // follows the fix immediately, so the orphan left by the end of the GNSS
+		    // session was switching off the transmit indication. Check here rather
+		    // than weigh down the lifecycle of 28 states.
+		    if (!is_in_state<LEDGNSSPowerOff>()) return;
+		    if (is_in_state<LEDConfigNotConnected>())
+			    transit<LEDConfigNotConnected>();
+		    else
+			    transit<LEDOff>();
+	    },
+	    system_timer->get_counter() + 500);
 	m_is_gnss_on = false;
 }
 
@@ -494,29 +506,32 @@ void LEDGNSSCloudLocateReady::entry() {
 			// quick blinks span ~400 ms before the transit_back fires at
 			// 500 ms. Falls through to LEDGNSSOn / LEDOff cleanly.
 			status_led->flash_alternate(RGBLedColor::CYAN, RGBLedColor::BLACK, 120);
-		} else {
+		}
+		else {
 			status_led->off();
 		}
 	}
 	// Schedule transit back. If GPS is still active (CLOUDLOCATE_ONLY=false),
 	// resume LEDGNSSOn so the operator sees the GPS is still acquiring.
 	// Otherwise go to LEDOff (the GNSS session ended).
-	system_timer->add_schedule([this]() {
-		// Has the state changed since this was armed? ledsm.cpp defines NO
-		// ::exit() anywhere, so a deferred transit is never cancelled: it fires no
-		// matter what, including when the FSM has moved to another state in the
-		// meantime. On the nominal deployment sequence the Argos transmission
-		// follows the fix immediately, so the orphan left by the end of the GNSS
-		// session was switching off the transmit indication. Check here rather
-		// than weigh down the lifecycle of 28 states.
-		if (!is_in_state<LEDGNSSCloudLocateReady>()) return;
-		if (m_is_gnss_on)
-			transit<LEDGNSSOn>();
-		else if (is_in_state<LEDConfigNotConnected>())
-			transit<LEDConfigNotConnected>();
-		else
-			transit<LEDOff>();
-	}, system_timer->get_counter() + 500);
+	system_timer->add_schedule(
+	    [this]() {
+		    // Has the state changed since this was armed? ledsm.cpp defines NO
+		    // ::exit() anywhere, so a deferred transit is never cancelled: it fires no
+		    // matter what, including when the FSM has moved to another state in the
+		    // meantime. On the nominal deployment sequence the Argos transmission
+		    // follows the fix immediately, so the orphan left by the end of the GNSS
+		    // session was switching off the transmit indication. Check here rather
+		    // than weigh down the lifecycle of 28 states.
+		    if (!is_in_state<LEDGNSSCloudLocateReady>()) return;
+		    if (m_is_gnss_on)
+			    transit<LEDGNSSOn>();
+		    else if (is_in_state<LEDConfigNotConnected>())
+			    transit<LEDConfigNotConnected>();
+		    else
+			    transit<LEDOff>();
+	    },
+	    system_timer->get_counter() + 500);
 }
 
 void LEDArgosTX::entry() {
@@ -528,14 +543,14 @@ void LEDArgosTX::entry() {
 		// Doppler / cert calibration: operator is watching this run actively;
 		// MAGENTA per TX regardless of LED_MODE so the visual cue is always there.
 		status_led->set(RGBLedColor::MAGENTA);
-	}
-	else {
+	} else {
 		LED_MODE_GUARD {
 			if (blind_tx_active())
 				blind_blink_sequence_start();
 			else
 				status_led->set(RGBLedColor::MAGENTA);
-		} else {
+		}
+		else {
 			status_led->off();
 		}
 	}
@@ -557,31 +572,34 @@ void LEDArgosTXComplete::entry() {
 			LED_MODE_GUARD {
 				status_led->set(RGBLedColor::MAGENTA);
 				hold_ms = BLIND_BLINK_END_MS;
-			} else {
+			}
+			else {
 				status_led->off();
 			}
 		} else {
 			status_led->off();
 		}
-		system_timer->add_schedule([this]() {
-			// Has the state changed since this was armed? ledsm.cpp defines NO
-			// ::exit() anywhere, so a deferred transit is never cancelled: it fires no
-			// matter what, including when the FSM has moved to another state in the
-			// meantime. On the nominal deployment sequence the Argos transmission
-			// follows the fix immediately, so the orphan left by the end of the GNSS
-			// session was switching off the transmit indication. Check here rather
-			// than weigh down the lifecycle of 28 states.
-			if (!is_in_state<LEDArgosTXComplete>()) return;
-			status_led->off();
-			if (m_is_gnss_on)
-				transit<LEDGNSSOn>();
-			else {
-				if (is_in_state<LEDConfigNotConnected>())
-					transit<LEDConfigNotConnected>();
-				else
-					transit<LEDOff>();
-			}
-		}, system_timer->get_counter() + hold_ms);
+		system_timer->add_schedule(
+		    [this]() {
+			    // Has the state changed since this was armed? ledsm.cpp defines NO
+			    // ::exit() anywhere, so a deferred transit is never cancelled: it fires no
+			    // matter what, including when the FSM has moved to another state in the
+			    // meantime. On the nominal deployment sequence the Argos transmission
+			    // follows the fix immediately, so the orphan left by the end of the GNSS
+			    // session was switching off the transmit indication. Check here rather
+			    // than weigh down the lifecycle of 28 states.
+			    if (!is_in_state<LEDArgosTXComplete>()) return;
+			    status_led->off();
+			    if (m_is_gnss_on)
+				    transit<LEDGNSSOn>();
+			    else {
+				    if (is_in_state<LEDConfigNotConnected>())
+					    transit<LEDConfigNotConnected>();
+				    else
+					    transit<LEDOff>();
+			    }
+		    },
+		    system_timer->get_counter() + hold_ms);
 	}
 }
 
@@ -643,20 +661,23 @@ void LEDSurfaceDetected::entry() {
 	arm_led_freeze_safety();
 	LED_MODE_GUARD {
 		status_led->set(RGBLedColor::GREEN);
-	} else {
+	}
+	else {
 		status_led->off();
 	}
-	system_timer->add_schedule([this]() {
-		// Has the state changed since this was armed? ledsm.cpp defines NO
-		// ::exit() anywhere, so a deferred transit is never cancelled: it fires no
-		// matter what, including when the FSM has moved to another state in the
-		// meantime. On the nominal deployment sequence the Argos transmission
-		// follows the fix immediately, so the orphan left by the end of the GNSS
-		// session was switching off the transmit indication. Check here rather
-		// than weigh down the lifecycle of 28 states.
-		if (!is_in_state<LEDSurfaceDetected>()) return;
-		transit<LEDOff>();
-	}, system_timer->get_counter() + 100);
+	system_timer->add_schedule(
+	    [this]() {
+		    // Has the state changed since this was armed? ledsm.cpp defines NO
+		    // ::exit() anywhere, so a deferred transit is never cancelled: it fires no
+		    // matter what, including when the FSM has moved to another state in the
+		    // meantime. On the nominal deployment sequence the Argos transmission
+		    // follows the fix immediately, so the orphan left by the end of the GNSS
+		    // session was switching off the transmit indication. Check here rather
+		    // than weigh down the lifecycle of 28 states.
+		    if (!is_in_state<LEDSurfaceDetected>()) return;
+		    transit<LEDOff>();
+	    },
+	    system_timer->get_counter() + 100);
 }
 
 void LEDDiveDetected::entry() {
@@ -664,18 +685,21 @@ void LEDDiveDetected::entry() {
 	arm_led_freeze_safety();
 	LED_MODE_GUARD {
 		status_led->set(RGBLedColor::BLUE);
-	} else {
+	}
+	else {
 		status_led->off();
 	}
-	system_timer->add_schedule([this]() {
-		// Has the state changed since this was armed? ledsm.cpp defines NO
-		// ::exit() anywhere, so a deferred transit is never cancelled: it fires no
-		// matter what, including when the FSM has moved to another state in the
-		// meantime. On the nominal deployment sequence the Argos transmission
-		// follows the fix immediately, so the orphan left by the end of the GNSS
-		// session was switching off the transmit indication. Check here rather
-		// than weigh down the lifecycle of 28 states.
-		if (!is_in_state<LEDDiveDetected>()) return;
-		transit<LEDOff>();
-	}, system_timer->get_counter() + 100);
+	system_timer->add_schedule(
+	    [this]() {
+		    // Has the state changed since this was armed? ledsm.cpp defines NO
+		    // ::exit() anywhere, so a deferred transit is never cancelled: it fires no
+		    // matter what, including when the FSM has moved to another state in the
+		    // meantime. On the nominal deployment sequence the Argos transmission
+		    // follows the fix immediately, so the orphan left by the end of the GNSS
+		    // session was switching off the transmit indication. Check here rather
+		    // than weigh down the lifecycle of 28 states.
+		    if (!is_in_state<LEDDiveDetected>()) return;
+		    transit<LEDOff>();
+	    },
+	    system_timer->get_counter() + 100);
 }

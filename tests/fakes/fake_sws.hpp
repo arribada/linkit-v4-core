@@ -15,5 +15,4 @@ public:
 
 private:
 	bool service_is_enabled() override { return false; }
-
 };

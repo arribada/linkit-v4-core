@@ -10,21 +10,18 @@ extern Scheduler *system_scheduler;
 
 // Sensor port indices (must match axl_sensor_service.hpp / sensor.hpp)
 static constexpr unsigned int AXL_PORT_ACTIVITY = 4;
-static constexpr unsigned int AXL_PORT_WAKEUP   = 5;
+static constexpr unsigned int AXL_PORT_WAKEUP = 5;
 
 /// @brief Constructor — init state as ALIVE, reset session data.
 /// @param logger  Optional persistent logger for mortality state.
-MortalityService::MortalityService(Logger *logger)
-	: Service(ServiceIdentifier::MORTALITY, "MORTALITY", logger)
-{
+MortalityService::MortalityService(Logger *logger) : Service(ServiceIdentifier::MORTALITY, "MORTALITY", logger) {
 	memset(&m_state, 0, sizeof(m_state));
 	m_state.status = MortalityStatus::ALIVE;
 	reset_session_data();
 }
 
 /// @brief Clear session-local sensor data (between daily evaluations).
-void MortalityService::reset_session_data()
-{
+void MortalityService::reset_session_data() {
 	m_has_activity = false;
 	m_has_temperature = false;
 	m_has_gps = false;
@@ -36,8 +33,7 @@ void MortalityService::reset_session_data()
 }
 
 /// @brief Init: restore persisted state from FsLog, reset session.
-void MortalityService::service_init()
-{
+void MortalityService::service_init() {
 	reset_session_data();
 	// H4: session-scoped flags — reset once per wake, NOT per evaluation
 	// (reset_session_data also runs at the end of each evaluate_mortality).
@@ -58,8 +54,8 @@ void MortalityService::service_init()
 			MortalityLogEntry last_entry;
 			get_logger()->read(&last_entry, get_logger()->num_entries() - 1);
 			m_state = last_entry.info;
-			DEBUG_INFO("MortalityService: Restored state: confidence=%u%% days=%u status=%u",
-					m_state.confidence, m_state.consecutive_days, (unsigned int)m_state.status);
+			DEBUG_INFO("MortalityService: Restored state: confidence=%u%% days=%u status=%u", m_state.confidence,
+			           m_state.consecutive_days, (unsigned int)m_state.status);
 		} catch (...) {
 			memset(&m_state, 0, sizeof(m_state));
 			m_state.status = MortalityStatus::ALIVE;
@@ -75,15 +71,13 @@ void MortalityService::service_init()
 /// @brief Terminate: clear session-local data. Persistent state (confidence,
 /// consecutive_days, status, no-fix streak) is already flushed to FsLog on each
 /// evaluate_mortality() / no-fix increment, so there is nothing to persist here.
-void MortalityService::service_term()
-{
+void MortalityService::service_term() {
 	reset_session_data();
 }
 
 /// @brief Enabled if MORTALITY_ENABLE param is set and board supports it.
 /// @return true if mortality detection is active.
-bool MortalityService::service_is_enabled()
-{
+bool MortalityService::service_is_enabled() {
 #if ENABLE_MORTALITY_SENSOR
 	return service_read_param<bool>(ParamID::MORTALITY_ENABLE);
 #else
@@ -93,37 +87,32 @@ bool MortalityService::service_is_enabled()
 
 /// @brief Schedule daily evaluation (24h period).
 /// @return 24 hours in ms.
-unsigned int MortalityService::service_next_schedule_in_ms()
-{
+unsigned int MortalityService::service_next_schedule_in_ms() {
 	// Event-driven only — no periodic scheduling
 	return SCHEDULE_DISABLED;
 }
 
 /// @brief Run daily mortality evaluation — compute confidence, log, persist.
-void MortalityService::service_initiate()
-{
+void MortalityService::service_initiate() {
 	// Should not be called (schedule disabled), but handle gracefully
 	service_complete();
 }
 
 /// @brief Cancel — no-op (evaluation is instant).
 /// @return Always false.
-bool MortalityService::service_cancel()
-{
+bool MortalityService::service_cancel() {
 	return false;
 }
 
 /// @brief Collect sensor data from peer events (AXL activity, thermistor temp, GPS fix).
 /// @param event  Peer service event.
-void MortalityService::notify_peer_event(ServiceEvent& event)
-{
+void MortalityService::notify_peer_event(ServiceEvent &event) {
 #if ENABLE_MORTALITY_SENSOR
-	if (!service_is_enabled())
-		return;
+	if (!service_is_enabled()) return;
 
 	// Collect AXL activity data
-	if (event.event_source == ServiceIdentifier::AXL_SENSOR &&
-		event.event_type == ServiceEventType::SERVICE_LOG_UPDATED) {
+	if (event.event_source == ServiceIdentifier::AXL_SENSOR
+	    && event.event_type == ServiceEventType::SERVICE_LOG_UPDATED) {
 		auto *sensor_data = std::get_if<ServiceSensorData>(&event.event_data);
 		if (sensor_data) {
 			m_session_activity = static_cast<uint8_t>(sensor_data->port[AXL_PORT_ACTIVITY]);
@@ -133,8 +122,8 @@ void MortalityService::notify_peer_event(ServiceEvent& event)
 	}
 
 	// Collect thermistor temperature data
-	if (event.event_source == ServiceIdentifier::THERMISTOR_SENSOR &&
-		event.event_type == ServiceEventType::SERVICE_LOG_UPDATED) {
+	if (event.event_source == ServiceIdentifier::THERMISTOR_SENSOR
+	    && event.event_type == ServiceEventType::SERVICE_LOG_UPDATED) {
 		auto *sensor_data = std::get_if<ServiceSensorData>(&event.event_data);
 		if (sensor_data) {
 			m_session_body_temp = sensor_data->port[0];
@@ -144,8 +133,8 @@ void MortalityService::notify_peer_event(ServiceEvent& event)
 	}
 
 	// Collect GPS position data
-	if (event.event_source == ServiceIdentifier::GNSS_SENSOR &&
-		event.event_type == ServiceEventType::SERVICE_LOG_UPDATED) {
+	if (event.event_source == ServiceIdentifier::GNSS_SENSOR
+	    && event.event_type == ServiceEventType::SERVICE_LOG_UPDATED) {
 		auto *gps_log = std::get_if<GPSLogEntry>(&event.event_data);
 		if (gps_log) {
 			m_gps_attempted = true;  // H4: GPS ran this session (fix or not)
@@ -154,8 +143,8 @@ void MortalityService::notify_peer_event(ServiceEvent& event)
 				m_session_lon = gps_log->info.lon;
 				m_session_gps_speed = gps_log->info.gSpeed;
 				m_has_gps = true;
-				DEBUG_TRACE("MortalityService: GPS lat=%.4f lon=%.4f speed=%d mm/s",
-						m_session_lat, m_session_lon, m_session_gps_speed);
+				DEBUG_TRACE("MortalityService: GPS lat=%.4f lon=%.4f speed=%d mm/s", m_session_lat, m_session_lon,
+				            m_session_gps_speed);
 			} else if (!m_no_fix_counted) {
 				// H4: no valid fix this session — extend the no-fix streak and
 				// persist it so it accumulates across TPL5111 power cuts. Once
@@ -168,8 +157,7 @@ void MortalityService::notify_peer_event(ServiceEvent& event)
 				// battery cost for no state change (L25).
 				if (m_state.no_fix_sessions < UINT8_MAX) {
 					m_state.no_fix_sessions++;
-					DEBUG_INFO("MortalityService: no GPS fix this session (no-fix streak=%u)",
-							m_state.no_fix_sessions);
+					DEBUG_INFO("MortalityService: no GPS fix this session (no-fix streak=%u)", m_state.no_fix_sessions);
 					persist_state();
 				}
 			}
@@ -196,9 +184,8 @@ void MortalityService::notify_peer_event(ServiceEvent& event)
 	bool have_other_sensor = (m_has_activity || m_has_temperature);
 	if (have_other_sensor && m_has_gps) {
 		evaluate_mortality();
-	} else if (m_has_activity && m_has_temperature && !m_fallback_evaluated &&
-			MORTALITY_NO_FIX_FALLBACK_SESSIONS > 0 &&
-			m_state.no_fix_sessions >= MORTALITY_NO_FIX_FALLBACK_SESSIONS) {
+	} else if (m_has_activity && m_has_temperature && !m_fallback_evaluated && MORTALITY_NO_FIX_FALLBACK_SESSIONS > 0
+	           && m_state.no_fix_sessions >= MORTALITY_NO_FIX_FALLBACK_SESSIONS) {
 		m_fallback_evaluated = true;
 		evaluate_mortality();
 	}
@@ -209,8 +196,7 @@ void MortalityService::notify_peer_event(ServiceEvent& event)
 
 /// @brief Check if all 3 sensor inputs (activity, temperature, GPS) have been received.
 /// @return true if all inputs are available for evaluation.
-bool MortalityService::all_inputs_collected() const
-{
+bool MortalityService::all_inputs_collected() const {
 	return m_has_activity && m_has_temperature && m_has_gps;
 }
 
@@ -224,16 +210,14 @@ bool MortalityService::all_inputs_collected() const
 ///        Only equality of consecutive keys matters to the caller, so the exact
 ///        magnitude is irrelevant; *366 (> max yday) guarantees no cross-year
 ///        collision. epoch==0 keeps returning 0 as the "never evaluated" sentinel.
-unsigned int MortalityService::eval_day_index(std::time_t epoch) const
-{
+unsigned int MortalityService::eval_day_index(std::time_t epoch) const {
 	if (epoch == 0) return 0;
 	struct tm *t = gmtime(&epoch);
 	return t ? static_cast<unsigned int>((t->tm_year + 1900) * 366 + t->tm_yday) : 0;
 }
 
 /// @brief Compute mortality confidence (0-100%) from activity, body temp, GPS stationarity.
-void MortalityService::evaluate_mortality()
-{
+void MortalityService::evaluate_mortality() {
 #if ENABLE_MORTALITY_SENSOR
 	unsigned int activity_thresh = service_read_param<unsigned int>(ParamID::MORTALITY_ACTIVITY_THRESH);
 	double temp_thresh = service_read_param<double>(ParamID::MORTALITY_TEMP_THRESH);
@@ -256,11 +240,10 @@ void MortalityService::evaluate_mortality()
 		// Check stationarity: distance from last known position + low speed
 		bool has_prior_position = (m_state.last_lat != 0.0 || m_state.last_lon != 0.0);
 		if (has_prior_position) {
-			double distance_km = haversine_distance(m_state.last_lon, m_state.last_lat,
-					m_session_lon, m_session_lat);
+			double distance_km = haversine_distance(m_state.last_lon, m_state.last_lat, m_session_lon, m_session_lat);
 			double distance_m = distance_km * 1000.0;
-			bool is_stationary = (distance_m < (double)gps_distance_thresh) &&
-					(m_session_gps_speed < 100); // < 100 mm/s = 0.36 km/h
+			bool is_stationary =
+			    (distance_m < (double)gps_distance_thresh) && (m_session_gps_speed < 100);  // < 100 mm/s = 0.36 km/h
 			if (is_stationary) {
 				gps_score = 30;
 			}
@@ -286,9 +269,8 @@ void MortalityService::evaluate_mortality()
 	m_state.confidence = static_cast<uint8_t>((old_confidence * 7 + session_score * 3) / 10);
 	if (m_state.confidence > 100) m_state.confidence = 100;
 
-	DEBUG_INFO("MortalityService: score=%u (act=%u temp=%u gps=%u) confidence=%u%% (was %u%%)",
-			session_score, activity_score, temp_score, gps_score,
-			m_state.confidence, old_confidence);
+	DEBUG_INFO("MortalityService: score=%u (act=%u temp=%u gps=%u) confidence=%u%% (was %u%%)", session_score,
+	           activity_score, temp_score, gps_score, m_state.confidence, old_confidence);
 
 	// --- Day boundary check ---
 	std::time_t now = service_current_time();
@@ -298,12 +280,10 @@ void MortalityService::evaluate_mortality()
 	if (now > 0 && now <= static_cast<std::time_t>(UINT32_MAX) && current_day != last_day) {
 		m_state.last_eval_epoch = static_cast<uint32_t>(now);
 		if (m_state.confidence >= 80) {
-			if (m_state.consecutive_days < 255)
-				m_state.consecutive_days++;
+			if (m_state.consecutive_days < 255) m_state.consecutive_days++;
 			DEBUG_INFO("MortalityService: consecutive_days++ = %u", m_state.consecutive_days);
 		} else {
-			if (m_state.consecutive_days > 0)
-				m_state.consecutive_days--;
+			if (m_state.consecutive_days > 0) m_state.consecutive_days--;
 			DEBUG_INFO("MortalityService: consecutive_days-- = %u", m_state.consecutive_days);
 		}
 	}
@@ -326,8 +306,7 @@ void MortalityService::evaluate_mortality()
 	// exactly when a confirmed-dead bird should be beaconing. MTP06's DTE range is
 	// 0-100, so a 1 is reachable — clamp it defensively before it reaches the
 	// duty-cycle write. 0 keeps its "never adapt" meaning (guarded below).
-	if (duty_modulo == 1)
-		duty_modulo = 2;
+	if (duty_modulo == 1) duty_modulo = 2;
 
 	unsigned int current_modulo = service_read_param<unsigned int>(ParamID::BOOT_COUNTER_MODULO);
 	unsigned int original = service_read_param<unsigned int>(ParamID::MORTALITY_ORIGINAL_MODULO);
@@ -339,8 +318,7 @@ void MortalityService::evaluate_mortality()
 		// CONFIRMED state (FsLog) persisted (M2, 2026-07): the next
 		// evaluation sees current_modulo != duty_modulo and re-applies it.
 		if (current_modulo != duty_modulo) {
-			if (original == 0)
-				service_write_param(ParamID::MORTALITY_ORIGINAL_MODULO, current_modulo);
+			if (original == 0) service_write_param(ParamID::MORTALITY_ORIGINAL_MODULO, current_modulo);
 			service_write_param(ParamID::BOOT_COUNTER_MODULO, duty_modulo);
 			DEBUG_INFO("MortalityService: CONFIRMED — duty cycle adapted to modulo=%u", duty_modulo);
 		}
@@ -362,14 +340,12 @@ void MortalityService::evaluate_mortality()
 #endif
 
 	// --- Update session data for log ---
-	if (m_has_activity)
-		m_state.last_activity = m_session_activity;
+	if (m_has_activity) m_state.last_activity = m_session_activity;
 	if (m_has_temperature) {
 		// Clamp before the unsigned cast: body temp is in °C and can be sub-zero
 		// (cold carcass / winter), which would otherwise wrap to ~65000 in this
 		// uint16 log field (L4). Store 0 for negatives — logging only.
-		m_state.last_body_temp = (m_session_body_temp > 0.0)
-			? static_cast<uint16_t>(m_session_body_temp) : 0;
+		m_state.last_body_temp = (m_session_body_temp > 0.0) ? static_cast<uint16_t>(m_session_body_temp) : 0;
 	}
 
 	// --- Persist to flash ---
@@ -378,14 +354,13 @@ void MortalityService::evaluate_mortality()
 	// Reset session data for next collection
 	reset_session_data();
 
-	DEBUG_INFO("MortalityService: status=%u confidence=%u%% days=%u",
-			(unsigned int)m_state.status, m_state.confidence, m_state.consecutive_days);
+	DEBUG_INFO("MortalityService: status=%u confidence=%u%% days=%u", (unsigned int)m_state.status, m_state.confidence,
+	           m_state.consecutive_days);
 #endif
 }
 
 /// @brief Write current mortality state to FsLog for persistence across power cycles.
-void MortalityService::persist_state()
-{
+void MortalityService::persist_state() {
 	MortalityLogEntry entry;
 	memset(&entry, 0, sizeof(entry));
 	entry.header.log_type = LOG_MORTALITY;

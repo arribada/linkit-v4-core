@@ -10,12 +10,8 @@ public:
 	std::time_t gettime() {
 		return (std::time_t)mock().actualCall("gettime").onObject(this).returnUnsignedLongIntValue();
 	}
-	void settime(std::time_t t) {
-		mock().actualCall("settime").onObject(this).withParameter("t", (uint64_t)t);
-	}
-	bool is_set() {
-		return mock().actualCall("is_set").onObject(this).returnBoolValue();
-	}
+	void settime(std::time_t t) { mock().actualCall("settime").onObject(this).withParameter("t", (uint64_t)t); }
+	bool is_set() { return mock().actualCall("is_set").onObject(this).returnBoolValue(); }
 };
 
-#endif // __MOCK_RTC_HPP_
+#endif  // __MOCK_RTC_HPP_

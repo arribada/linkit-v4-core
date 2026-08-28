@@ -12,25 +12,23 @@
 #include "scheduler.hpp"
 #include "filesystem.hpp"
 
-#define SMD_STATE_CHANGE(x, y)                       \
-	do {                                             \
-		DEBUG_TRACE("SmdSat::SMD_STATE_CHANGE: " #x " -> " #y ); \
-		m_state = y;                                 \
-		state_ ## x ##_exit();                       \
-		state_ ## y ##_enter();                      \
+#define SMD_STATE_CHANGE(x, y)                                  \
+	do {                                                        \
+		DEBUG_TRACE("SmdSat::SMD_STATE_CHANGE: " #x " -> " #y); \
+		m_state = y;                                            \
+		state_##x##_exit();                                     \
+		state_##y##_enter();                                    \
 	} while (0)
 
-#define SMD_STATE_EQUAL(x) \
-	(m_state == x)
+#define SMD_STATE_EQUAL(x) (m_state == x)
 
-#define SMD_STATE_CALL(x)   \
-	do {                    \
-		state_ ## x();      \
+#define SMD_STATE_CALL(x) \
+	do {                  \
+		state_##x();      \
 	} while (0)
 
 
 class SmdSat : public KineisDevice {
-
 private:
 	enum SmdSatState {
 		stopped,
@@ -45,7 +43,7 @@ private:
 	};
 
 	// Command layer (SPI or AT, selected at compile time)
-	SmdSatCmd& m_cmd;
+	SmdSatCmd &m_cmd;
 
 	// Top-level state
 	Scheduler::TaskHandle m_task;
@@ -53,10 +51,12 @@ private:
 	unsigned int m_state_counter;
 	unsigned int m_next_delay;
 	bool m_stopping;
-	bool is_kmac_profil_loaded = false;       ///< Routes idle_pending → load_kmac for boot config (TCXO, LPM)
-	bool m_needs_explicit_kmac_load = true;   ///< True when RCONF changed and explicit load_kmac_profil SPI command is needed.
-	bool m_kmac_blind_pushed = false;         ///< True while the last pushed KMAC profile was BLIND — forces a BASIC push when blind is turned off within a session.
-	                                          ///< False when RCONF unchanged — STM32 auto-inits MAC from flash at POR.
+	bool is_kmac_profil_loaded = false;  ///< Routes idle_pending → load_kmac for boot config (TCXO, LPM)
+	bool m_needs_explicit_kmac_load =
+	    true;  ///< True when RCONF changed and explicit load_kmac_profil SPI command is needed.
+	bool m_kmac_blind_pushed =
+	    false;  ///< True while the last pushed KMAC profile was BLIND — forces a BASIC push when blind is turned off within a session.
+	///< False when RCONF unchanged — STM32 auto-inits MAC from flash at POR.
 	bool m_credentials_written = false;
 	bool m_rconf_recovery_attempted = false;
 
@@ -131,19 +131,19 @@ private:
 	SmdArgosModulation m_modulation;
 	std::string m_pending_rconf;  // Deferred RCONF for next power-on
 	unsigned int m_tx_power;
-	double      m_tx_freq;
-	bool        m_is_first_tx;
-	uint32_t    m_tcxo_warmup_time;
-	uint64_t    m_tx_trace_start_ms = 0;  ///< Anchor for [TXTRACE +N ms] timing logs; reset in send()
-	uint8_t     m_lpm_mode;  // SMD LPM bitmap written at every boot
-	bool        m_wkup_lowered = false;  // True if state_idle_enter dropped WKUP (=> idle_exit must re-raise + wait for wake)
+	double m_tx_freq;
+	bool m_is_first_tx;
+	uint32_t m_tcxo_warmup_time;
+	uint64_t m_tx_trace_start_ms = 0;  ///< Anchor for [TXTRACE +N ms] timing logs; reset in send()
+	uint8_t m_lpm_mode;                // SMD LPM bitmap written at every boot
+	bool m_wkup_lowered = false;  // True if state_idle_enter dropped WKUP (=> idle_exit must re-raise + wait for wake)
 
 	/// @brief Timestamp (ms) of the last full power-off (shutdown). Used by
 	/// state_powering_on to skip the redundant VDD discharge wait when the
 	/// dive lasted long enough for natural decay (>5 s). Saves ~50 ms FAST /
 	/// ~100 ms SAFE on the first Doppler at surface — the typical sealed
 	/// turtle case where dives are minutes long. 0 = never powered off.
-	uint64_t    m_last_power_off_ms = 0;
+	uint64_t m_last_power_off_ms = 0;
 	static constexpr uint64_t VDD_NATURAL_DISCHARGE_MS = 5000;  ///< Dive >5 s → VDD fully decayed
 
 	// New firmware version (cached after DFU)
@@ -157,7 +157,7 @@ private:
 	// avoids re-probing a module firmware that lacks the command (graceful
 	// degradation — MC then left auto-managed by the SMD).
 	enum class McSupport : uint8_t { UNKNOWN, YES, NO };
-	McSupport    m_mc_support = McSupport::UNKNOWN;
+	McSupport m_mc_support = McSupport::UNKNOWN;
 	KineisPacket m_mc_last_payload;     // payload of the previous TX (repeat detection)
 	void apply_message_counter_hold();  // called before initiate_tx in state_transmit_pending
 
@@ -167,7 +167,7 @@ private:
 	bool write_credentials_from_config();
 
 	// State machine functionality
-	void state_machine(bool use_scheduler=true);
+	void state_machine(bool use_scheduler = true);
 	void state_starting();
 	void state_starting_enter();
 	void state_starting_exit();
@@ -197,9 +197,9 @@ private:
 	void state_transmitting_exit();
 
 public:
-	SmdSat(SmdSatCmd& cmd, unsigned int idle_shutdown_timeout_ms = 1000);
+	SmdSat(SmdSatCmd &cmd, unsigned int idle_shutdown_timeout_ms = 1000);
 	~SmdSat();
-	void send(const KineisModulation mode, const KineisPacket& packet, const unsigned int size_bits) override;
+	void send(const KineisModulation mode, const KineisPacket &packet, const unsigned int size_bits) override;
 	void stop_send() override;
 	void start_receive(const KineisModulation mode) override;
 	bool stop_receive() override;
@@ -208,10 +208,10 @@ public:
 	void set_tx_power(unsigned int power) override;
 	void set_lpm_mode(uint8_t lpm_bitmap);
 
-	void set_credentials(unsigned int dec_id, unsigned int address,
-	                     const std::string& seckey, const std::string& radioconf) override;
-	void read_credentials(unsigned int *dec_id, unsigned int *address,
-	                      std::string *seckey, std::string *radioconf) override;
+	void set_credentials(unsigned int dec_id, unsigned int address, const std::string &seckey,
+	                     const std::string &radioconf) override;
+	void read_credentials(unsigned int *dec_id, unsigned int *address, std::string *seckey,
+	                      std::string *radioconf) override;
 	static void shutdown(void);
 
 	// DFU Public API
@@ -229,7 +229,7 @@ public:
 	SmdDfuResponse firmware_update(File *file, size_t size, uint32_t stm32_crc32,
 	                               void (*progress_callback)(uint8_t percent) = nullptr);
 
-	SmdDfuResponse firmware_update_from_file(const std::string& filepath,
+	SmdDfuResponse firmware_update_from_file(const std::string &filepath,
 	                                         void (*progress_callback)(uint8_t percent) = nullptr);
 
 	std::string get_firmware_version();
@@ -247,7 +247,7 @@ public:
 	bool cw_stop();
 
 	// Runtime modulation switching (RCONF + save + KMAC reload, no power cycle)
-	bool switch_modulation(KineisModulation mode, const std::string& rconf_hex) override;
+	bool switch_modulation(KineisModulation mode, const std::string &rconf_hex) override;
 	KineisModulation get_current_modulation() const override;
 	unsigned int cooldown_remaining_ms() const override;
 };

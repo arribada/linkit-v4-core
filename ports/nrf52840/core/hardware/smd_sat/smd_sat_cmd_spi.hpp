@@ -8,21 +8,17 @@
 #include "smd_sat_cmd.hpp"
 #include "nrf_spim.hpp"
 struct SpiAplusResponse {
-    uint8_t seq;
-    SpiAplusStatus status;
-    uint8_t data[SPI_PROTOCOL_APLUS_MAX_DATA_LEN];
-    uint16_t data_len;
-    bool valid;
-    uint8_t raw_status;   // real STATUS byte from the frame, preserved even when CRC fails
-    bool crc_error;       // true when the frame was structurally valid but the CRC8 mismatched
+	uint8_t seq;
+	SpiAplusStatus status;
+	uint8_t data[SPI_PROTOCOL_APLUS_MAX_DATA_LEN];
+	uint16_t data_len;
+	bool valid;
+	uint8_t raw_status;  // real STATUS byte from the frame, preserved even when CRC fails
+	bool crc_error;      // true when the frame was structurally valid but the CRC8 mismatched
 };
 
 // Protocol mode enumeration
-enum class SpiProtocolMode {
-    LEGACY,
-    APLUS,
-    AUTO_DETECT
-};
+enum class SpiProtocolMode { LEGACY, APLUS, AUTO_DETECT };
 
 // ============================================================================
 // SmdSatCmdSpi — SPI Protocol A+ implementation of SmdSatCmd
@@ -56,7 +52,7 @@ public:
 	void read_rconf_raw(uint8_t *rconf_raw, uint16_t *len) override;
 
 	// KMAC
-	void load_kmac_profil(uint8_t profile, const uint8_t* ctx = nullptr, uint8_t ctx_len = 0) override;
+	void load_kmac_profil(uint8_t profile, const uint8_t *ctx = nullptr, uint8_t ctx_len = 0) override;
 	void read_kmac(uint8_t *profile) override;
 	void get_kmac_status(uint8_t *status) override;
 
@@ -71,7 +67,7 @@ public:
 	void set_tcxo_control(bool state) override;
 
 	// TX
-	bool initiate_tx(const KineisPacket& payload) override;
+	bool initiate_tx(const KineisPacket &payload) override;
 	bool is_tx_finished() override;
 	bool is_tx_in_progress() override;
 	bool is_tx_successful() override { return m_last_tx_status == MAC_TX_DONE; }
@@ -117,8 +113,8 @@ public:
 	uint8_t poll_tx_result(uint32_t timeout_ms);
 
 	// SPI-specific: direct access to NrfSPIM (needed by SmdSat for power management)
-	NrfSPIM* get_spim() const { return m_nrf_spim; }
-	void set_spim(NrfSPIM* spim) { m_nrf_spim = spim; }
+	NrfSPIM *get_spim() const { return m_nrf_spim; }
+	void set_spim(NrfSPIM *spim) { m_nrf_spim = spim; }
 
 private:
 	NrfSPIM *m_nrf_spim;
@@ -127,7 +123,7 @@ private:
 	SpiProtocolMode m_protocol_mode;
 	uint8_t m_sequence_number;  // Wraps at 256 — matches Zephyr argos-smd-driver behavior
 	bool m_protocol_detected;
-	bool m_seq_reset_attempted; // Prevents infinite retry loop on INVALID_CMD
+	bool m_seq_reset_attempted;  // Prevents infinite retry loop on INVALID_CMD
 
 	// DFU state
 	bool m_dfu_mode;
@@ -146,12 +142,10 @@ private:
 	// Protocol A+ core
 	uint16_t build_aplus_frame(uint8_t *frame, uint8_t cmd, const uint8_t *data, uint16_t data_len);
 	bool parse_aplus_response(const uint8_t *rx_buffer, uint16_t rx_len, SpiAplusResponse *response);
-	bool send_command_aplus(uint8_t command, const uint8_t *tx_data, uint16_t tx_len,
-	                        SpiAplusResponse *response);
+	bool send_command_aplus(uint8_t command, const uint8_t *tx_data, uint16_t tx_len, SpiAplusResponse *response);
 	bool send_command_auto(uint8_t command, const uint8_t *tx_data = nullptr, uint16_t tx_len = 0,
 	                       uint8_t *rx_data = nullptr, uint16_t *rx_len = nullptr);
-	bool send_command_2phase(uint8_t req_cmd, uint8_t write_cmd,
-	                         const uint8_t *data, uint16_t len);
+	bool send_command_2phase(uint8_t req_cmd, uint8_t write_cmd, const uint8_t *data, uint16_t len);
 
 	// DFU low-level
 	SmdDfuResponse dfu_send_command(uint8_t cmd, const uint8_t *data = nullptr, uint16_t data_len = 0,

@@ -8,14 +8,13 @@
 #include "rtc.hpp"
 
 extern "C" {
-	#include "previpass.h"
+#include "previpass.h"
 }
 
 extern RTC *rtc;
 
 /// @brief Constructor — reset all optional state, seed RNG.
-ArgosTxScheduler::ArgosTxScheduler() :
-		m_rand(std::mt19937()) {
+ArgosTxScheduler::ArgosTxScheduler() : m_rand(std::mt19937()) {
 	m_last_schedule_abs.reset();
 	m_curr_schedule_abs.reset();
 	m_earliest_schedule.reset();
@@ -35,8 +34,7 @@ void ArgosTxScheduler::reset(unsigned int seed) {
 /// @param time_ms     Absolute time in ms.
 /// @param duty_cycle  24-bit bitmask (bit 23 = hour 0 UTC, bit 0 = hour 23 UTC).
 /// @return true if the hour is active in the duty cycle.
-bool ArgosTxScheduler::is_in_duty_cycle(uint64_t time_ms, unsigned int duty_cycle)
-{
+bool ArgosTxScheduler::is_in_duty_cycle(uint64_t time_ms, unsigned int duty_cycle) {
 	// Note that duty cycle is a bit-field comprising 24 bits as follows:
 	// 23 22 21 20 19 18 17 16 15 14 13 12 11 10 09 08 07 06 05 04 03 02 01 00  bit
 	// 0  1  2  3  4  5  6  7  8  9  10 11 12 13 14 15 16 17 18 19 21 21 22 23  hour (UTC)
@@ -67,8 +65,8 @@ int ArgosTxScheduler::compute_random_jitter(bool jitter_en, int min, int max) {
 /// @param duty_cycle   24-bit hourly bitmask (0xFFFFFF = always on).
 /// @param now_ms       Current time in ms.
 /// @throws ErrorCode::RESOURCE_NOT_AVAILABLE if no slot found in 24h.
-void ArgosTxScheduler::schedule_periodic(unsigned int period_ms, bool jitter_en, unsigned int duty_cycle, uint64_t now_ms) {
-
+void ArgosTxScheduler::schedule_periodic(unsigned int period_ms, bool jitter_en, unsigned int duty_cycle,
+                                         uint64_t now_ms) {
 	uint64_t start_time;
 
 	// Sealed-device guard (audit 2026-07): the 24 h search loop below advances
@@ -86,20 +84,18 @@ void ArgosTxScheduler::schedule_periodic(unsigned int period_ms, bool jitter_en,
 	}
 
 	DEBUG_TRACE("ArgosTxScheduler::schedule_periodic: now=%llu last=%llu tr=%u jitter=%u", now_ms,
-			m_last_schedule_abs.has_value() ? m_last_schedule_abs.value() : 0,
-			period_ms, jitter_en);
+	            m_last_schedule_abs.has_value() ? m_last_schedule_abs.value() : 0, period_ms, jitter_en);
 
 	// Handle the case where earliest TX time has been set
-	while (m_earliest_schedule.has_value())
-	{
-		DEBUG_TRACE("ArgosTxScheduler::schedule_periodic: earliest TX constraint: earliest=%llu now=%llu", m_earliest_schedule.value(), now_ms);
+	while (m_earliest_schedule.has_value()) {
+		DEBUG_TRACE("ArgosTxScheduler::schedule_periodic: earliest TX constraint: earliest=%llu now=%llu",
+		            m_earliest_schedule.value(), now_ms);
 
 		// If earliest TX is later than last known schedule
 		if (m_earliest_schedule.value() >= now_ms) {
 			// If we already had a schedule that is later then use that instead
 			start_time = m_earliest_schedule.value();
-			if (m_last_schedule_abs.has_value() &&
-				start_time < m_last_schedule_abs.value())
+			if (m_last_schedule_abs.has_value() && start_time < m_last_schedule_abs.value())
 				start_time = m_last_schedule_abs.value();
 
 			// Check if start_time is in the duty cycle
@@ -125,9 +121,7 @@ void ArgosTxScheduler::schedule_periodic(unsigned int period_ms, bool jitter_en,
 		// Use now as the initial TR_NOM -- we don't allow
 		// a -ve jitter amount in this case to avoid a potential -ve overflow
 		start_time = now_ms + compute_random_jitter(jitter_en, 0);
-	}
-	else
-	{
+	} else {
 		// Advance by TR_NOM + TX jitter if we have a previous TR_NOM
 		// It should be safe to allow a -ve jitter because TR_NOM is always larger
 		// than the jitter amount
@@ -135,8 +129,7 @@ void ArgosTxScheduler::schedule_periodic(unsigned int period_ms, bool jitter_en,
 
 		// Since we only project 24 hours forwards make sure that the start_time is within
 		// 24 hours of the current time
-		if ((start_time + (MSECS_PER_SECOND * SECONDS_PER_DAY)) < now_ms)
-			start_time = now_ms;
+		if ((start_time + (MSECS_PER_SECOND * SECONDS_PER_DAY)) < now_ms) start_time = now_ms;
 	}
 
 	DEBUG_TRACE("ArgosTxScheduler::schedule_periodic: starting @ %llu", start_time);
@@ -146,7 +139,8 @@ void ArgosTxScheduler::schedule_periodic(unsigned int period_ms, bool jitter_en,
 	uint64_t elapsed_time = 0;
 	while (elapsed_time <= (MSECS_PER_SECOND * SECONDS_PER_DAY)) {
 		if (is_in_duty_cycle(start_time, duty_cycle) && start_time >= now_ms) {
-			DEBUG_INFO("ArgosTxScheduler::schedule_periodic: TX scheduled @ %llu (in %llu ms)", start_time, start_time - now_ms);
+			DEBUG_INFO("ArgosTxScheduler::schedule_periodic: TX scheduled @ %llu (in %llu ms)", start_time,
+			           start_time - now_ms);
 			m_curr_schedule_abs = start_time;
 			return;
 		} else {
@@ -155,16 +149,16 @@ void ArgosTxScheduler::schedule_periodic(unsigned int period_ms, bool jitter_en,
 		}
 	}
 
-	DEBUG_ERROR("ArgosTxScheduler::schedule_periodic: no TX slot found in 24h search (duty_cycle=0x%06X period=%u ms) — TX schedule aborted", duty_cycle, period_ms);
+	DEBUG_ERROR("ArgosTxScheduler::schedule_periodic: no TX slot found in 24h search (duty_cycle=0x%06X period=%u ms) "
+	            "— TX schedule aborted",
+	            duty_cycle, period_ms);
 	m_curr_schedule_abs.reset();
 	throw ErrorCode::RESOURCE_NOT_AVAILABLE;
 }
 
 /// @brief Epoch of the next satellite pass — READ ONLY.
-std::time_t ArgosTxScheduler::next_pass_epoch(ArgosConfig& config, BasePassPredict& pass_predict,
-                                              std::time_t now) {
-	if (!m_location.has_value() || pass_predict.num_records == 0)
-		return 0;
+std::time_t ArgosTxScheduler::next_pass_epoch(ArgosConfig &config, BasePassPredict &pass_predict, std::time_t now) {
+	if (!m_location.has_value() || pass_predict.num_records == 0) return 0;
 
 	std::time_t start_time = now;
 	std::time_t stop_time = start_time + static_cast<std::time_t>(24 * SECONDS_PER_HOUR);
@@ -188,26 +182,25 @@ std::time_t ArgosTxScheduler::next_pass_epoch(ArgosConfig& config, BasePassPredi
 		config.prepass_max_passes,
 		static_cast<float>(config.prepass_linear_margin) / 60.0f,
 		config.prepass_comp_step,
-		static_cast<float>(config.prepass_min_culmination),   // PPP10
-		static_cast<float>(config.prepass_position_margin_km), // PPP12
-		true // includeCurrentPass
+		static_cast<float>(config.prepass_min_culmination),     // PPP10
+		static_cast<float>(config.prepass_position_margin_km),  // PPP12
+		true                                                    // includeCurrentPass
 	};
 	SatelliteNextPassPrediction_t next_pass;
-	if (PREVIPASS_compute_next_pass(&pp_config, pass_predict.records,
-	                                pass_predict.num_records, &next_pass))
+	if (PREVIPASS_compute_next_pass(&pp_config, pass_predict.records, pass_predict.num_records, &next_pass))
 		return static_cast<std::time_t>(next_pass.epoch);
 	return 0;
 }
 
 /// @brief Schedule next TX using satellite pass prediction (PREVIPASS).
 /// @return Delay in ms until next TX, or INVALID_SCHEDULE if no pass found.
-unsigned int ArgosTxScheduler::schedule_prepass(ArgosConfig& config, BasePassPredict& pass_predict,
-                                                std::time_t now) {
+unsigned int ArgosTxScheduler::schedule_prepass(ArgosConfig &config, BasePassPredict &pass_predict, std::time_t now) {
 	DEBUG_TRACE("ArgosTxScheduler::schedule_prepass");
 
 	// We must have a previous GPS location to proceed
 	if (!m_location.has_value()) {
-		DEBUG_WARN("ArgosTxScheduler::schedule_prepass: no known GPS location, cannot predict passes — TX disabled until next GPS fix");
+		DEBUG_WARN("ArgosTxScheduler::schedule_prepass: no known GPS location, cannot predict passes — TX disabled "
+		           "until next GPS fix");
 		m_last_schedule_abs.reset();
 		return INVALID_SCHEDULE;
 	}
@@ -231,8 +224,8 @@ unsigned int ArgosTxScheduler::schedule_prepass(ArgosConfig& config, BasePassPre
 	struct tm tm_stop = *p_tm;
 
 	DEBUG_TRACE("ArgosTxScheduler::schedule_prepass: window start=%llu now=%llu stop=%llu",
-	           static_cast<unsigned long long>(start_time), static_cast<unsigned long long>(now),
-	           static_cast<unsigned long long>(stop_time));
+	            static_cast<unsigned long long>(start_time), static_cast<unsigned long long>(now),
+	            static_cast<unsigned long long>(stop_time));
 
 	PredictionPassConfiguration_t pp_config = {
 		static_cast<float>(m_location.value().latitude),
@@ -249,25 +242,22 @@ unsigned int ArgosTxScheduler::schedule_prepass(ArgosConfig& config, BasePassPre
 		config.prepass_max_passes,
 		static_cast<float>(config.prepass_linear_margin) / 60.0f,
 		config.prepass_comp_step,
-		static_cast<float>(config.prepass_min_culmination),   // PPP10
-		static_cast<float>(config.prepass_position_margin_km), // PPP12
-		true // includeCurrentPass
+		static_cast<float>(config.prepass_min_culmination),     // PPP10
+		static_cast<float>(config.prepass_position_margin_km),  // PPP12
+		true                                                    // includeCurrentPass
 	};
 	SatelliteNextPassPrediction_t next_pass;
 
-	while (PREVIPASS_compute_next_pass_with_status(&pp_config,
-		pass_predict.records,
-		pass_predict.num_records,
-		SAT_DNLK_OFF,
-		SAT_UPLK_ON_KINEIS_V1, // TODO : Manage all satellites for LDA2 on legacy RF band
-		&next_pass))
-		{
+	while (PREVIPASS_compute_next_pass_with_status(
+	    &pp_config, pass_predict.records, pass_predict.num_records, SAT_DNLK_OFF,
+	    SAT_UPLK_ON_KINEIS_V1,  // TODO : Manage all satellites for LDA2 on legacy RF band
+	    &next_pass)) {
 		uint64_t schedule = 0;
 
 		// Ensure at least TR_NOM from last TX
 		if (m_last_schedule_abs.has_value())
-			schedule = std::max(schedule,
-			                    m_last_schedule_abs.value() + static_cast<uint64_t>(config.tx_interval_s) * MSECS_PER_SECOND);
+			schedule = std::max(schedule, m_last_schedule_abs.value()
+			                                  + static_cast<uint64_t>(config.tx_interval_s) * MSECS_PER_SECOND);
 
 		// Advance to at least the prepass epoch
 		schedule = std::max(static_cast<uint64_t>(next_pass.epoch) * MSECS_PER_SECOND, schedule);
@@ -280,11 +270,11 @@ unsigned int ArgosTxScheduler::schedule_prepass(ArgosConfig& config, BasePassPre
 		schedule = std::max(now_ms, schedule);
 
 		// Check we don't transmit past the end of the prepass window
-		if ((schedule + ARGOS_TX_MARGIN_MSECS) < (static_cast<uint64_t>(next_pass.epoch) + next_pass.duration) * MSECS_PER_SECOND) {
+		if ((schedule + ARGOS_TX_MARGIN_MSECS)
+		    < (static_cast<uint64_t>(next_pass.epoch) + next_pass.duration) * MSECS_PER_SECOND) {
 			DEBUG_INFO("ArgosTxScheduler::schedule_prepass: scheduled in %.3f secs (hex_id=%01x ul=%u)",
 			           static_cast<double>(schedule - now_ms) / MSECS_PER_SECOND,
-			           static_cast<unsigned>(next_pass.satHexId),
-			           static_cast<unsigned>(next_pass.uplinkStatus));
+			           static_cast<unsigned>(next_pass.satHexId), static_cast<unsigned>(next_pass.uplinkStatus));
 			m_curr_schedule_abs = schedule;
 			// 2026-08 — no more overwriting of the modulation here. This line
 			// forced LDA2 unconditionally, cancelling the
@@ -305,15 +295,13 @@ unsigned int ArgosTxScheduler::schedule_prepass(ArgosConfig& config, BasePassPre
 		start_time = static_cast<std::time_t>(next_pass.epoch) + next_pass.duration;
 		p_tm = std::gmtime(&start_time);
 		tm_start = *p_tm;
-		pp_config.start = { static_cast<uint16_t>(1900 + tm_start.tm_year),
-		                     static_cast<uint8_t>(tm_start.tm_mon + 1),
-		                     static_cast<uint8_t>(tm_start.tm_mday),
-		                     static_cast<uint8_t>(tm_start.tm_hour),
-		                     static_cast<uint8_t>(tm_start.tm_min),
-		                     static_cast<uint8_t>(tm_start.tm_sec) };
+		pp_config.start = { static_cast<uint16_t>(1900 + tm_start.tm_year), static_cast<uint8_t>(tm_start.tm_mon + 1),
+		                    static_cast<uint8_t>(tm_start.tm_mday),         static_cast<uint8_t>(tm_start.tm_hour),
+		                    static_cast<uint8_t>(tm_start.tm_min),          static_cast<uint8_t>(tm_start.tm_sec) };
 	}
 
-	DEBUG_ERROR("ArgosTxScheduler::schedule_prepass: no satellite pass found in 24h window (stale AOP or elevation config?) — TX disabled until next GPS fix");
+	DEBUG_ERROR("ArgosTxScheduler::schedule_prepass: no satellite pass found in 24h window (stale AOP or elevation "
+	            "config?) — TX disabled until next GPS fix");
 	return INVALID_SCHEDULE;
 }
 
@@ -321,11 +309,12 @@ unsigned int ArgosTxScheduler::schedule_prepass(ArgosConfig& config, BasePassPre
 /// @param config  Argos configuration (tx_interval, jitter, duty_cycle bitmask).
 /// @param now     Current RTC time.
 /// @return Delay in ms until next TX, or INVALID_SCHEDULE.
-unsigned int ArgosTxScheduler::schedule_duty_cycle(ArgosConfig& config, std::time_t now) {
+unsigned int ArgosTxScheduler::schedule_duty_cycle(ArgosConfig &config, std::time_t now) {
 	try {
-		schedule_periodic((config.tx_interval_s * MSECS_PER_SECOND), config.argos_tx_jitter_en, config.duty_cycle, ((uint64_t)now * MSECS_PER_SECOND));
+		schedule_periodic((config.tx_interval_s * MSECS_PER_SECOND), config.argos_tx_jitter_en, config.duty_cycle,
+		                  ((uint64_t)now * MSECS_PER_SECOND));
 		return m_curr_schedule_abs.value() - (now * MSECS_PER_SECOND);
-	} catch(...) {
+	} catch (...) {
 		return INVALID_SCHEDULE;
 	}
 }
@@ -334,11 +323,12 @@ unsigned int ArgosTxScheduler::schedule_duty_cycle(ArgosConfig& config, std::tim
 /// @param config  Argos configuration (tx_interval, jitter).
 /// @param now     Current RTC time.
 /// @return Delay in ms until next TX, or INVALID_SCHEDULE.
-unsigned int ArgosTxScheduler::schedule_legacy(ArgosConfig& config, std::time_t now) {
+unsigned int ArgosTxScheduler::schedule_legacy(ArgosConfig &config, std::time_t now) {
 	try {
-		schedule_periodic((config.tx_interval_s * MSECS_PER_SECOND), config.argos_tx_jitter_en, DUTYCYCLE_24HRS, (now * MSECS_PER_SECOND));
+		schedule_periodic((config.tx_interval_s * MSECS_PER_SECOND), config.argos_tx_jitter_en, DUTYCYCLE_24HRS,
+		                  (now * MSECS_PER_SECOND));
 		return m_curr_schedule_abs.value() - (now * MSECS_PER_SECOND);
-	} catch(...) {
+	} catch (...) {
 		return INVALID_SCHEDULE;
 	}
 }

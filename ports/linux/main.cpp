@@ -4,9 +4,9 @@
 #include "linux_timer.hpp"
 
 
-#define BLOCK_COUNT   (256)
-#define BLOCK_SIZE    (64*1024)
-#define PAGE_SIZE     (256)
+#define BLOCK_COUNT (256)
+#define BLOCK_SIZE  (64 * 1024)
+#define PAGE_SIZE   (256)
 
 // Global contexts
 FileSystem *main_filesystem;

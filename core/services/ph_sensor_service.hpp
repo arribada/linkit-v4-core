@@ -22,23 +22,20 @@ struct __attribute__((packed)) PHLogEntry {
 
 class PHLogFormatter : public LogFormatter {
 public:
-	const std::string header() override {
-		return "log_datetime,pH\r\n";
-	}
-	const std::string log_entry(const LogEntry& e) override {
+	const std::string header() override { return "log_datetime,pH\r\n"; }
+	const std::string log_entry(const LogEntry &e) override {
 		char entry[512], d1[128];
 		const auto *ph = reinterpret_cast<const PHLogEntry *>(&e);
 		std::time_t t;
 		std::tm *tm;
 
-		t = convert_epochtime(ph->header.year, ph->header.month, ph->header.day, ph->header.hours, ph->header.minutes, ph->header.seconds);
+		t = convert_epochtime(ph->header.year, ph->header.month, ph->header.day, ph->header.hours, ph->header.minutes,
+		                      ph->header.seconds);
 		tm = std::gmtime(&t);
 		std::strftime(d1, sizeof(d1), "%d/%m/%Y %H:%M:%S", tm);
 
 		// Convert to CSV
-		snprintf(entry, sizeof(entry), "%s,%f\r\n",
-				d1,
-				ph->ph);
+		snprintf(entry, sizeof(entry), "%s,%f\r\n", d1, ph->ph);
 		return std::string(entry);
 	}
 };
@@ -46,13 +43,13 @@ public:
 
 class PHSensorService : public SensorService {
 public:
-	PHSensorService(Sensor& sensor, Logger *logger) : SensorService(sensor, ServiceIdentifier::PH_SENSOR, "PH", logger) {}
+	PHSensorService(Sensor &sensor, Logger *logger)
+	    : SensorService(sensor, ServiceIdentifier::PH_SENSOR, "PH", logger) {}
 
 private:
-
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Warray-bounds"
-	void sensor_populate_log_entry(LogEntry *e, ServiceSensorData& data) override {
+	void sensor_populate_log_entry(LogEntry *e, ServiceSensorData &data) override {
 		auto *ph = reinterpret_cast<PHLogEntry *>(e);
 		ph->ph = data.port[0];
 		service_set_log_header_time(ph->header, service_current_time());
@@ -65,13 +62,10 @@ private:
 
 	unsigned int sensor_num_channels() override { return 1U; }
 
-	bool sensor_is_enabled() override {
-		return service_read_param<bool>(ParamID::PH_SENSOR_ENABLE);
-	}
+	bool sensor_is_enabled() override { return service_read_param<bool>(ParamID::PH_SENSOR_ENABLE); }
 
 	unsigned int sensor_periodic() override {
-		unsigned int schedule =
-				1000 * service_read_param<unsigned int>(ParamID::PH_SENSOR_PERIODIC);
+		unsigned int schedule = 1000 * service_read_param<unsigned int>(ParamID::PH_SENSOR_PERIODIC);
 		return schedule == 0 ? Service::SCHEDULE_DISABLED : schedule;
 	}
 

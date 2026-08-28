@@ -14,15 +14,15 @@
 /// Non-copyable. Supports nesting via SoftDevice critical region API.
 class InterruptLock {
 public:
-    /// @brief Enter critical region (disable IRQs / lock mutex).
-    InterruptLock();
+	/// @brief Enter critical region (disable IRQs / lock mutex).
+	InterruptLock();
 
-    InterruptLock(const InterruptLock&) = delete;
-    InterruptLock& operator=(const InterruptLock&) = delete;
+	InterruptLock(const InterruptLock &) = delete;
+	InterruptLock &operator=(const InterruptLock &) = delete;
 
-    /// @brief Exit critical region (restore IRQs / unlock mutex).
-    ~InterruptLock();
+	/// @brief Exit critical region (restore IRQs / unlock mutex).
+	~InterruptLock();
 
 private:
-    uint8_t m_nested = 0;  ///< SoftDevice nesting counter (unused on Linux port).
+	uint8_t m_nested = 0;  ///< SoftDevice nesting counter (unused on Linux port).
 };

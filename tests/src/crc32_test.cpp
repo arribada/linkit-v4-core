@@ -7,12 +7,9 @@
 using namespace std::literals::string_literals;
 
 
-TEST_GROUP(CRC32)
-{
-};
+TEST_GROUP(CRC32){};
 
-TEST(CRC32, SimpleCRC32Test)
-{
+TEST(CRC32, SimpleCRC32Test) {
 	// Refer to https://crccalc.com/?crc=123456789&method=crc32&datatype=ascii&outtype=hex
 	// for the reference output vector
 	CRC32 c;

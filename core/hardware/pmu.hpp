@@ -8,14 +8,7 @@
 #include <cstdint>
 
 /// @brief Crash type identifier stored in .noinit RAM for post-reset diagnostics.
-enum PMULogType {
-	WDT,
-	HARDFAULT,
-	ETL,
-	MMAN,
-	STACK,
-	MALLOC
-};
+enum PMULogType { WDT, HARDFAULT, ETL, MMAN, STACK, MALLOC };
 
 /// @brief Reset cause determined from NRF_POWER->RESETREAS + GPREGRET.
 enum class ResetCause {

@@ -32,8 +32,9 @@ static constexpr unsigned int ARGOS_RX_CAMPAIGN_MAX_SECS = 2 * 24 * 3600;
 
 /// @brief Construct Argos RX service with a KineisDevice backend.
 /// @param device  KineisDevice for RX operations (SMD/KIM2).
-ArgosRxService::ArgosRxService(KineisDevice& device) : Service(ServiceIdentifier::ARGOS_RX, "ARGOSRX"), m_kineis(device) {
-}
+ArgosRxService::ArgosRxService(KineisDevice &device)
+    : Service(ServiceIdentifier::ARGOS_RX, "ARGOSRX"),
+      m_kineis(device) {}
 
 /// @brief Init: set TCXO warmup, subscribe to KineisDevice events.
 void ArgosRxService::service_init() {
@@ -63,9 +64,9 @@ bool ArgosRxService::service_is_enabled() {
 	// setting the incidental protection vanishes and the receiver powers up for
 	// ARGOS_RX_MAX_WINDOW -- fifteen minutes by default -- on a battery already
 	// declared low. The whole point of the LB profile is to do LESS.
-	if (argos_config.is_lb)
-		return false;
-	return (argos_config.argos_rx_en && argos_config.mode == BaseArgosMode::PASS_PREDICTION && !argos_config.cert_tx_enable);
+	if (argos_config.is_lb) return false;
+	return (argos_config.argos_rx_en && argos_config.mode == BaseArgosMode::PASS_PREDICTION
+	        && !argos_config.cert_tx_enable);
 }
 
 /// @brief Compute next RX window using PREVIPASS.
@@ -73,7 +74,7 @@ bool ArgosRxService::service_is_enabled() {
 unsigned int ArgosRxService::service_next_schedule_in_ms() {
 	ArgosConfig argos_config;
 	configuration_store->get_argos_configuration(argos_config);
-	BasePassPredict& pass_predict = configuration_store->read_pass_predict();
+	BasePassPredict &pass_predict = configuration_store->read_pass_predict();
 	std::time_t now = service_current_time();
 	return m_sched.schedule(argos_config, pass_predict, now, m_timeout, m_mode);
 }
@@ -105,20 +106,17 @@ unsigned int ArgosRxService::service_next_timeout() {
 
 /// @brief Handle peer events — GPS fix updates location, UW surfacing sets earliest schedule.
 /// @param e  Peer service event.
-void ArgosRxService::notify_peer_event(ServiceEvent& e) {
-
-	if (e.event_source == ServiceIdentifier::GNSS_SENSOR &&
-		e.event_type == ServiceEventType::SERVICE_LOG_UPDATED)
-	{
+void ArgosRxService::notify_peer_event(ServiceEvent &e) {
+	if (e.event_source == ServiceIdentifier::GNSS_SENSOR && e.event_type == ServiceEventType::SERVICE_LOG_UPDATED) {
 		// Update location information if we got a valid fix
-		GPSLogEntry& gps = std::get<GPSLogEntry>(e.event_data);
+		GPSLogEntry &gps = std::get<GPSLogEntry>(e.event_data);
 		if (gps.info.valid) {
 			DEBUG_TRACE("ArgosRxService::notify_peer_event: updated GPS location");
 			m_sched.set_location(gps.info.lon, gps.info.lat);
-			if (!service_is_scheduled())
-				service_reschedule();
+			if (!service_is_scheduled()) service_reschedule();
 		}
-	} else if (e.event_source == ServiceIdentifier::UW_SENSOR && e.event_type == ServiceEventType::SERVICE_LOG_UPDATED) {
+	} else if (e.event_source == ServiceIdentifier::UW_SENSOR
+	           && e.event_type == ServiceEventType::SERVICE_LOG_UPDATED) {
 		if (std::get<bool>(e.event_data) == false) {
 			ArgosConfig argos_config;
 			configuration_store->get_argos_configuration(argos_config);
@@ -133,14 +131,14 @@ void ArgosRxService::notify_peer_event(ServiceEvent& e) {
 /// @brief Reschedule on surfacing (non-immediate — wait for earliest schedule).
 /// @param[out] immediate  Always false for RX (no immediate trigger).
 /// @return true (always reschedule on surface).
-bool ArgosRxService::service_is_triggered_on_surfaced(bool& immediate) {
+bool ArgosRxService::service_is_triggered_on_surfaced(bool &immediate) {
 	immediate = false;
 	return true;
 }
 
 /// @brief Downlink packet received — decode AOP and merge into pass predict.
 /// @param e  RX packet event with hex-encoded payload.
-void ArgosRxService::react(KineisEventRxPacket const& e) {
+void ArgosRxService::react(KineisEventRxPacket const &e) {
 	// Frames still in flight when the window was closed (the module keeps
 	// delivering for a few seconds after AT+DL=0, and the commit has just
 	// cleared the maps) would re-seed the decoder with a partial picture that
@@ -157,25 +155,24 @@ void ArgosRxService::react(KineisEventRxPacket const& e) {
 	// tracking follows the CS message set (counter/index/total) so that we can
 	// tell a complete constellation picture from a partial one.
 	BasePassPredict pass_predict;
-	PassPredictCodec::decode(m_orbit_params_map, m_constellation_status_map,
-			&m_constellation_status_tracking, e.packet, pass_predict);
+	PassPredictCodec::decode(m_orbit_params_map, m_constellation_status_map, &m_constellation_status_tracking, e.packet,
+	                         pass_predict);
 
 	// Check to see if any new AOP records were found
 	update_pass_predict(pass_predict);
 }
 
 /// @brief Device error — cancel RX and complete service.
-void ArgosRxService::react(KineisEventDeviceError const&) {
+void ArgosRxService::react(KineisEventDeviceError const &) {
 	DEBUG_TRACE("ArgosRxService::react: KineisEventDeviceError");
-	if (service_cancel())
-		service_complete();
+	if (service_cancel()) service_complete();
 }
 
 /// @brief Power off — flush cumulative RX time to config store (seconds).
-void ArgosRxService::react(KineisEventPowerOff const&) {
+void ArgosRxService::react(KineisEventPowerOff const &) {
 	if (m_cumulative_rx_time) {
 		DEBUG_INFO("ArgosRxService::react: KineisEventPowerOff: cumulative_rx=%u ms", m_cumulative_rx_time);
-		configuration_store->increment_rx_time((m_cumulative_rx_time + 999) / 1000); // Stored in seconds
+		configuration_store->increment_rx_time((m_cumulative_rx_time + 999) / 1000);  // Stored in seconds
 		// RAM updated — flash deferred to periodic flush / powerdown
 		m_cumulative_rx_time = 0;
 	}
@@ -183,15 +180,14 @@ void ArgosRxService::react(KineisEventPowerOff const&) {
 
 /// @brief RX stopped — accumulate RX-on time for statistics.
 /// @param e  Event with rx_time in ms.
-void ArgosRxService::react(KineisEventRxStopped const& e) {
+void ArgosRxService::react(KineisEventRxStopped const &e) {
 	m_cumulative_rx_time += e.rx_time;
 	m_rx_window_open = false;
 }
 
 /// @brief Merge new AOP records into existing pass predict database and persist to flash.
 /// @param new_pass_predict  Decoded AOP records from downlink packet(s).
-void ArgosRxService::update_pass_predict(BasePassPredict& new_pass_predict) {
-
+void ArgosRxService::update_pass_predict(BasePassPredict &new_pass_predict) {
 	BasePassPredict existing_pass_predict;
 	unsigned int num_updated_records = 0;
 
@@ -200,21 +196,18 @@ void ArgosRxService::update_pass_predict(BasePassPredict& new_pass_predict) {
 
 	// Iterate over new candidate records
 	for (unsigned int i = 0; i < new_pass_predict.num_records; i++) {
-		bool operational = new_pass_predict.records[i].downlinkStatus ||
-				new_pass_predict.records[i].uplinkStatus;
+		bool operational = new_pass_predict.records[i].downlinkStatus || new_pass_predict.records[i].uplinkStatus;
 		bool has_aop = new_pass_predict.records[i].bulletin.year != 0;
 		unsigned int j = 0;
 
 		DEBUG_TRACE("ArgosRxService::update_pass_predict: hexid=%02x dl=%u ul=%u aop=%u",
-				(unsigned int)new_pass_predict.records[i].satHexId,
-				(unsigned int)new_pass_predict.records[i].downlinkStatus,
-				(unsigned int)new_pass_predict.records[i].uplinkStatus,
-				(unsigned int)has_aop);
+		            (unsigned int)new_pass_predict.records[i].satHexId,
+		            (unsigned int)new_pass_predict.records[i].downlinkStatus,
+		            (unsigned int)new_pass_predict.records[i].uplinkStatus, (unsigned int)has_aop);
 
 		for (; j < existing_pass_predict.num_records; j++) {
 			// Check for existing hex ID match
-			if (new_pass_predict.records[i].satHexId != existing_pass_predict.records[j].satHexId)
-				continue;
+			if (new_pass_predict.records[i].satHexId != existing_pass_predict.records[j].satHexId) continue;
 			if (operational && has_aop) {
 				num_updated_records++;
 				existing_pass_predict.records[j] = new_pass_predict.records[i];
@@ -237,7 +230,7 @@ void ArgosRxService::update_pass_predict(BasePassPredict& new_pass_predict) {
 					num_updated_records++;
 				} else {
 					DEBUG_WARN("ArgosRxService::update_pass_predict: database full, hexid=%02x dropped",
-							(unsigned int)new_pass_predict.records[i].satHexId);
+					           (unsigned int)new_pass_predict.records[i].satHexId);
 				}
 			} else if (!operational) {
 				// Unknown and out of service: nothing to store, but nothing
@@ -247,16 +240,14 @@ void ArgosRxService::update_pass_predict(BasePassPredict& new_pass_predict) {
 		}
 	}
 
-	DEBUG_INFO("ArgosRxService::update_pass_predict: received=%u/%u constellation_status=%s",
-			num_updated_records, new_pass_predict.num_records,
-			m_constellation_status_tracking.is_complete() ? "complete" : "partial");
+	DEBUG_INFO("ArgosRxService::update_pass_predict: received=%u/%u constellation_status=%s", num_updated_records,
+	           new_pass_predict.num_records, m_constellation_status_tracking.is_complete() ? "complete" : "partial");
 
 	// Normal case: commit once the whole constellation status set has been
 	// received and every satellite it declares has been matched with an orbit
 	// bulletin, so the database is never written with holes.
-	const bool campaign_complete = m_constellation_status_tracking.is_complete() &&
-			new_pass_predict.num_records &&
-			num_updated_records == new_pass_predict.num_records;
+	const bool campaign_complete = m_constellation_status_tracking.is_complete() && new_pass_predict.num_records
+	                               && num_updated_records == new_pass_predict.num_records;
 
 	// Safety valve: a campaign that drags on is committed with what it has.
 	// Waiting forever for one satellite would keep the whole database frozen,
@@ -266,13 +257,12 @@ void ArgosRxService::update_pass_predict(BasePassPredict& new_pass_predict) {
 
 	if (m_campaign_started == 0)
 		m_campaign_started = now;
-	else if (!campaign_complete && num_updated_records &&
-			 (now - m_campaign_started) > (std::time_t)ARGOS_RX_CAMPAIGN_MAX_SECS) {
+	else if (!campaign_complete && num_updated_records
+	         && (now - m_campaign_started) > (std::time_t)ARGOS_RX_CAMPAIGN_MAX_SECS) {
 		campaign_expired = true;
 		DEBUG_WARN("ArgosRxService::update_pass_predict: campaign running for %llu s "
-				"with %u/%u satellites, committing what we have",
-				(unsigned long long)(now - m_campaign_started),
-				num_updated_records, new_pass_predict.num_records);
+		           "with %u/%u satellites, committing what we have",
+		           (unsigned long long)(now - m_campaign_started), num_updated_records, new_pass_predict.num_records);
 	}
 
 	if (campaign_complete || campaign_expired) {
@@ -291,20 +281,18 @@ void ArgosRxService::update_pass_predict(BasePassPredict& new_pass_predict) {
 				bool declared = false;
 
 				for (unsigned int j = 0; j < new_pass_predict.num_records; j++) {
-					if (existing_pass_predict.records[i].satHexId ==
-							new_pass_predict.records[j].satHexId) {
+					if (existing_pass_predict.records[i].satHexId == new_pass_predict.records[j].satHexId) {
 						declared = true;
 						break;
 					}
 				}
 				if (!declared) {
 					DEBUG_WARN("ArgosRxService::update_pass_predict: hexid=%02x no longer "
-							"declared by the constellation, removed from the database",
-							(unsigned int)existing_pass_predict.records[i].satHexId);
+					           "declared by the constellation, removed from the database",
+					           (unsigned int)existing_pass_predict.records[i].satHexId);
 					continue;
 				}
-				if (kept != i)
-					existing_pass_predict.records[kept] = existing_pass_predict.records[i];
+				if (kept != i) existing_pass_predict.records[kept] = existing_pass_predict.records[i];
 				kept++;
 			}
 			existing_pass_predict.num_records = static_cast<uint8_t>(kept);
@@ -351,7 +339,8 @@ ArgosRxScheduler::ArgosRxScheduler() : m_earliest_schedule(0) {
 /// @param[out] timeout    RX window duration in ms.
 /// @param[out] mode       Modulation for the RX window.
 /// @return Delay in ms until RX start, or SCHEDULE_DISABLED.
-unsigned int ArgosRxScheduler::schedule(ArgosConfig& argos_config, BasePassPredict& pass_predict, std::time_t now, unsigned int &timeout, KineisModulation& mode) {
+unsigned int ArgosRxScheduler::schedule(ArgosConfig &argos_config, BasePassPredict &pass_predict, std::time_t now,
+                                        unsigned int &timeout, KineisModulation &mode) {
 	if (!m_location.has_value()) {
 		DEBUG_TRACE("ArgosRxService::schedule: can't schedule as last location/time is not known");
 		return Service::SCHEDULE_DISABLED;
@@ -365,7 +354,7 @@ unsigned int ArgosRxScheduler::schedule(ArgosConfig& argos_config, BasePassPredi
 	std::time_t stop_time = start_time + (std::time_t)SECONDS_PER_DAY;
 
 	DEBUG_TRACE("ArgosRxService::service_next_schedule_in_ms: searching window start=%llu stop=%llu",
-			(unsigned long long)start_time, (unsigned long long)stop_time);
+	            (unsigned long long)start_time, (unsigned long long)stop_time);
 
 	// The search start moves forward when a candidate pass turns out to be
 	// almost over, so the configuration is rebuilt on each iteration.
@@ -378,19 +367,22 @@ unsigned int ArgosRxScheduler::schedule(ArgosConfig& argos_config, BasePassPredi
 		PredictionPassConfiguration_t cfg = {
 			(float)m_location.value().latitude,
 			(float)m_location.value().longitude,
-			{ (uint16_t)(1900 + tm_start.tm_year), (uint8_t)(tm_start.tm_mon + 1), (uint8_t)tm_start.tm_mday, (uint8_t)tm_start.tm_hour, (uint8_t)tm_start.tm_min, (uint8_t)tm_start.tm_sec },
-			{ (uint16_t)(1900 + tm_stop.tm_year), (uint8_t)(tm_stop.tm_mon + 1), (uint8_t)tm_stop.tm_mday, (uint8_t)tm_stop.tm_hour, (uint8_t)tm_stop.tm_min, (uint8_t)tm_stop.tm_sec },
-			(float)argos_config.prepass_min_elevation,        //< Minimum elevation of passes [0, 90]
-			(float)argos_config.prepass_max_elevation,        //< Maximum elevation of passes  [maxElevation >= < minElevation]
-			(float)argos_config.prepass_min_duration / 60.0f,  //< Minimum duration (minutes)
-			argos_config.prepass_max_passes,                  //< Maximum number of passes per satellite (#)
-			(float)argos_config.prepass_linear_margin / 60.0f, //< Linear time margin (in minutes/6months)
-			argos_config.prepass_comp_step,                    //< Computation step (seconds)
+			{ (uint16_t)(1900 + tm_start.tm_year), (uint8_t)(tm_start.tm_mon + 1), (uint8_t)tm_start.tm_mday,
+			  (uint8_t)tm_start.tm_hour, (uint8_t)tm_start.tm_min, (uint8_t)tm_start.tm_sec },
+			{ (uint16_t)(1900 + tm_stop.tm_year), (uint8_t)(tm_stop.tm_mon + 1), (uint8_t)tm_stop.tm_mday,
+			  (uint8_t)tm_stop.tm_hour, (uint8_t)tm_stop.tm_min, (uint8_t)tm_stop.tm_sec },
+			(float)argos_config.prepass_min_elevation,  //< Minimum elevation of passes [0, 90]
+			(float)
+			    argos_config.prepass_max_elevation,  //< Maximum elevation of passes  [maxElevation >= < minElevation]
+			(float)argos_config.prepass_min_duration / 60.0f,   //< Minimum duration (minutes)
+			argos_config.prepass_max_passes,                    //< Maximum number of passes per satellite (#)
+			(float)argos_config.prepass_linear_margin / 60.0f,  //< Linear time margin (in minutes/6months)
+			argos_config.prepass_comp_step,                     //< Computation step (seconds)
 			// PPP11, default 20 deg: the downlink window is a fixed cost, and a
 			// grazing pass spends it for a link that will not close.
 			(float)argos_config.prepass_rx_min_culmination,
-			(float)argos_config.prepass_position_margin_km,   // PPP12
-			true // includeCurrentPass
+			(float)argos_config.prepass_position_margin_km,  // PPP12
+			true                                             // includeCurrentPass
 		};
 		return cfg;
 	};
@@ -399,14 +391,8 @@ unsigned int ArgosRxScheduler::schedule(ArgosConfig& argos_config, BasePassPredi
 	SatelliteNextPassPrediction_t next_pass;
 
 	for (unsigned int attempt = 0; attempt < ARGOS_RX_MAX_PASS_CANDIDATES; attempt++) {
-
-		if (!PREVIPASS_compute_next_pass_with_status(
-				&pp_config,
-				pass_predict.records,
-				pass_predict.num_records,
-				SAT_DNLK_ON,
-				SAT_UPLK_ON_KINEIS_V1,
-				&next_pass))
+		if (!PREVIPASS_compute_next_pass_with_status(&pp_config, pass_predict.records, pass_predict.num_records,
+		                                             SAT_DNLK_ON, SAT_UPLK_ON_KINEIS_V1, &next_pass))
 			break;
 
 		// Set initial start/end points based on this discovered window
@@ -416,13 +402,9 @@ unsigned int ArgosRxScheduler::schedule(ArgosConfig& argos_config, BasePassPredi
 		start = std::max((std::time_t)next_pass.epoch, start);
 
 		DEBUG_INFO("ArgosRxScheduler::schedule_prepass: sat=%02x dl=%u e=%llu t=%llu [%llu %llu %llu]",
-					(unsigned int)next_pass.satHexId,
-					(unsigned int)next_pass.downlinkStatus,
-					(unsigned long long)m_earliest_schedule,
-					(unsigned long long)now,
-					(unsigned long long)start_time,
-					(unsigned long long)next_pass.epoch,
-					(unsigned long long)end);
+		           (unsigned int)next_pass.satHexId, (unsigned int)next_pass.downlinkStatus,
+		           (unsigned long long)m_earliest_schedule, (unsigned long long)now, (unsigned long long)start_time,
+		           (unsigned long long)next_pass.epoch, (unsigned long long)end);
 
 		// A pass already under way when the window opens only leaves its tail.
 		// Powering the receiver for a few seconds yields nothing — the module
@@ -431,13 +413,12 @@ unsigned int ArgosRxScheduler::schedule(ArgosConfig& argos_config, BasePassPredi
 		// instead of burning a window on it.
 		if (end <= start || (unsigned int)(end - start) < ARGOS_RX_MIN_WINDOW_SECS) {
 			DEBUG_TRACE("ArgosRxScheduler::schedule_prepass: sat=%02x window too short (%d secs), skipping",
-					(unsigned int)next_pass.satHexId, (int)(end - start));
+			            (unsigned int)next_pass.satHexId, (int)(end - start));
 			// Strictly monotonic: a candidate whose end is already behind the
 			// current search start would otherwise be returned again and again,
 			// burning the candidate budget without moving forward.
 			start_time = std::max(end + (std::time_t)1, start_time + (std::time_t)1);
-			if (start_time >= stop_time)
-				break;
+			if (start_time >= stop_time) break;
 			pp_config = build_config(start_time);
 			continue;
 		}
@@ -447,7 +428,7 @@ unsigned int ArgosRxScheduler::schedule(ArgosConfig& argos_config, BasePassPredi
 			// We're good to go for this schedule, compute relative delay until the epoch arrives
 			mode = KineisModulation::LDK;
 			DEBUG_INFO("ArgosRxScheduler::schedule_prepass: scheduled in %llu secs | timeout %u secs",
-					(unsigned long long)(start - now), (unsigned int)(end - start));
+			           (unsigned long long)(start - now), (unsigned int)(end - start));
 			timeout = (end - start) * MSECS_PER_SECOND;
 			return (start - now) * MSECS_PER_SECOND;
 		} else {

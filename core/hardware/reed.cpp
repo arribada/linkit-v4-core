@@ -27,17 +27,12 @@ extern Scheduler *system_scheduler;
 // semantics are unchanged.
 static constexpr unsigned int REED_GESTURE_PRIORITY = 2;
 
-ReedSwitch::ReedSwitch(
-		Switch &sw,
-		unsigned int short_hold_period_ms,
-		unsigned int long_hold_period_ms) : m_switch(sw)
-{
+ReedSwitch::ReedSwitch(Switch &sw, unsigned int short_hold_period_ms, unsigned int long_hold_period_ms) : m_switch(sw) {
 	m_short_hold_period_ms = short_hold_period_ms;
 	m_long_hold_period_ms = long_hold_period_ms;
 }
 
-ReedSwitch::~ReedSwitch()
-{
+ReedSwitch::~ReedSwitch() {
 	stop();
 }
 
@@ -52,44 +47,42 @@ void ReedSwitch::stop() {
 }
 
 void ReedSwitch::switch_state_handler(bool state) {
-
 	if (state) {
-
 		DEBUG_TRACE("ReedSwitch::switch_state_handler: ENGAGE");
 
 		if (m_user_callback) {
-			system_scheduler->post_task_prio([this]() {
-				m_user_callback(ReedSwitchGesture::ENGAGE);
-			}, "ReedSwitchUserCallback", REED_GESTURE_PRIORITY);
+			system_scheduler->post_task_prio([this]() { m_user_callback(ReedSwitchGesture::ENGAGE); },
+			                                 "ReedSwitchUserCallback", REED_GESTURE_PRIORITY);
 		}
 
 		// Start hold timers
-		m_task = system_scheduler->post_task_prio([this]() {
-			if (m_user_callback) {
-				system_scheduler->post_task_prio([this]() {
-					m_user_callback(ReedSwitchGesture::SHORT_HOLD);
-				}, "ReedSwitchUserCallback", REED_GESTURE_PRIORITY);
-			}
+		m_task = system_scheduler->post_task_prio(
+		    [this]() {
+			    if (m_user_callback) {
+				    system_scheduler->post_task_prio([this]() { m_user_callback(ReedSwitchGesture::SHORT_HOLD); },
+					                                 "ReedSwitchUserCallback", REED_GESTURE_PRIORITY);
+			    }
 
-			m_task = system_scheduler->post_task_prio([this]() {
-				if (m_user_callback) {
-					system_scheduler->post_task_prio([this]() {
-						m_user_callback(ReedSwitchGesture::LONG_HOLD);
-					}, "ReedSwitchUserCallback", REED_GESTURE_PRIORITY);
-				}
-			}, "ShortHoldEventHandler", REED_GESTURE_PRIORITY, m_short_hold_period_ms);
-		}, "LongHoldEventHandler", REED_GESTURE_PRIORITY, m_long_hold_period_ms - m_short_hold_period_ms);
+			    m_task = system_scheduler->post_task_prio(
+			        [this]() {
+				        if (m_user_callback) {
+					        system_scheduler->post_task_prio(
+					            [this]() { m_user_callback(ReedSwitchGesture::LONG_HOLD); }, "ReedSwitchUserCallback",
+					            REED_GESTURE_PRIORITY);
+				        }
+			        },
+			        "ShortHoldEventHandler", REED_GESTURE_PRIORITY, m_short_hold_period_ms);
+		    },
+		    "LongHoldEventHandler", REED_GESTURE_PRIORITY, m_long_hold_period_ms - m_short_hold_period_ms);
 
 	} else {
-
 		DEBUG_TRACE("ReedSwitch::switch_state_handler: RELEASE");
 
 		system_scheduler->cancel_task(m_task);
 
 		if (m_user_callback) {
-			system_scheduler->post_task_prio([this]() {
-				m_user_callback(ReedSwitchGesture::RELEASE);
-			}, "ReedSwitchUserCallback", REED_GESTURE_PRIORITY);
+			system_scheduler->post_task_prio([this]() { m_user_callback(ReedSwitchGesture::RELEASE); },
+			                                 "ReedSwitchUserCallback", REED_GESTURE_PRIORITY);
 		}
 	}
 }

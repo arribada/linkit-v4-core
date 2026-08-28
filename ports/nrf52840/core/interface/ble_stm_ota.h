@@ -95,38 +95,33 @@ extern "C" {
  * @param   _name   Name of the instance.
  * @hideinitializer
  */
-#define BLE_STM_OTA_DEF(_name)                                                                          \
-static ble_stm_ota_t _name;                                                                         \
-NRF_SDH_BLE_OBSERVER(_name ## _obs,                                                                 \
-                     BLE_STM_OTA_BLE_OBSERVER_PRIO,                                                 \
-                     ble_stm_ota_on_ble_evt, &_name)
+#define BLE_STM_OTA_DEF(_name)  \
+	static ble_stm_ota_t _name; \
+	NRF_SDH_BLE_OBSERVER(_name##_obs, BLE_STM_OTA_BLE_OBSERVER_PRIO, ble_stm_ota_on_ble_evt, &_name)
 
 // 00000000-8E22-4541-9D4C-21EDAE82ED19
-#define STM_OTA_UUID_BASE        {0x19, 0xED, 0x82, 0xAE, 0xED, 0x21, 0x4C, 0x9D, \
-                              	  0x41, 0x45, 0x22, 0x8E, 0x00, 0x00, 0x00, 0x00}
+#define STM_OTA_UUID_BASE \
+	{ 0x19, 0xED, 0x82, 0xAE, 0xED, 0x21, 0x4C, 0x9D, 0x41, 0x45, 0x22, 0x8E, 0x00, 0x00, 0x00, 0x00 }
 
 
-#define STM_OTA_UUID_SERVICE     			0xFE20
-#define STM_OTA_UUID_BASE_ADDRESS 			0xFE22
-#define STM_OTA_UUID_FILE_UPLOAD_STATUS		0xFE23
-#define STM_OTA_UUID_OTA_RAW_DATA			0xFE24
+#define STM_OTA_UUID_SERVICE                      0xFE20
+#define STM_OTA_UUID_BASE_ADDRESS                 0xFE22
+#define STM_OTA_UUID_FILE_UPLOAD_STATUS           0xFE23
+#define STM_OTA_UUID_OTA_RAW_DATA                 0xFE24
 
-#define STM_OTA_STATUS_IGNORE						0xFF
-#define STM_OTA_STATUS_FILE_RECEPTION_OK			0x00
-#define STM_OTA_STATUS_FILE_RECEPTION_INTERRUPTED	0x01
-#define STM_OTA_STATUS_INTEGRITY_OK					0x00
-#define STM_OTA_STATUS_INTEGRITY_NOT_OK				0x01
-#define STM_OTA_STATUS_START_UPLOAD_OK				0x00
-#define STM_OTA_STATUS_START_UPLOAD_BUSY			0x01
+#define STM_OTA_STATUS_IGNORE                     0xFF
+#define STM_OTA_STATUS_FILE_RECEPTION_OK          0x00
+#define STM_OTA_STATUS_FILE_RECEPTION_INTERRUPTED 0x01
+#define STM_OTA_STATUS_INTEGRITY_OK               0x00
+#define STM_OTA_STATUS_INTEGRITY_NOT_OK           0x01
+#define STM_OTA_STATUS_START_UPLOAD_OK            0x00
+#define STM_OTA_STATUS_START_UPLOAD_BUSY          0x01
 
 
 // Forward declaration of the ble_lbs_t type.
 typedef struct ble_stm_ota_s ble_stm_ota_t;
 
-typedef enum {
-	STM_OTA_EVENT_ACTION,
-	STM_OTA_EVENT_RAW_DATA
-} ble_stm_ota_event_type_t;
+typedef enum { STM_OTA_EVENT_ACTION, STM_OTA_EVENT_RAW_DATA } ble_stm_ota_event_type_t;
 
 typedef enum {
 	STM_OTA_ACTION_STOP_ALL,
@@ -136,8 +131,7 @@ typedef enum {
 	STM_OTA_ACTION_CANCEL
 } ble_stm_ota_action_t;
 
-typedef struct
-{
+typedef struct {
 	ble_stm_ota_event_type_t event_type;
 	union {
 		struct {
@@ -145,30 +139,31 @@ typedef struct
 			uint32_t address;
 		};
 		struct {
-			void * p_data;
+			void *p_data;
 			uint8_t length;
 		};
 	};
 } ble_stm_ota_event_t;
 
-typedef void (*ble_stm_ota_event_handler_t) (uint16_t conn_handle, ble_stm_ota_t * p_stm_ota, ble_stm_ota_event_t * p_event);
+typedef void (*ble_stm_ota_event_handler_t)(uint16_t conn_handle, ble_stm_ota_t *p_stm_ota,
+                                            ble_stm_ota_event_t *p_event);
 
 /** @brief STM OTA Service init structure. This structure contains all options and data needed for
  *        initialization of the service.*/
-typedef struct
-{
-	ble_stm_ota_event_handler_t event_handler; /**< Event handler to be called when client writes one of the characteristics */
+typedef struct {
+	ble_stm_ota_event_handler_t
+	    event_handler; /**< Event handler to be called when client writes one of the characteristics */
 } ble_stm_ota_init_t;
 
 /**@brief STM OTA Service structure. This structure contains various status information for the service. */
-struct ble_stm_ota_s
-{
-    uint16_t                    service_handle;      /**< Handle of LED Button Service (as provided by the BLE stack). */
-    ble_gatts_char_handles_t    base_address_char_handles;    /**< Handles related to the Base Address Characteristic. */
-    ble_gatts_char_handles_t    file_upload_end_status_char_handles;    /**< Handles related to the File Upload End Status Characteristic. */
-    ble_gatts_char_handles_t    ota_raw_data_char_handles; /**< Handles related to the OTA Raw Data Characteristic. */
-    uint8_t                     uuid_type;           /**< UUID type for the STM OTA Service. */
-    ble_stm_ota_event_handler_t event_handler;   /**< Event handler to be called when a Characteristic is written. */
+struct ble_stm_ota_s {
+	uint16_t service_handle; /**< Handle of LED Button Service (as provided by the BLE stack). */
+	ble_gatts_char_handles_t base_address_char_handles; /**< Handles related to the Base Address Characteristic. */
+	ble_gatts_char_handles_t
+	    file_upload_end_status_char_handles; /**< Handles related to the File Upload End Status Characteristic. */
+	ble_gatts_char_handles_t ota_raw_data_char_handles; /**< Handles related to the OTA Raw Data Characteristic. */
+	uint8_t uuid_type;                                  /**< UUID type for the STM OTA Service. */
+	ble_stm_ota_event_handler_t event_handler; /**< Event handler to be called when a Characteristic is written. */
 };
 
 
@@ -181,7 +176,7 @@ struct ble_stm_ota_s
  *
  * @retval NRF_SUCCESS If the service was initialized successfully. Otherwise, an error code is returned.
  */
-uint32_t ble_stm_ota_init(ble_stm_ota_t * p_stm_ota, const ble_stm_ota_init_t * p_stm_ota_init);
+uint32_t ble_stm_ota_init(ble_stm_ota_t *p_stm_ota, const ble_stm_ota_init_t *p_stm_ota_init);
 
 
 /**@brief Function for handling the application's BLE stack events.
@@ -191,7 +186,7 @@ uint32_t ble_stm_ota_init(ble_stm_ota_t * p_stm_ota, const ble_stm_ota_init_t * 
  * @param[in] p_ble_evt  Event received from the BLE stack.
  * @param[in] p_context  LED Button Service structure.
  */
-void ble_stm_ota_on_ble_evt(ble_evt_t const * p_ble_evt, void * p_context);
+void ble_stm_ota_on_ble_evt(ble_evt_t const *p_ble_evt, void *p_context);
 
 
 /**@brief Function for sending File Upload Status.
@@ -202,13 +197,13 @@ void ble_stm_ota_on_ble_evt(ble_evt_t const * p_ble_evt, void * p_context);
  *
  * @retval NRF_SUCCESS If the notification was sent successfully. Otherwise, an error code is returned.
  */
-uint32_t ble_stm_ota_on_file_upload_status(uint16_t conn_handle, ble_stm_ota_t * p_stm_ota, uint8_t status[3]);
+uint32_t ble_stm_ota_on_file_upload_status(uint16_t conn_handle, ble_stm_ota_t *p_stm_ota, uint8_t status[3]);
 
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif // BLE_STM_OTA_H__
+#endif  // BLE_STM_OTA_H__
 
 /** @} */

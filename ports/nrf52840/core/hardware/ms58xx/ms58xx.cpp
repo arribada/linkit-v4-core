@@ -16,8 +16,7 @@
 /// @param C   PROM calibration coefficients (C[0]..C[7]).
 /// @param[out] temperature  Temperature in °C.
 /// @param[out] pressure     Pressure in bar.
-static void read_ms5837_30bar(int32_t D1, int32_t D2, const uint16_t *C, double& temperature, double& pressure)
-{
+static void read_ms5837_30bar(int32_t D1, int32_t D2, const uint16_t *C, double &temperature, double &pressure) {
 	int32_t TEMP, dT;
 	int64_t OFF, SENS, T2, OFF2, SENS2;
 
@@ -58,8 +57,7 @@ static void read_ms5837_30bar(int32_t D1, int32_t D2, const uint16_t *C, double&
 /// @param C   PROM calibration coefficients.
 /// @param[out] temperature  Temperature in °C.
 /// @param[out] pressure     Pressure in bar.
-static void read_ms5803_14bar(int32_t D1, int32_t D2, const uint16_t *C, double& temperature, double& pressure)
-{
+static void read_ms5803_14bar(int32_t D1, int32_t D2, const uint16_t *C, double &temperature, double &pressure) {
 	int32_t TEMP, dT;
 	int64_t OFF, SENS, T2, OFF2, SENS2;
 
@@ -100,8 +98,7 @@ static void read_ms5803_14bar(int32_t D1, int32_t D2, const uint16_t *C, double&
 /// @param C   PROM calibration coefficients.
 /// @param[out] temperature  Temperature in °C.
 /// @param[out] pressure     Pressure in bar.
-static void read_ms5837_02bar(int32_t D1, int32_t D2, const uint16_t *C, double& temperature, double& pressure)
-{
+static void read_ms5837_02bar(int32_t D1, int32_t D2, const uint16_t *C, double &temperature, double &pressure) {
 	int32_t TEMP, dT;
 	int64_t OFF, SENS, T2, OFF2, SENS2;
 
@@ -143,9 +140,10 @@ static void read_ms5837_02bar(int32_t D1, int32_t D2, const uint16_t *C, double&
 /// @param variant  Variant string ("MS5803_14BA", "MS5837_30BA", "MS5837_02BA").
 /// @throws ErrorCode::NOT_IMPLEMENTED if variant is not supported.
 /// @throws ErrorCode::I2C_CRC_FAILURE if PROM CRC check fails.
-MS58xxLL::MS58xxLL(unsigned int bus, unsigned char addr, const std::string& variant)
-	: m_bus(bus), m_addr(addr), m_resolution(MS58xxCommand::ADC_4096)
-{
+MS58xxLL::MS58xxLL(unsigned int bus, unsigned char addr, const std::string &variant)
+    : m_bus(bus),
+      m_addr(addr),
+      m_resolution(MS58xxCommand::ADC_4096) {
 	DEBUG_TRACE("MS58xxLL(bus=%u, addr=0x%02x, variant=%s)", bus, static_cast<unsigned int>(addr), variant.c_str());
 
 	if (variant == "MS5837_02BA") {
@@ -179,8 +177,7 @@ MS58xxLL::MS58xxLL(unsigned int bus, unsigned char addr, const std::string& vari
 /// @brief Read pressure and temperature using the variant-specific conversion function.
 /// @param[out] temperature  Temperature in °C.
 /// @param[out] pressure     Pressure in bar.
-void MS58xxLL::read(double& temperature, double& pressure)
-{
+void MS58xxLL::read(double &temperature, double &pressure) {
 	auto D1 = static_cast<int32_t>(sample_adc(MS58xxCommand::ADC_D1));
 	auto D2 = static_cast<int32_t>(sample_adc(MS58xxCommand::ADC_D2));
 	m_convert(D1, D2, C, temperature, pressure);
@@ -188,14 +185,12 @@ void MS58xxLL::read(double& temperature, double& pressure)
 
 /// @brief Send a single-byte I2C command.
 /// @param command  Command byte.
-void MS58xxLL::send_command(uint8_t command)
-{
+void MS58xxLL::send_command(uint8_t command) {
 	NrfI2C::write(m_bus, m_addr, &command, sizeof(command), false);
 }
 
 /// @brief Reset device and read PROM calibration coefficients via I2C.
-void MS58xxLL::read_coeffs()
-{
+void MS58xxLL::read_coeffs() {
 	DEBUG_TRACE("MS58xxLL: reading PROM (%u words)", m_prom_size);
 
 	send_command(static_cast<uint8_t>(MS58xxCommand::RESET));
@@ -213,11 +208,9 @@ void MS58xxLL::read_coeffs()
 /// @brief Sample one ADC channel (D1=pressure or D2=temperature).
 /// @param measurement  ADC_D1 or ADC_D2.
 /// @return 24-bit ADC result.
-uint32_t MS58xxLL::sample_adc(uint8_t measurement)
-{
-	uint8_t cmd = static_cast<uint8_t>(MS58xxCommand::ADC_CONV)
-	            | static_cast<uint8_t>(MS58xxCommand::ADC_4096)
-	            | measurement;
+uint32_t MS58xxLL::sample_adc(uint8_t measurement) {
+	uint8_t cmd =
+	    static_cast<uint8_t>(MS58xxCommand::ADC_CONV) | static_cast<uint8_t>(MS58xxCommand::ADC_4096) | measurement;
 	send_command(cmd);
 	PMU::delay_ms(10);  // 4096 OSR conversion time: max 8.22 ms
 	send_command(static_cast<uint8_t>(MS58xxCommand::ADC_READ));
@@ -229,8 +222,7 @@ uint32_t MS58xxLL::sample_adc(uint8_t measurement)
 
 /// @brief Verify PROM CRC (4-bit CRC per MS58xx datasheet).
 /// @throws ErrorCode::I2C_CRC_FAILURE if CRC mismatch.
-void MS58xxLL::check_coeffs()
-{
+void MS58xxLL::check_coeffs() {
 	uint32_t n_rem = 0;
 	uint16_t crc_temp = C[m_crc_offset];
 

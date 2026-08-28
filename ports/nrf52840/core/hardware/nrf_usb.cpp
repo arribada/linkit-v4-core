@@ -17,11 +17,11 @@ static inline void usb_queue_process() {
 	while (app_usbd_event_queue_process()) {}
 }
 
-#define CDC_ACM_COMM_INTERFACE  0
-#define CDC_ACM_COMM_EPIN       NRF_DRV_USBD_EPIN2
-#define CDC_ACM_DATA_INTERFACE  1
-#define CDC_ACM_DATA_EPIN       NRF_DRV_USBD_EPIN1
-#define CDC_ACM_DATA_EPOUT      NRF_DRV_USBD_EPOUT1
+#define CDC_ACM_COMM_INTERFACE 0
+#define CDC_ACM_COMM_EPIN      NRF_DRV_USBD_EPIN2
+#define CDC_ACM_DATA_INTERFACE 1
+#define CDC_ACM_DATA_EPIN      NRF_DRV_USBD_EPIN1
+#define CDC_ACM_DATA_EPOUT     NRF_DRV_USBD_EPOUT1
 
 static constexpr size_t USB_CDC_READ_SIZE = 64;  ///< Max bytes per USB CDC read transfer
 
@@ -35,73 +35,50 @@ volatile bool NrfUSB::m_line_ready = false;
 /// @brief Temporary buffer for USB CDC reads (single transfer).
 static char s_usb_rx_temp[USB_CDC_READ_SIZE];
 
-static void cdc_acm_user_ev_handler(app_usbd_class_inst_t const *p_inst,
-                                    app_usbd_cdc_acm_user_event_t event);
+static void cdc_acm_user_ev_handler(app_usbd_class_inst_t const *p_inst, app_usbd_cdc_acm_user_event_t event);
 
 extern "C" {
-APP_USBD_CDC_ACM_GLOBAL_DEF(m_app_cdc_acm,
-                            cdc_acm_user_ev_handler,
-                            CDC_ACM_COMM_INTERFACE,
-                            CDC_ACM_DATA_INTERFACE,
-                            CDC_ACM_COMM_EPIN,
-                            CDC_ACM_DATA_EPIN,
-                            CDC_ACM_DATA_EPOUT,
+APP_USBD_CDC_ACM_GLOBAL_DEF(m_app_cdc_acm, cdc_acm_user_ev_handler, CDC_ACM_COMM_INTERFACE, CDC_ACM_DATA_INTERFACE,
+                            CDC_ACM_COMM_EPIN, CDC_ACM_DATA_EPIN, CDC_ACM_DATA_EPOUT,
                             APP_USBD_CDC_COMM_PROTOCOL_AT_V250);
 }
 
 /// @brief Kick off a new async USB CDC read if port is open.
 static void start_usb_read() {
-	if (NrfUSB::is_port_open())
-		app_usbd_cdc_acm_read_any(&m_app_cdc_acm, s_usb_rx_temp, USB_CDC_READ_SIZE);
+	if (NrfUSB::is_port_open()) app_usbd_cdc_acm_read_any(&m_app_cdc_acm, s_usb_rx_temp, USB_CDC_READ_SIZE);
 }
 
 /// @brief CDC ACM user event handler — manages port state and RX data.
-static void cdc_acm_user_ev_handler(app_usbd_class_inst_t const *p_inst,
-                                    app_usbd_cdc_acm_user_event_t event)
-{
+static void cdc_acm_user_ev_handler(app_usbd_class_inst_t const *p_inst, app_usbd_cdc_acm_user_event_t event) {
 	switch (event) {
 	case APP_USBD_CDC_ACM_USER_EVT_PORT_OPEN:
 		NrfUSB::set_port_open(true);
 		start_usb_read();
 		break;
-	case APP_USBD_CDC_ACM_USER_EVT_PORT_CLOSE:
-		NrfUSB::set_port_open(false);
-		break;
-	case APP_USBD_CDC_ACM_USER_EVT_RX_DONE:
-	{
+	case APP_USBD_CDC_ACM_USER_EVT_PORT_CLOSE: NrfUSB::set_port_open(false); break;
+	case APP_USBD_CDC_ACM_USER_EVT_RX_DONE: {
 		size_t rx_size = app_usbd_cdc_acm_rx_size(&m_app_cdc_acm);
-		if (rx_size > 0)
-			NrfUSB::on_rx_data(s_usb_rx_temp, rx_size);
+		if (rx_size > 0) NrfUSB::on_rx_data(s_usb_rx_temp, rx_size);
 		start_usb_read();
 		break;
 	}
 	case APP_USBD_CDC_ACM_USER_EVT_TX_DONE:
-	default:
-		break;
+	default: break;
 	}
 }
 
 /// @brief USBD state machine handler — enable/disable/start/stop on power events.
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wswitch-enum"
-static void usbd_user_ev_handler(app_usbd_event_type_t event)
-{
+static void usbd_user_ev_handler(app_usbd_event_type_t event) {
 	switch (event) {
-	case APP_USBD_EVT_STOPPED:
-		app_usbd_disable();
-		break;
+	case APP_USBD_EVT_STOPPED: app_usbd_disable(); break;
 	case APP_USBD_EVT_POWER_DETECTED:
-		if (!nrf_drv_usbd_is_enabled())
-			app_usbd_enable();
+		if (!nrf_drv_usbd_is_enabled()) app_usbd_enable();
 		break;
-	case APP_USBD_EVT_POWER_REMOVED:
-		app_usbd_stop();
-		break;
-	case APP_USBD_EVT_POWER_READY:
-		app_usbd_start();
-		break;
-	default:
-		break;
+	case APP_USBD_EVT_POWER_REMOVED: app_usbd_stop(); break;
+	case APP_USBD_EVT_POWER_READY: app_usbd_start(); break;
+	default: break;
 	}
 }
 #pragma GCC diagnostic pop
@@ -111,8 +88,7 @@ static void usbd_user_ev_handler(app_usbd_event_type_t event)
 //  Init
 // ═══════════════════════════════════════════════════════
 
-void NrfUSB::init()
-{
+void NrfUSB::init() {
 	m_rx_write_idx = 0;
 	m_rx_read_idx = 0;
 	m_line_ready = false;
@@ -172,40 +148,33 @@ void NrfUSB::init()
 // ═══════════════════════════════════════════════════════
 
 /// @brief Blocking write — queue data then flush USB events.
-int NrfUSB::write(char *ptr, int len)
-{
-	if (!m_port_open)
-		return len;
+int NrfUSB::write(char *ptr, int len) {
+	if (!m_port_open) return len;
 	app_usbd_cdc_acm_write(&m_app_cdc_acm, ptr, len);
 	usb_queue_process();
 	return len;
 }
 
 /// @brief Store received data in ring buffer (called from USB ISR).
-void NrfUSB::on_rx_data(const char *data, size_t len)
-{
+void NrfUSB::on_rx_data(const char *data, size_t len) {
 	for (size_t i = 0; i < len; i++) {
 		size_t next_write = (m_rx_write_idx + 1) % NRF_USB_RX_BUFFER_SIZE;
-		if (next_write == m_rx_read_idx)
-			break;  // Buffer full — discard rest
+		if (next_write == m_rx_read_idx) break;  // Buffer full — discard rest
 
 		m_rx_buffer[m_rx_write_idx] = data[i];
 		m_rx_write_idx = next_write;
 
-		if (data[i] == '\r' || data[i] == '\n')
-			m_line_ready = true;
+		if (data[i] == '\r' || data[i] == '\n') m_line_ready = true;
 	}
 }
 
 /// @brief True if the ring buffer contains unread data.
-bool NrfUSB::has_data()
-{
+bool NrfUSB::has_data() {
 	return m_rx_write_idx != m_rx_read_idx;
 }
 
 /// @brief Read raw bytes from the ring buffer.
-int NrfUSB::read(char *ptr, int max_len)
-{
+int NrfUSB::read(char *ptr, int max_len) {
 	int count = 0;
 	while (m_rx_read_idx != m_rx_write_idx && count < max_len) {
 		ptr[count++] = m_rx_buffer[m_rx_read_idx];
@@ -215,14 +184,12 @@ int NrfUSB::read(char *ptr, int max_len)
 }
 
 /// @brief Read one complete line from the ring buffer, or return empty string.
-std::string NrfUSB::read_line()
-{
+std::string NrfUSB::read_line() {
 	std::string result;
 
 	usb_queue_process();
 
-	if (!m_line_ready)
-		return result;
+	if (!m_line_ready) return result;
 
 	// Extract characters until line terminator
 	while (m_rx_read_idx != m_rx_write_idx) {
@@ -256,8 +223,7 @@ std::string NrfUSB::read_line()
 }
 
 /// @brief Process pending USB events — call from main loop.
-void NrfUSB::process()
-{
+void NrfUSB::process() {
 #ifdef BENCH_TEST
 	// Bench harness runs over WSL2/usbip, where the host CDC DTR assertion
 	// (SET_CONTROL_LINE_STATE) that normally raises APP_USBD_CDC_ACM_USER_EVT_PORT_OPEN
@@ -275,8 +241,7 @@ void NrfUSB::process()
 }
 
 /// @brief Update port state and reset ring buffer on close.
-void NrfUSB::set_port_open(bool is_open)
-{
+void NrfUSB::set_port_open(bool is_open) {
 	m_port_open = is_open;
 	if (!is_open) {
 		m_rx_write_idx = 0;

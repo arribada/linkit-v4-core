@@ -7,7 +7,7 @@
 extern "C" {
 #endif
 
-#define NRF_SUCCESS          0
+#define NRF_SUCCESS 0
 
 /**
  * @brief API Result.
@@ -29,4 +29,4 @@ typedef uint32_t ret_code_t;
 }
 #endif
 
-#endif // SDK_ERRORS_H__
+#endif  // SDK_ERRORS_H__

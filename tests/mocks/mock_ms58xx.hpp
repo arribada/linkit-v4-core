@@ -6,7 +6,7 @@
 
 class MockMS58xx : public PressureSensorDevice {
 public:
-	void read(double& temperature, double& pressure) {
+	void read(double &temperature, double &pressure) {
 		temperature = mock().actualCall("read.temperature").onObject(this).returnDoubleValue();
 		pressure = mock().actualCall("read.pressure").onObject(this).returnDoubleValue();
 	}

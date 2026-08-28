@@ -25,13 +25,10 @@ bool GPIOPins::m_gnss_uart_active = false;
 #endif
 
 /// @brief Configure all BSP GPIO pins and set safe initial state for all power rails.
-void GPIOPins::initialise()
-{
-	for (unsigned int i = 0; i < static_cast<unsigned int>(BSP::GPIO::GPIO_TOTAL_NUMBER); i++)
-	{
-		nrf_gpio_cfg(BSP::GPIO_Inits[i].pin_number,
-					BSP::GPIO_Inits[i].dir, BSP::GPIO_Inits[i].input, BSP::GPIO_Inits[i].pull,
-					BSP::GPIO_Inits[i].drive, BSP::GPIO_Inits[i].sense);
+void GPIOPins::initialise() {
+	for (unsigned int i = 0; i < static_cast<unsigned int>(BSP::GPIO::GPIO_TOTAL_NUMBER); i++) {
+		nrf_gpio_cfg(BSP::GPIO_Inits[i].pin_number, BSP::GPIO_Inits[i].dir, BSP::GPIO_Inits[i].input,
+		             BSP::GPIO_Inits[i].pull, BSP::GPIO_Inits[i].drive, BSP::GPIO_Inits[i].sense);
 	}
 
 	// Tri-state UART pins — controlled at driver level, not GPIO init
@@ -94,9 +91,10 @@ void GPIOPins::initialise()
 #endif
 
 #ifdef CAM_PWR_EN
-	DEBUG_TRACE("Initializing CAM pins: CAM_PWR_EN=%u (P%u.%u) | CAM_PWR_BUTT=%u (P%u.%u)",
-		CAM_PWR_EN, (BSP::GPIO_Inits[CAM_PWR_EN].pin_number >> 5), (BSP::GPIO_Inits[CAM_PWR_EN].pin_number & 0x1F),
-		CAM_PWR_BUTT, (BSP::GPIO_Inits[CAM_PWR_BUTT].pin_number >> 5), (BSP::GPIO_Inits[CAM_PWR_BUTT].pin_number & 0x1F));
+	DEBUG_TRACE("Initializing CAM pins: CAM_PWR_EN=%u (P%u.%u) | CAM_PWR_BUTT=%u (P%u.%u)", CAM_PWR_EN,
+	            (BSP::GPIO_Inits[CAM_PWR_EN].pin_number >> 5), (BSP::GPIO_Inits[CAM_PWR_EN].pin_number & 0x1F),
+	            CAM_PWR_BUTT, (BSP::GPIO_Inits[CAM_PWR_BUTT].pin_number >> 5),
+	            (BSP::GPIO_Inits[CAM_PWR_BUTT].pin_number & 0x1F));
 	clear(CAM_PWR_EN);
 	clear(CAM_PWR_BUTT);
 	// Force re-enable GPIO configuration to ensure pins are properly configured
@@ -112,42 +110,33 @@ void GPIOPins::initialise()
 #endif
 }
 
-void GPIOPins::init_pin(uint32_t pin)
-{
-	nrf_gpio_cfg(BSP::GPIO_Inits[pin].pin_number,
-				BSP::GPIO_Inits[pin].dir, BSP::GPIO_Inits[pin].input, BSP::GPIO_Inits[pin].pull,
-				BSP::GPIO_Inits[pin].drive, BSP::GPIO_Inits[pin].sense);
+void GPIOPins::init_pin(uint32_t pin) {
+	nrf_gpio_cfg(BSP::GPIO_Inits[pin].pin_number, BSP::GPIO_Inits[pin].dir, BSP::GPIO_Inits[pin].input,
+	             BSP::GPIO_Inits[pin].pull, BSP::GPIO_Inits[pin].drive, BSP::GPIO_Inits[pin].sense);
 }
 
-void GPIOPins::set(uint32_t pin)
-{
+void GPIOPins::set(uint32_t pin) {
 	nrf_gpio_pin_set(BSP::GPIO_Inits[pin].pin_number);
 }
 
-void GPIOPins::clear(uint32_t pin)
-{
+void GPIOPins::clear(uint32_t pin) {
 	nrf_gpio_pin_clear(BSP::GPIO_Inits[pin].pin_number);
 }
 
-void GPIOPins::toggle(uint32_t pin)
-{
+void GPIOPins::toggle(uint32_t pin) {
 	nrf_gpio_pin_toggle(BSP::GPIO_Inits[pin].pin_number);
 }
 
-uint32_t GPIOPins::value(uint32_t pin)
-{
+uint32_t GPIOPins::value(uint32_t pin) {
 	return nrf_gpio_pin_read(BSP::GPIO_Inits[pin].pin_number);
 }
 
-void GPIOPins::enable(uint32_t pin)
-{
-	nrf_gpio_cfg(BSP::GPIO_Inits[pin].pin_number,
-				BSP::GPIO_Inits[pin].dir, BSP::GPIO_Inits[pin].input, BSP::GPIO_Inits[pin].pull,
-				BSP::GPIO_Inits[pin].drive, BSP::GPIO_Inits[pin].sense);
+void GPIOPins::enable(uint32_t pin) {
+	nrf_gpio_cfg(BSP::GPIO_Inits[pin].pin_number, BSP::GPIO_Inits[pin].dir, BSP::GPIO_Inits[pin].input,
+	             BSP::GPIO_Inits[pin].pull, BSP::GPIO_Inits[pin].drive, BSP::GPIO_Inits[pin].sense);
 }
 
-void GPIOPins::disable(uint32_t pin)
-{
+void GPIOPins::disable(uint32_t pin) {
 	nrf_gpio_cfg_default(BSP::GPIO_Inits[pin].pin_number);
 }
 
@@ -161,8 +150,7 @@ void GPIOPins::disable(uint32_t pin)
  * Prevents backfeed current through sensor ESD diodes and floating
  * interrupt lines triggering spurious GPIOTE events.
  */
-void GPIOPins::disconnect_sensor_pins()
-{
+void GPIOPins::disconnect_sensor_pins() {
 #ifdef SENSORS_PWR_PIN
 	// I2C pins — explicit disconnect (workaround for nRF52840 TWIM pin release errata)
 #ifdef ONBOARD_I2C_BUS
@@ -181,8 +169,7 @@ void GPIOPins::disconnect_sensor_pins()
 
 /// @brief Reconnect sensor interrupt pins after VSENSORS powers on.
 /// @note I2C bus pins are reconnected by NrfI2C::init(), not here.
-void GPIOPins::reconnect_sensor_pins()
-{
+void GPIOPins::reconnect_sensor_pins() {
 #ifdef SENSORS_PWR_PIN
 #ifdef BMA400_WAKEUP_PIN
 	enable(BMA400_WAKEUP_PIN);
@@ -193,8 +180,7 @@ void GPIOPins::reconnect_sensor_pins()
 #endif
 }
 
-void GPIOPins::power_cycle_sensors()
-{
+void GPIOPins::power_cycle_sensors() {
 #ifdef SENSORS_PWR_PIN
 	// Time the rail is held off — long enough to drain the VSENSORS decoupling
 	// caps below the sensors' POR threshold so a wedged slave is forced to reset.
@@ -210,7 +196,7 @@ void GPIOPins::power_cycle_sensors()
 	}
 
 	DEBUG_TRACE("GPIOPins::power_cycle_sensors: cycling VSENSORS to release a wedged I2C slave");
-	disconnect_sensor_pins();                 // release nRF's I2C/INT pin config + INT lines
+	disconnect_sensor_pins();  // release nRF's I2C/INT pin config + INT lines
 
 #ifdef ONBOARD_I2C_BUS
 	// The I2C pull-ups likely sit on an always-on rail (DCDC3V3). If so, merely
@@ -221,12 +207,14 @@ void GPIOPins::power_cycle_sensors()
 	// anyway). I2C is open-drain, so driving low is benign for the VBAT STC3117 too.
 	const uint32_t scl = BSP::I2C_Inits[ONBOARD_I2C_BUS].twim_config.scl;
 	const uint32_t sda = BSP::I2C_Inits[ONBOARD_I2C_BUS].twim_config.sda;
-	nrf_gpio_cfg_output(scl); nrf_gpio_pin_clear(scl);
-	nrf_gpio_cfg_output(sda); nrf_gpio_pin_clear(sda);
+	nrf_gpio_cfg_output(scl);
+	nrf_gpio_pin_clear(scl);
+	nrf_gpio_cfg_output(sda);
+	nrf_gpio_pin_clear(sda);
 #endif
 
-	clear(SENSORS_PWR_PIN);                    // cut the rail
-	nrf_delay_ms(SENSORS_PWR_CYCLE_OFF_MS);    // drain caps → POR the VSENSORS sensors
+	clear(SENSORS_PWR_PIN);                  // cut the rail
+	nrf_delay_ms(SENSORS_PWR_CYCLE_OFF_MS);  // drain caps → POR the VSENSORS sensors
 
 #ifdef ONBOARD_I2C_BUS
 	// Release SCL/SDA before power returns so the pull-ups bring them up cleanly.
@@ -234,21 +222,19 @@ void GPIOPins::power_cycle_sensors()
 	nrf_gpio_cfg_default(sda);
 #endif
 
-	set(SENSORS_PWR_PIN);                      // restore
-	nrf_delay_ms(50);                          // power-up stabilization (matches acquire)
-	reconnect_sensor_pins();                   // INT pins back; I2C pins reinit by caller
+	set(SENSORS_PWR_PIN);     // restore
+	nrf_delay_ms(50);         // power-up stabilization (matches acquire)
+	reconnect_sensor_pins();  // INT pins back; I2C pins reinit by caller
 #endif
 }
 
-void GPIOPins::acquire_sensors_pwr()
-{
+void GPIOPins::acquire_sensors_pwr() {
 #ifdef SENSORS_PWR_PIN
 	if (m_sensors_pwr_refcount == UINT8_MAX) {
 		DEBUG_ERROR("GPIOPins::acquire_sensors_pwr: refcount overflow — capped at %u", m_sensors_pwr_refcount);
 		return;
 	}
-	if (m_sensors_pwr_refcount == 0)
-	{
+	if (m_sensors_pwr_refcount == 0) {
 		DEBUG_TRACE("GPIOPins::acquire_sensors_pwr: Powering ON VSENSORS (refcount 0->1)");
 		set(SENSORS_PWR_PIN);
 		nrf_delay_ms(50);  // 50 ms for sensor power-up stabilization
@@ -257,10 +243,9 @@ void GPIOPins::acquire_sensors_pwr()
 		if (!NrfI2C::is_enabled(0)) {
 			NrfI2C::init();
 		}
-	}
-	else
-	{
-		DEBUG_TRACE("GPIOPins::acquire_sensors_pwr: refcount %u->%u (already on)", m_sensors_pwr_refcount, m_sensors_pwr_refcount + 1);
+	} else {
+		DEBUG_TRACE("GPIOPins::acquire_sensors_pwr: refcount %u->%u (already on)", m_sensors_pwr_refcount,
+		            m_sensors_pwr_refcount + 1);
 		// NOTE: no per-acquire bus re-init here. A wedged bus is left DISABLED
 		// (fast-fail) so it never storms recover_bus + 100 ms timeouts on every
 		// read — that would block the cooperative scheduler (reed switch, main
@@ -271,11 +256,9 @@ void GPIOPins::acquire_sensors_pwr()
 #endif
 }
 
-void GPIOPins::release_sensors_pwr()
-{
+void GPIOPins::release_sensors_pwr() {
 #ifdef SENSORS_PWR_PIN
-	if (m_sensors_pwr_refcount == 0)
-	{
+	if (m_sensors_pwr_refcount == 0) {
 		DEBUG_WARN("GPIOPins::release_sensors_pwr: refcount already 0 | ignoring release");
 		return;
 	}
@@ -287,15 +270,13 @@ void GPIOPins::release_sensors_pwr()
 	// still drive it to 0 and cut the rail. Clamp the floor HARD at 1: never let a
 	// release take VSENSORS down on RSPB. (Backfeed is a non-issue now that the
 	// pull-ups are on VSENSORS, not DCDC_3V3.)
-	if (m_sensors_pwr_refcount <= 1)
-	{
+	if (m_sensors_pwr_refcount <= 1) {
 		DEBUG_TRACE("GPIOPins::release_sensors_pwr: RSPB floor — keeping VSENSORS ON (refcount stays 1)");
 		return;
 	}
 #endif
 	m_sensors_pwr_refcount--;
-	if (m_sensors_pwr_refcount == 0)
-	{
+	if (m_sensors_pwr_refcount == 0) {
 		DEBUG_TRACE("GPIOPins::release_sensors_pwr: Powering OFF VSENSORS (refcount 1->0)");
 		// 1. Uninit I2C bus BEFORE cutting power
 		NrfI2C::uninit();
@@ -304,31 +285,26 @@ void GPIOPins::release_sensors_pwr()
 		// 3. Cut VSENSORS power
 		clear(SENSORS_PWR_PIN);
 		nrf_delay_ms(50);  // Power supply discharge stabilization
-	}
-	else
-	{
-		DEBUG_TRACE("GPIOPins::release_sensors_pwr: refcount %u->%u (still in use)", m_sensors_pwr_refcount + 1, m_sensors_pwr_refcount);
+	} else {
+		DEBUG_TRACE("GPIOPins::release_sensors_pwr: refcount %u->%u (still in use)", m_sensors_pwr_refcount + 1,
+		            m_sensors_pwr_refcount);
 	}
 #endif
 }
 
-void GPIOPins::set_gnss_uart_active(bool active)
-{
+void GPIOPins::set_gnss_uart_active(bool active) {
 	m_gnss_uart_active = active;
 }
 
-bool GPIOPins::is_gnss_uart_active()
-{
+bool GPIOPins::is_gnss_uart_active() {
 	return m_gnss_uart_active;
 }
 
-bool GPIOPins::get_sensors_pwr_state()
-{
+bool GPIOPins::get_sensors_pwr_state() {
 	return m_sensors_pwr_refcount > 0;
 }
 
-uint8_t GPIOPins::get_sensors_pwr_refcount()
-{
+uint8_t GPIOPins::get_sensors_pwr_refcount() {
 	return m_sensors_pwr_refcount;
 }
 
@@ -336,8 +312,7 @@ uint8_t GPIOPins::get_sensors_pwr_refcount()
 //  Pin control helpers
 // ═══════════════════════════════════════════════════════
 
-void GPIOPins::pulse_low_then_release(uint32_t pin, uint32_t duration_ms)
-{
+void GPIOPins::pulse_low_then_release(uint32_t pin, uint32_t duration_ms) {
 	uint32_t pin_number = BSP::GPIO_Inits[pin].pin_number;
 
 	nrf_gpio_cfg_output(pin_number);
@@ -349,19 +324,16 @@ void GPIOPins::pulse_low_then_release(uint32_t pin, uint32_t duration_ms)
 	nrf_gpio_cfg_default(pin_number);
 }
 
-void GPIOPins::drive_low(uint32_t pin)
-{
+void GPIOPins::drive_low(uint32_t pin) {
 	uint32_t pin_number = BSP::GPIO_Inits[pin].pin_number;
 	nrf_gpio_cfg_output(pin_number);
 	nrf_gpio_pin_clear(pin_number);
 }
 
-void GPIOPins::release_to_highz(uint32_t pin)
-{
+void GPIOPins::release_to_highz(uint32_t pin) {
 	nrf_gpio_cfg_default(BSP::GPIO_Inits[pin].pin_number);
 }
 
-void GPIOPins::release_to_pullup(uint32_t pin)
-{
+void GPIOPins::release_to_pullup(uint32_t pin) {
 	nrf_gpio_cfg_input(BSP::GPIO_Inits[pin].pin_number, NRF_GPIO_PIN_PULLUP);
 }

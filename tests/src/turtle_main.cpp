@@ -64,11 +64,11 @@ MockSupportPlugin mockPlugin;
  * @brief Structure to store test results for HTML report
  */
 struct TestResultInfo {
-    std::string group_name;
-    std::string test_name;
-    bool passed;
-    std::string failure_message;
-    double duration_ms;
+	std::string group_name;
+	std::string test_name;
+	bool passed;
+	std::string failure_message;
+	double duration_ms;
 };
 
 // Global storage for HTML results (accessible from custom output)
@@ -87,37 +87,39 @@ static bool g_test_failed = false;
  */
 class HtmlReportPlugin : public TestPlugin {
 public:
-    HtmlReportPlugin(const SimpleString& name) : TestPlugin(name) {}
+	HtmlReportPlugin(const SimpleString &name) : TestPlugin(name) {}
 
-    void preTestAction(UtestShell& test, TestResult& /*result*/) override {
-        g_current_group = test.getGroup().asCharString();
-        g_current_test = test.getName().asCharString();
-        g_current_failure.clear();
-        g_test_failed = false;
-        g_test_start_time = clock();
-    }
+	void preTestAction(UtestShell &test, TestResult & /*result*/) override {
+		g_current_group = test.getGroup().asCharString();
+		g_current_test = test.getName().asCharString();
+		g_current_failure.clear();
+		g_test_failed = false;
+		g_test_start_time = clock();
+	}
 
-    void postTestAction(UtestShell& /*test*/, TestResult& result) override {
-        double duration = (double)(clock() - g_test_start_time) / CLOCKS_PER_SEC * 1000.0;
+	void postTestAction(UtestShell & /*test*/, TestResult &result) override {
+		double duration = (double)(clock() - g_test_start_time) / CLOCKS_PER_SEC * 1000.0;
 
-        // Check if this specific test failed
-        bool test_passed = !g_test_failed;
+		// Check if this specific test failed
+		bool test_passed = !g_test_failed;
 
-        TestResultInfo tr;
-        tr.group_name = g_current_group;
-        tr.test_name = g_current_test;
-        tr.passed = test_passed;
-        tr.failure_message = g_current_failure;
-        tr.duration_ms = duration;
-        g_test_results.push_back(tr);
+		TestResultInfo tr;
+		tr.group_name = g_current_group;
+		tr.test_name = g_current_test;
+		tr.passed = test_passed;
+		tr.failure_message = g_current_failure;
+		tr.duration_ms = duration;
+		g_test_results.push_back(tr);
 
-        g_total_tests++;
-        if (test_passed) g_passed_tests++;
-        else g_failed_tests++;
+		g_total_tests++;
+		if (test_passed)
+			g_passed_tests++;
+		else
+			g_failed_tests++;
 
-        // Suppress unused parameter warning
-        (void)result;
-    }
+		// Suppress unused parameter warning
+		(void)result;
+	}
 };
 
 /**
@@ -125,35 +127,34 @@ public:
  */
 class HtmlTestOutput : public ConsoleTestOutput {
 public:
-    void printFailure(const TestFailure& failure) override {
-        g_test_failed = true;
-        std::ostringstream oss;
-        oss << failure.getFileName().asCharString() << ":" << failure.getFailureLineNumber()
-            << " - " << failure.getMessage().asCharString();
-        g_current_failure = oss.str();
-        ConsoleTestOutput::printFailure(failure);
-    }
+	void printFailure(const TestFailure &failure) override {
+		g_test_failed = true;
+		std::ostringstream oss;
+		oss << failure.getFileName().asCharString() << ":" << failure.getFailureLineNumber() << " - "
+		    << failure.getMessage().asCharString();
+		g_current_failure = oss.str();
+		ConsoleTestOutput::printFailure(failure);
+	}
 };
 
 /**
  * @brief Generate HTML report from test results
  */
-void generate_html_report(const std::string& filename) {
-    std::ofstream html(filename);
-    if (!html.is_open()) {
-        printf("ERROR: Cannot create HTML report file: %s\n", filename.c_str());
-        return;
-    }
+void generate_html_report(const std::string &filename) {
+	std::ofstream html(filename);
+	if (!html.is_open()) {
+		printf("ERROR: Cannot create HTML report file: %s\n", filename.c_str());
+		return;
+	}
 
-    // Get current time
-    time_t now = time(nullptr);
-    char time_str[64];
-    strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", localtime(&now));
+	// Get current time
+	time_t now = time(nullptr);
+	char time_str[64];
+	strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", localtime(&now));
 
-    double pass_rate = g_total_tests > 0 ?
-        (100.0 * g_passed_tests / g_total_tests) : 0.0;
+	double pass_rate = g_total_tests > 0 ? (100.0 * g_passed_tests / g_total_tests) : 0.0;
 
-    html << R"(<!DOCTYPE html>
+	html << R"(<!DOCTYPE html>
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
@@ -271,29 +272,35 @@ void generate_html_report(const std::string& filename) {
 <body>
     <div class="container">
         <h1><span class="turtle-icon">&#x1F422;</span>Turtle Simulation Report</h1>
-        <p style="text-align:center; margin-bottom:30px; opacity:0.7;">)" << time_str << R"(</p>
+        <p style="text-align:center; margin-bottom:30px; opacity:0.7;">)"
+	     << time_str << R"(</p>
 
         <div class="summary">
             <div class="stat-card total">
-                <div class="stat-value">)" << g_total_tests << R"(</div>
+                <div class="stat-value">)"
+	     << g_total_tests << R"(</div>
                 <div class="stat-label">Total Tests</div>
             </div>
             <div class="stat-card passed">
-                <div class="stat-value">)" << g_passed_tests << R"(</div>
+                <div class="stat-value">)"
+	     << g_passed_tests << R"(</div>
                 <div class="stat-label">Passed</div>
             </div>
             <div class="stat-card failed">
-                <div class="stat-value">)" << g_failed_tests << R"(</div>
+                <div class="stat-value">)"
+	     << g_failed_tests << R"(</div>
                 <div class="stat-label">Failed</div>
             </div>
             <div class="stat-card rate">
-                <div class="stat-value">)" << std::fixed << std::setprecision(1) << pass_rate << R"(%</div>
+                <div class="stat-value">)"
+	     << std::fixed << std::setprecision(1) << pass_rate << R"(%</div>
                 <div class="stat-label">Pass Rate</div>
             </div>
         </div>
 
         <div class="progress-bar">
-            <div class="progress-fill" style="width: )" << pass_rate << R"(%;"></div>
+            <div class="progress-fill" style="width: )"
+	     << pass_rate << R"(%;"></div>
         </div>
 
         <table class="tests-table">
@@ -308,23 +315,22 @@ void generate_html_report(const std::string& filename) {
             <tbody>
 )";
 
-    for (const auto& test : g_test_results) {
-        html << "                <tr>\n"
-             << "                    <td>" << test.group_name << "</td>\n"
-             << "                    <td>" << test.test_name;
-        if (!test.passed && !test.failure_message.empty()) {
-            html << "<div class=\"failure-msg\">" << test.failure_message << "</div>";
-        }
-        html << "</td>\n"
-             << "                    <td><span class=\"status-badge "
-             << (test.passed ? "status-pass\">PASS" : "status-fail\">FAIL")
-             << "</span></td>\n"
-             << "                    <td class=\"duration\">"
-             << std::fixed << std::setprecision(1) << test.duration_ms << " ms</td>\n"
-             << "                </tr>\n";
-    }
+	for (const auto &test : g_test_results) {
+		html << "                <tr>\n"
+		     << "                    <td>" << test.group_name << "</td>\n"
+		     << "                    <td>" << test.test_name;
+		if (!test.passed && !test.failure_message.empty()) {
+			html << "<div class=\"failure-msg\">" << test.failure_message << "</div>";
+		}
+		html << "</td>\n"
+		     << "                    <td><span class=\"status-badge "
+		     << (test.passed ? "status-pass\">PASS" : "status-fail\">FAIL") << "</span></td>\n"
+		     << "                    <td class=\"duration\">" << std::fixed << std::setprecision(1) << test.duration_ms
+		     << " ms</td>\n"
+		     << "                </tr>\n";
+	}
 
-    html << R"(            </tbody>
+	html << R"(            </tbody>
         </table>
 
         <div class="footer">
@@ -336,46 +342,45 @@ void generate_html_report(const std::string& filename) {
 </html>
 )";
 
-    html.close();
-    printf("\n=== HTML Report generated: %s ===\n", filename.c_str());
+	html.close();
+	printf("\n=== HTML Report generated: %s ===\n", filename.c_str());
 }
 
-int main(int argc, char** argv) {
-    ConsoleLog con_log;
-    DebugLogger::console_log = &con_log;
+int main(int argc, char **argv) {
+	ConsoleLog con_log;
+	DebugLogger::console_log = &con_log;
 
-    // Install plugins
-    HtmlReportPlugin htmlPlugin("HtmlReport");
-    TestRegistry::getCurrentRegistry()->installPlugin(&mockPlugin);
-    TestRegistry::getCurrentRegistry()->installPlugin(&htmlPlugin);
+	// Install plugins
+	HtmlReportPlugin htmlPlugin("HtmlReport");
+	TestRegistry::getCurrentRegistry()->installPlugin(&mockPlugin);
+	TestRegistry::getCurrentRegistry()->installPlugin(&htmlPlugin);
 
-    // Run tests
-    int exit_code = CommandLineTestRunner::RunAllTests(argc, argv);
+	// Run tests
+	int exit_code = CommandLineTestRunner::RunAllTests(argc, argv);
 
-    // Generate HTML report
-    std::string report_path = "turtle_simulation_report.html";
+	// Generate HTML report
+	std::string report_path = "turtle_simulation_report.html";
 
-    // Check if a custom path was provided via environment variable
-    const char* custom_path = getenv("TURTLE_REPORT_PATH");
-    if (custom_path != nullptr) {
-        report_path = custom_path;
-    }
+	// Check if a custom path was provided via environment variable
+	const char *custom_path = getenv("TURTLE_REPORT_PATH");
+	if (custom_path != nullptr) {
+		report_path = custom_path;
+	}
 
-    generate_html_report(report_path);
+	generate_html_report(report_path);
 
-    // Print summary to console
-    printf("\n");
-    printf("========================================\n");
-    printf("       TURTLE SIMULATION SUMMARY\n");
-    printf("========================================\n");
-    printf("  Total:  %d tests\n", g_total_tests);
-    printf("  Passed: %d tests\n", g_passed_tests);
-    printf("  Failed: %d tests\n", g_failed_tests);
-    printf("  Rate:   %.1f%%\n", g_total_tests > 0 ?
-           (100.0 * g_passed_tests / g_total_tests) : 0.0);
-    printf("========================================\n");
-    printf("  Report: %s\n", report_path.c_str());
-    printf("========================================\n");
+	// Print summary to console
+	printf("\n");
+	printf("========================================\n");
+	printf("       TURTLE SIMULATION SUMMARY\n");
+	printf("========================================\n");
+	printf("  Total:  %d tests\n", g_total_tests);
+	printf("  Passed: %d tests\n", g_passed_tests);
+	printf("  Failed: %d tests\n", g_failed_tests);
+	printf("  Rate:   %.1f%%\n", g_total_tests > 0 ? (100.0 * g_passed_tests / g_total_tests) : 0.0);
+	printf("========================================\n");
+	printf("  Report: %s\n", report_path.c_str());
+	printf("========================================\n");
 
-    return exit_code;
+	return exit_code;
 }

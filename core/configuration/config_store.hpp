@@ -110,10 +110,10 @@ struct ArgosConfig {
 	BaseGnssStrategy gnss_strategy;
 	unsigned int argos_rx_aop_update_period;
 	std::time_t last_aop_update;
-	bool prepass_en;                   // prepass gating, independent of the mode
-	unsigned int aop_max_age_days;     // beyond this: AOP stale -> periodic fallback
-	unsigned int prepass_max_wait_s;   // max wait without a window (0 = unlimited)
-	bool        cert_tx_enable;
+	bool prepass_en;                  // prepass gating, independent of the mode
+	unsigned int aop_max_age_days;    // beyond this: AOP stale -> periodic fallback
+	unsigned int prepass_max_wait_s;  // max wait without a window (0 = unlimited)
+	bool cert_tx_enable;
 	std::string cert_tx_payload;
 	BaseArgosModulation cert_tx_modulation;
 	unsigned int cert_tx_repetition;
@@ -136,14 +136,13 @@ enum class ConfigMode {
 	NORMAL,
 	LOW_BATTERY,
 	OUT_OF_ZONE,
-	HAULED,              // Plan 1 step 3 — substitutes HAULED_* override params
-	MOORED               // 2026-08 — substitutes MOORED_* override params (vessel stationary)
-	// (Plan 2 will add AT_SEA_SEQUENCED below this, between HAULED and base.)
+	HAULED,  // Plan 1 step 3 — substitutes HAULED_* override params
+	MOORED   // 2026-08 — substitutes MOORED_* override params (vessel stationary)
+	         // (Plan 2 will add AT_SEA_SEQUENCED below this, between HAULED and base.)
 };
 
 
 class ConfigurationStore {
-
 protected:
 	// 0x1F (2026-07): ARP36/ARP37 removed from the serialized set (slots 223/224
 	// back to reserved). The June builds (b8a4946e+) serialized them WITHOUT a
@@ -487,10 +486,10 @@ protected:
 	bool m_credentials_dirty = true;  // true on first boot to ensure initial write
 	uint8_t m_battery_level = 0;
 	uint16_t m_battery_voltage = 0;
-	bool     m_is_battery_level_low = false;
+	bool m_is_battery_level_low = false;
 	GPSLogEntry m_last_gps_log_entry;
 	GPSLogEntry m_last_fastloc_log_entry;
-	ConfigMode  m_last_config_mode;
+	ConfigMode m_last_config_mode;
 
 	/// @brief HM-2 audit fix: track config-mode transitions with an explicit
 	/// HAULED-exit log. Previously the cascade logged "NORMAL/OOZ/LB detected"
@@ -502,23 +501,23 @@ protected:
 		if (m_last_config_mode == new_mode) return;
 		if (m_last_config_mode == ConfigMode::HAULED) {
 			DEBUG_INFO("ConfigurationStore: HAULED mode EXITED -> %s",
-			           new_mode == ConfigMode::LOW_BATTERY ? "LOW_BATTERY" :
-			           new_mode == ConfigMode::OUT_OF_ZONE ? "OUT_OF_ZONE" :
-			           new_mode == ConfigMode::MOORED      ? "MOORED" :
-			           new_mode == ConfigMode::NORMAL      ? "NORMAL" : "?");
+			           new_mode == ConfigMode::LOW_BATTERY   ? "LOW_BATTERY"
+			           : new_mode == ConfigMode::OUT_OF_ZONE ? "OUT_OF_ZONE"
+			           : new_mode == ConfigMode::MOORED      ? "MOORED"
+			           : new_mode == ConfigMode::NORMAL      ? "NORMAL"
+			                                                 : "?");
 #if VALIDATION_LOG_ENABLE
-			DEBUG_INFO("[VAL-HAULED] mode_exit t=%u to=%d",
-			           rtc && rtc->is_set() ? (unsigned int)rtc->gettime() : 0U,
+			DEBUG_INFO("[VAL-HAULED] mode_exit t=%u to=%d", rtc && rtc->is_set() ? (unsigned int)rtc->gettime() : 0U,
 			           (int)new_mode);
 #endif
 		}
 		switch (new_mode) {
-			case ConfigMode::LOW_BATTERY: DEBUG_INFO("ConfigurationStore: LOW_BATTERY mode detected"); break;
-			case ConfigMode::OUT_OF_ZONE: DEBUG_INFO("ConfigurationStore: OUT_OF_ZONE mode detected"); break;
-			case ConfigMode::NORMAL:      DEBUG_INFO("ConfigurationStore: NORMAL mode detected"); break;
-			case ConfigMode::HAULED:      /* logged inline as "engaged (GNSS)" / "engaged (Argos)" */ break;
-			case ConfigMode::MOORED:      /* logged inline as "engaged (GNSS)" / "engaged (Argos)" */ break;
-			default: break;
+		case ConfigMode::LOW_BATTERY: DEBUG_INFO("ConfigurationStore: LOW_BATTERY mode detected"); break;
+		case ConfigMode::OUT_OF_ZONE: DEBUG_INFO("ConfigurationStore: OUT_OF_ZONE mode detected"); break;
+		case ConfigMode::NORMAL: DEBUG_INFO("ConfigurationStore: NORMAL mode detected"); break;
+		case ConfigMode::HAULED: /* logged inline as "engaged (GNSS)" / "engaged (Argos)" */ break;
+		case ConfigMode::MOORED: /* logged inline as "engaged (GNSS)" / "engaged (Argos)" */ break;
+		default: break;
 		}
 		m_last_config_mode = new_mode;
 	}
@@ -527,7 +526,7 @@ protected:
 	virtual void update_battery_level() = 0;
 
 private:
-	static const inline unsigned int SECONDS_PER_MINUTE	= 60;
+	static const inline unsigned int SECONDS_PER_MINUTE = 60;
 	static const inline unsigned int SECONDS_PER_HOUR = 3600;
 
 	BaseDeltaTimeLoc calc_delta_time_loc(unsigned int dloc_arg_nom) {
@@ -566,8 +565,8 @@ private:
 
 public:
 	ConfigurationStore() {
-		m_last_gps_log_entry.info.valid = 0; // Mark last GPS entry as invalid
-		m_last_fastloc_log_entry.info.valid = 0; // Mark last Fastloc entry as invalid
+		m_last_gps_log_entry.info.valid = 0;      // Mark last GPS entry as invalid
+		m_last_fastloc_log_entry.info.valid = 0;  // Mark last Fastloc entry as invalid
 		m_last_config_mode = ConfigMode::NORMAL;
 	}
 
@@ -583,10 +582,10 @@ public:
 	virtual void factory_reset() = 0;
 
 	/// @brief Read Argos pass prediction data from flash.
-	virtual BasePassPredict& read_pass_predict() = 0;
+	virtual BasePassPredict &read_pass_predict() = 0;
 
 	/// @brief Write Argos pass prediction data to flash.
-	virtual void write_pass_predict(BasePassPredict& value) = 0;
+	virtual void write_pass_predict(BasePassPredict &value) = 0;
 
 	/// @brief Warn if the low-battery threshold pair cannot do its job.
 	///
@@ -618,17 +617,15 @@ public:
 		unsigned int lb, crit;
 		try {
 			lb_en = read_param<bool>(ParamID::LB_EN);
-			lb    = read_param<unsigned int>(ParamID::LB_THRESHOLD);
-			crit  = read_param<unsigned int>(ParamID::LB_CRITICAL_THRESH);
+			lb = read_param<unsigned int>(ParamID::LB_THRESHOLD);
+			crit = read_param<unsigned int>(ParamID::LB_CRITICAL_THRESH);
 		} catch (...) {
 			return true;  // store not readable yet — not our problem to report
 		}
 
-		if (!lb_en)
-			return true;  // LB mode disabled: the gated guard is inactive by design
+		if (!lb_en) return true;  // LB mode disabled: the gated guard is inactive by design
 
-		if (lb > crit)
-			return true;
+		if (lb > crit) return true;
 
 		if (lb < crit)
 			DEBUG_WARN("ConfigurationStore: LB_THRESHOLD (LBP02=%u%%) is BELOW "
@@ -647,8 +644,7 @@ public:
 	/// @brief Read a configuration parameter by ID.
 	/// @tparam T  Expected parameter type (e.g., unsigned int, bool, std::string).
 	/// @throws CONFIG_STORE_CORRUPTED if store is invalid or type mismatch.
-	template <typename T>
-	T& read_param(ParamID param_id) {
+	template <typename T> T &read_param(ParamID param_id) {
 		try {
 			bool b_is_valid = false;
 
@@ -674,12 +670,9 @@ public:
 			} else if (param_id == ParamID::ARGOS_RADIOCONF) {
 				b_is_valid = true;
 #if defined(LORA_RAK3172) && (LORA_RAK3172 == 1)
-			} else if (param_id == ParamID::LORA_DEVEUI ||
-			           param_id == ParamID::LORA_APPEUI ||
-			           param_id == ParamID::LORA_APPKEY ||
-			           param_id == ParamID::LORA_DEVADDR ||
-			           param_id == ParamID::LORA_APPSKEY ||
-			           param_id == ParamID::LORA_NWKSKEY) {
+			} else if (param_id == ParamID::LORA_DEVEUI || param_id == ParamID::LORA_APPEUI
+			           || param_id == ParamID::LORA_APPKEY || param_id == ParamID::LORA_DEVADDR
+			           || param_id == ParamID::LORA_APPSKEY || param_id == ParamID::LORA_NWKSKEY) {
 				b_is_valid = true;
 #endif
 			} else if (param_id == ParamID::DEVICE_MODEL) {
@@ -696,7 +689,7 @@ public:
 #if ENABLE_ALS_SENSOR
 			else if (param_id == ParamID::ALS_SENSOR_VALUE) {
 				try {
-					Sensor& s = SensorManager::find_by_name("ALS");
+					Sensor &s = SensorManager::find_by_name("ALS");
 					m_params.at((unsigned)param_id) = s.read(1);
 				} catch (...) {
 					m_params.at((unsigned)param_id) = (double)std::nan("");
@@ -707,7 +700,7 @@ public:
 #if ENABLE_PH_SENSOR
 			else if (param_id == ParamID::PH_SENSOR_VALUE) {
 				try {
-					Sensor& s = SensorManager::find_by_name("PH");
+					Sensor &s = SensorManager::find_by_name("PH");
 					m_params.at((unsigned)param_id) = s.read();
 				} catch (...) {
 					m_params.at((unsigned)param_id) = (double)std::nan("");
@@ -720,10 +713,10 @@ public:
 				// Sea temp sensor can be either RTD or TSYS01
 				try {
 					try {
-						Sensor& s = SensorManager::find_by_name("RTD");
+						Sensor &s = SensorManager::find_by_name("RTD");
 						m_params.at((unsigned)param_id) = s.read();
 					} catch (...) {
-						Sensor& s = SensorManager::find_by_name("TSYS01");
+						Sensor &s = SensorManager::find_by_name("TSYS01");
 						m_params.at((unsigned)param_id) = s.read();
 					}
 				} catch (...) {
@@ -735,7 +728,7 @@ public:
 #if ENABLE_THERMISTOR_SENSOR
 			else if (param_id == ParamID::THERMISTOR_SENSOR_VALUE) {
 				try {
-					Sensor& s = SensorManager::find_by_name("THERMISTOR");
+					Sensor &s = SensorManager::find_by_name("THERMISTOR");
 					m_params.at((unsigned)param_id) = s.read();
 				} catch (...) {
 					m_params.at((unsigned)param_id) = (double)std::nan("");
@@ -746,7 +739,7 @@ public:
 #if ENABLE_CDT_SENSOR
 			else if (param_id == ParamID::CDT_SENSOR_CONDUCTIVITY_VALUE) {
 				try {
-					Sensor& s = SensorManager::find_by_name("CDT");
+					Sensor &s = SensorManager::find_by_name("CDT");
 					m_params.at((unsigned)param_id) = s.read(0);
 				} catch (...) {
 					m_params.at((unsigned)param_id) = (double)std::nan("");
@@ -754,7 +747,7 @@ public:
 				b_is_valid = true;
 			} else if (param_id == ParamID::CDT_SENSOR_DEPTH_VALUE) {
 				try {
-					Sensor& s = SensorManager::find_by_name("CDT");
+					Sensor &s = SensorManager::find_by_name("CDT");
 					m_params.at((unsigned)param_id) = s.read(1);
 				} catch (...) {
 					m_params.at((unsigned)param_id) = (double)std::nan("");
@@ -762,7 +755,7 @@ public:
 				b_is_valid = true;
 			} else if (param_id == ParamID::CDT_SENSOR_TEMPERATURE_VALUE) {
 				try {
-					Sensor& s = SensorManager::find_by_name("CDT");
+					Sensor &s = SensorManager::find_by_name("CDT");
 					m_params.at((unsigned)param_id) = s.read(2);
 				} catch (...) {
 					m_params.at((unsigned)param_id) = (double)std::nan("");
@@ -777,8 +770,7 @@ public:
 			if (b_is_valid) {
 				if constexpr (std::is_same<T, BaseType>::value) {
 					return m_params.at((unsigned)param_id);
-				}
-				else {
+				} else {
 					return std::get<T>(m_params.at((unsigned)param_id));
 				};
 			} else {
@@ -792,14 +784,12 @@ public:
 	/// @brief Write a configuration parameter by ID.
 	/// @tparam T  Parameter value type.
 	/// @note Marks credentials dirty if DECID/HEXID/SECKEY/RADIOCONF changes.
-	template<typename T>
-	void write_param(ParamID param_id, const T& value) {
+	template <typename T> void write_param(ParamID param_id, const T &value) {
 		try {
 			if (is_valid()) {
 				m_params.at((unsigned)param_id) = value;
 				// Mark credentials dirty when credential params change
-				if (param_id == ParamID::ARGOS_DECID ||
-				    param_id == ParamID::ARGOS_HEXID ||
+				if (param_id == ParamID::ARGOS_DECID || param_id == ParamID::ARGOS_HEXID ||
 #if defined(ARGOS_SMD) && (ARGOS_SMD == 1)
 				    param_id == ParamID::ARGOS_SECKEY ||
 #endif
@@ -834,46 +824,34 @@ public:
 	}
 
 	/// @brief Update cached last GPS fix (used for zone exclusion calculation).
-	void notify_gps_location(GPSLogEntry& gps_location) {
-		m_last_gps_log_entry = gps_location;
-	}
+	void notify_gps_location(GPSLogEntry &gps_location) { m_last_gps_log_entry = gps_location; }
 
 	/// @brief Get the last known GPS fix.
-	const GPSLogEntry& get_last_gps_entry() const {
-		return m_last_gps_log_entry;
-	}
+	const GPSLogEntry &get_last_gps_entry() const { return m_last_gps_log_entry; }
 
 	/// @brief Update cached last Fastloc / degraded-PVT position.
 	/// Used by Phase-1 surfacing burst to TX the most recent known position
 	/// when no live fix is available this surface.
-	void notify_fastloc_location(GPSLogEntry& gps_location) {
-		m_last_fastloc_log_entry = gps_location;
-	}
+	void notify_fastloc_location(GPSLogEntry &gps_location) { m_last_fastloc_log_entry = gps_location; }
 
 	/// @brief Get the last known Fastloc / degraded-PVT position.
-	const GPSLogEntry& get_last_fastloc_entry() const {
-		return m_last_fastloc_log_entry;
-	}
+	const GPSLogEntry &get_last_fastloc_entry() const { return m_last_fastloc_log_entry; }
 
 	/// @brief Check if device is outside the configured zone (haversine distance).
 	bool is_zone_exclusion() {
-
-		if (read_param<bool>(ParamID::ZONE_ENABLE_OUT_OF_ZONE_DETECTION_MODE) &&
-			read_param<BaseZoneType>(ParamID::ZONE_TYPE) == BaseZoneType::CIRCLE &&
-			m_last_gps_log_entry.info.valid) {
-
+		if (read_param<bool>(ParamID::ZONE_ENABLE_OUT_OF_ZONE_DETECTION_MODE)
+		    && read_param<BaseZoneType>(ParamID::ZONE_TYPE) == BaseZoneType::CIRCLE
+		    && m_last_gps_log_entry.info.valid) {
 			DEBUG_TRACE("ConfigurationStore::is_zone_exclusion: enabled with valid GPS fix");
 
-			if (!read_param<bool>(ParamID::ZONE_ENABLE_ACTIVATION_DATE) || (
-				read_param<std::time_t>(ParamID::ZONE_ACTIVATION_DATE) <=
-				convert_epochtime(m_last_gps_log_entry.info.year, m_last_gps_log_entry.info.month, m_last_gps_log_entry.info.day, m_last_gps_log_entry.info.hour, m_last_gps_log_entry.info.min, 0)
-				)) {
-
+			if (!read_param<bool>(ParamID::ZONE_ENABLE_ACTIVATION_DATE)
+			    || (read_param<std::time_t>(ParamID::ZONE_ACTIVATION_DATE) <= convert_epochtime(
+			            m_last_gps_log_entry.info.year, m_last_gps_log_entry.info.month, m_last_gps_log_entry.info.day,
+			            m_last_gps_log_entry.info.hour, m_last_gps_log_entry.info.min, 0))) {
 				// Compute distance between two points of longitude and latitude using haversine formula
 				double d_km = haversine_distance(read_param<double>(ParamID::ZONE_CENTER_LONGITUDE),
-						read_param<double>(ParamID::ZONE_CENTER_LATITUDE),
-												 m_last_gps_log_entry.info.lon,
-												 m_last_gps_log_entry.info.lat);
+				                                 read_param<double>(ParamID::ZONE_CENTER_LATITUDE),
+				                                 m_last_gps_log_entry.info.lon, m_last_gps_log_entry.info.lat);
 
 				// Check if outside zone radius for exclusion parameter triggering
 				if (d_km > ((double)read_param<unsigned int>(ParamID::ZONE_RADIUS) / (double)1000)) {
@@ -890,7 +868,7 @@ public:
 	}
 
 	/// @brief Populate GNSSConfig struct from current params (handles NORMAL/LB/ZONE modes).
-	void get_gnss_configuration(GNSSConfig& gnss_config) {
+	void get_gnss_configuration(GNSSConfig &gnss_config) {
 		auto cert_tx_enable = read_param<bool>(ParamID::CERT_TX_ENABLE);
 		auto lb_en = read_param<bool>(ParamID::LB_EN);
 		update_battery_level();
@@ -905,18 +883,15 @@ public:
 		// and logs both transitions on each tick (2-line spam ~1 Hz on the
 		// observed field log of 2026-05-23).
 		HauledModeService::evaluate();
-		bool hauled_will_override = !(lb_en && m_is_battery_level_low) &&
-		                             HauledModeService::is_hauled() &&
-		                             read_param<bool>(ParamID::HAULED_DETECT_EN);
+		bool hauled_will_override = !(lb_en && m_is_battery_level_low) && HauledModeService::is_hauled()
+		                            && read_param<bool>(ParamID::HAULED_DETECT_EN);
 
 		// Same prediction for the MOORED override (2026-08). Priority sits below
 		// HAULED and above OUT_OF_ZONE: a vessel lying still far from its zone
 		// should stay economical, so MOORED wins over the zone variant.
 		MooredModeService::evaluate();
-		bool moored_will_override = !(lb_en && m_is_battery_level_low) &&
-		                            !hauled_will_override &&
-		                             MooredModeService::is_moored() &&
-		                             read_param<bool>(ParamID::MOORED_DETECT_EN);
+		bool moored_will_override = !(lb_en && m_is_battery_level_low) && !hauled_will_override
+		                            && MooredModeService::is_moored() && read_param<bool>(ParamID::MOORED_DETECT_EN);
 
 		if (lb_en && m_is_battery_level_low) {
 			// Use LB mode which takes priority
@@ -1036,8 +1011,7 @@ public:
 				           gnss_config.dloc_arg_nom);
 #if VALIDATION_LOG_ENABLE
 				DEBUG_INFO("[VAL-MOORED] mode_enter t=%u src=GNSS dloc=%u",
-				           rtc && rtc->is_set() ? (unsigned int)rtc->gettime() : 0U,
-				           gnss_config.dloc_arg_nom);
+				           rtc && rtc->is_set() ? (unsigned int)rtc->gettime() : 0U, gnss_config.dloc_arg_nom);
 #endif
 				m_last_config_mode = ConfigMode::MOORED;
 			}
@@ -1079,28 +1053,25 @@ public:
 		// are typically allocated as a contiguous block sharing a vendor prefix,
 		// so a naive "parse the first 8 hex chars" would collapse a whole fleet
 		// onto one seed -- the very failure this function exists to prevent.
-		const std::string& deveui = read_param<std::string>(ParamID::LORA_DEVEUI);
+		const std::string &deveui = read_param<std::string>(ParamID::LORA_DEVEUI);
 		if (!deveui.empty()) {
 			unsigned int hash = 2166136261U;  // FNV offset basis
 			for (char c : deveui) {
 				hash ^= (unsigned char)c;
-				hash *= 16777619U;            // FNV prime
+				hash *= 16777619U;  // FNV prime
 			}
-			if (hash)
-				return hash;
+			if (hash) return hash;
 		}
 #endif
 		unsigned int seed = read_param<unsigned int>(ParamID::ARGOS_DECID);
-		if (seed)
-			return seed;
+		if (seed) return seed;
 		seed = read_param<unsigned int>(ParamID::ARGOS_HEXID);
-		if (seed)
-			return seed;
+		if (seed) return seed;
 		return (unsigned int)PMU::device_identifier();
 	}
 
 	/// @brief Populate ArgosConfig struct from current params (handles NORMAL/LB/ZONE modes).
-	void get_argos_configuration(ArgosConfig& argos_config) {
+	void get_argos_configuration(ArgosConfig &argos_config) {
 		auto lb_en = read_param<bool>(ParamID::LB_EN);
 		update_battery_level();
 
@@ -1120,16 +1091,13 @@ public:
 		// HauledModeService::evaluate() call shared with get_gnss_configuration
 		// would be ideal but the two functions are called independently.
 		HauledModeService::evaluate();
-		bool hauled_will_override = !(lb_en && m_is_battery_level_low) &&
-		                             HauledModeService::is_hauled() &&
-		                             read_param<bool>(ParamID::HAULED_DETECT_EN);
+		bool hauled_will_override = !(lb_en && m_is_battery_level_low) && HauledModeService::is_hauled()
+		                            && read_param<bool>(ParamID::HAULED_DETECT_EN);
 
 		// Same prediction for the MOORED override — see get_gnss_configuration().
 		MooredModeService::evaluate();
-		bool moored_will_override = !(lb_en && m_is_battery_level_low) &&
-		                            !hauled_will_override &&
-		                             MooredModeService::is_moored() &&
-		                             read_param<bool>(ParamID::MOORED_DETECT_EN);
+		bool moored_will_override = !(lb_en && m_is_battery_level_low) && !hauled_will_override
+		                            && MooredModeService::is_moored() && read_param<bool>(ParamID::MOORED_DETECT_EN);
 
 		// Power and frequency are controlled by RADIOCONF on SMD devices.
 		// These fields are kept for legacy (non-SMD) scheduler compatibility.
@@ -1202,7 +1170,8 @@ public:
 			argos_config.prepass_min_culmination = read_param<unsigned int>(ParamID::PP_MIN_CULMINATION);
 			argos_config.prepass_rx_min_culmination = read_param<unsigned int>(ParamID::PP_RX_MIN_CULMINATION);
 			argos_config.prepass_position_margin_km = read_param<unsigned int>(ParamID::PP_POSITION_MARGIN_KM);
-			argos_config.delta_time_loc = calc_delta_time_loc(read_param<unsigned int>(ParamID::ZONE_GNSS_DELTA_ARG_LOC_ARGOS_SECONDS));
+			argos_config.delta_time_loc =
+			    calc_delta_time_loc(read_param<unsigned int>(ParamID::ZONE_GNSS_DELTA_ARG_LOC_ARGOS_SECONDS));
 			argos_config.shutdown_ntime_sat = read_param<unsigned int>(ParamID::SHUTDOWN_NTIME_SAT);
 			argos_config.surfacing_burst_init_s = read_param<unsigned int>(ParamID::SURFACING_BURST_INIT_S);
 			argos_config.surfacing_burst_step_s = read_param<unsigned int>(ParamID::SURFACING_BURST_STEP_S);
@@ -1293,8 +1262,7 @@ public:
 				// GPS AND use last fix", but the actual behavior is "GPS stays
 				// off, TX uses cache only". Fired once on HAULED entry only
 				// (gated by the !=HAULED check above) — no log spam.
-				if (strat != (unsigned int)BaseGnssStrategy::FRESH &&
-				    read_param<bool>(ParamID::HAULED_GNSS_EN)) {
+				if (strat != (unsigned int)BaseGnssStrategy::FRESH && read_param<bool>(ParamID::HAULED_GNSS_EN)) {
 					DEBUG_WARN("ConfigurationStore: HMP12=HAULED_GNSS_EN=true but HMP13=%s "
 					           "(non-FRESH) ignores it — GPS will stay OFF during HAULED. "
 					           "Set HMP13=FRESH if you want HMP12 to enable GPS, or set "
@@ -1323,8 +1291,7 @@ public:
 				           argos_config.tx_interval_s);
 #if VALIDATION_LOG_ENABLE
 				DEBUG_INFO("[VAL-MOORED] mode_enter t=%u src=Argos tr=%u",
-				           rtc && rtc->is_set() ? (unsigned int)rtc->gettime() : 0U,
-				           argos_config.tx_interval_s);
+				           rtc && rtc->is_set() ? (unsigned int)rtc->gettime() : 0U, argos_config.tx_interval_s);
 #endif
 				m_last_config_mode = ConfigMode::MOORED;
 			}
@@ -1338,15 +1305,13 @@ public:
 		argos_config.argos_tcxo_warmup_time = read_param<unsigned int>(ParamID::ARGOS_TCXO_WARMUP_TIME);
 
 		// Mark GNSS disabled if certification is set
-		if (argos_config.cert_tx_enable)
-			argos_config.gnss_en = false;
+		if (argos_config.cert_tx_enable) argos_config.gnss_en = false;
 
 		// BLIND is disabled when the EFFECTIVE mode (after LB/OoZ/HAULED override)
 		// runs its own nRF-paced burst — SURFACING_BURST and DOPPLER — because a
 		// module-owned retx would double-transmit. Makes argos_config.blind_en the
 		// mode-aware source of truth for the drivers and the TX service.
-		if (argos_config.mode == BaseArgosMode::SURFACING_BURST ||
-		    argos_config.mode == BaseArgosMode::DOPPLER)
+		if (argos_config.mode == BaseArgosMode::SURFACING_BURST || argos_config.mode == BaseArgosMode::DOPPLER)
 			argos_config.blind_en = false;
 
 		// Adaptive modulation configuration
@@ -1360,19 +1325,31 @@ public:
 		if (argos_config.gnss_en) {
 #if ENABLE_ALS_SENSOR
 			argos_config.sensor_tx_enable |=
-				(int)(read_param<bool>(ParamID::ALS_SENSOR_ENABLE) && read_param<BaseSensorEnableTxMode>(ParamID::ALS_SENSOR_ENABLE_TX_MODE) != BaseSensorEnableTxMode::OFF) << (int)ServiceIdentifier::ALS_SENSOR;
+			    (int)(read_param<bool>(ParamID::ALS_SENSOR_ENABLE)
+			          && read_param<BaseSensorEnableTxMode>(ParamID::ALS_SENSOR_ENABLE_TX_MODE)
+			                 != BaseSensorEnableTxMode::OFF)
+			    << (int)ServiceIdentifier::ALS_SENSOR;
 #endif
 #if ENABLE_PRESSURE_SENSOR
 			argos_config.sensor_tx_enable |=
-				(int)(read_param<bool>(ParamID::PRESSURE_SENSOR_ENABLE) && read_param<BaseSensorEnableTxMode>(ParamID::PRESSURE_SENSOR_ENABLE_TX_MODE) != BaseSensorEnableTxMode::OFF) << (int)ServiceIdentifier::PRESSURE_SENSOR;
+			    (int)(read_param<bool>(ParamID::PRESSURE_SENSOR_ENABLE)
+			          && read_param<BaseSensorEnableTxMode>(ParamID::PRESSURE_SENSOR_ENABLE_TX_MODE)
+			                 != BaseSensorEnableTxMode::OFF)
+			    << (int)ServiceIdentifier::PRESSURE_SENSOR;
 #endif
 #if ENABLE_SEA_TEMP_SENSOR
 			argos_config.sensor_tx_enable |=
-				(int)(read_param<bool>(ParamID::SEA_TEMP_SENSOR_ENABLE) && read_param<BaseSensorEnableTxMode>(ParamID::SEA_TEMP_SENSOR_ENABLE_TX_MODE) != BaseSensorEnableTxMode::OFF) << (int)ServiceIdentifier::SEA_TEMP_SENSOR;
+			    (int)(read_param<bool>(ParamID::SEA_TEMP_SENSOR_ENABLE)
+			          && read_param<BaseSensorEnableTxMode>(ParamID::SEA_TEMP_SENSOR_ENABLE_TX_MODE)
+			                 != BaseSensorEnableTxMode::OFF)
+			    << (int)ServiceIdentifier::SEA_TEMP_SENSOR;
 #endif
 #if ENABLE_PH_SENSOR
 			argos_config.sensor_tx_enable |=
-				(int)(read_param<bool>(ParamID::PH_SENSOR_ENABLE) && read_param<BaseSensorEnableTxMode>(ParamID::PH_SENSOR_ENABLE_TX_MODE) != BaseSensorEnableTxMode::OFF) << (int)ServiceIdentifier::PH_SENSOR;
+			    (int)(read_param<bool>(ParamID::PH_SENSOR_ENABLE)
+			          && read_param<BaseSensorEnableTxMode>(ParamID::PH_SENSOR_ENABLE_TX_MODE)
+			                 != BaseSensorEnableTxMode::OFF)
+			    << (int)ServiceIdentifier::PH_SENSOR;
 #endif
 #if ENABLE_AXL_SENSOR
 			// The accelerometer was missing from this mask while every other
@@ -1386,11 +1363,17 @@ public:
 			// Both AXP01 and AXP05 default to false/OFF, so this changes nothing
 			// until an operator asks for it explicitly.
 			argos_config.sensor_tx_enable |=
-				(int)(read_param<bool>(ParamID::AXL_SENSOR_ENABLE) && read_param<BaseSensorEnableTxMode>(ParamID::AXL_SENSOR_ENABLE_TX_MODE) != BaseSensorEnableTxMode::OFF) << (int)ServiceIdentifier::AXL_SENSOR;
+			    (int)(read_param<bool>(ParamID::AXL_SENSOR_ENABLE)
+			          && read_param<BaseSensorEnableTxMode>(ParamID::AXL_SENSOR_ENABLE_TX_MODE)
+			                 != BaseSensorEnableTxMode::OFF)
+			    << (int)ServiceIdentifier::AXL_SENSOR;
 #endif
 #if ENABLE_THERMISTOR_SENSOR
 			argos_config.sensor_tx_enable |=
-				(int)(read_param<bool>(ParamID::THERMISTOR_SENSOR_ENABLE) && read_param<BaseSensorEnableTxMode>(ParamID::THERMISTOR_SENSOR_ENABLE_TX_MODE) != BaseSensorEnableTxMode::OFF) << (int)ServiceIdentifier::THERMISTOR_SENSOR;
+			    (int)(read_param<bool>(ParamID::THERMISTOR_SENSOR_ENABLE)
+			          && read_param<BaseSensorEnableTxMode>(ParamID::THERMISTOR_SENSOR_ENABLE_TX_MODE)
+			                 != BaseSensorEnableTxMode::OFF)
+			    << (int)ServiceIdentifier::THERMISTOR_SENSOR;
 #endif
 		}
 	}
@@ -1433,9 +1416,7 @@ public:
 		return boot_counter;
 	}
 
-	unsigned int boot_count_read() {
-		return read_param<unsigned int>(ParamID::BOOT_COUNTER);
-	}
+	unsigned int boot_count_read() { return read_param<unsigned int>(ParamID::BOOT_COUNTER); }
 
 	// Check if this boot is our turn to run based on modulo
 	// Returns true if (boot_counter % modulo == 0), meaning it's our turn to run

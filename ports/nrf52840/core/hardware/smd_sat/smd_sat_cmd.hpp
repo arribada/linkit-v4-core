@@ -56,7 +56,7 @@ public:
 	// ========================================================================
 	// Load a KMAC MAC profile. ctx (optional) = packed profile config bytes sent
 	// as hex after the profile id: "AT+KMAC=<profile>,<hex(ctx)>" (BLIND uses it).
-	virtual void load_kmac_profil(uint8_t profile, const uint8_t* ctx = nullptr, uint8_t ctx_len = 0) = 0;
+	virtual void load_kmac_profil(uint8_t profile, const uint8_t *ctx = nullptr, uint8_t ctx_len = 0) = 0;
 	virtual void read_kmac(uint8_t *profile) = 0;
 	virtual void get_kmac_status(uint8_t *status) = 0;
 
@@ -77,7 +77,7 @@ public:
 	// ========================================================================
 	// TX
 	// ========================================================================
-	virtual bool initiate_tx(const KineisPacket& payload) = 0;
+	virtual bool initiate_tx(const KineisPacket &payload) = 0;
 	virtual bool is_tx_finished() = 0;
 	virtual bool is_tx_in_progress() = 0;
 	/// @brief After is_tx_finished() returns true, returns whether the TX
@@ -103,8 +103,14 @@ public:
 	// Contract: *mc / mc is the 9-bit (0-511) counter the NEXT transmission
 	// will use; set_message_counter sets that next MC.
 	// ========================================================================
-	virtual bool read_message_counter(uint16_t *mc) { (void)mc; return false; }
-	virtual bool set_message_counter(uint16_t mc)   { (void)mc; return false; }
+	virtual bool read_message_counter(uint16_t *mc) {
+		(void)mc;
+		return false;
+	}
+	virtual bool set_message_counter(uint16_t mc) {
+		(void)mc;
+		return false;
+	}
 
 	// ========================================================================
 	// Version / firmware info
@@ -130,17 +136,33 @@ public:
 	virtual bool is_dfu_mode() const { return false; }
 	virtual bool dfu_enter() { return false; }
 	virtual bool dfu_exit() { return false; }
-	virtual bool dfu_get_bootloader_info(SmdDfuInfo *info) { (void)info; return false; }
+	virtual bool dfu_get_bootloader_info(SmdDfuInfo *info) {
+		(void)info;
+		return false;
+	}
 	virtual SmdDfuResponse dfu_erase() { return DFU_RSP_ERROR; }
 	virtual SmdDfuResponse dfu_write_chunk(uint32_t addr, const uint8_t *data, uint16_t len) {
-		(void)addr; (void)data; (void)len; return DFU_RSP_ERROR;
+		(void)addr;
+		(void)data;
+		(void)len;
+		return DFU_RSP_ERROR;
 	}
 	virtual SmdDfuResponse dfu_read_chunk(uint32_t addr, uint8_t *data, uint16_t len) {
-		(void)addr; (void)data; (void)len; return DFU_RSP_ERROR;
+		(void)addr;
+		(void)data;
+		(void)len;
+		return DFU_RSP_ERROR;
 	}
-	virtual SmdDfuResponse dfu_verify(uint32_t crc32) { (void)crc32; return DFU_RSP_ERROR; }
+	virtual SmdDfuResponse dfu_verify(uint32_t crc32) {
+		(void)crc32;
+		return DFU_RSP_ERROR;
+	}
 	virtual SmdDfuResponse dfu_jump() { return DFU_RSP_ERROR; }
-	virtual uint32_t calculate_crc32(const uint8_t *data, size_t len) { (void)data; (void)len; return 0; }
+	virtual uint32_t calculate_crc32(const uint8_t *data, size_t len) {
+		(void)data;
+		(void)len;
+		return 0;
+	}
 
 	// ========================================================================
 	// Debug / test

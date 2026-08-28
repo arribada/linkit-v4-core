@@ -10,18 +10,19 @@
 
 /// @brief Printf-based console logger — dispatches to type-specific formatters.
 class ConsoleLog : public Logger {
-
 public:
 	ConsoleLog() : Logger("Console") {}
 
 private:
 	void debug_formatter(const char *level, LogHeader *header, const char *msg) {
 #ifndef CPPUTEST
-		if (__get_IPSR()) // Indicate if this was created from an IRQ
-			printf("%02u/%02u/%04u %02u:%02u:%02u [%s] IRQ\t%s\r\n", header->day, header->month, header->year, header->hours, header->minutes, header->seconds, level, msg);
+		if (__get_IPSR())  // Indicate if this was created from an IRQ
+			printf("%02u/%02u/%04u %02u:%02u:%02u [%s] IRQ\t%s\r\n", header->day, header->month, header->year,
+			       header->hours, header->minutes, header->seconds, level, msg);
 		else
 #endif
-			printf("%02u/%02u/%04u %02u:%02u:%02u [%s]\t%s\r\n", header->day, header->month, header->year, header->hours, header->minutes, header->seconds, level, msg);
+			printf("%02u/%02u/%04u %02u:%02u:%02u [%s]\t%s\r\n", header->day, header->month, header->year,
+			       header->hours, header->minutes, header->seconds, level, msg);
 	}
 	void gps_formatter(const GPSLogEntry *entry) {
 		const char *name = log_type_name[entry->header.log_type];
@@ -49,7 +50,8 @@ private:
 	}
 	void ble_formatter(const BLEActionLogEntry *entry) {
 		const char *name = log_type_name[entry->header.log_type];
-		printf("[%s]\tble_state: %d cause: %d\r\n", name, static_cast<int>(entry->event), static_cast<int>(entry->cause));
+		printf("[%s]\tble_state: %d cause: %d\r\n", name, static_cast<int>(entry->event),
+		       static_cast<int>(entry->cause));
 	}
 	void state_formatter(const StateChangeLogEntry *entry) {
 		const char *name = log_type_name[entry->header.log_type];
@@ -60,8 +62,8 @@ public:
 	void create() override {}
 	void truncate() override {}
 	bool is_ready() override { return true; }
-	unsigned int num_entries() override {return 0;}
-	void read(void *, int) override { }
+	unsigned int num_entries() override { return 0; }
+	void read(void *, int) override {}
 	void write(void *entry) override {
 		auto *p = static_cast<LogEntry *>(entry);
 		switch (p->header.log_type) {
@@ -71,35 +73,18 @@ public:
 		case LOG_TRACE:
 			debug_formatter(log_type_name[p->header.log_type], &p->header, reinterpret_cast<const char *>(p->data));
 			break;
-		case LOG_GPS:
-			gps_formatter(static_cast<const GPSLogEntry *>(entry));
-			break;
-		case LOG_STATE:
-			state_formatter(static_cast<const StateChangeLogEntry *>(entry));
-			break;
-		case LOG_BATTERY:
-			battery_formatter(static_cast<const BatteryLogEntry *>(entry));
-			break;
-		case LOG_STARTUP:
-			startup_formatter(static_cast<const SystemStartupLogEntry *>(entry));
-			break;
-		case LOG_ZONE:
-			zone_formatter(static_cast<const ZoneLogEntry *>(entry));
-			break;
-		case LOG_UNDERWATER:
-			underwater_formatter(static_cast<const UnderwaterLogEntry *>(entry));
-			break;
-		case LOG_BLE:
-			ble_formatter(static_cast<const BLEActionLogEntry *>(entry));
-			break;
-		case LOG_OTA_UPDATE:
-			ota_update_formatter(static_cast<const OTAFWUpdateLogEntry *>(entry));
-			break;
+		case LOG_GPS: gps_formatter(static_cast<const GPSLogEntry *>(entry)); break;
+		case LOG_STATE: state_formatter(static_cast<const StateChangeLogEntry *>(entry)); break;
+		case LOG_BATTERY: battery_formatter(static_cast<const BatteryLogEntry *>(entry)); break;
+		case LOG_STARTUP: startup_formatter(static_cast<const SystemStartupLogEntry *>(entry)); break;
+		case LOG_ZONE: zone_formatter(static_cast<const ZoneLogEntry *>(entry)); break;
+		case LOG_UNDERWATER: underwater_formatter(static_cast<const UnderwaterLogEntry *>(entry)); break;
+		case LOG_BLE: ble_formatter(static_cast<const BLEActionLogEntry *>(entry)); break;
+		case LOG_OTA_UPDATE: ota_update_formatter(static_cast<const OTAFWUpdateLogEntry *>(entry)); break;
 		case LOG_CAM:
 		case LOG_AXL:
 		case LOG_MORTALITY:
-		default:
-			break;
+		default: break;
 		}
 	}
 };

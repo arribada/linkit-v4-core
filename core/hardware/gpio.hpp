@@ -27,14 +27,14 @@ public:
 	static void clear(uint32_t pin);
 	static void toggle(uint32_t pin);
 	static uint32_t value(uint32_t pin);
-	static void disable(uint32_t pin);   ///< Float pin (nrf_gpio_cfg_default)
-	static void enable(uint32_t pin);    ///< Restore BSP configuration
+	static void disable(uint32_t pin);  ///< Float pin (nrf_gpio_cfg_default)
+	static void enable(uint32_t pin);   ///< Restore BSP configuration
 	/// @}
 
 	/// @name VSENSORS power management (reference-counted)
 	/// @{
-	static void acquire_sensors_pwr();   ///< Increment refcount, power on if was 0
-	static void release_sensors_pwr();   ///< Decrement refcount, power off if reaches 0
+	static void acquire_sensors_pwr();  ///< Increment refcount, power on if was 0
+	static void release_sensors_pwr();  ///< Decrement refcount, power off if reaches 0
 	static bool get_sensors_pwr_state();
 	static uint8_t get_sensors_pwr_refcount();
 	/// @brief Verrou "l'UART GNSS est en service" (2026-08).
@@ -111,6 +111,6 @@ class SensorsPowerGuard {
 public:
 	SensorsPowerGuard() { GPIOPins::acquire_sensors_pwr(); }
 	~SensorsPowerGuard() { GPIOPins::release_sensors_pwr(); }
-	SensorsPowerGuard(const SensorsPowerGuard&) = delete;
-	SensorsPowerGuard& operator=(const SensorsPowerGuard&) = delete;
+	SensorsPowerGuard(const SensorsPowerGuard &) = delete;
+	SensorsPowerGuard &operator=(const SensorsPowerGuard &) = delete;
 };

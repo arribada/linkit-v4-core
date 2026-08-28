@@ -20,11 +20,11 @@
 /// @brief LoRa TX service — builds and transmits packets via KineisDevice (LoRa backend).
 class LoRaTxService : public Service, KineisEventListener {
 public:
-	LoRaTxService(KineisDevice& device);
+	LoRaTxService(KineisDevice &device);
 
 	/// @brief Handle peer events (GPS fix, sensor data, underwater state).
 	/// @param e  Peer service event.
-	void notify_peer_event(ServiceEvent& e) override;
+	void notify_peer_event(ServiceEvent &e) override;
 
 protected:
 	void service_init() override;
@@ -34,11 +34,11 @@ protected:
 	void service_initiate() override;
 	bool service_cancel() override;
 	unsigned int service_next_timeout() override;
-	bool service_is_triggered_on_surfaced(bool& immediate) override;
+	bool service_is_triggered_on_surfaced(bool &immediate) override;
 	bool service_is_active_on_initiate() override;
 
 private:
-	KineisDevice& m_device;
+	KineisDevice &m_device;
 	DepthPileManager m_depth_pile_manager;
 	LoRaTxScheduler m_sched;
 	bool m_is_first_tx = true;
@@ -46,8 +46,8 @@ private:
 	unsigned int m_session_tx_count = 0;
 	unsigned int m_consecutive_device_errors = 0;
 	static constexpr unsigned int DEVICE_ERROR_MAX_CONSECUTIVE = 3;
-	static constexpr unsigned int DEVICE_ERROR_BACKOFF_BASE_MS = 60000;   ///< 1 min
-	static constexpr unsigned int DEVICE_ERROR_BACKOFF_MAX_MS  = 600000;  ///< 10 min
+	static constexpr unsigned int DEVICE_ERROR_BACKOFF_BASE_MS = 60000;  ///< 1 min
+	static constexpr unsigned int DEVICE_ERROR_BACKOFF_MAX_MS = 600000;  ///< 10 min
 
 	/// @brief How long TX stays suspended after DEVICE_ERROR_MAX_CONSECUTIVE
 	/// strikes, before one probe dispatch is allowed through.
@@ -124,9 +124,9 @@ private:
 	/// any previously pending pre-warm task before re-arming.
 	void schedule_burst_prewarm();
 
-	void react(KineisEventTxStarted const&) override;
-	void react(KineisEventTxComplete const&) override;
-	void react(KineisEventDeviceError const&) override;
+	void react(KineisEventTxStarted const &) override;
+	void react(KineisEventTxComplete const &) override;
+	void react(KineisEventDeviceError const &) override;
 
 	void process_gps_burst();
 	void process_sensor_burst();

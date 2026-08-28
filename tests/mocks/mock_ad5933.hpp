@@ -8,13 +8,13 @@
 class MockAD5933 : public AD5933 {
 public:
 	void start(const unsigned int frequency = 90000, const VRange vrange = VRange::V1_GAIN1X) {
-		mock().actualCall("start").onObject(this).
-				withParameter("frequency", frequency).
-				withParameter("vrange", (unsigned int)vrange);
+		mock()
+		    .actualCall("start")
+		    .onObject(this)
+		    .withParameter("frequency", frequency)
+		    .withParameter("vrange", (unsigned int)vrange);
 	}
-	void stop() {
-		mock().actualCall("stop").onObject(this);
-	}
+	void stop() { mock().actualCall("stop").onObject(this); }
 	double get_impedence(const unsigned int averaging = 1, const double gain = 1) {
 		int16_t real, imag;
 		double impedence = 0;
@@ -26,10 +26,8 @@ public:
 		impedence /= averaging;
 		return impedence;
 	}
-	void get_real_imaginary(int16_t& real, int16_t& imag) {
-		real = (int16_t)mock().actualCall("get_real_imaginary.real").onObject(this).
-				returnIntValue();
-		imag = (int16_t)mock().actualCall("get_real_imaginary.imag").onObject(this).
-				returnIntValue();
+	void get_real_imaginary(int16_t &real, int16_t &imag) {
+		real = (int16_t)mock().actualCall("get_real_imaginary.real").onObject(this).returnIntValue();
+		imag = (int16_t)mock().actualCall("get_real_imaginary.imag").onObject(this).returnIntValue();
 	}
 };

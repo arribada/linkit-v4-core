@@ -15,8 +15,7 @@ extern Scheduler *system_scheduler;
 extern RTC *rtc;
 
 
-TEST_GROUP(DiveMode)
-{
+TEST_GROUP(DiveMode) {
 	FakeConfigurationStore *fake_config_store;
 	FakeTimer *fake_timer;
 	FakeRTC *fake_rtc;
@@ -44,13 +43,12 @@ TEST_GROUP(DiveMode)
 		delete fake_timer;
 		delete fake_config_store;
 		delete fake_rtc;
-		rtc = nullptr;   // never leave a dangling global for the next test
+		rtc = nullptr;  // never leave a dangling global for the next test
 	}
 
 	void notify_underwater_state(bool state) {
 		ServiceEvent e;
-		e.event_type = ServiceEventType::SERVICE_LOG_UPDATED,
-		e.event_data = state,
+		e.event_type = ServiceEventType::SERVICE_LOG_UPDATED, e.event_data = state,
 		e.event_source = ServiceIdentifier::UW_SENSOR;
 		e.event_originator_unique_id = 0x12345678;
 		ServiceManager::notify_peer_event(e);
@@ -63,8 +61,7 @@ TEST_GROUP(DiveMode)
 };
 
 
-TEST(DiveMode, DiveModeEngagedAndDisengagedBySurfacing)
-{
+TEST(DiveMode, DiveModeEngagedAndDisengagedBySurfacing) {
 	unsigned int start_period = 10;
 	bool dive_mode_en = true;
 
@@ -83,8 +80,7 @@ TEST(DiveMode, DiveModeEngagedAndDisengagedBySurfacing)
 	CHECK_FALSE(fake_switch.is_paused());
 }
 
-TEST(DiveMode, DiveModeHasNoEffectWhenDisabled)
-{
+TEST(DiveMode, DiveModeHasNoEffectWhenDisabled) {
 	unsigned int start_period = 10;
 	bool dive_mode_en = false;
 
@@ -100,8 +96,7 @@ TEST(DiveMode, DiveModeHasNoEffectWhenDisabled)
 	CHECK_FALSE(fake_switch.is_paused());
 }
 
-TEST(DiveMode, DiveModeDisengagedIfServiceStopped)
-{
+TEST(DiveMode, DiveModeDisengagedIfServiceStopped) {
 	unsigned int start_period = 10;
 	bool dive_mode_en = true;
 
@@ -123,8 +118,7 @@ TEST(DiveMode, DiveModeDisengagedIfServiceStopped)
 /// the reed paused at the next surface. The previous gating on
 /// `service_is_enabled()` would silently drop surface events if the user
 /// disabled dive mode mid-engaged via DTE — leaving the magnet inert.
-TEST(DiveMode, DiveModeDisengagesEvenIfDisabledMidCycle)
-{
+TEST(DiveMode, DiveModeDisengagesEvenIfDisabledMidCycle) {
 	unsigned int start_period = 10;
 
 	configuration_store->write_param(ParamID::UW_DIVE_MODE_ENABLE, (bool)true);
@@ -154,8 +148,7 @@ TEST(DiveMode, DiveModeDisengagesEvenIfDisabledMidCycle)
 /// must NOT pause the reed when the timer eventually fires. Otherwise the
 /// magnet stays inert at the surface — see dive_mode_service.hpp StartPending
 /// branch.
-TEST(DiveMode, DiveModeCancelledByEarlySurfacing)
-{
+TEST(DiveMode, DiveModeCancelledByEarlySurfacing) {
 	unsigned int start_period = 10;
 	bool dive_mode_en = true;
 
@@ -192,8 +185,7 @@ TEST(DiveMode, DiveModeCancelledByEarlySurfacing)
 }
 
 
-TEST(DiveMode, DiveModeRunsMultipleTimes)
-{
+TEST(DiveMode, DiveModeRunsMultipleTimes) {
 	unsigned int start_period = 10;
 	bool dive_mode_en = true;
 

@@ -44,12 +44,10 @@ static NrfIRQ *pin_map_get(uint32_t pin) {
 // ═══════════════════════════════════════════════════════
 
 static void nrfx_gpiote_in_event_handler(nrfx_gpiote_pin_t pin, nrf_gpiote_polarity_t action) {
-	if (action != NRF_GPIOTE_POLARITY_LOTOHI && action != NRF_GPIOTE_POLARITY_HITOLO)
-		return;
+	if (action != NRF_GPIOTE_POLARITY_LOTOHI && action != NRF_GPIOTE_POLARITY_HITOLO) return;
 
 	NrfIRQ *obj = pin_map_get(static_cast<uint32_t>(pin));
-	if (obj)
-		obj->process_event();
+	if (obj) obj->process_event();
 }
 
 
@@ -68,8 +66,8 @@ NrfIRQ::NrfIRQ(int pin) : m_pin(pin), m_task{} {
 	}
 
 	uint32_t hw_pin = BSP::GPIO_Inits[m_pin].pin_number;
-	if (nrfx_gpiote_in_init(hw_pin, &BSP::GPIO_Inits[m_pin].gpiote_in_config,
-	                         nrfx_gpiote_in_event_handler) != NRFX_SUCCESS) {
+	if (nrfx_gpiote_in_init(hw_pin, &BSP::GPIO_Inits[m_pin].gpiote_in_config, nrfx_gpiote_in_event_handler)
+	    != NRFX_SUCCESS) {
 		throw ErrorCode::RESOURCE_NOT_AVAILABLE;
 	}
 
@@ -101,13 +99,11 @@ void NrfIRQ::disable() {
 
 /// @brief Post the user callback to the scheduler (called from GPIOTE ISR).
 void NrfIRQ::process_event() {
-	if (m_func)
-		m_task = system_scheduler->post_task_prio([this]() { m_func(); }, "NrfIRQTask");
+	if (m_func) m_task = system_scheduler->post_task_prio([this]() { m_func(); }, "NrfIRQTask");
 }
 
 /// @brief Read current pin level, returns true if the active polarity matches.
 bool NrfIRQ::poll() {
-	if (BSP::GPIO_Inits[m_pin].gpiote_in_config.sense == NRF_GPIOTE_POLARITY_LOTOHI)
-		return GPIOPins::value(m_pin);
+	if (BSP::GPIO_Inits[m_pin].gpiote_in_config.sense == NRF_GPIOTE_POLARITY_LOTOHI) return GPIOPins::value(m_pin);
 	return !GPIOPins::value(m_pin);
 }

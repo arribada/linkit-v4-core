@@ -9,7 +9,7 @@
 
 /// @brief Parameter value with its ParamID (used by PARMW command).
 struct ParamValue {
-	ParamID  param;
+	ParamID param;
 	BaseType value;
 };
 

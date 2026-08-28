@@ -8,8 +8,7 @@
  * existants qui ne l'attendent pas. */
 nrf_uarte_baudrate_t g_fake_last_baudrate = NRF_UARTE_BAUDRATE_9600;
 
-void nrf_uarte_baudrate_set(NRF_UARTE_Type   * p_reg, nrf_uarte_baudrate_t baudrate)
-{
-    (void)p_reg;
-    g_fake_last_baudrate = baudrate;
+void nrf_uarte_baudrate_set(NRF_UARTE_Type *p_reg, nrf_uarte_baudrate_t baudrate) {
+	(void)p_reg;
+	g_fake_last_baudrate = baudrate;
 }

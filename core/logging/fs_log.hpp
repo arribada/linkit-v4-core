@@ -16,24 +16,22 @@ static constexpr unsigned int LOG_CHUNK_SIZE = 4 * 1024;
 
 /// @brief Persistent circular log stored as chunked LittleFS files.
 class FsLog : public Logger {
-
 private:
 	LFSFileSystem *m_filesystem;
-	LFSFile *m_file_read;				// Used for avoiding file open overhead on reads
-	LFSFile *m_file_write;				// Used for avoiding file open overhead on writes
-	unsigned int m_last_read_index;		// Last file index read
-	unsigned int m_max_size;			// Maximum overall log size
-	unsigned int m_write_offset;		// Current write offset written as file attribute
-	const char *m_filename;				// Base name of log file
-	unsigned int m_has_wrapped;			// Tracks if the log file has wrapped
+	LFSFile *m_file_read;            // Used for avoiding file open overhead on reads
+	LFSFile *m_file_write;           // Used for avoiding file open overhead on writes
+	unsigned int m_last_read_index;  // Last file index read
+	unsigned int m_max_size;         // Maximum overall log size
+	unsigned int m_write_offset;     // Current write offset written as file attribute
+	const char *m_filename;          // Base name of log file
+	unsigned int m_has_wrapped;      // Tracks if the log file has wrapped
 	bool m_is_ready;
 
 	void set_payload_size(LogEntry *entry) {
-		if (entry->header.log_type == LogType::LOG_GPS)
-			entry->header.payload_size = sizeof(GPSInfo);
+		if (entry->header.log_type == LogType::LOG_GPS) entry->header.payload_size = sizeof(GPSInfo);
 	}
-public:
 
+public:
 	FsLog(LFSFileSystem *fs, const char *filename, const unsigned int max_size) : Logger(filename) {
 		m_filesystem = fs;
 		m_filename = filename;
@@ -54,7 +52,6 @@ public:
 	bool is_ready() override { return m_is_ready; }
 
 	void truncate() {
-
 		// Close any open file handles BEFORE nulling pointers
 		delete m_file_read;
 		m_file_read = nullptr;
@@ -78,9 +75,7 @@ public:
 	void create() {
 		try {
 			// See if log file exists
-			{
-				LFSFile f(m_filesystem, m_filename, LFS_O_RDONLY);
-			}
+			{ LFSFile f(m_filesystem, m_filename, LFS_O_RDONLY); }
 
 			// Get the current attribute from the file
 			unsigned int attr;
@@ -109,9 +104,7 @@ public:
 
 		} catch (int e) {
 			// Create a new log file if the file does not exist
-			{
-				LFSFile f(m_filesystem, m_filename, LFS_O_WRONLY | LFS_O_CREAT);
-			}
+			{ LFSFile f(m_filesystem, m_filename, LFS_O_WRONLY | LFS_O_CREAT); }
 			unsigned int attr = m_write_offset | m_has_wrapped;
 			m_filesystem->set_attr(m_filename, attr);
 			//DEBUG_TRACE("FsLog::create: file=%s does not exist setting attr=%08x", m_filename, attr);
@@ -120,9 +113,7 @@ public:
 			unsigned int file_index = 0;
 			std::string filename(m_filename);
 			filename += "." + std::to_string(file_index);
-			{
-				LFSFile f(m_filesystem, filename.c_str(), LFS_O_WRONLY | LFS_O_CREAT);
-			}
+			{ LFSFile f(m_filesystem, filename.c_str(), LFS_O_WRONLY | LFS_O_CREAT); }
 
 			DEBUG_INFO("FsLog::create: new log file %s created", m_filename);
 		}
@@ -131,8 +122,7 @@ public:
 	}
 
 	void write(void *entry) {
-		if (!m_is_ready)
-			throw ErrorCode::RESOURCE_NOT_AVAILABLE;
+		if (!m_is_ready) throw ErrorCode::RESOURCE_NOT_AVAILABLE;
 
 		// To minimize the risk of data loss, this function will always open/close the file
 		// object each time and also write to the attributes file to update the write offset
@@ -156,9 +146,10 @@ public:
 
 		// Check to ensure the file size and write offset are equal
 		if (static_cast<unsigned int>(f.size()) != (m_write_offset % LOG_CHUNK_SIZE)) {
-			DEBUG_TRACE("File size (%u) does not match expected write offset (%u)", f.size(), (m_write_offset % LOG_CHUNK_SIZE));
+			DEBUG_TRACE("File size (%u) does not match expected write offset (%u)", f.size(),
+			            (m_write_offset % LOG_CHUNK_SIZE));
 			// We need to reset this chunk back to its start -- this log entry will be lost
-			m_write_offset &= ~(LOG_CHUNK_SIZE-1);
+			m_write_offset &= ~(LOG_CHUNK_SIZE - 1);
 		} else {
 			set_payload_size(static_cast<LogEntry *>(entry));
 			f.write(entry, static_cast<lfs_size_t>(sizeof(LogEntry)));
@@ -182,10 +173,8 @@ public:
 		}
 	}
 
-	void read(void *entry, int index=0) {
-
-		if (!m_is_ready)
-			throw ErrorCode::RESOURCE_NOT_AVAILABLE;
+	void read(void *entry, int index = 0) {
+		if (!m_is_ready) throw ErrorCode::RESOURCE_NOT_AVAILABLE;
 
 		// Compute the log chunk we need to read
 		unsigned int read_offset = 0;
@@ -207,8 +196,7 @@ public:
 			// Close the existing cached file handle (if any) and open a new one
 			std::string filename(m_filename);
 			filename += "." + std::to_string(file_index);
-			if (m_file_read)
-				delete m_file_read;
+			if (m_file_read) delete m_file_read;
 			m_file_read = new LFSFile(m_filesystem, filename.c_str(), LFS_O_RDONLY);
 			m_last_read_index = file_index;
 		}
@@ -224,7 +212,7 @@ public:
 			// the base read position of the log file.  Note that the rounding up is necessary since
 			// when overwriting previous log chunks they get deleted first.
 			if ((m_write_offset % LOG_CHUNK_SIZE) == 0)
-				return m_max_size / sizeof(LogEntry); // Full log file if write offset is on log chunk boundary
+				return m_max_size / sizeof(LogEntry);  // Full log file if write offset is on log chunk boundary
 			else
 				return (m_max_size - (LOG_CHUNK_SIZE - (m_write_offset % LOG_CHUNK_SIZE))) / sizeof(LogEntry);
 		} else {

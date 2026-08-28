@@ -14,7 +14,7 @@ class M10QAsyncReceiver : public UBXCommsEventListener, public GPSDevice {
 public:
 	M10QAsyncReceiver();
 	~M10QAsyncReceiver();
-	void power_on(const GPSNavSettings& nav_settings) override;
+	void power_on(const GPSNavSettings &nav_settings) override;
 	void power_off() override;
 	void power_off_immediate() override;
 	bool enter_backup_charge_mode() override;
@@ -22,9 +22,7 @@ public:
 	/// @brief 2026-05 deep-idle refactor: report whether the M10Q is in PMREQ-backup
 	/// with rail still on (state == backupidle or transitioning to it). Used by
 	/// GPSService for the R5 hygiene check + service_initiate fast-path detection.
-	bool is_in_deep_idle() const override {
-		return m_state == State::backupidle || m_state == State::enterbackup;
-	}
+	bool is_in_deep_idle() const override { return m_state == State::backupidle || m_state == State::enterbackup; }
 	/// @brief 2026-05 (CRITICAL #1 audit fix): arm deep-idle as the next stop
 	/// disposition. Sets an intent flag that is honored in `state_poweroff()`:
 	/// instead of cutting VDD via `enter_shutdown()`, the state machine routes
@@ -41,9 +39,9 @@ public:
 private:
 	GPSNavSettings m_nav_settings;
 	UBXComms m_ubx_comms;
-	uint8_t  m_navigation_database[16384];
+	uint8_t m_navigation_database[16384];
 	unsigned int m_ano_database_len;
-    unsigned int m_ana_database_len;
+	unsigned int m_ana_database_len;
 	unsigned int m_expected_dbd_messages;
 	unsigned int m_mga_ack_count;
 	unsigned int m_step;
@@ -198,18 +196,11 @@ private:
 		stopreceive,
 		fetchdatabase,
 		poweroff,
-		enterbackup,        ///< Powering on rail + sending UBX-RXM-PMREQ backup
-		backupidle,         ///< Rail powered, UART torn down, M10 sleeping (~15 µA from V_BCKP)
+		enterbackup,  ///< Powering on rail + sending UBX-RXM-PMREQ backup
+		backupidle,   ///< Rail powered, UART torn down, M10 sleeping (~15 µA from V_BCKP)
 	};
 
-	enum OpState {
-		IDLE,
-		PENDING,
-		SUCCESS,
-		TIMEOUT,
-		NACK,
-		ERROR
-	};
+	enum OpState { IDLE, PENDING, SUCCESS, TIMEOUT, NACK, ERROR };
 
 	State m_state = State::idle;
 	/// 2026-08 (A1) — `volatile` obligatoire: ce champ est ecrit depuis le
@@ -237,8 +228,8 @@ private:
 	void state_poweron();
 	unsigned int boot_baud_for_step(unsigned int step) const;
 	static unsigned int boot_baud_retries(unsigned int step);
-	void reset_session_state(const GPSNavSettings& nav_settings);
-	void reset_session_counters(const GPSNavSettings& nav_settings);
+	void reset_session_state(const GPSNavSettings &nav_settings);
+	void reset_session_counters(const GPSNavSettings &nav_settings);
 	void state_poweron_exit();
 	void state_configure_enter();
 	void state_configure();
@@ -308,11 +299,11 @@ private:
 	void enable_nav_pvt_message();
 	void enable_nav_dop_message();
 	void enable_nav_status_message();
-    void enable_nav_sat_message();
+	void enable_nav_sat_message();
 	void disable_nav_pvt_message();
 	void disable_nav_dop_message();
 	void disable_nav_status_message();
-    void disable_nav_sat_message();
+	void disable_nav_sat_message();
 	void enable_rxm_measc12_message();
 	void enable_rxm_meas20_message();
 	void enable_rxm_meas50_message();
@@ -321,7 +312,7 @@ private:
 	void query_sec_uniqid();
 	void sync_baud_rate(unsigned int baud);
 	void send_pmreq_backup();
-	void pulse_extint_wake();   ///< 2026-05 deep-idle: pulse EXTINT to wake M10Q from PMREQ-backup
+	void pulse_extint_wake();  ///< 2026-05 deep-idle: pulse EXTINT to wake M10Q from PMREQ-backup
 
 	// 2026-05 deep-idle robustness: counter of consecutive wake-from-deep-idle
 	// failures. Incremented before each attempt, reset on first successful
@@ -363,18 +354,18 @@ private:
 #endif
 
 	// Events
-	void react(const UBXCommsEventSendComplete&) override;
-	void react(const UBXCommsEventAckNack&) override;
-	void react(const UBXCommsEventCfgValget&) override;
-    void react(const UBXCommsEventSatReport& sat) override;
-	void react(const UBXCommsEventNavReport&) override;
-	void react(const UBXCommsEventMgaAck&) override;
-	void react(const UBXCommsEventMgaDBD&) override;
-	void react(const UBXCommsEventMonVer&) override;
-	void react(const UBXCommsEventSecUniqId&) override;
-	void react(const UBXCommsEventRawMeasurement&) override;
-	void react(const UBXCommsEventDebug&) override;
-	void react(const UBXCommsEventError&) override;
+	void react(const UBXCommsEventSendComplete &) override;
+	void react(const UBXCommsEventAckNack &) override;
+	void react(const UBXCommsEventCfgValget &) override;
+	void react(const UBXCommsEventSatReport &sat) override;
+	void react(const UBXCommsEventNavReport &) override;
+	void react(const UBXCommsEventMgaAck &) override;
+	void react(const UBXCommsEventMgaDBD &) override;
+	void react(const UBXCommsEventMonVer &) override;
+	void react(const UBXCommsEventSecUniqId &) override;
+	void react(const UBXCommsEventRawMeasurement &) override;
+	void react(const UBXCommsEventDebug &) override;
+	void react(const UBXCommsEventError &) override;
 
 public:
 	GNSSDeviceInfo get_device_info() const override;
@@ -389,7 +380,7 @@ public:
 	void stop_bridge() override;
 	bool is_bridge_active() const override { return m_bridge_active; }
 	bool is_powered() const override { return m_num_power_on > 0 || m_state != State::idle; }
-	bool bridge_send(const uint8_t* data, size_t len) override;
+	bool bridge_send(const uint8_t *data, size_t len) override;
 	void bridge_process_rx() override;
 
 private:

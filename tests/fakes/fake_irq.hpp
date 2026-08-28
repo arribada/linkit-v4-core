@@ -5,7 +5,6 @@
 class FakeIRQ : public IRQ {
 public:
 	void invoke() {
-		if (m_func)
-			m_func();
+		if (m_func) m_func();
 	}
 };

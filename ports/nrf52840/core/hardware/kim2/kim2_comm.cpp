@@ -17,8 +17,7 @@ using namespace KIM2;
 // RCONF response parser (namespace-scope helper — reusable by KIM2Device)
 // ============================================================================
 
-KIM2::RConfDecoded KIM2::parse_rconf_info(const std::string& info)
-{
+KIM2::RConfDecoded KIM2::parse_rconf_info(const std::string &info) {
 	// Expected: "<min_freq>,<max_freq>,<rf_level>,<modulation>"
 	// e.g. "401625000,401635000,27,VLDA4"
 	RConfDecoded out;
@@ -30,10 +29,10 @@ KIM2::RConfDecoded KIM2::parse_rconf_info(const std::string& info)
 	const size_t c3 = info.find(',', c2 + 1);
 	if (c3 == std::string::npos) return out;
 
-	char* end = nullptr;
+	char *end = nullptr;
 	const std::string s_min = info.substr(0, c1);
 	const std::string s_max = info.substr(c1 + 1, c2 - c1 - 1);
-	const std::string s_rf  = info.substr(c2 + 1, c3 - c2 - 1);
+	const std::string s_rf = info.substr(c2 + 1, c3 - c2 - 1);
 	const std::string s_mod = info.substr(c3 + 1);
 
 	const unsigned long min_hz = strtoul(s_min.c_str(), &end, 10);
@@ -43,14 +42,14 @@ KIM2::RConfDecoded KIM2::parse_rconf_info(const std::string& info)
 	const long rf = strtol(s_rf.c_str(), &end, 10);
 	if (end == s_rf.c_str()) return out;
 
-	out.min_freq_hz  = static_cast<unsigned int>(min_hz);
-	out.max_freq_hz  = static_cast<unsigned int>(max_hz);
+	out.min_freq_hz = static_cast<unsigned int>(min_hz);
+	out.max_freq_hz = static_cast<unsigned int>(max_hz);
 	out.rf_level_dbm = static_cast<int>(rf);
-	out.modulation   = s_mod;
+	out.modulation = s_mod;
 	// Strip any trailing whitespace/CR left over (base class should have stripped CRLF)
-	while (!out.modulation.empty() &&
-	       (out.modulation.back() == '\r' || out.modulation.back() == '\n' ||
-	        out.modulation.back() == ' '  || out.modulation.back() == '\t')) {
+	while (!out.modulation.empty()
+	       && (out.modulation.back() == '\r' || out.modulation.back() == '\n' || out.modulation.back() == ' '
+	           || out.modulation.back() == '\t')) {
 		out.modulation.pop_back();
 	}
 	out.valid = !out.modulation.empty();
@@ -61,18 +60,13 @@ KIM2::RConfDecoded KIM2::parse_rconf_info(const std::string& info)
 // Constructor / Init / Deinit — delegate to NrfUartAsync
 // ============================================================================
 
-KIM2Comm::KIM2Comm(unsigned int instance)
-	: NrfUartAsync(instance)
-{
-}
+KIM2Comm::KIM2Comm(unsigned int instance) : NrfUartAsync(instance) {}
 
-void KIM2Comm::init()
-{
+void KIM2Comm::init() {
 	NrfUartAsync::init();  // Uses BSP default baudrate
 }
 
-void KIM2Comm::deinit()
-{
+void KIM2Comm::deinit() {
 	NrfUartAsync::deinit();
 }
 
@@ -80,8 +74,7 @@ void KIM2Comm::deinit()
 // AT command send
 // ============================================================================
 
-bool KIM2Comm::send(ATCmd cmd, const std::optional<std::string>& params)
-{
+bool KIM2Comm::send(ATCmd cmd, const std::optional<std::string> &params) {
 	if (m_is_send_busy) {
 		DEBUG_ERROR("KIM2Comm: already busy");
 		return false;
@@ -98,30 +91,23 @@ struct ATCmdEntry {
 };
 
 static constexpr ATCmdEntry cmd_table[] = {
-	{ AT_PING,           "AT+PING=?\r\n",    false },
-	{ AT_GET_ID,         "AT+ID=?\r\n",       false },
-	{ AT_GET_ADDR,       "AT+ADDR=?\r\n",     false },
-	{ AT_SET_RCONF,      "AT+RCONF=",          true },
-	{ AT_GET_RCONF,      "AT+RCONF=?\r\n",    false },
-	{ AT_SET_KMAC_BASIC, "AT+KMAC=1\r\n",     false },
-	{ AT_SET_KMAC_BLIND, "AT+KMAC=2,",         true  },
-	{ AT_TX,             "AT+TX=",              true },
-	{ AT_GET_FW,         "AT+FW=?\r\n",         false },
-	{ AT_DL_START,       "AT+DL=",              true  },
-	{ AT_DL_STOP,        "AT+DL=0\r\n",         false },
+	{ AT_PING, "AT+PING=?\r\n", false },       { AT_GET_ID, "AT+ID=?\r\n", false },
+	{ AT_GET_ADDR, "AT+ADDR=?\r\n", false },   { AT_SET_RCONF, "AT+RCONF=", true },
+	{ AT_GET_RCONF, "AT+RCONF=?\r\n", false }, { AT_SET_KMAC_BASIC, "AT+KMAC=1\r\n", false },
+	{ AT_SET_KMAC_BLIND, "AT+KMAC=2,", true }, { AT_TX, "AT+TX=", true },
+	{ AT_GET_FW, "AT+FW=?\r\n", false },       { AT_DL_START, "AT+DL=", true },
+	{ AT_DL_STOP, "AT+DL=0\r\n", false },
 };
 
-bool KIM2Comm::send_at_cmd(ATCmd cmd, const std::optional<std::string>& params)
-{
+bool KIM2Comm::send_at_cmd(ATCmd cmd, const std::optional<std::string> &params) {
 	if (cmd >= AT_UNKNOWN || cmd >= static_cast<ATCmd>(std::size(cmd_table))) {
 		return false;
 	}
-	const auto& entry = cmd_table[cmd];
+	const auto &entry = cmd_table[cmd];
 
 	// Fresh AT+TX cycle: forget any prior +HDLR ack so the delayed +TX status is
 	// parsed against THIS transmission's stack format (see m_hdlr_seen).
-	if (cmd == AT_TX)
-		m_hdlr_seen = false;
+	if (cmd == AT_TX) m_hdlr_seen = false;
 
 	m_tx_buffer = entry.prefix;
 	if (entry.expects_params && params.has_value()) {
@@ -136,8 +122,7 @@ bool KIM2Comm::send_at_cmd(ATCmd cmd, const std::optional<std::string>& params)
 // process_rx — delegate to base class
 // ============================================================================
 
-void KIM2Comm::process_rx()
-{
+void KIM2Comm::process_rx() {
 	NrfUartAsync::process_rx();
 }
 
@@ -145,13 +130,11 @@ void KIM2Comm::process_rx()
 // Bridge/passthrough mode — raw UART access for DTE KIMBR command
 // ============================================================================
 
-bool KIM2Comm::send_raw_data(const uint8_t* data, size_t len)
-{
+bool KIM2Comm::send_raw_data(const uint8_t *data, size_t len) {
 	return NrfUartAsync::send_raw(data, len);
 }
 
-void KIM2Comm::set_passthrough(bool active, PassthroughCallback callback)
-{
+void KIM2Comm::set_passthrough(bool active, PassthroughCallback callback) {
 	m_passthrough_active = active;
 	m_passthrough_callback = callback;
 }
@@ -160,15 +143,13 @@ void KIM2Comm::set_passthrough(bool active, PassthroughCallback callback)
 // Protocol parsing — NrfUartAsync callbacks
 // ============================================================================
 
-void KIM2Comm::on_rx_line(std::string& line)
-{
+void KIM2Comm::on_rx_line(std::string &line) {
 	// Bridge/passthrough mode: forward raw line (with CRLF) to callback, skip AT parsing.
 	// Base class strips CRLF so we reconstitute for terminal-style display on USB.
 	if (m_passthrough_active) {
 		if (m_passthrough_callback && !line.empty()) {
 			std::string framed = line + "\r\n";
-			m_passthrough_callback(reinterpret_cast<const uint8_t*>(framed.data()),
-			                        framed.size());
+			m_passthrough_callback(reinterpret_cast<const uint8_t *>(framed.data()), framed.size());
 		}
 		return;
 	}
@@ -203,8 +184,7 @@ void KIM2Comm::on_rx_line(std::string& line)
 	// RESP_CONFIG and RESP_UNKNOWN: no event, values stored in members
 }
 
-void KIM2Comm::on_rx_error(unsigned int error_type)
-{
+void KIM2Comm::on_rx_error(unsigned int error_type) {
 	notify(KIM2CommEventUartError(error_type));
 }
 
@@ -214,21 +194,18 @@ void KIM2Comm::on_rx_error(unsigned int error_type)
 
 /// @brief Parse a single line and extract response type + data.
 /// @note Line is already stripped of CR/LF by NrfUartAsync.
-KIM2::RespType KIM2Comm::parse_rx_line_protocol(const std::string& line)
-{
-	if (line.empty() || line[0] != SYNC_CHAR)
-		return RESP_UNKNOWN;
+KIM2::RespType KIM2Comm::parse_rx_line_protocol(const std::string &line) {
+	if (line.empty() || line[0] != SYNC_CHAR) return RESP_UNKNOWN;
 
-	size_t ok_len    = strlen(OK_RESPONSE);
-	size_t id_len    = strlen(ID_RESPONSE);
-	size_t addr_len  = strlen(ADDR_RESPONSE);
+	size_t ok_len = strlen(OK_RESPONSE);
+	size_t id_len = strlen(ID_RESPONSE);
+	size_t addr_len = strlen(ADDR_RESPONSE);
 	size_t rconf_len = strlen(RCONF_RESPONSE);
-	size_t tx_len    = strlen(TX_RESPONSE);
-	size_t err_len   = strlen(ERR_RESPONSE);
+	size_t tx_len = strlen(TX_RESPONSE);
+	size_t err_len = strlen(ERR_RESPONSE);
 
 	// +OK
-	if (line.compare(0, ok_len, OK_RESPONSE) == 0 && line.size() == ok_len)
-		return RESP_OK;
+	if (line.compare(0, ok_len, OK_RESPONSE) == 0 && line.size() == ok_len) return RESP_OK;
 
 	// +ID=<6 decimal digits>
 	if (line.compare(0, id_len, ID_RESPONSE) == 0 && line.size() >= id_len + ID_SIZE) {
@@ -268,8 +245,7 @@ KIM2::RespType KIM2Comm::parse_rx_line_protocol(const std::string& line)
 	// bare "+DL=" end-of-window marker.
 
 	// +DL_ALLCAST=<hex data> — the only line we act on: allcast AOP / CS update.
-	if (line.compare(0, strlen(DL_ALLCAST_RESPONSE), DL_ALLCAST_RESPONSE) == 0)
-		return RESP_ALLCAST;
+	if (line.compare(0, strlen(DL_ALLCAST_RESPONSE), DL_ALLCAST_RESPONSE) == 0) return RESP_ALLCAST;
 
 	// +DL_USERBC=<hex data>,<bc_mc> — decoded beacon command, not handled here.
 	if (line.compare(0, strlen(DL_USERBC_RESPONSE), DL_USERBC_RESPONSE) == 0) {
@@ -291,16 +267,15 @@ KIM2::RespType KIM2Comm::parse_rx_line_protocol(const std::string& line)
 		return (line.size() == strlen(RX_RESPONSE)) ? RESP_RX_END : RESP_CONFIG;
 
 	// Detection diagnostics (test mode): traced, never acted upon.
-	if (line.compare(0, strlen(SATDET_RESPONSE), SATDET_RESPONSE) == 0 ||
-	    line.compare(0, strlen(SATLOST_RESPONSE), SATLOST_RESPONSE) == 0 ||
-	    line.compare(0, strlen(N0_RESPONSE), N0_RESPONSE) == 0) {
+	if (line.compare(0, strlen(SATDET_RESPONSE), SATDET_RESPONSE) == 0
+	    || line.compare(0, strlen(SATLOST_RESPONSE), SATLOST_RESPONSE) == 0
+	    || line.compare(0, strlen(N0_RESPONSE), N0_RESPONSE) == 0) {
 		DEBUG_TRACE("KIM2 RX diag: %s", line.c_str());
 		return RESP_CONFIG;
 	}
 
 	// +ERROR=...
-	if (line.compare(0, err_len, ERR_RESPONSE) == 0)
-		return RESP_ERROR;
+	if (line.compare(0, err_len, ERR_RESPONSE) == 0) return RESP_ERROR;
 
 	// +HDLR=<TX handler id> — new-stack immediate ack, sent just before +OK.
 	// Informational: we advance on +OK, so recognise and ignore it (a benign
@@ -321,8 +296,7 @@ KIM2::RespType KIM2Comm::parse_rx_line_protocol(const std::string& line)
 		if (m_hdlr_seen) {
 			// New stack: drop the leading handler field so <status> parses.
 			size_t h = resp.find(',');
-			if (h != std::string::npos)
-				resp = resp.substr(h + 1);
+			if (h != std::string::npos) resp = resp.substr(h + 1);
 		}
 		size_t comma = resp.find(',');
 		std::string status_str = (comma != std::string::npos) ? resp.substr(0, comma) : resp;

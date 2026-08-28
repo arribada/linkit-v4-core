@@ -17,13 +17,16 @@
 #include "battery.hpp"
 
 /// @brief Reed switch gesture event for FSM transitions.
-struct ReedSwitchEvent : tinyfsm::Event { ReedSwitchGesture state; };
+struct ReedSwitchEvent : tinyfsm::Event {
+	ReedSwitchGesture state;
+};
 /// @brief Error event — triggers transition to ErrorState.
-struct ErrorEvent : tinyfsm::Event { ErrorCode error_code; };
+struct ErrorEvent : tinyfsm::Event {
+	ErrorCode error_code;
+};
 
 /// @brief Main FSM base class — handles reed switch, watchdog, config flush.
-class GenTracker : public tinyfsm::Fsm<GenTracker>
-{
+class GenTracker : public tinyfsm::Fsm<GenTracker> {
 public:
 	void react(tinyfsm::Event const &);
 	void react(ReedSwitchEvent const &event);
@@ -57,9 +60,7 @@ public:
 	/// Safe because every confirmation RESOLUTION path clears m_confirmation_pending
 	/// BEFORE dispatching the resolved-state LED — so a real resolution is never
 	/// gated. See ledsm.cpp / led_confirmation_gesture_pending().
-	static bool is_confirmation_gesture_pending() {
-		return m_confirmation_pending != ConfirmationPending::NONE;
-	}
+	static bool is_confirmation_gesture_pending() { return m_confirmation_pending != ConfirmationPending::NONE; }
 
 protected:
 	enum class ConfirmationPending { NONE, ENTER_CONFIG, EXIT_CONFIG, POWEROFF };
@@ -77,16 +78,14 @@ protected:
 
 
 /// @brief Boot state — init hardware, check reset cause, transition to Off or PreOp.
-class BootState : public GenTracker
-{
+class BootState : public GenTracker {
 public:
 	void entry() override;
 	void exit() override;
 };
 
 /// @brief Off state — device sleeping, periodic LED blink, reed switch wakes to PreOp.
-class OffState : public GenTracker
-{
+class OffState : public GenTracker {
 private:
 	static constexpr unsigned int OFF_LED_PERIOD_MS = 5000;
 	Scheduler::TaskHandle m_off_state_task;
@@ -97,8 +96,7 @@ public:
 };
 
 /// @brief PreOperational — init config, mount filesystem, transition to Operational.
-class PreOperationalState : public GenTracker
-{
+class PreOperationalState : public GenTracker {
 private:
 #ifdef EXTERNAL_WAKEUP
 	static constexpr unsigned int TRANSIT_PERIOD_MS = 100;
@@ -126,8 +124,7 @@ public:
 };
 
 /// @brief Operational — all services running, GPS/TX/sensors active, battery monitoring.
-class OperationalState : public GenTracker, public BatteryMonitorEventListener
-{
+class OperationalState : public GenTracker, public BatteryMonitorEventListener {
 private:
 	void service_event_handler(ServiceEvent &e);
 
@@ -138,8 +135,7 @@ public:
 };
 
 /// @brief Configuration — BLE/USB DTE interface active, accepts commands, OTA updates.
-class ConfigurationState : public GenTracker
-{
+class ConfigurationState : public GenTracker {
 private:
 	static constexpr unsigned int BLE_INACTIVITY_TIMEOUT_MS = 20 * 60 * 1000;  ///< 20 min for OTA
 	static constexpr unsigned int USB_POLL_INTERVAL_MS = 50;
@@ -158,7 +154,7 @@ private:
 	/// backup-charge. Visual heartbeat so the user can see the device is still alive
 	/// in the silent charging state. Self-reschedules until m_backup_charge_mode = false.
 	void backup_charge_blink_fire();
-	int on_ble_event(BLEServiceEvent&);
+	int on_ble_event(BLEServiceEvent &);
 	void on_ble_inactivity_timeout();
 	void restart_inactivity_timeout();
 	void process_received_data();
@@ -171,21 +167,21 @@ public:
 };
 
 /// @brief Battery critical — services stopped, 2-min timeout before powerdown.
-class BatteryCriticalState : public GenTracker
-{
+class BatteryCriticalState : public GenTracker {
 private:
 	static constexpr unsigned int BATTERY_CRITICAL_TIMEOUT_MS = 2 * 60 * 1000;
 	Scheduler::TaskHandle m_transit_task;
+
 public:
 	void entry() override;
 	void exit() override;
 };
 
 /// @brief Error state — RED LED, 30s delay before powerdown.
-class ErrorState : public GenTracker
-{
+class ErrorState : public GenTracker {
 private:
 	Scheduler::TaskHandle m_shutdown_task;
+
 public:
 	void entry();
 	void exit();

@@ -17,7 +17,6 @@
 
 /// @brief Sample the detector, accumulate dry/wet counts, emit state change on terminal iteration.
 void UWDetectorService::service_initiate() {
-
 #if UW_TIMING_LOG_ENABLE
 	uint64_t uw_t0_ms = PMU::get_timestamp_ms();
 #endif
@@ -44,7 +43,6 @@ void UWDetectorService::service_initiate() {
 	}
 
 	if (m_sample_iteration >= m_max_samples) {
-
 		// If we reached the terminal number of iterations then the SWS state must have been
 		// set for all sampling iterations -- we treat SWS as definitively set.
 
@@ -56,9 +54,8 @@ void UWDetectorService::service_initiate() {
 		if (m_pending_state != m_current_state || m_is_first_time) {
 #if UW_TIMING_LOG_ENABLE
 			DEBUG_INFO("[UW-CHG t=%lu det=%u ms] state changed: state=%u (sample_iter=%u dry=%u max=%u min_dry=%u)",
-			           static_cast<unsigned long>(uw_t0_ms), detector_ms,
-			           (unsigned int)m_pending_state, m_sample_iteration, m_dry_count,
-			           m_max_samples, m_min_dry_samples);
+			           static_cast<unsigned long>(uw_t0_ms), detector_ms, (unsigned int)m_pending_state,
+			           m_sample_iteration, m_dry_count, m_max_samples, m_min_dry_samples);
 #else
 			DEBUG_INFO("UWDetectorService: state changed: state=%u", (unsigned int)m_pending_state);
 #endif
@@ -87,7 +84,8 @@ void UWDetectorService::service_initiate() {
 /// @brief Init: load UW detection params from config (thresholds, sample counts, gaps).
 void UWDetectorService::service_init() {
 	m_is_first_time = true;
-	m_period_underwater_ms = static_cast<unsigned int>(service_read_param<double>(ParamID::SAMPLING_UNDER_FREQ) * 1000.0);
+	m_period_underwater_ms =
+	    static_cast<unsigned int>(service_read_param<double>(ParamID::SAMPLING_UNDER_FREQ) * 1000.0);
 	m_period_surface_ms = static_cast<unsigned int>(service_read_param<double>(ParamID::SAMPLING_SURF_FREQ) * 1000.0);
 	m_activation_threshold = service_read_param<double>(ParamID::UNDERWATER_DETECT_THRESH);
 	m_sample_gap = service_read_param<unsigned int>(ParamID::UW_SAMPLE_GAP);
@@ -100,8 +98,7 @@ void UWDetectorService::service_init() {
 }
 
 /// @brief Terminate: no-op.
-void UWDetectorService::service_term() {
-};
+void UWDetectorService::service_term() {};
 
 /// @brief Next schedule: sample_gap between iterations, or surface/underwater period.
 /// @return Delay in ms until next sample, or 0 for first-time immediate.

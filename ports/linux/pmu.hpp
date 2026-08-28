@@ -7,9 +7,7 @@ extern "C" {
 
 class PMU {
 public:
-	static void enter_low_power_mode() {
-		usleep(100);
-	}
+	static void enter_low_power_mode() { usleep(100); }
 };
 
-#endif // __PMU_HPP_
+#endif  // __PMU_HPP_

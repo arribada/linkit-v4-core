@@ -31,7 +31,7 @@ public:
 	virtual void stop() = 0;
 	// Note: "impedence" is a legacy typo — kept for API compatibility across callers.
 	virtual double get_impedence(unsigned int averaging, double gain) = 0;
-	virtual void get_real_imaginary(int16_t& real, int16_t& imag) = 0;
+	virtual void get_real_imaginary(int16_t &real, int16_t &imag) = 0;
 };
 
 /// @brief AD5933 low-level I2C driver.
@@ -45,7 +45,7 @@ public:
 	void start(unsigned int frequency, VRange vrange) override;
 	void stop() override;
 	double get_impedence(unsigned int averaging, double gain) override;
-	void get_real_imaginary(int16_t& real, int16_t& imag) override;
+	void get_real_imaginary(int16_t &real, int16_t &imag) override;
 
 private:
 	unsigned int m_bus;
@@ -53,49 +53,49 @@ private:
 	uint8_t m_gain_setting;
 
 	enum class Reg : uint8_t {
-		CONTROL_HIGH            = 0x80,
-		CONTROL_LOW             = 0x81,
-		START_FREQ_23_16        = 0x82,
-		START_FREQ_15_8         = 0x83,
-		START_FREQ_7_0          = 0x84,
-		FREQ_INC_23_16          = 0x85,
-		FREQ_INC_15_8           = 0x86,
-		FREQ_INC_7_0            = 0x87,
-		NUM_INC_15_8            = 0x88,
-		NUM_INC_7_0             = 0x89,
-		SETTLING_15_8           = 0x8A,
-		SETTLING_7_0            = 0x8B,
-		STATUS                  = 0x8F,
-		REAL_15_8               = 0x94,
-		REAL_7_0                = 0x95,
-		IMAG_15_8               = 0x96,
-		IMAG_7_0                = 0x97,
+		CONTROL_HIGH = 0x80,
+		CONTROL_LOW = 0x81,
+		START_FREQ_23_16 = 0x82,
+		START_FREQ_15_8 = 0x83,
+		START_FREQ_7_0 = 0x84,
+		FREQ_INC_23_16 = 0x85,
+		FREQ_INC_15_8 = 0x86,
+		FREQ_INC_7_0 = 0x87,
+		NUM_INC_15_8 = 0x88,
+		NUM_INC_7_0 = 0x89,
+		SETTLING_15_8 = 0x8A,
+		SETTLING_7_0 = 0x8B,
+		STATUS = 0x8F,
+		REAL_15_8 = 0x94,
+		REAL_7_0 = 0x95,
+		IMAG_15_8 = 0x96,
+		IMAG_7_0 = 0x97,
 	};
 
 	enum class CtrlHigh : uint8_t {
-		INIT_START_FREQ         = (1 << 4),
-		START_SWEEP             = (2 << 4),
-		INC_FREQ                = (3 << 4),
-		REPEAT_FREQ             = (4 << 4),
-		MEASURE_TEMP            = (9 << 4),
-		POWER_DOWN              = (10 << 4),
-		STANDBY                 = (11 << 4),
-		OPV_2V                  = (0 << 1),
-		OPV_200MV               = (1 << 1),
-		OPV_400MV               = (2 << 1),
-		OPV_1V                  = (3 << 1),
-		PGA_GAIN_1X             = (1 << 0),
+		INIT_START_FREQ = (1 << 4),
+		START_SWEEP = (2 << 4),
+		INC_FREQ = (3 << 4),
+		REPEAT_FREQ = (4 << 4),
+		MEASURE_TEMP = (9 << 4),
+		POWER_DOWN = (10 << 4),
+		STANDBY = (11 << 4),
+		OPV_2V = (0 << 1),
+		OPV_200MV = (1 << 1),
+		OPV_400MV = (2 << 1),
+		OPV_1V = (3 << 1),
+		PGA_GAIN_1X = (1 << 0),
 	};
 
 	enum class CtrlLow : uint8_t {
-		RESET                   = (1 << 4),
-		EXT_CLK                 = (1 << 3),
+		RESET = (1 << 4),
+		EXT_CLK = (1 << 3),
 	};
 
 	enum class Status : uint8_t {
-		VALID_TEMP              = (1 << 0),
-		VALID_IQ                = (1 << 1),
-		SWEEP_COMPLETE          = (1 << 2),
+		VALID_TEMP = (1 << 0),
+		VALID_IQ = (1 << 1),
+		SWEEP_COMPLETE = (1 << 2),
 	};
 
 	uint8_t read_reg(Reg reg);

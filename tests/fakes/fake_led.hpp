@@ -11,7 +11,7 @@ private:
 	const char *m_name;
 
 public:
-	FakeLed(const char *name, int pin=0) : Led(pin) {
+	FakeLed(const char *name, int pin = 0) : Led(pin) {
 		m_pin_state = false;
 		m_is_flashing = false;
 		m_name = name;
@@ -34,7 +34,5 @@ public:
 	}
 
 	// Fake test helper function
-	bool is_flashing() override {
-		return m_is_flashing;
-	}
+	bool is_flashing() override { return m_is_flashing; }
 };

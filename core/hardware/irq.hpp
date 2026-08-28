@@ -15,10 +15,6 @@ protected:
 public:
 	IRQ() : m_func(nullptr) {}
 	virtual ~IRQ() {}
-	virtual void enable(std::function<void()> func) {
-		m_func = func;
-	}
-	virtual void disable() {
-		m_func = nullptr;
-	}
+	virtual void enable(std::function<void()> func) { m_func = func; }
+	virtual void disable() { m_func = nullptr; }
 };

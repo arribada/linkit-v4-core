@@ -51,9 +51,9 @@ public:
 	static void evaluate(std::time_t now);
 
 	// Public state accessors.
-	static bool        is_hauled();
+	static bool is_hauled();
 	static std::time_t last_uw_event_rtc();
-	static unsigned    uw_events_since_hauled();
+	static unsigned uw_events_since_hauled();
 
 	// Mitigation K (2026-05): re-baseline timestamp when the RTC is synced
 	// from GNSS (jump from virtual epoch ~1 to real UTC ~1.7e9). Called by

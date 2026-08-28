@@ -20,23 +20,22 @@ extern Scheduler *system_scheduler;
 extern RTC *rtc;
 extern BatteryMonitor *battery_monitor;
 
-#define FIRST_AQPERIOD		(30)
+#define FIRST_AQPERIOD (30)
 
 
-TEST_GROUP(GPSService)
-{
+TEST_GROUP(GPSService) {
 	FakeBatteryMonitor *fake_battery_mon;
 	FakeConfigurationStore *fake_config_store;
 	FakeRTC *fake_rtc;
 	FakeTimer *fake_timer;
 	FakeLog *fake_log;
 	MockM10Q *mock_m10q;
-    MockStdFunctionVoidComparator m_comparator_std_func;
-    MockGPSNavSettingsComparator  m_comparator_nav;
+	MockStdFunctionVoidComparator m_comparator_std_func;
+	MockGPSNavSettingsComparator m_comparator_nav;
 
 	void setup() {
-	    mock().installComparator("std::function<void()>", m_comparator_std_func);
-	    mock().installComparator("const GPSNavSettings&", m_comparator_nav);
+		mock().installComparator("std::function<void()>", m_comparator_std_func);
+		mock().installComparator("const GPSNavSettings&", m_comparator_nav);
 		fake_log = new FakeLog("GPS");
 		mock_m10q = new MockM10Q;
 		fake_config_store = new FakeConfigurationStore;
@@ -62,20 +61,18 @@ TEST_GROUP(GPSService)
 		MooredModeService::reset_for_tests();
 		delete system_scheduler;
 		delete fake_timer;
-		delete fake_rtc; rtc = nullptr;
+		delete fake_rtc;
+		rtc = nullptr;
 		delete fake_config_store;
 		delete fake_battery_mon;
 		delete mock_m10q;
 		delete fake_log;
 	}
 
-	void increment_time_ms(uint64_t ms)
-	{
-		while (ms)
-		{
+	void increment_time_ms(uint64_t ms) {
+		while (ms) {
 			m_current_ms++;
-			if (m_current_ms % 1000 == 0)
-				fake_rtc->incrementtime(1);
+			if (m_current_ms % 1000 == 0) fake_rtc->incrementtime(1);
 			fake_timer->increment_counter(1);
 
 			system_scheduler->run();
@@ -84,13 +81,11 @@ TEST_GROUP(GPSService)
 		}
 	}
 
-	void increment_time_s(uint64_t s)
-	{
+	void increment_time_s(uint64_t s) {
 		increment_time_ms(s * 1000);
 	}
 
-	void increment_time_min(uint64_t min)
-	{
+	void increment_time_min(uint64_t min) {
 		increment_time_ms(min * 60 * 1000);
 	}
 
@@ -107,12 +102,11 @@ TEST_GROUP(GPSService)
 };
 
 
-TEST(GPSService, GNSSDisabled)
-{
+TEST(GPSService, GNSSDisabled) {
 	bool lb_en = false;
 	unsigned int lb_threshold = 0U;
 	bool gnss_en = false;
-	unsigned int dloc_arg_nom = 10*60;
+	unsigned int dloc_arg_nom = 10 * 60;
 	unsigned int gnss_acq_timeout = 0;
 	unsigned int gnss_acq_timeout_cold_start = 0;
 	bool gnss_hdopfilt_en = false;
@@ -139,12 +133,11 @@ TEST(GPSService, GNSSDisabled)
 	increment_time_min(60);
 }
 
-TEST(GPSService, GNSSEnabled10MinutesDloc)
-{
+TEST(GPSService, GNSSEnabled10MinutesDloc) {
 	bool lb_en = false;
 	unsigned int lb_threshold = 0U;
 	bool gnss_en = true;
-	unsigned int dloc_arg_nom = 10*60;
+	unsigned int dloc_arg_nom = 10 * 60;
 	unsigned int gnss_acq_timeout = 60;
 	unsigned int gnss_acq_timeout_cold_start = 60;
 	bool gnss_hdopfilt_en = false;
@@ -165,7 +158,7 @@ TEST(GPSService, GNSSEnabled10MinutesDloc)
 	BaseGNSSDynModel dyn_model = BaseGNSSDynModel::SEA;
 	fake_config_store->write_param(ParamID::GNSS_DYN_MODEL, dyn_model);
 
-	fake_rtc->settime(1580083200); // 27/01/2020 00:00:00
+	fake_rtc->settime(1580083200);  // 27/01/2020 00:00:00
 
 	GPSService s(*mock_m10q, fake_log);
 	s.start();
@@ -179,8 +172,7 @@ TEST(GPSService, GNSSEnabled10MinutesDloc)
 	mock_m10q->notify_gnss_data(fake_rtc->gettime(), 10, 10);
 
 	int iterations = 3;
-	for (int i = 0; i < iterations; ++i)
-	{
+	for (int i = 0; i < iterations; ++i) {
 		mock().expectOneCall("power_on").onObject(mock_m10q).ignoreOtherParameters();
 		increment_time_s(dloc_arg_nom - offset);
 		mock().expectOneCall("power_off").onObject(mock_m10q);
@@ -189,12 +181,11 @@ TEST(GPSService, GNSSEnabled10MinutesDloc)
 	}
 }
 
-TEST(GPSService, GNSSEnabled15MinutesDloc)
-{
+TEST(GPSService, GNSSEnabled15MinutesDloc) {
 	bool lb_en = false;
 	unsigned int lb_threshold = 0U;
 	bool gnss_en = true;
-	unsigned int dloc_arg_nom = 15*60;
+	unsigned int dloc_arg_nom = 15 * 60;
 	unsigned int gnss_acq_timeout = 60;
 	unsigned int gnss_acq_timeout_cold_start = 60;
 	bool gnss_hdopfilt_en = false;
@@ -215,7 +206,7 @@ TEST(GPSService, GNSSEnabled15MinutesDloc)
 	BaseGNSSDynModel dyn_model = BaseGNSSDynModel::SEA;
 	fake_config_store->write_param(ParamID::GNSS_DYN_MODEL, dyn_model);
 
-	fake_rtc->settime(1580083200); // 27/01/2020 00:00:00
+	fake_rtc->settime(1580083200);  // 27/01/2020 00:00:00
 
 	GPSService s(*mock_m10q, fake_log);
 	s.start();
@@ -229,8 +220,7 @@ TEST(GPSService, GNSSEnabled15MinutesDloc)
 	mock_m10q->notify_gnss_data(fake_rtc->gettime(), 10, 10);
 
 	int iterations = 3;
-	for (int i = 0; i < iterations; ++i)
-	{
+	for (int i = 0; i < iterations; ++i) {
 		mock().expectOneCall("power_on").onObject(mock_m10q).ignoreOtherParameters();
 		increment_time_s(dloc_arg_nom - offset);
 		mock().expectOneCall("power_off").onObject(mock_m10q);
@@ -239,12 +229,11 @@ TEST(GPSService, GNSSEnabled15MinutesDloc)
 	}
 }
 
-TEST(GPSService, GNSSEnabled30MinutesDloc)
-{
+TEST(GPSService, GNSSEnabled30MinutesDloc) {
 	bool lb_en = false;
 	unsigned int lb_threshold = 0U;
 	bool gnss_en = true;
-	unsigned int dloc_arg_nom = 30*60;
+	unsigned int dloc_arg_nom = 30 * 60;
 	unsigned int gnss_acq_timeout = 60;
 	unsigned int gnss_acq_timeout_cold_start = 60;
 	bool gnss_hdopfilt_en = false;
@@ -265,7 +254,7 @@ TEST(GPSService, GNSSEnabled30MinutesDloc)
 	BaseGNSSDynModel dyn_model = BaseGNSSDynModel::SEA;
 	fake_config_store->write_param(ParamID::GNSS_DYN_MODEL, dyn_model);
 
-	fake_rtc->settime(1580083200); // 27/01/2020 00:00:00
+	fake_rtc->settime(1580083200);  // 27/01/2020 00:00:00
 
 	GPSService s(*mock_m10q, fake_log);
 	s.start();
@@ -279,8 +268,7 @@ TEST(GPSService, GNSSEnabled30MinutesDloc)
 	mock_m10q->notify_gnss_data(fake_rtc->gettime(), 10, 10);
 
 	int iterations = 3;
-	for (int i = 0; i < iterations; ++i)
-	{
+	for (int i = 0; i < iterations; ++i) {
 		mock().expectOneCall("power_on").onObject(mock_m10q).ignoreOtherParameters();
 		increment_time_s(dloc_arg_nom - offset);
 		mock().expectOneCall("power_off").onObject(mock_m10q);
@@ -289,12 +277,11 @@ TEST(GPSService, GNSSEnabled30MinutesDloc)
 	}
 }
 
-TEST(GPSService, GNSSEnabled60MinutesDloc)
-{
+TEST(GPSService, GNSSEnabled60MinutesDloc) {
 	bool lb_en = false;
 	unsigned int lb_threshold = 0U;
 	bool gnss_en = true;
-	unsigned int dloc_arg_nom = 60*60;
+	unsigned int dloc_arg_nom = 60 * 60;
 	unsigned int gnss_acq_timeout = 60;
 	unsigned int gnss_acq_timeout_cold_start = 60;
 	bool gnss_hdopfilt_en = false;
@@ -315,7 +302,7 @@ TEST(GPSService, GNSSEnabled60MinutesDloc)
 	BaseGNSSDynModel dyn_model = BaseGNSSDynModel::SEA;
 	fake_config_store->write_param(ParamID::GNSS_DYN_MODEL, dyn_model);
 
-	fake_rtc->settime(1580083200); // 27/01/2020 00:00:00
+	fake_rtc->settime(1580083200);  // 27/01/2020 00:00:00
 
 	GPSService s(*mock_m10q, fake_log);
 	s.start();
@@ -329,8 +316,7 @@ TEST(GPSService, GNSSEnabled60MinutesDloc)
 	mock_m10q->notify_gnss_data(fake_rtc->gettime(), 10, 10);
 
 	int iterations = 3;
-	for (int i = 0; i < iterations; ++i)
-	{
+	for (int i = 0; i < iterations; ++i) {
 		mock().expectOneCall("power_on").onObject(mock_m10q).ignoreOtherParameters();
 		increment_time_s(dloc_arg_nom - offset);
 		mock().expectOneCall("power_off").onObject(mock_m10q);
@@ -339,12 +325,11 @@ TEST(GPSService, GNSSEnabled60MinutesDloc)
 	}
 }
 
-TEST(GPSService, GNSSEnabled120MinutesDloc)
-{
+TEST(GPSService, GNSSEnabled120MinutesDloc) {
 	bool lb_en = false;
 	unsigned int lb_threshold = 0U;
 	bool gnss_en = true;
-	unsigned int dloc_arg_nom = 120*60;
+	unsigned int dloc_arg_nom = 120 * 60;
 	unsigned int gnss_acq_timeout = 60;
 	unsigned int gnss_acq_timeout_cold_start = 60;
 	bool gnss_hdopfilt_en = false;
@@ -365,7 +350,7 @@ TEST(GPSService, GNSSEnabled120MinutesDloc)
 	BaseGNSSDynModel dyn_model = BaseGNSSDynModel::SEA;
 	fake_config_store->write_param(ParamID::GNSS_DYN_MODEL, dyn_model);
 
-	fake_rtc->settime(1580083200); // 27/01/2020 00:00:00
+	fake_rtc->settime(1580083200);  // 27/01/2020 00:00:00
 
 	GPSService s(*mock_m10q, fake_log);
 	s.start();
@@ -379,8 +364,7 @@ TEST(GPSService, GNSSEnabled120MinutesDloc)
 	mock_m10q->notify_gnss_data(fake_rtc->gettime(), 10, 10);
 
 	int iterations = 3;
-	for (int i = 0; i < iterations; ++i)
-	{
+	for (int i = 0; i < iterations; ++i) {
 		mock().expectOneCall("power_on").onObject(mock_m10q).ignoreOtherParameters();
 		increment_time_s(dloc_arg_nom - offset);
 		mock().expectOneCall("power_off").onObject(mock_m10q);
@@ -389,12 +373,11 @@ TEST(GPSService, GNSSEnabled120MinutesDloc)
 	}
 }
 
-TEST(GPSService, GNSSEnabledColdStartTimeoutAndRetryCheck)
-{
+TEST(GPSService, GNSSEnabledColdStartTimeoutAndRetryCheck) {
 	bool lb_en = false;
 	unsigned int lb_threshold = 0U;
 	bool gnss_en = true;
-	unsigned int dloc_arg_nom = 10*60;
+	unsigned int dloc_arg_nom = 10 * 60;
 	unsigned int gnss_acq_timeout = 60;
 	unsigned int gnss_acq_timeout_cold_start = 120;
 	unsigned int gnss_cold_start_retry_period = 60;
@@ -417,7 +400,7 @@ TEST(GPSService, GNSSEnabledColdStartTimeoutAndRetryCheck)
 	BaseGNSSDynModel dyn_model = BaseGNSSDynModel::SEA;
 	fake_config_store->write_param(ParamID::GNSS_DYN_MODEL, dyn_model);
 
-	fake_rtc->settime(1580083200); // 27/01/2020 00:00:00
+	fake_rtc->settime(1580083200);  // 27/01/2020 00:00:00
 
 	GPSService s(*mock_m10q, fake_log);
 	s.start();
@@ -441,15 +424,14 @@ TEST(GPSService, GNSSEnabledColdStartTimeoutAndRetryCheck)
 
 	// Next schedule should be back to dloc_arg_nom
 	mock().expectOneCall("power_on").onObject(mock_m10q).ignoreOtherParameters();
-	increment_time_s(dloc_arg_nom - (m_current_ms/1000) + 1);
+	increment_time_s(dloc_arg_nom - (m_current_ms / 1000) + 1);
 }
 
-TEST(GPSService, GNSSEnabledNominalTimeoutAfterFirstFix)
-{
+TEST(GPSService, GNSSEnabledNominalTimeoutAfterFirstFix) {
 	bool lb_en = false;
 	unsigned int lb_threshold = 0U;
 	bool gnss_en = true;
-	unsigned int dloc_arg_nom = 10*60;
+	unsigned int dloc_arg_nom = 10 * 60;
 	unsigned int gnss_acq_timeout = 60;
 	unsigned int gnss_acq_timeout_cold_start = 120;
 	bool gnss_hdopfilt_en = false;
@@ -470,7 +452,7 @@ TEST(GPSService, GNSSEnabledNominalTimeoutAfterFirstFix)
 	BaseGNSSDynModel dyn_model = BaseGNSSDynModel::SEA;
 	fake_config_store->write_param(ParamID::GNSS_DYN_MODEL, dyn_model);
 
-	fake_rtc->settime(1580083200); // 27/01/2020 00:00:00
+	fake_rtc->settime(1580083200);  // 27/01/2020 00:00:00
 
 	GPSService s(*mock_m10q, fake_log);
 	s.start();
@@ -500,12 +482,11 @@ TEST(GPSService, GNSSEnabledNominalTimeoutAfterFirstFix)
 	mock_m10q->notify_max_nav_samples();
 }
 
-TEST(GPSService, GNSSInterruptedByUnderwaterEvent)
-{
+TEST(GPSService, GNSSInterruptedByUnderwaterEvent) {
 	bool lb_en = false;
 	unsigned int lb_threshold = 0U;
 	bool gnss_en = true;
-	unsigned int dloc_arg_nom = 10*60;
+	unsigned int dloc_arg_nom = 10 * 60;
 	unsigned int gnss_acq_timeout = 60;
 	unsigned int gnss_acq_timeout_cold_start = 120;
 	bool gnss_hdopfilt_en = false;
@@ -526,7 +507,7 @@ TEST(GPSService, GNSSInterruptedByUnderwaterEvent)
 	BaseGNSSDynModel dyn_model = BaseGNSSDynModel::SEA;
 	fake_config_store->write_param(ParamID::GNSS_DYN_MODEL, dyn_model);
 
-	fake_rtc->settime(1580083200); // 27/01/2020 00:00:00
+	fake_rtc->settime(1580083200);  // 27/01/2020 00:00:00
 
 	GPSService s(*mock_m10q, fake_log);
 	s.start();
@@ -543,12 +524,11 @@ TEST(GPSService, GNSSInterruptedByUnderwaterEvent)
 }
 
 
-TEST(GPSService, GNSSIgnoredAfterUnderwaterEvent)
-{
+TEST(GPSService, GNSSIgnoredAfterUnderwaterEvent) {
 	bool lb_en = false;
 	unsigned int lb_threshold = 0U;
 	bool gnss_en = true;
-	unsigned int dloc_arg_nom = 10*60;
+	unsigned int dloc_arg_nom = 10 * 60;
 	unsigned int gnss_acq_timeout = 60;
 	bool gnss_hdopfilt_en = false;
 	bool gnss_haccfilt_en = false;
@@ -567,7 +547,7 @@ TEST(GPSService, GNSSIgnoredAfterUnderwaterEvent)
 	BaseGNSSDynModel dyn_model = BaseGNSSDynModel::SEA;
 	fake_config_store->write_param(ParamID::GNSS_DYN_MODEL, dyn_model);
 
-	fake_rtc->settime(1580083200); // 27/01/2020 00:00:00
+	fake_rtc->settime(1580083200);  // 27/01/2020 00:00:00
 
 	GPSService s(*mock_m10q, fake_log);
 	s.start();
@@ -593,8 +573,7 @@ TEST(GPSService, GNSSIgnoredAfterUnderwaterEvent)
 }
 
 
-TEST(GPSService, GNSSNoPeriodicTriggerOnSurfaceEvent)
-{
+TEST(GPSService, GNSSNoPeriodicTriggerOnSurfaceEvent) {
 	bool lb_en = false;
 	unsigned int lb_threshold = 0U;
 	bool gnss_en = true;
@@ -643,8 +622,7 @@ TEST(GPSService, GNSSNoPeriodicTriggerOnSurfaceEvent)
 }
 
 
-TEST(GPSService, GNSSNoPeriodicTriggerOnAXLWakeupEvent)
-{
+TEST(GPSService, GNSSNoPeriodicTriggerOnAXLWakeupEvent) {
 	bool lb_en = false;
 	unsigned int lb_threshold = 0U;
 	bool gnss_en = true;
@@ -700,12 +678,11 @@ TEST(GPSService, GNSSNoPeriodicTriggerOnAXLWakeupEvent)
 }
 
 
-TEST(GPSService, GNSSInterruptedByErrorEvent)
-{
+TEST(GPSService, GNSSInterruptedByErrorEvent) {
 	bool lb_en = false;
 	unsigned int lb_threshold = 0U;
 	bool gnss_en = true;
-	unsigned int dloc_arg_nom = 10*60;
+	unsigned int dloc_arg_nom = 10 * 60;
 	unsigned int gnss_acq_timeout = 60;
 	unsigned int gnss_acq_timeout_cold_start = 120;
 	bool gnss_hdopfilt_en = false;
@@ -726,7 +703,7 @@ TEST(GPSService, GNSSInterruptedByErrorEvent)
 	BaseGNSSDynModel dyn_model = BaseGNSSDynModel::SEA;
 	fake_config_store->write_param(ParamID::GNSS_DYN_MODEL, dyn_model);
 
-	fake_rtc->settime(1580083200); // 27/01/2020 00:00:00
+	fake_rtc->settime(1580083200);  // 27/01/2020 00:00:00
 
 	GPSService s(*mock_m10q, fake_log);
 	s.start();
@@ -743,8 +720,7 @@ TEST(GPSService, GNSSInterruptedByErrorEvent)
 }
 
 
-TEST(GPSService, GNSSNoPeriodicColdStartOnSurfaceEvent)
-{
+TEST(GPSService, GNSSNoPeriodicColdStartOnSurfaceEvent) {
 	bool lb_en = false;
 	unsigned int lb_threshold = 0U;
 	bool gnss_en = true;
@@ -794,11 +770,10 @@ TEST(GPSService, GNSSNoPeriodicColdStartOnSurfaceEvent)
 // FASTLOC (DEGRADED PVT) TESTS
 // ============================================================================
 
-TEST(GPSService, FastlocDegradedPVTLoggedWhenEnabled)
-{
+TEST(GPSService, FastlocDegradedPVTLoggedWhenEnabled) {
 	// GNP45=1 (DEGRADED_PVT): degraded fix should produce FASTLOC log entry
 	fake_config_store->write_param(ParamID::GNSS_EN, (bool)true);
-	fake_config_store->write_param(ParamID::GNSS_FASTLOC_MODE, 1U); // 1=DEGRADED_PVT
+	fake_config_store->write_param(ParamID::GNSS_FASTLOC_MODE, 1U);  // 1=DEGRADED_PVT
 	fake_config_store->write_param(ParamID::DLOC_ARG_NOM, 600U);
 	fake_config_store->write_param(ParamID::GNSS_ACQ_TIMEOUT, 60U);
 	fake_config_store->write_param(ParamID::GNSS_COLD_ACQ_TIMEOUT, 60U);
@@ -809,7 +784,7 @@ TEST(GPSService, FastlocDegradedPVTLoggedWhenEnabled)
 
 	fake_rtc->settime(1580083200);
 
-	fake_log->create(); // Reset log index
+	fake_log->create();  // Reset log index
 	GPSService s(*mock_m10q, fake_log);
 	s.start();
 
@@ -824,11 +799,10 @@ TEST(GPSService, FastlocDegradedPVTLoggedWhenEnabled)
 	CHECK_EQUAL(1U, fake_log->num_entries());
 }
 
-TEST(GPSService, FastlocDisabledTreatsAsNoFix)
-{
+TEST(GPSService, FastlocDisabledTreatsAsNoFix) {
 	// GNP45=0 (OFF): degraded fix should be treated as no fix
 	fake_config_store->write_param(ParamID::GNSS_EN, (bool)true);
-	fake_config_store->write_param(ParamID::GNSS_FASTLOC_MODE, 0U); // 0=OFF
+	fake_config_store->write_param(ParamID::GNSS_FASTLOC_MODE, 0U);  // 0=OFF
 	fake_config_store->write_param(ParamID::DLOC_ARG_NOM, 600U);
 	fake_config_store->write_param(ParamID::GNSS_ACQ_TIMEOUT, 60U);
 	fake_config_store->write_param(ParamID::GNSS_COLD_ACQ_TIMEOUT, 60U);
@@ -839,7 +813,7 @@ TEST(GPSService, FastlocDisabledTreatsAsNoFix)
 
 	fake_rtc->settime(1580083200);
 
-	fake_log->create(); // Reset log index
+	fake_log->create();  // Reset log index
 	GPSService s(*mock_m10q, fake_log);
 	s.start();
 
@@ -854,12 +828,11 @@ TEST(GPSService, FastlocDisabledTreatsAsNoFix)
 	CHECK_EQUAL(1U, fake_log->num_entries());
 }
 
-TEST(GPSService, FastlocDoesNotSetFirstFixFound)
-{
+TEST(GPSService, FastlocDoesNotSetFirstFixFound) {
 	// Degraded fix should NOT set m_is_first_fix_found — cold start retry period used
-	unsigned int cold_retry = 60U; // GNSS_COLD_START_RETRY_PERIOD default
+	unsigned int cold_retry = 60U;  // GNSS_COLD_START_RETRY_PERIOD default
 	fake_config_store->write_param(ParamID::GNSS_EN, (bool)true);
-	fake_config_store->write_param(ParamID::GNSS_FASTLOC_MODE, 1U); // 1=DEGRADED_PVT
+	fake_config_store->write_param(ParamID::GNSS_FASTLOC_MODE, 1U);  // 1=DEGRADED_PVT
 	fake_config_store->write_param(ParamID::DLOC_ARG_NOM, 600U);
 	fake_config_store->write_param(ParamID::GNSS_ACQ_TIMEOUT, 60U);
 	fake_config_store->write_param(ParamID::GNSS_COLD_ACQ_TIMEOUT, 120U);
@@ -870,7 +843,7 @@ TEST(GPSService, FastlocDoesNotSetFirstFixFound)
 
 	fake_rtc->settime(1580083200);
 
-	fake_log->create(); // Reset log index
+	fake_log->create();  // Reset log index
 	GPSService s(*mock_m10q, fake_log);
 	s.start();
 
@@ -894,12 +867,11 @@ TEST(GPSService, FastlocDoesNotSetFirstFixFound)
 	CHECK_EQUAL(2U, fake_log->num_entries());
 }
 
-TEST(GPSService, NormalFixAfterDegradedSetsFirstFix)
-{
+TEST(GPSService, NormalFixAfterDegradedSetsFirstFix) {
 	// After degraded-only → normal fix → first_fix_found should be set
 	unsigned int cold_retry = 60U;
 	fake_config_store->write_param(ParamID::GNSS_EN, (bool)true);
-	fake_config_store->write_param(ParamID::GNSS_FASTLOC_MODE, 1U); // 1=DEGRADED_PVT
+	fake_config_store->write_param(ParamID::GNSS_FASTLOC_MODE, 1U);  // 1=DEGRADED_PVT
 	fake_config_store->write_param(ParamID::DLOC_ARG_NOM, 600U);
 	fake_config_store->write_param(ParamID::GNSS_ACQ_TIMEOUT, 60U);
 	fake_config_store->write_param(ParamID::GNSS_COLD_ACQ_TIMEOUT, 120U);
@@ -910,7 +882,7 @@ TEST(GPSService, NormalFixAfterDegradedSetsFirstFix)
 
 	fake_rtc->settime(1580083200);
 
-	fake_log->create(); // Reset log index
+	fake_log->create();  // Reset log index
 	GPSService s(*mock_m10q, fake_log);
 	s.start();
 
@@ -933,11 +905,10 @@ TEST(GPSService, NormalFixAfterDegradedSetsFirstFix)
 	mock().checkExpectations();
 }
 
-TEST(GPSService, MaxSatSamplesNoFix)
-{
+TEST(GPSService, MaxSatSamplesNoFix) {
 	// MaxSatSamples event (no signal at all) should produce no-fix log entry
 	fake_config_store->write_param(ParamID::GNSS_EN, (bool)true);
-	fake_config_store->write_param(ParamID::GNSS_FASTLOC_MODE, 1U); // 1=DEGRADED_PVT
+	fake_config_store->write_param(ParamID::GNSS_FASTLOC_MODE, 1U);  // 1=DEGRADED_PVT
 	fake_config_store->write_param(ParamID::DLOC_ARG_NOM, 600U);
 	fake_config_store->write_param(ParamID::GNSS_ACQ_TIMEOUT, 60U);
 	fake_config_store->write_param(ParamID::GNSS_COLD_ACQ_TIMEOUT, 60U);
@@ -948,7 +919,7 @@ TEST(GPSService, MaxSatSamplesNoFix)
 
 	fake_rtc->settime(1580083200);
 
-	fake_log->create(); // Reset log index
+	fake_log->create();  // Reset log index
 	GPSService s(*mock_m10q, fake_log);
 	s.start();
 
@@ -962,8 +933,7 @@ TEST(GPSService, MaxSatSamplesNoFix)
 	CHECK_EQUAL(1U, fake_log->num_entries());
 }
 
-TEST(GPSService, SingleFixModeStopsAfterFirstFix)
-{
+TEST(GPSService, SingleFixModeStopsAfterFirstFix) {
 	// GNP30=1: GPS should not reschedule after first valid fix
 	fake_config_store->write_param(ParamID::GNSS_EN, (bool)true);
 	fake_config_store->write_param(ParamID::GNSS_SESSION_SINGLE_FIX, (bool)true);
@@ -977,7 +947,7 @@ TEST(GPSService, SingleFixModeStopsAfterFirstFix)
 
 	fake_rtc->settime(1580083200);
 
-	fake_log->create(); // Reset log index
+	fake_log->create();  // Reset log index
 	GPSService s(*mock_m10q, fake_log);
 	s.start();
 
@@ -990,7 +960,7 @@ TEST(GPSService, SingleFixModeStopsAfterFirstFix)
 
 	// Wait well past DLOC period — GPS should NOT power on again
 	increment_time_s(1200);
-	mock().checkExpectations(); // No power_on expected
+	mock().checkExpectations();  // No power_on expected
 }
 
 
@@ -1008,10 +978,9 @@ TEST(GPSService, SingleFixModeStopsAfterFirstFix)
 // broadcasts, hence updates the classifier) BEFORE reschedule(), so the new
 // cadence takes effect on the same session that engages MOORED — not one
 // session later.
-TEST(GPSService, MooredModeStretchesAcquisitionPeriodEndToEnd)
-{
-	const unsigned int dloc_under_way = 600;    // 10 min
-	const unsigned int dloc_moored    = 3600;   // 1 h
+TEST(GPSService, MooredModeStretchesAcquisitionPeriodEndToEnd) {
+	const unsigned int dloc_under_way = 600;  // 10 min
+	const unsigned int dloc_moored = 3600;    // 1 h
 
 	fake_config_store->write_param(ParamID::LB_EN, false);
 	fake_config_store->write_param(ParamID::GNSS_EN, true);
@@ -1041,7 +1010,7 @@ TEST(GPSService, MooredModeStretchesAcquisitionPeriodEndToEnd)
 	// travels the peer bus and reaches the moored funnel. s.start() with no
 	// argument leaves m_data_notification_callback null and nothing is
 	// broadcast at all — the funnel would never run.
-	s.start([](ServiceEvent& e) { ServiceManager::notify_peer_event(e); });
+	s.start([](ServiceEvent &e) { ServiceManager::notify_peer_event(e); });
 
 	// --- Session 1: first schedule, plants the reference anchor -------------
 	mock().expectOneCall("power_on").onObject(mock_m10q).ignoreOtherParameters();
@@ -1053,7 +1022,7 @@ TEST(GPSService, MooredModeStretchesAcquisitionPeriodEndToEnd)
 
 	// --- Session 2: one stationary fix, still under way ---------------------
 	mock().expectOneCall("power_on").onObject(mock_m10q).ignoreOtherParameters();
-	increment_time_s(dloc_under_way - FIRST_AQPERIOD);   // UTC-aligned: 570 s
+	increment_time_s(dloc_under_way - FIRST_AQPERIOD);  // UTC-aligned: 570 s
 	mock().expectOneCall("power_off").onObject(mock_m10q);
 	mock_m10q->notify_gnss_data(fake_rtc->gettime(), 10, 10);
 	CHECK_EQUAL(1U, MooredModeService::stationary_fixes());
@@ -1079,15 +1048,14 @@ TEST(GPSService, MooredModeStretchesAcquisitionPeriodEndToEnd)
 
 	// And it does fire once the moored period elapses.
 	mock().expectOneCall("power_on").onObject(mock_m10q).ignoreOtherParameters();
-	increment_time_s(1800);   // 600 + 1800 = 2400
+	increment_time_s(1800);  // 600 + 1800 = 2400
 	mock().checkExpectations();
 }
 
 // Same setup, master switch off: the cadence must stay at DLOC_ARG_NOM however
 // stationary the vessel is. This is the non-regression guarantee for every
 // deployment that never enables the feature.
-TEST(GPSService, MooredModeDisabledLeavesAcquisitionPeriodUntouched)
-{
+TEST(GPSService, MooredModeDisabledLeavesAcquisitionPeriodUntouched) {
 	const unsigned int dloc_under_way = 600;
 
 	fake_config_store->write_param(ParamID::LB_EN, false);
@@ -1111,7 +1079,7 @@ TEST(GPSService, MooredModeDisabledLeavesAcquisitionPeriodUntouched)
 	fake_rtc->settime(1580083200);
 
 	GPSService s(*mock_m10q, fake_log);
-	s.start([](ServiceEvent& e) { ServiceManager::notify_peer_event(e); });
+	s.start([](ServiceEvent &e) { ServiceManager::notify_peer_event(e); });
 
 	mock().expectOneCall("power_on").onObject(mock_m10q).ignoreOtherParameters();
 	increment_time_s(FIRST_AQPERIOD);

@@ -11,37 +11,33 @@ extern "C" {
 #include "nrf_uarte.h"
 
 /** @brief Types of libuarte driver events. */
-typedef enum
-{
-    NRF_LIBUARTE_ASYNC_EVT_RX_DATA,  ///< Requested TX transfer completed.
-    NRF_LIBUARTE_ASYNC_EVT_TX_DONE,  ///< Requested RX transfer completed.
-    NRF_LIBUARTE_ASYNC_EVT_ERROR,    ///< Error reported by UARTE peripheral.
-    NRF_LIBUARTE_ASYNC_EVT_OVERRUN_ERROR,  ///< Error reported by the driver.
-    NRF_LIBUARTE_ASYNC_EVT_ALLOC_ERROR  ///< Error reported by the driver.
+typedef enum {
+	NRF_LIBUARTE_ASYNC_EVT_RX_DATA,        ///< Requested TX transfer completed.
+	NRF_LIBUARTE_ASYNC_EVT_TX_DONE,        ///< Requested RX transfer completed.
+	NRF_LIBUARTE_ASYNC_EVT_ERROR,          ///< Error reported by UARTE peripheral.
+	NRF_LIBUARTE_ASYNC_EVT_OVERRUN_ERROR,  ///< Error reported by the driver.
+	NRF_LIBUARTE_ASYNC_EVT_ALLOC_ERROR     ///< Error reported by the driver.
 } nrf_libuarte_async_evt_type_t;
 
 /** @brief Structure for libuarte async transfer completion event. */
-typedef struct
-{
-    uint8_t  * p_data; ///< Pointer to memory used for transfer.
-    size_t     length; ///< Number of bytes transfered.
+typedef struct {
+	uint8_t *p_data;  ///< Pointer to memory used for transfer.
+	size_t length;    ///< Number of bytes transfered.
 } nrf_libuarte_async_data_t;
 
 /** @brief Structu for software error event. */
-typedef struct
-{
-    uint32_t overrun_length; ///< Number of bytes lost due to overrun.
+typedef struct {
+	uint32_t overrun_length;  ///< Number of bytes lost due to overrun.
 } nrf_libuarte_async_overrun_err_evt_t;
 
 /** @brief Structure for libuarte error event. */
-typedef struct
-{
-    nrf_libuarte_async_evt_type_t type; ///< Event type.
-    union {
-        nrf_libuarte_async_data_t rxtx;                   ///< RXD/TXD data.
-        uint8_t                   errorsrc;               ///< Error source.
-        nrf_libuarte_async_overrun_err_evt_t overrun_err; ///< Overrun error data.
-    } data;                                 ///< Union with data.
+typedef struct {
+	nrf_libuarte_async_evt_type_t type;  ///< Event type.
+	union {
+		nrf_libuarte_async_data_t rxtx;                    ///< RXD/TXD data.
+		uint8_t errorsrc;                                  ///< Error source.
+		nrf_libuarte_async_overrun_err_evt_t overrun_err;  ///< Overrun error data.
+	} data;                                                ///< Union with data.
 } nrf_libuarte_async_evt_t;
 
 /**
@@ -50,14 +46,13 @@ typedef struct
  * @param[in] p_evt  Pointer to event structure. Event is allocated on the stack so it is available
  *                   only within the context of the event handler.
  */
-typedef void (*nrf_libuarte_async_evt_handler_t)(void * context, nrf_libuarte_async_evt_t * p_evt);
+typedef void (*nrf_libuarte_async_evt_handler_t)(void *context, nrf_libuarte_async_evt_t *p_evt);
 
 /** @brief Structure for libuarte async configuration. */
-typedef struct
-{
-    uint32_t baudrate;
-    uint32_t tx_pin;
-    uint32_t rx_pin;
+typedef struct {
+	uint32_t baudrate;
+	uint32_t tx_pin;
+	uint32_t rx_pin;
 } nrf_libuarte_async_config_t;
 
 /**
@@ -70,7 +65,7 @@ typedef struct {
  * @brief nrf_libuarte_async instance structure (placed in ROM).
  */
 typedef struct {
-    const nrf_uarte_t *p_libuarte;
+	const nrf_uarte_t *p_libuarte;
 } nrf_libuarte_async_t;
 
 
@@ -84,30 +79,29 @@ typedef struct {
  *
  * @return NRF_SUCCESS when properly initialized. NRF_ERROR_INTERNAL otherwise.
  */
-ret_code_t nrf_libuarte_async_init(const nrf_libuarte_async_t * const p_libuarte,
-                                   nrf_libuarte_async_config_t const * p_config,
-                                   nrf_libuarte_async_evt_handler_t    evt_handler,
-                                   void * context);
+ret_code_t nrf_libuarte_async_init(const nrf_libuarte_async_t *const p_libuarte,
+                                   nrf_libuarte_async_config_t const *p_config,
+                                   nrf_libuarte_async_evt_handler_t evt_handler, void *context);
 
 /** @brief Function for uninitializing the libuarte async library.
  *
  * @param[in] p_libuarte   Libuarte_async instance.
  */
-void nrf_libuarte_async_uninit(const nrf_libuarte_async_t * const p_libuarte);
+void nrf_libuarte_async_uninit(const nrf_libuarte_async_t *const p_libuarte);
 
 /**
  * @brief Function for starting receiver.
  *
  * @param p_libuarte  Libuarte_async instance.
  */
-void nrf_libuarte_async_start_rx(const nrf_libuarte_async_t * const p_libuarte);
+void nrf_libuarte_async_start_rx(const nrf_libuarte_async_t *const p_libuarte);
 
 /**
  * @brief Function for stopping receiver.
  *
  * @param p_libuarte  Libuarte_async instance.
  */
-void nrf_libuarte_async_stop_rx(const nrf_libuarte_async_t * const p_libuarte);
+void nrf_libuarte_async_stop_rx(const nrf_libuarte_async_t *const p_libuarte);
 
 /**
  * @brief Function for modifying the receive timeout.
@@ -115,7 +109,7 @@ void nrf_libuarte_async_stop_rx(const nrf_libuarte_async_t * const p_libuarte);
  *
  * @param p_libuarte  Libuarte_async instance.
  */
-void nrf_libuarte_async_set_timeout(const nrf_libuarte_async_t * const p_libuarte, unsigned int timeout_us);
+void nrf_libuarte_async_set_timeout(const nrf_libuarte_async_t *const p_libuarte, unsigned int timeout_us);
 
 /**
  * @brief Function for deasserting RTS to pause the transmission.
@@ -124,7 +118,7 @@ void nrf_libuarte_async_set_timeout(const nrf_libuarte_async_t * const p_libuart
  *
  * @param p_libuarte Libuarte_async instance.
  */
-void nrf_libuarte_async_rts_clear(const nrf_libuarte_async_t * const p_libuarte);
+void nrf_libuarte_async_rts_clear(const nrf_libuarte_async_t *const p_libuarte);
 
 /**
  * @brief Function for asserting RTS to restart the transmission.
@@ -133,7 +127,7 @@ void nrf_libuarte_async_rts_clear(const nrf_libuarte_async_t * const p_libuarte)
  *
  * @param p_libuarte Libuarte_async instance.
  */
-void nrf_libuarte_async_rts_set(const nrf_libuarte_async_t * const p_libuarte);
+void nrf_libuarte_async_rts_set(const nrf_libuarte_async_t *const p_libuarte);
 
 /**
  * @brief Function for sending data asynchronously over UARTE.
@@ -149,8 +143,7 @@ void nrf_libuarte_async_rts_set(const nrf_libuarte_async_t * const p_libuarte);
  * @retval NRF_ERROR_INTERNAL  Error during configuration.
  * @retval NRF_SUCCESS         Buffer set for sending.
  */
-ret_code_t nrf_libuarte_async_tx(const nrf_libuarte_async_t * const p_libuarte,
-                                 uint8_t * p_data, size_t length);
+ret_code_t nrf_libuarte_async_tx(const nrf_libuarte_async_t *const p_libuarte, uint8_t *p_data, size_t length);
 
 /**
  * @brief Function for deallocating received buffer data.
@@ -159,11 +152,10 @@ ret_code_t nrf_libuarte_async_tx(const nrf_libuarte_async_t * const p_libuarte,
  * @param[in] p_data  Pointer to data.
  * @param[in] length  Number of bytes to free.
  */
-void nrf_libuarte_async_rx_free(const nrf_libuarte_async_t * const p_libuarte,
-                                uint8_t * p_data, size_t length);
+void nrf_libuarte_async_rx_free(const nrf_libuarte_async_t *const p_libuarte, uint8_t *p_data, size_t length);
 
 // Test injection
-extern bool m_is_rx_enabled;   /* etat RX du fake, lu par les tests */
+extern bool m_is_rx_enabled; /* etat RX du fake, lu par les tests */
 
 void nrf_libuarte_inject_event(nrf_libuarte_async_evt_t *evt);
 
@@ -173,4 +165,4 @@ void nrf_libuarte_inject_event(nrf_libuarte_async_evt_t *evt);
 }
 #endif
 
-#endif //UART_ASYNC_H
+#endif  //UART_ASYNC_H

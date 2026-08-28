@@ -23,24 +23,22 @@ extern Timer *system_timer;
 // ═══════════════════════════════════════════════════════
 
 static bool is_error_event(nrfx_twim_evt_type_t type) {
-	return type == NRFX_TWIM_EVT_ADDRESS_NACK ||
-	       type == NRFX_TWIM_EVT_DATA_NACK    ||
-	       type == NRFX_TWIM_EVT_OVERRUN       ||
-	       type == NRFX_TWIM_EVT_BUS_ERROR;
+	return type == NRFX_TWIM_EVT_ADDRESS_NACK || type == NRFX_TWIM_EVT_DATA_NACK || type == NRFX_TWIM_EVT_OVERRUN
+	       || type == NRFX_TWIM_EVT_BUS_ERROR;
 }
 
 // DIAGNOSTIC (2026-07): capture the last TWIM error event type per bus to tell an
 // ADDRESS_NACK (device absent/unresponsive) apart from a BUS_ERROR/OVERRUN (bus or
 // recovery-bit-bang corruption). Remove once the STC3117 no-ACK is root-caused.
-static volatile uint8_t s_last_twim_err[2] = {0xFF, 0xFF};
+static volatile uint8_t s_last_twim_err[2] = { 0xFF, 0xFF };
 static const char *twim_evt_str(uint8_t t) {
 	switch (t) {
 	case NRFX_TWIM_EVT_ADDRESS_NACK: return "ADDR_NACK";
-	case NRFX_TWIM_EVT_DATA_NACK:    return "DATA_NACK";
-	case NRFX_TWIM_EVT_OVERRUN:      return "OVERRUN";
-	case NRFX_TWIM_EVT_BUS_ERROR:    return "BUS_ERROR";
-	case NRFX_TWIM_EVT_DONE:         return "DONE";
-	default:                         return "none";
+	case NRFX_TWIM_EVT_DATA_NACK: return "DATA_NACK";
+	case NRFX_TWIM_EVT_OVERRUN: return "OVERRUN";
+	case NRFX_TWIM_EVT_BUS_ERROR: return "BUS_ERROR";
+	case NRFX_TWIM_EVT_DONE: return "DONE";
+	default: return "none";
 	}
 }
 
@@ -105,8 +103,7 @@ bool NrfI2C::is_bus_stuck(uint8_t bus) {
 	bool sda_low = (nrf_gpio_pin_read(sda) == 0);
 
 	if (scl_low || sda_low) {
-		DEBUG_TRACE("I2C bus %u stuck: SCL=%s SDA=%s",
-			bus, scl_low ? "LOW" : "HIGH", sda_low ? "LOW" : "HIGH");
+		DEBUG_TRACE("I2C bus %u stuck: SCL=%s SDA=%s", bus, scl_low ? "LOW" : "HIGH", sda_low ? "LOW" : "HIGH");
 		return true;
 	}
 	return false;
@@ -148,9 +145,7 @@ bool NrfI2C::clock_stretch_recovery(uint8_t bus) {
 
 bool NrfI2C::reinit_bus(uint8_t bus) {
 	nrfx_twim_evt_handler_t handler = get_event_handler(bus);
-	nrfx_err_t err = nrfx_twim_init(&BSP::I2C_Inits[bus].twim,
-	                                 &BSP::I2C_Inits[bus].twim_config,
-	                                 handler, nullptr);
+	nrfx_err_t err = nrfx_twim_init(&BSP::I2C_Inits[bus].twim, &BSP::I2C_Inits[bus].twim_config, handler, nullptr);
 	if (err != NRFX_SUCCESS) {
 		DEBUG_ERROR("I2C bus %u reinit failed (0x%08X)", bus, err);
 		m_is_enabled[bus] = false;
@@ -285,8 +280,7 @@ void NrfI2C::init(void) {
 			bool freed = false;
 			for (unsigned int attempt = 0; attempt < I2C_RECOVERY_MAX_ATTEMPTS && !freed; attempt++) {
 				freed = clock_stretch_recovery(i);
-				if (!freed)
-					PMU::delay_ms(5);
+				if (!freed) PMU::delay_ms(5);
 			}
 			// RSPB: VSENSORS power-cycle escalation DISABLED (pull-ups on VSENSORS —
 			// cutting it kills them; can't reset a VBAT STC anyway). See recover_bus().
@@ -400,8 +394,7 @@ bool NrfI2C::wait_for_transfer(uint8_t bus, uint32_t timeout_ms) {
 	while (!m_transfer_done[bus]) {
 		uint64_t elapsed = system_timer->get_counter() - start_time;
 		if (elapsed >= timeout_ms || ++iters >= max_iters) {
-			DEBUG_TRACE("I2C bus %u transfer timeout (%u ms, iters=%u)",
-			           bus, timeout_ms, (unsigned)iters);
+			DEBUG_TRACE("I2C bus %u transfer timeout (%u ms, iters=%u)", bus, timeout_ms, (unsigned)iters);
 			m_stats[bus].timeouts++;
 
 			// Force stop and clear TWIM events
@@ -430,12 +423,9 @@ bool NrfI2C::wait_for_transfer(uint8_t bus, uint32_t timeout_ms) {
  * Starts an async RX or TX, waits with timeout, retries with bus
  * recovery on failure.  Factored to avoid duplicating the retry logic.
  */
-bool NrfI2C::transfer_with_retry(uint8_t bus, uint8_t address,
-		uint8_t *buffer, unsigned int length,
-		bool is_read, bool no_stop, const char *op_name)
-{
-	if (bus >= BSP::I2C_TOTAL_NUMBER || !m_is_enabled[bus])
-		return false;
+bool NrfI2C::transfer_with_retry(uint8_t bus, uint8_t address, uint8_t *buffer, unsigned int length, bool is_read,
+                                 bool no_stop, const char *op_name) {
+	if (bus >= BSP::I2C_TOTAL_NUMBER || !m_is_enabled[bus]) return false;
 
 	m_stats[bus].total_operations++;
 
@@ -455,8 +445,8 @@ bool NrfI2C::transfer_with_retry(uint8_t bus, uint8_t address,
 		}
 
 		if (err != NRFX_SUCCESS) {
-			DEBUG_TRACE("I2C %s(0x%02X) start err=0x%08X retry %u/%u",
-			           op_name, address, err, retry + 1, I2C_MAX_RETRIES);
+			DEBUG_TRACE("I2C %s(0x%02X) start err=0x%08X retry %u/%u", op_name, address, err, retry + 1,
+			            I2C_MAX_RETRIES);
 		}
 
 		m_stats[bus].errors++;
@@ -467,8 +457,8 @@ bool NrfI2C::transfer_with_retry(uint8_t bus, uint8_t address,
 		}
 	}
 
-	DEBUG_ERROR("I2C %s(0x%02X) failed after %u retries [last err=%s]",
-	            op_name, address, I2C_MAX_RETRIES, twim_evt_str(s_last_twim_err[bus]));
+	DEBUG_ERROR("I2C %s(0x%02X) failed after %u retries [last err=%s]", op_name, address, I2C_MAX_RETRIES,
+	            twim_evt_str(s_last_twim_err[bus]));
 #if defined(BOARD_RSPB)
 	// A device wedged the bus (STC3117 on VBAT holding SCL low = only a battery
 	// power-cycle clears it; or a BUS_ERROR/timeout cascade leaving the TWIM BUSY).
@@ -497,13 +487,11 @@ bool NrfI2C::write_safe(uint8_t bus, uint8_t address, const uint8_t *buffer, uns
 }
 
 void NrfI2C::read(uint8_t bus, uint8_t address, uint8_t *buffer, unsigned int length) {
-	if (!read_safe(bus, address, buffer, length))
-		throw ErrorCode::I2C_COMMS_ERROR;
+	if (!read_safe(bus, address, buffer, length)) throw ErrorCode::I2C_COMMS_ERROR;
 }
 
 void NrfI2C::write(uint8_t bus, uint8_t address, const uint8_t *buffer, unsigned int length, bool no_stop) {
-	if (!write_safe(bus, address, buffer, length, no_stop))
-		throw ErrorCode::I2C_COMMS_ERROR;
+	if (!write_safe(bus, address, buffer, length, no_stop)) throw ErrorCode::I2C_COMMS_ERROR;
 }
 
 
@@ -519,7 +507,7 @@ bool NrfI2C::is_enabled(uint8_t bus) {
 	return (bus < BSP::I2C_TOTAL_NUMBER) && m_is_enabled[bus];
 }
 
-const I2CStats& NrfI2C::get_stats(uint8_t bus) {
+const I2CStats &NrfI2C::get_stats(uint8_t bus) {
 	if (bus >= BSP::I2C_TOTAL_NUMBER) {
 		static I2CStats dummy = {};
 		return dummy;
@@ -528,6 +516,5 @@ const I2CStats& NrfI2C::get_stats(uint8_t bus) {
 }
 
 void NrfI2C::reset_stats(uint8_t bus) {
-	if (bus < BSP::I2C_TOTAL_NUMBER)
-		m_stats[bus] = {};
+	if (bus < BSP::I2C_TOTAL_NUMBER) m_stats[bus] = {};
 }

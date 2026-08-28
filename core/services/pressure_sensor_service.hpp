@@ -27,23 +27,20 @@ struct __attribute__((packed)) PressureLogEntry {
 
 class PressureLogFormatter : public LogFormatter {
 public:
-	const std::string header() override {
-		return "log_datetime,pressure,temperature,altitude\r\n";
-	}
-	const std::string log_entry(const LogEntry& e) override {
+	const std::string header() override { return "log_datetime,pressure,temperature,altitude\r\n"; }
+	const std::string log_entry(const LogEntry &e) override {
 		char entry[512], d1[128];
 		const auto *log = reinterpret_cast<const PressureLogEntry *>(&e);
 		std::time_t t;
 		std::tm *tm;
 
-		t = convert_epochtime(log->header.year, log->header.month, log->header.day, log->header.hours, log->header.minutes, log->header.seconds);
+		t = convert_epochtime(log->header.year, log->header.month, log->header.day, log->header.hours,
+		                      log->header.minutes, log->header.seconds);
 		tm = std::gmtime(&t);
 		std::strftime(d1, sizeof(d1), "%d/%m/%Y %H:%M:%S", tm);
 
 		// Convert to CSV
-		snprintf(entry, sizeof(entry), "%s,%f,%f,%.2f\r\n",
-				d1,
-				log->pressure, log->temperature, log->altitude);
+		snprintf(entry, sizeof(entry), "%s,%f,%f,%.2f\r\n", d1, log->pressure, log->temperature, log->altitude);
 		return std::string(entry);
 	}
 };
@@ -56,7 +53,9 @@ enum class PressureSensorPort : unsigned int {
 
 class PressureSensorService : public SensorService {
 public:
-	PressureSensorService(Sensor& sensor, Logger *logger = nullptr) : SensorService(sensor, ServiceIdentifier::PRESSURE_SENSOR, "PRESSURE", logger), m_last_pressure(0) {}
+	PressureSensorService(Sensor &sensor, Logger *logger = nullptr)
+	    : SensorService(sensor, ServiceIdentifier::PRESSURE_SENSOR, "PRESSURE", logger),
+	      m_last_pressure(0) {}
 
 private:
 #pragma GCC diagnostic push
@@ -67,7 +66,7 @@ private:
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Warray-bounds"
-	void sensor_populate_log_entry(LogEntry *e, ServiceSensorData& data) override {
+	void sensor_populate_log_entry(LogEntry *e, ServiceSensorData &data) override {
 		auto *log = reinterpret_cast<PressureLogEntry *>(e);
 		log->pressure = data.port[static_cast<unsigned int>(PressureSensorPort::PRESSURE)];
 		log->temperature = data.port[static_cast<unsigned int>(PressureSensorPort::TEMPERATURE)];
@@ -82,17 +81,18 @@ private:
 		} else {
 			log->altitude = 0.0;
 		}
-		DEBUG_INFO("PressureSensorService: pressure=%.4f bar | temp=%.2f C | altitude=%.2f m",
-				log->pressure, log->temperature, log->altitude);
+		DEBUG_INFO("PressureSensorService: pressure=%.4f bar | temp=%.2f C | altitude=%.2f m", log->pressure,
+		           log->temperature, log->altitude);
 
 		// Check pressure logging mode
-		BasePressureSensorLoggingMode mode = service_read_param<BasePressureSensorLoggingMode>(ParamID::PRESSURE_SENSOR_LOGGING_MODE);
+		BasePressureSensorLoggingMode mode =
+		    service_read_param<BasePressureSensorLoggingMode>(ParamID::PRESSURE_SENSOR_LOGGING_MODE);
 		if (mode == BasePressureSensorLoggingMode::ALWAYS) {
 			service_set_log_header_time(log->header, service_current_time());
 		} else if (mode == BasePressureSensorLoggingMode::UW_THRESHOLD) {
 			double uw_threshold = service_read_param<double>(ParamID::UNDERWATER_DETECT_THRESH);
-			if ((m_last_pressure < uw_threshold && log->pressure >= uw_threshold) ||
-				(m_last_pressure >= uw_threshold && log->pressure < uw_threshold)) {
+			if ((m_last_pressure < uw_threshold && log->pressure >= uw_threshold)
+			    || (m_last_pressure >= uw_threshold && log->pressure < uw_threshold)) {
 				// Trigger criteria of submerged or surfaced is met
 				m_last_pressure = log->pressure;
 				service_set_log_header_time(log->header, service_current_time());
@@ -111,13 +111,10 @@ private:
 
 	unsigned int sensor_num_channels() override { return 2U; }
 
-	bool sensor_is_enabled() override {
-		return service_read_param<bool>(ParamID::PRESSURE_SENSOR_ENABLE);
-	}
+	bool sensor_is_enabled() override { return service_read_param<bool>(ParamID::PRESSURE_SENSOR_ENABLE); }
 
 	unsigned int sensor_periodic() override {
-		unsigned int schedule =
-				1000 * service_read_param<unsigned int>(ParamID::PRESSURE_SENSOR_PERIODIC);
+		unsigned int schedule = 1000 * service_read_param<unsigned int>(ParamID::PRESSURE_SENSOR_PERIODIC);
 		return schedule == 0 ? Service::SCHEDULE_DISABLED : schedule;
 	}
 
@@ -128,7 +125,8 @@ private:
 	bool sensor_is_usable_underwater() override { return true; }
 
 	void sensor_init() override {
-		unsigned int fs = static_cast<unsigned int>(service_read_param<BasePressureSensorFullScale>(ParamID::PRESSURE_SENSOR_FULL_SCALE));
+		unsigned int fs = static_cast<unsigned int>(
+		    service_read_param<BasePressureSensorFullScale>(ParamID::PRESSURE_SENSOR_FULL_SCALE));
 		m_sensor.set_full_scale(fs);
 	}
 

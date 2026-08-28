@@ -26,8 +26,7 @@ extern RTC *rtc;
 extern BatteryMonitor *battery_monitor;
 
 
-TEST_GROUP(ArgosTxService)
-{
+TEST_GROUP(ArgosTxService) {
 	FakeBatteryMonitor *fake_battery_monitor;
 	FakeConfigurationStore *fake_config_store;
 	MockKineisDevice *mock_kineis;
@@ -51,9 +50,9 @@ TEST_GROUP(ArgosTxService)
 		fake_rtc = new FakeRTC;
 		rtc = fake_rtc;
 		// Set RTC time so service_is_time_known() returns true
-		fake_rtc->settime(1580083200); // 27/01/2020 00:00:00
+		fake_rtc->settime(1580083200);  // 27/01/2020 00:00:00
 		fake_timer = new FakeTimer;
-		system_timer = fake_timer; // linux_timer;
+		system_timer = fake_timer;  // linux_timer;
 		system_scheduler = new Scheduler(system_timer);
 		fake_timer->start();
 
@@ -83,7 +82,8 @@ TEST_GROUP(ArgosTxService)
 		battery_monitor = nullptr;
 	}
 
-	GPSLogEntry make_gps_location(bool is_valid=true, double longitude=0, double latitude=0, std::time_t t=0, bool is_3d_fix = false, int32_t hMSL=0, int32_t gSpeed=0, uint16_t batt=4200) {
+	GPSLogEntry make_gps_location(bool is_valid = true, double longitude = 0, double latitude = 0, std::time_t t = 0,
+	                              bool is_3d_fix = false, int32_t hMSL = 0, int32_t gSpeed = 0, uint16_t batt = 4200) {
 		GPSLogEntry log{};  // Zero-init to avoid UB on unset fields (e.g. headMot)
 		log.info.valid = is_valid;
 		log.info.lon = longitude;
@@ -94,8 +94,7 @@ TEST_GROUP(ArgosTxService)
 		log.info.batt_voltage = batt;
 		log.info.gSpeed = gSpeed;
 
-		if (t == 0)
-			t = rtc->gettime();
+		if (t == 0) t = rtc->gettime();
 
 		uint16_t year;
 		uint8_t month, day, hour, min, sec;
@@ -135,7 +134,8 @@ TEST_GROUP(ArgosTxService)
 		ServiceManager::notify_peer_event(e);
 	}
 
-	void inject_gps_location(bool is_valid=true, double longitude=0, double latitude=0, std::time_t t=0, bool is_3d_fix = false, int32_t hMSL=0, int32_t gSpeed=0, uint16_t batt=4200) {
+	void inject_gps_location(bool is_valid = true, double longitude = 0, double latitude = 0, std::time_t t = 0,
+	                         bool is_3d_fix = false, int32_t hMSL = 0, int32_t gSpeed = 0, uint16_t batt = 4200) {
 		ServiceEvent e;
 		GPSLogEntry log = make_gps_location(is_valid, longitude, latitude, t, is_3d_fix, hMSL, gSpeed, batt);
 
@@ -170,10 +170,9 @@ TEST_GROUP(ArgosTxService)
 	}
 };
 
-TEST(ArgosTxService, DepthPileFillsAndEmpties)
-{
+TEST(ArgosTxService, DepthPileFillsAndEmpties) {
 	DepthPile<GPSLogEntry> dp;
-	std::vector<GPSLogEntry*> v;
+	std::vector<GPSLogEntry *> v;
 	GPSLogEntry e;
 
 	// Load up full depth pile with burst count of 1
@@ -190,16 +189,16 @@ TEST(ArgosTxService, DepthPileFillsAndEmpties)
 	v = dp.retrieve_latest();
 	CHECK_EQUAL(1, v.size());
 	CHECK_EQUAL(24, dp.eligible());
-	CHECK_EQUAL(23, v.at(0)->info.day); // Should be most recent
+	CHECK_EQUAL(23, v.at(0)->info.day);  // Should be most recent
 
 	// Retrieve entire depth pile (in blocks of 3 — LDA2 long packet carries 3
 	// fixes to leave room for the firmware-embedded CRC8 at byte 23)
 	for (unsigned int i = 0; i < 8; i++) {
 		v = dp.retrieve(24);
 		CHECK_EQUAL(3, v.size());
-		CHECK_EQUAL(21-(i*3), dp.eligible());
+		CHECK_EQUAL(21 - (i * 3), dp.eligible());
 		for (unsigned j = 0; j < 3; j++) {
-			CHECK_EQUAL(24-((i+1)*3)+j, v.at(j)->info.day);
+			CHECK_EQUAL(24 - ((i + 1) * 3) + j, v.at(j)->info.day);
 		}
 	}
 
@@ -210,10 +209,9 @@ TEST(ArgosTxService, DepthPileFillsAndEmpties)
 	CHECK_EQUAL(0, v.size());
 }
 
-TEST(ArgosTxService, DepthPile1)
-{
+TEST(ArgosTxService, DepthPile1) {
 	DepthPile<GPSLogEntry> dp;
-	std::vector<GPSLogEntry*> v;
+	std::vector<GPSLogEntry *> v;
 	GPSLogEntry e;
 
 	// Load up full depth pile with burst count of 1
@@ -230,7 +228,7 @@ TEST(ArgosTxService, DepthPile1)
 	v = dp.retrieve_latest();
 	CHECK_EQUAL(1, v.size());
 	CHECK_EQUAL(24, dp.eligible());
-	CHECK_EQUAL(23, v.at(0)->info.day); // Should be most recent
+	CHECK_EQUAL(23, v.at(0)->info.day);  // Should be most recent
 
 	// Retrieve depth pile and should be most recent
 	v = dp.retrieve(1);
@@ -244,25 +242,23 @@ TEST(ArgosTxService, DepthPile1)
 	CHECK_EQUAL(0, v.size());
 }
 
-TEST(ArgosTxService, DutyCycleCalculation)
-{
+TEST(ArgosTxService, DutyCycleCalculation) {
 	unsigned int mask;
 	mask = 0xFFFFFF;
 	for (unsigned int i = 0; i < 24; i++)
-		CHECK_EQUAL((bool)((mask >> (23-i))&1), ArgosTxScheduler::is_in_duty_cycle(i*3600*1000, mask));
+		CHECK_EQUAL((bool)((mask >> (23 - i)) & 1), ArgosTxScheduler::is_in_duty_cycle(i * 3600 * 1000, mask));
 	mask = 0xEEEEEE;
 	for (unsigned int i = 0; i < 24; i++)
-		CHECK_EQUAL((bool)((mask >> (23-i))&1), ArgosTxScheduler::is_in_duty_cycle(i*3600*1000, mask));
+		CHECK_EQUAL((bool)((mask >> (23 - i)) & 1), ArgosTxScheduler::is_in_duty_cycle(i * 3600 * 1000, mask));
 	mask = 0;
 	for (unsigned int i = 0; i < 24; i++)
-		CHECK_EQUAL((bool)((mask >> (23-i))&1), ArgosTxScheduler::is_in_duty_cycle(i*3600*1000, mask));
+		CHECK_EQUAL((bool)((mask >> (23 - i)) & 1), ArgosTxScheduler::is_in_duty_cycle(i * 3600 * 1000, mask));
 	mask = 0x123456;
 	for (unsigned int i = 0; i < 24; i++)
-		CHECK_EQUAL((bool)((mask >> (23-i))&1), ArgosTxScheduler::is_in_duty_cycle(i*3600*1000, mask));
+		CHECK_EQUAL((bool)((mask >> (23 - i)) & 1), ArgosTxScheduler::is_in_duty_cycle(i * 3600 * 1000, mask));
 }
 
-TEST(ArgosTxService, SchedulerLegacyNoJitter)
-{
+TEST(ArgosTxService, SchedulerLegacyNoJitter) {
 	ArgosTxScheduler sched;
 	ArgosConfig config;
 
@@ -295,8 +291,7 @@ TEST(ArgosTxService, SchedulerLegacyNoJitter)
 // -> reboot -> x3 -> factory reset). Exercised through the public schedule_legacy
 // path: the guard throws, schedule_legacy catches it and returns INVALID_SCHEDULE.
 // The fact that this test RETURNS at all proves there is no infinite loop.
-TEST(ArgosTxService, SchedulerZeroIntervalNoHang)
-{
+TEST(ArgosTxService, SchedulerZeroIntervalNoHang) {
 	ArgosTxScheduler sched;
 	ArgosConfig config;
 	config.argos_tx_jitter_en = false;
@@ -310,8 +305,7 @@ TEST(ArgosTxService, SchedulerZeroIntervalNoHang)
 	CHECK_EQUAL(0U, sched.schedule_legacy(config, 100));
 }
 
-TEST(ArgosTxService, SchedulerLegacyNoJitterWithEarliestTxSet)
-{
+TEST(ArgosTxService, SchedulerLegacyNoJitterWithEarliestTxSet) {
 	ArgosTxScheduler sched;
 	ArgosConfig config;
 
@@ -337,8 +331,7 @@ TEST(ArgosTxService, SchedulerLegacyNoJitterWithEarliestTxSet)
 	sched.notify_tx_complete();
 }
 
-TEST(ArgosTxService, SchedulerLegacyWithJitter)
-{
+TEST(ArgosTxService, SchedulerLegacyWithJitter) {
 	ArgosTxScheduler sched;
 	ArgosConfig config;
 
@@ -354,8 +347,7 @@ TEST(ArgosTxService, SchedulerLegacyWithJitter)
 	sched.notify_tx_complete();
 }
 
-TEST(ArgosTxService, SchedulerDutyCycleNoJitter)
-{
+TEST(ArgosTxService, SchedulerDutyCycleNoJitter) {
 	ArgosTxScheduler sched;
 	ArgosConfig config;
 
@@ -364,37 +356,35 @@ TEST(ArgosTxService, SchedulerDutyCycleNoJitter)
 	config.duty_cycle = 0x1;
 
 	unsigned int result = sched.schedule_duty_cycle(config, 0);
-	CHECK_EQUAL(23*3600*1000, result);
+	CHECK_EQUAL(23 * 3600 * 1000, result);
 	sched.notify_tx_complete();
-	result = sched.schedule_duty_cycle(config, 23*3600);
+	result = sched.schedule_duty_cycle(config, 23 * 3600);
 	CHECK_EQUAL(10000U, result);
 	sched.notify_tx_complete();
 }
 
-TEST(ArgosTxService, BuildLongCertificationPacket)
-{
+TEST(ArgosTxService, BuildLongCertificationPacket) {
 	unsigned int size_bits;
 	// LONG_PACKET_BYTES is 24 (LDA2 frame); certification truncates to that size.
-	std::string x = ArgosPacketBuilder::build_certification_packet("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", size_bits);
+	std::string x = ArgosPacketBuilder::build_certification_packet(
+	    "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", size_bits);
 	CHECK_EQUAL(ArgosPacketBuilder::LDA2_FRAME_BITS, size_bits);
 	CHECK_EQUAL(ArgosPacketBuilder::LDA2_FRAME_BYTES, x.size());
 	CHECK_EQUAL("\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF"s, x);
 }
 
-TEST(ArgosTxService, BuildShortCertificationPacket)
-{
+TEST(ArgosTxService, BuildShortCertificationPacket) {
 	unsigned int size_bits;
 	// SHORT_PACKET_BYTES = 12, so input must be ≤12 bytes (24 hex chars)
-	std::string x = ArgosPacketBuilder::build_certification_packet("FFFFFFFFFFFFFFFFFFFF", size_bits); // 10 bytes
-	CHECK_EQUAL(96, size_bits); // SHORT_PACKET_BITS = 96
-	CHECK_EQUAL("\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\x00\x00"s, x); // Padded to 12 bytes
+	std::string x = ArgosPacketBuilder::build_certification_packet("FFFFFFFFFFFFFFFFFFFF", size_bits);  // 10 bytes
+	CHECK_EQUAL(96, size_bits);                                           // SHORT_PACKET_BITS = 96
+	CHECK_EQUAL("\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\x00\x00"s, x);  // Padded to 12 bytes
 }
 
-TEST(ArgosTxService, BuildShortGNSSPacket)
-{
+TEST(ArgosTxService, BuildShortGNSSPacket) {
 	unsigned int size_bits;
 	GPSLogEntry e = make_gps_location(1, 12.3, 44.4, 1652105502);
-	std::vector<GPSLogEntry*> v({&e});
+	std::vector<GPSLogEntry *> v({ &e });
 	std::string x = ArgosPacketBuilder::build_gnss_packet(v, false, false, BaseDeltaTimeLoc::DELTA_T_10MIN, size_bits);
 	CHECK_EQUAL("097166C6600781E00003FE58"s, Binascii::hexlify(x));
 
@@ -410,7 +400,7 @@ TEST(ArgosTxService, BuildShortGNSSPacket)
 
 
 // Helper for LDA2 long-packet: verify size, prefix data, and self-consistent CRC8 at byte 23.
-static void check_lda2_long_packet(const std::string& packet, const std::string& expected_data_prefix) {
+static void check_lda2_long_packet(const std::string &packet, const std::string &expected_data_prefix) {
 	CHECK_EQUAL(ArgosPacketBuilder::LDA2_FRAME_BYTES, packet.size());
 	std::string hex = Binascii::hexlify(packet);
 	std::string prefix = hex.substr(0, expected_data_prefix.size());
@@ -419,21 +409,20 @@ static void check_lda2_long_packet(const std::string& packet, const std::string&
 	CHECK_EQUAL((unsigned int)expected_crc, (unsigned int)(unsigned char)packet[23]);
 }
 
-TEST(ArgosTxService, BuildLongGNSSPacket)
-{
+TEST(ArgosTxService, BuildLongGNSSPacket) {
 	unsigned int size_bits;
 	GPSLogEntry e = make_gps_location(1, 12.3, 44.4, 1652105502);
 	// Long packet: header 000 (Type 0, shared with Short Packet, disambiguated by size 24B vs 12B).
 	// Packs up to 3 fixes (down from 4) to leave 8 bits for CRC at byte 23.
-	std::vector<GPSLogEntry*> v({&e, &e});
+	std::vector<GPSLogEntry *> v({ &e, &e });
 	std::string x = ArgosPacketBuilder::build_gnss_packet(v, false, false, BaseDeltaTimeLoc::DELTA_T_10MIN, size_bits);
 	CHECK_EQUAL(ArgosPacketBuilder::LDA2_FRAME_BITS, size_bits);
 	check_lda2_long_packet(x, "097166C6600781E002584D8CC00F03C7FFFFFFFFFF");
-	v = {&e, &e, &e};
+	v = { &e, &e, &e };
 	x = ArgosPacketBuilder::build_gnss_packet(v, false, false, BaseDeltaTimeLoc::DELTA_T_10MIN, size_bits);
 	check_lda2_long_packet(x, "097166C6600781E002584D8CC00F03C1B19801E078");
 	// 4 fixes provided → 4th is silently dropped (LDA2 budget = 3 fixes after CRC).
-	v = {&e, &e, &e, &e};
+	v = { &e, &e, &e, &e };
 	x = ArgosPacketBuilder::build_gnss_packet(v, false, false, BaseDeltaTimeLoc::DELTA_T_10MIN, size_bits);
 	check_lda2_long_packet(x, "097166C6600781E002584D8CC00F03C1B19801E078");
 	x = ArgosPacketBuilder::build_gnss_packet(v, true, false, BaseDeltaTimeLoc::DELTA_T_10MIN, size_bits);
@@ -450,13 +439,12 @@ TEST(ArgosTxService, BuildLongGNSSPacket)
 // keeps the plain pre-v2 layout — bits 168+ (bytes 21/22) stay zero, dating is
 // the uniform delta_time_loc grid. (The 2026-06 v2 skip-field extension was
 // removed 2026-07: decoders expect the plain legacy frame.)
-TEST(ArgosTxService, BuildLongGNSSPacketNonUniformKeepsLegacyLayout)
-{
+TEST(ArgosTxService, BuildLongGNSSPacketNonUniformKeepsLegacyLayout) {
 	unsigned int size_bits;
 	GPSLogEntry newest = make_gps_location(1, 12.3, 44.4, 1652106702);
-	GPSLogEntry mid    = make_gps_location(1, 12.3, 44.4, 1652105502); // newest - 1200 (2*600)
-	GPSLogEntry oldest = make_gps_location(1, 12.3, 44.4, 1652104902); // mid    -  600 (1*600)
-	std::vector<GPSLogEntry*> v({&oldest, &mid, &newest}); // chronological asc; builder reverses
+	GPSLogEntry mid = make_gps_location(1, 12.3, 44.4, 1652105502);     // newest - 1200 (2*600)
+	GPSLogEntry oldest = make_gps_location(1, 12.3, 44.4, 1652104902);  // mid    -  600 (1*600)
+	std::vector<GPSLogEntry *> v({ &oldest, &mid, &newest });           // chronological asc; builder reverses
 	std::string x = ArgosPacketBuilder::build_gnss_packet(v, false, false, BaseDeltaTimeLoc::DELTA_T_10MIN, size_bits);
 	CHECK_EQUAL(ArgosPacketBuilder::LDA2_FRAME_BYTES, x.size());
 	// Non-uniform spacing must NOT set any trailing format/skip bits
@@ -468,13 +456,12 @@ TEST(ArgosTxService, BuildLongGNSSPacketNonUniformKeepsLegacyLayout)
 }
 
 // Legacy LONG format: uniformly-spaced positions — same zero trailing region.
-TEST(ArgosTxService, BuildLongGNSSPacketUniformKeepsLegacyLayout)
-{
+TEST(ArgosTxService, BuildLongGNSSPacketUniformKeepsLegacyLayout) {
 	unsigned int size_bits;
 	GPSLogEntry a = make_gps_location(1, 12.3, 44.4, 1652106702);
-	GPSLogEntry b = make_gps_location(1, 12.3, 44.4, 1652106102); // a - 600 (1*600)
-	GPSLogEntry c = make_gps_location(1, 12.3, 44.4, 1652105502); // b - 600 (1*600)
-	std::vector<GPSLogEntry*> v({&c, &b, &a}); // chronological asc; builder reverses to a,b,c
+	GPSLogEntry b = make_gps_location(1, 12.3, 44.4, 1652106102);  // a - 600 (1*600)
+	GPSLogEntry c = make_gps_location(1, 12.3, 44.4, 1652105502);  // b - 600 (1*600)
+	std::vector<GPSLogEntry *> v({ &c, &b, &a });                  // chronological asc; builder reverses to a,b,c
 	std::string x = ArgosPacketBuilder::build_gnss_packet(v, false, false, BaseDeltaTimeLoc::DELTA_T_10MIN, size_bits);
 	CHECK_EQUAL(0x00, (unsigned int)(unsigned char)x[21]);
 	CHECK_EQUAL(0x00, (unsigned int)(unsigned char)x[22]);
@@ -491,8 +478,7 @@ TEST(ArgosTxService, BuildLongGNSSPacketUniformKeepsLegacyLayout)
 //
 // This test now asserts the opposite of its ancestor: the 0xFF heartbeat MUST
 // go out even if no fix ever lands.
-TEST(ArgosTxService, LegacyNoFixHeartbeatSentWithoutAnyFix)
-{
+TEST(ArgosTxService, LegacyNoFixHeartbeatSentWithoutAnyFix) {
 	fake_config_store->write_param(ParamID::ARGOS_MODE, BaseArgosMode::LEGACY);
 	fake_config_store->write_param(ParamID::ARGOS_DEPTH_PILE, BaseDepthPile::DEPTH_PILE_1);
 	fake_config_store->write_param(ParamID::ARGOS_HEXID, (unsigned int)0x01234567U);
@@ -502,7 +488,7 @@ TEST(ArgosTxService, LegacyNoFixHeartbeatSentWithoutAnyFix)
 
 	ArgosTxService serv(*mock_kineis);
 	std::time_t t = 1652105502000;  // ms
-	fake_rtc->settime(t/1000);   // clock IS set (e.g. DTE/pseudo-RTC) but never by GPS
+	fake_rtc->settime(t / 1000);    // clock IS set (e.g. DTE/pseudo-RTC) but never by GPS
 	fake_timer->set_counter(t);
 
 	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
@@ -510,11 +496,14 @@ TEST(ArgosTxService, LegacyNoFixHeartbeatSentWithoutAnyFix)
 
 	// NO_FIX only, no real fix at all: the heartbeat must still be transmitted
 	// (SHORT, 96 bits) -- the beacon signals that it is there.
-	inject_gps_nofix(t/1000);
-	mock().expectOneCall("send").onObject(mock_kineis).withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2).
-			withUnsignedIntParameter("size_bits", 96);
+	inject_gps_nofix(t / 1000);
+	mock()
+	    .expectOneCall("send")
+	    .onObject(mock_kineis)
+	    .withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2)
+	    .withUnsignedIntParameter("size_bits", 96);
 	t += serv.get_last_schedule();
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 	system_scheduler->run();
 	mock_kineis->notify(KineisEventTxComplete({}));
@@ -523,8 +512,7 @@ TEST(ArgosTxService, LegacyNoFixHeartbeatSentWithoutAnyFix)
 
 // After a real GPS fix corrects the clock (unlocks TX), a subsequent no-fix
 // cycle transmits the NO_FIX 0xFF heartbeat.
-TEST(ArgosTxService, LegacyNoFixHeartbeatAfterFix)
-{
+TEST(ArgosTxService, LegacyNoFixHeartbeatAfterFix) {
 	fake_config_store->write_param(ParamID::ARGOS_MODE, BaseArgosMode::LEGACY);
 	fake_config_store->write_param(ParamID::ARGOS_DEPTH_PILE, BaseDepthPile::DEPTH_PILE_1);
 	fake_config_store->write_param(ParamID::ARGOS_HEXID, (unsigned int)0x01234567U);
@@ -534,28 +522,34 @@ TEST(ArgosTxService, LegacyNoFixHeartbeatAfterFix)
 
 	ArgosTxService serv(*mock_kineis);
 	std::time_t t = 1652105502000;  // ms
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 
 	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
 	serv.start();
 
 	// Real fix unlocks TX and is transmitted (SHORT, 96 bits)
-	inject_gps_location(1, 11.8768, -33.8232, t/1000);
-	mock().expectOneCall("send").onObject(mock_kineis).withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2).
-			withUnsignedIntParameter("size_bits", 96);
+	inject_gps_location(1, 11.8768, -33.8232, t / 1000);
+	mock()
+	    .expectOneCall("send")
+	    .onObject(mock_kineis)
+	    .withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2)
+	    .withUnsignedIntParameter("size_bits", 96);
 	t += serv.get_last_schedule();
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 	system_scheduler->run();
 	mock_kineis->notify(KineisEventTxComplete({}));
 
 	// Now a no-fix cycle -> NO_FIX heartbeat cached and transmitted as SHORT 0xFF
-	inject_gps_nofix(t/1000);
-	mock().expectOneCall("send").onObject(mock_kineis).withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2).
-			withUnsignedIntParameter("size_bits", 96);
+	inject_gps_nofix(t / 1000);
+	mock()
+	    .expectOneCall("send")
+	    .onObject(mock_kineis)
+	    .withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2)
+	    .withUnsignedIntParameter("size_bits", 96);
 	t += serv.get_last_schedule();
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 	system_scheduler->run();
 	mock().checkExpectations();
@@ -565,8 +559,7 @@ TEST(ArgosTxService, LegacyNoFixHeartbeatAfterFix)
 // arrives (no purge in LEGACY/DUTY_CYCLE/PASS_PREDICTION) so it keeps its slot
 // on the delta_time_loc grid — the next packet is a LONG (192-bit) carrying
 // the real fix plus the 0xFF filler.
-TEST(ArgosTxService, LegacyNoFixFillerKeptAfterRealFix)
-{
+TEST(ArgosTxService, LegacyNoFixFillerKeptAfterRealFix) {
 	fake_config_store->write_param(ParamID::ARGOS_MODE, BaseArgosMode::LEGACY);
 	fake_config_store->write_param(ParamID::ARGOS_DEPTH_PILE, BaseDepthPile::DEPTH_PILE_4);
 	fake_config_store->write_param(ParamID::ARGOS_HEXID, (unsigned int)0x01234567U);
@@ -576,7 +569,7 @@ TEST(ArgosTxService, LegacyNoFixFillerKeptAfterRealFix)
 
 	ArgosTxService serv(*mock_kineis);
 	std::time_t t = 1652105502000;  // ms
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 
 	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
@@ -585,11 +578,14 @@ TEST(ArgosTxService, LegacyNoFixFillerKeptAfterRealFix)
 	// GPS cycle 1: no fix -> the heartbeat is cached AND transmitted (SHORT,
 	// 96 bits). Before 2026-08 the first-message lock forced silence here; it
 	// was removed, a beacon with no fix must keep signalling itself.
-	inject_gps_nofix(t/1000);
-	mock().expectOneCall("send").onObject(mock_kineis).withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2).
-			withUnsignedIntParameter("size_bits", 96);
+	inject_gps_nofix(t / 1000);
+	mock()
+	    .expectOneCall("send")
+	    .onObject(mock_kineis)
+	    .withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2)
+	    .withUnsignedIntParameter("size_bits", 96);
 	t += serv.get_last_schedule();
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 	system_scheduler->run();
 	mock_kineis->notify(KineisEventTxComplete({}));
@@ -598,11 +594,14 @@ TEST(ArgosTxService, LegacyNoFixFillerKeptAfterRealFix)
 	// GPS cycle 2: real fix -> unlocks TX; the FIX purge keeps the NO_FIX filler
 	// (include_no_fix=false in planned modes) -> pile = [NO_FIX, FIX] ->
 	// LONG packet (192 bits) with the fix + 0xFF filler
-	inject_gps_location(1, 11.8768, -33.8232, t/1000);
-	mock().expectOneCall("send").onObject(mock_kineis).withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2).
-			withUnsignedIntParameter("size_bits", 192);
+	inject_gps_location(1, 11.8768, -33.8232, t / 1000);
+	mock()
+	    .expectOneCall("send")
+	    .onObject(mock_kineis)
+	    .withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2)
+	    .withUnsignedIntParameter("size_bits", 192);
 	t += serv.get_last_schedule();
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 	system_scheduler->run();
 	mock_kineis->notify(KineisEventTxComplete({}));
@@ -610,8 +609,7 @@ TEST(ArgosTxService, LegacyNoFixFillerKeptAfterRealFix)
 }
 
 
-TEST(ArgosTxService, TxCounterIncrements)
-{
+TEST(ArgosTxService, TxCounterIncrements) {
 	ArgosTxService serv(*mock_kineis);
 
 	unsigned int counter;
@@ -637,8 +635,7 @@ TEST(ArgosTxService, TxCounterIncrements)
 	CHECK_EQUAL(2, counter);
 }
 
-TEST(ArgosTxService, TimeSyncBurstPosFix)
-{
+TEST(ArgosTxService, TimeSyncBurstPosFix) {
 	double frequency = 900.22;
 	BaseArgosMode mode = BaseArgosMode::LEGACY;
 	BaseArgosPower power = BaseArgosPower::POWER_1000_MW;
@@ -660,15 +657,18 @@ TEST(ArgosTxService, TimeSyncBurstPosFix)
 	ArgosTxService serv(*mock_kineis);
 
 	std::time_t t = 1652105502000;
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 
 	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
 	serv.start();
 
 	// First TX is time sync burst
-	mock().expectOneCall("send").onObject(mock_kineis).withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2).
-			withUnsignedIntParameter("size_bits", 96);
+	mock()
+	    .expectOneCall("send")
+	    .onObject(mock_kineis)
+	    .withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2)
+	    .withUnsignedIntParameter("size_bits", 96);
 
 	inject_gps_location(1, 11.8768, -33.8232, t);
 	system_scheduler->run();
@@ -688,8 +688,7 @@ TEST(ArgosTxService, TimeSyncBurstPosFix)
 	system_scheduler->run();
 }
 
-TEST(ArgosTxService, TimeSyncBurstNoPosFix)
-{
+TEST(ArgosTxService, TimeSyncBurstNoPosFix) {
 	// Time-sync burst fires only after the GNSS has updated the clock this
 	// session (like v3). A NO_FIX cycle does not update the clock, so the
 	// first-message gate holds TX -> silence.
@@ -714,7 +713,7 @@ TEST(ArgosTxService, TimeSyncBurstNoPosFix)
 	ArgosTxService serv(*mock_kineis);
 
 	std::time_t t = 1652105502000;
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 
 	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
@@ -730,8 +729,7 @@ TEST(ArgosTxService, TimeSyncBurstNoPosFix)
 	serv.stop();
 }
 
-TEST(ArgosTxService, TimeSyncBurstNoPosOrTimeFix)
-{
+TEST(ArgosTxService, TimeSyncBurstNoPosOrTimeFix) {
 	// No time fix and no GNSS fix: both the RTC-unknown gate and the
 	// first-message gate hold TX -> silence.
 	double frequency = 900.22;
@@ -765,8 +763,7 @@ TEST(ArgosTxService, TimeSyncBurstNoPosOrTimeFix)
 	mock().checkExpectations();  // silence
 }
 
-TEST(ArgosTxService, LegacyTxServiceInv)
-{
+TEST(ArgosTxService, LegacyTxServiceInv) {
 	double frequency = 900.22;
 	BaseArgosMode mode = BaseArgosMode::LEGACY;
 	BaseArgosPower power = BaseArgosPower::POWER_1000_MW;
@@ -790,13 +787,13 @@ TEST(ArgosTxService, LegacyTxServiceInv)
 	ArgosTxService serv(*mock_kineis);
 
 	std::time_t t = 1665137726000;
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 
 	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
 	serv.start();
 
-	inject_gps_location(1, -2.117964, 51.376382, t/1000, false, 0, 162, 4424);
+	inject_gps_location(1, -2.117964, 51.376382, t / 1000, false, 0, 162, 4424);
 	//inject_gps_location(1, 11.8768, -33.8232, t);
 	//inject_gps_location(1, 11.8768, -33.8232, t);
 	//inject_gps_location(1, 11.8768, -33.8232, t);
@@ -804,11 +801,14 @@ TEST(ArgosTxService, LegacyTxServiceInv)
 
 	// Subsequent TX will be long packets
 	for (unsigned int i = 0; i < 1; i++) {
-		mock().expectOneCall("send").onObject(mock_kineis).withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2).
-				withUnsignedIntParameter("size_bits", 96);
+		mock()
+		    .expectOneCall("send")
+		    .onObject(mock_kineis)
+		    .withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2)
+		    .withUnsignedIntParameter("size_bits", 96);
 
 		t += serv.get_last_schedule();
-		fake_rtc->settime(t/1000);
+		fake_rtc->settime(t / 1000);
 		fake_timer->set_counter(t);
 		system_scheduler->run();
 
@@ -817,8 +817,7 @@ TEST(ArgosTxService, LegacyTxServiceInv)
 }
 
 
-TEST(ArgosTxService, LegacyTxLowBattery)
-{
+TEST(ArgosTxService, LegacyTxLowBattery) {
 	// Relies on unlimited replay: LB_NTRY_PER_MESSAGE=0 (0 = unlimited replay in
 	// LEGACY/DUTY_CYCLE/PASS_PREDICTION; the LB default of 4 would otherwise
 	// bound the single LB pile entry to 4 TX).
@@ -846,7 +845,7 @@ TEST(ArgosTxService, LegacyTxLowBattery)
 	ArgosTxService serv(*mock_kineis);
 
 	std::time_t t = 1652105502000;
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 
 	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
@@ -865,11 +864,14 @@ TEST(ArgosTxService, LegacyTxLowBattery)
 
 	// Subsequent TX will be short packets (depth pile 1 in LB mode)
 	for (unsigned int i = 0; i < 10; i++) {
-		mock().expectOneCall("send").onObject(mock_kineis).withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2).
-				withUnsignedIntParameter("size_bits", 96);
+		mock()
+		    .expectOneCall("send")
+		    .onObject(mock_kineis)
+		    .withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2)
+		    .withUnsignedIntParameter("size_bits", 96);
 
 		t += serv.get_last_schedule();
-		fake_rtc->settime(t/1000);
+		fake_rtc->settime(t / 1000);
 		fake_timer->set_counter(t);
 		system_scheduler->run();
 
@@ -877,8 +879,7 @@ TEST(ArgosTxService, LegacyTxLowBattery)
 	}
 }
 
-TEST(ArgosTxService, LegacyTxOutOfZone)
-{
+TEST(ArgosTxService, LegacyTxOutOfZone) {
 	double frequency = 900.22;
 	BaseArgosMode mode = BaseArgosMode::LEGACY;
 	BaseArgosPower power = BaseArgosPower::POWER_1000_MW;
@@ -904,7 +905,7 @@ TEST(ArgosTxService, LegacyTxOutOfZone)
 	ArgosTxService serv(*mock_kineis);
 
 	std::time_t t = 1652105502000;
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 
 	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
@@ -918,11 +919,14 @@ TEST(ArgosTxService, LegacyTxOutOfZone)
 
 	// Subsequent TX will be short packets (depth pile 1 in OOZ mode)
 	for (unsigned int i = 0; i < 10; i++) {
-		mock().expectOneCall("send").onObject(mock_kineis).withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2).
-				withUnsignedIntParameter("size_bits", 96);
+		mock()
+		    .expectOneCall("send")
+		    .onObject(mock_kineis)
+		    .withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2)
+		    .withUnsignedIntParameter("size_bits", 96);
 
 		t += serv.get_last_schedule();
-		fake_rtc->settime(t/1000);
+		fake_rtc->settime(t / 1000);
 		fake_timer->set_counter(t);
 		system_scheduler->run();
 
@@ -930,8 +934,7 @@ TEST(ArgosTxService, LegacyTxOutOfZone)
 	}
 }
 
-TEST(ArgosTxService, TxServiceCancelledByUnderwaterBeforeTx)
-{
+TEST(ArgosTxService, TxServiceCancelledByUnderwaterBeforeTx) {
 	double frequency = 900.22;
 	BaseArgosMode mode = BaseArgosMode::LEGACY;
 	BaseArgosPower power = BaseArgosPower::POWER_1000_MW;
@@ -955,7 +958,7 @@ TEST(ArgosTxService, TxServiceCancelledByUnderwaterBeforeTx)
 	ArgosTxService serv(*mock_kineis);
 
 	std::time_t t = 1652105502000;
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 
 	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
@@ -984,20 +987,22 @@ TEST(ArgosTxService, TxServiceCancelledByUnderwaterBeforeTx)
 
 	// Next schedule should be equal to dry time before TX since the last TX was deferred
 	unsigned int dry_time_before_tx = fake_config_store->read_param<unsigned int>(ParamID::DRY_TIME_BEFORE_TX);
-	CHECK_EQUAL(dry_time_before_tx*1000, serv.get_last_schedule());
+	CHECK_EQUAL(dry_time_before_tx * 1000, serv.get_last_schedule());
 
 	// Should now transmit (TCXO warmup skipped on first TX after submerge)
 	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 0);
-	mock().expectOneCall("send").onObject(mock_kineis).withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2).
-			withUnsignedIntParameter("size_bits", 192);
+	mock()
+	    .expectOneCall("send")
+	    .onObject(mock_kineis)
+	    .withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2)
+	    .withUnsignedIntParameter("size_bits", 192);
 	t += serv.get_last_schedule();
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 	system_scheduler->run();
 }
 
-TEST(ArgosTxService, TxServiceCancelledDuringTx)
-{
+TEST(ArgosTxService, TxServiceCancelledDuringTx) {
 	double frequency = 900.22;
 	BaseArgosMode mode = BaseArgosMode::LEGACY;
 	BaseArgosPower power = BaseArgosPower::POWER_1000_MW;
@@ -1021,7 +1026,7 @@ TEST(ArgosTxService, TxServiceCancelledDuringTx)
 	ArgosTxService serv(*mock_kineis);
 
 	std::time_t t = 1652105502000;
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 
 	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
@@ -1033,12 +1038,15 @@ TEST(ArgosTxService, TxServiceCancelledDuringTx)
 	inject_gps_location(1, 11.8768, -33.8232, t);
 	system_scheduler->run();
 
-	mock().expectOneCall("send").onObject(mock_kineis).withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2).
-			withUnsignedIntParameter("size_bits", 192);
+	mock()
+	    .expectOneCall("send")
+	    .onObject(mock_kineis)
+	    .withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2)
+	    .withUnsignedIntParameter("size_bits", 192);
 
 	// TX should start
 	t += serv.get_last_schedule();
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 	system_scheduler->run();
 
@@ -1053,15 +1061,18 @@ TEST(ArgosTxService, TxServiceCancelledDuringTx)
 
 	// Next schedule should be equal to dry time before TX since the last TX was deferred
 	unsigned int dry_time_before_tx = fake_config_store->read_param<unsigned int>(ParamID::DRY_TIME_BEFORE_TX);
-	CHECK_EQUAL(dry_time_before_tx*1000, serv.get_last_schedule());
+	CHECK_EQUAL(dry_time_before_tx * 1000, serv.get_last_schedule());
 
 	// Should now transmit. Depth pile has 4 fixes; with max_messages=3 the second slot
 	// only carries 1 fix, so the 2nd send is a SHORT (LDK 96-bit) packet.
 	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 0);
-	mock().expectOneCall("send").onObject(mock_kineis).withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2).
-			withUnsignedIntParameter("size_bits", 96);
+	mock()
+	    .expectOneCall("send")
+	    .onObject(mock_kineis)
+	    .withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2)
+	    .withUnsignedIntParameter("size_bits", 96);
 	t += serv.get_last_schedule();
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 	system_scheduler->run();
 	// TX complete restores TCXO warmup
@@ -1070,8 +1081,7 @@ TEST(ArgosTxService, TxServiceCancelledDuringTx)
 }
 
 
-TEST(ArgosTxService, LegacyTxServiceDepthPile1)
-{
+TEST(ArgosTxService, LegacyTxServiceDepthPile1) {
 	double frequency = 900.22;
 	BaseArgosMode mode = BaseArgosMode::LEGACY;
 	BaseArgosPower power = BaseArgosPower::POWER_1000_MW;
@@ -1095,7 +1105,7 @@ TEST(ArgosTxService, LegacyTxServiceDepthPile1)
 	ArgosTxService serv(*mock_kineis);
 
 	std::time_t t = 1652105502000;
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 
 	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
@@ -1109,11 +1119,14 @@ TEST(ArgosTxService, LegacyTxServiceDepthPile1)
 
 	// Subsequent TX will be short packets
 	for (unsigned int i = 0; i < 10; i++) {
-		mock().expectOneCall("send").onObject(mock_kineis).withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2).
-				withUnsignedIntParameter("size_bits", 96);
+		mock()
+		    .expectOneCall("send")
+		    .onObject(mock_kineis)
+		    .withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2)
+		    .withUnsignedIntParameter("size_bits", 96);
 
 		t += serv.get_last_schedule();
-		fake_rtc->settime(t/1000);
+		fake_rtc->settime(t / 1000);
 		fake_timer->set_counter(t);
 		system_scheduler->run();
 
@@ -1127,8 +1140,7 @@ TEST(ArgosTxService, LegacyTxServiceDepthPile1)
 // The service must keep the LDK master modulation but cap the burst to a single
 // fix so it ships a 96-bit SHORT packet that fits. (User policy: keep master mod,
 // limit the number of fixes.)
-TEST(ArgosTxService, LegacyNonAdaptiveLdkMasterCapsToSingleFix)
-{
+TEST(ArgosTxService, LegacyNonAdaptiveLdkMasterCapsToSingleFix) {
 	double frequency = 900.22;
 	BaseArgosMode mode = BaseArgosMode::LEGACY;
 	BaseArgosPower power = BaseArgosPower::POWER_1000_MW;
@@ -1156,7 +1168,7 @@ TEST(ArgosTxService, LegacyNonAdaptiveLdkMasterCapsToSingleFix)
 	ArgosTxService serv(*mock_kineis);
 
 	std::time_t t = 1652105502000;
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 
 	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
@@ -1171,11 +1183,14 @@ TEST(ArgosTxService, LegacyNonAdaptiveLdkMasterCapsToSingleFix)
 	for (unsigned int i = 0; i < 3; i++) {
 		// Capped to a single fix → 96-bit SHORT packet, still in the LDK master mod.
 		// (Pre-fix this was send(LDK, 192) → silent KIM2 drop.)
-		mock().expectOneCall("send").onObject(mock_kineis).withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDK).
-				withUnsignedIntParameter("size_bits", 96);
+		mock()
+		    .expectOneCall("send")
+		    .onObject(mock_kineis)
+		    .withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDK)
+		    .withUnsignedIntParameter("size_bits", 96);
 
 		t += serv.get_last_schedule();
-		fake_rtc->settime(t/1000);
+		fake_rtc->settime(t / 1000);
 		fake_timer->set_counter(t);
 		system_scheduler->run();
 
@@ -1187,9 +1202,8 @@ TEST(ArgosTxService, LegacyNonAdaptiveLdkMasterCapsToSingleFix)
 // (24-bit budget) can't hold even a single 96-bit GNSS fix. Instead of a silent
 // KIM2 oversize drop, the service must fall back to LDA2 (when its RCONF is
 // provisioned) and ship the fix there. (User policy: on overflow → LDA2.)
-TEST(ArgosTxService, LegacyNonAdaptiveVlda4MasterFallsBackToLda2)
-{
-	const std::string lda2_rconf = "00112233445566778899aabbccddeeff"; // 32 hex chars
+TEST(ArgosTxService, LegacyNonAdaptiveVlda4MasterFallsBackToLda2) {
+	const std::string lda2_rconf = "00112233445566778899aabbccddeeff";  // 32 hex chars
 
 	double frequency = 900.22;
 	BaseArgosMode mode = BaseArgosMode::LEGACY;
@@ -1219,7 +1233,7 @@ TEST(ArgosTxService, LegacyNonAdaptiveVlda4MasterFallsBackToLda2)
 	ArgosTxService serv(*mock_kineis);
 
 	std::time_t t = 1652105502000;
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 
 	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
@@ -1230,22 +1244,26 @@ TEST(ArgosTxService, LegacyNonAdaptiveVlda4MasterFallsBackToLda2)
 	system_scheduler->run();
 
 	// First TX: 96-bit fix doesn't fit VLDA4 → fall back to LDA2 (switch), send there.
-	mock().expectOneCall("switch_modulation").onObject(mock_kineis)
-			.withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2)
-			.withStringParameter("rconf", lda2_rconf.c_str());
-	mock().expectOneCall("send").onObject(mock_kineis).withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2).
-			withUnsignedIntParameter("size_bits", 96);
+	mock()
+	    .expectOneCall("switch_modulation")
+	    .onObject(mock_kineis)
+	    .withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2)
+	    .withStringParameter("rconf", lda2_rconf.c_str());
+	mock()
+	    .expectOneCall("send")
+	    .onObject(mock_kineis)
+	    .withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2)
+	    .withUnsignedIntParameter("size_bits", 96);
 
 	t += serv.get_last_schedule();
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 	system_scheduler->run();
 
 	mock_kineis->notify(KineisEventTxComplete({}));
 }
 
-TEST(ArgosTxService, UnderwaterFor24HoursBeforeTx)
-{
+TEST(ArgosTxService, UnderwaterFor24HoursBeforeTx) {
 	double frequency = 900.22;
 	BaseArgosMode mode = BaseArgosMode::LEGACY;
 	BaseArgosPower power = BaseArgosPower::POWER_1000_MW;
@@ -1269,7 +1287,7 @@ TEST(ArgosTxService, UnderwaterFor24HoursBeforeTx)
 	ArgosTxService serv(*mock_kineis);
 
 	std::time_t t = 1652105502000;
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 
 	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
@@ -1289,7 +1307,7 @@ TEST(ArgosTxService, UnderwaterFor24HoursBeforeTx)
 
 	// Keep UW for 25 hours
 	t += 50 * 3600 * 1000;
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 	system_scheduler->run();
 
@@ -1298,20 +1316,22 @@ TEST(ArgosTxService, UnderwaterFor24HoursBeforeTx)
 
 	// Next schedule should be equal to dry time before TX since the last TX was deferred
 	unsigned int dry_time_before_tx = fake_config_store->read_param<unsigned int>(ParamID::DRY_TIME_BEFORE_TX);
-	CHECK_EQUAL(dry_time_before_tx*1000, serv.get_last_schedule());
+	CHECK_EQUAL(dry_time_before_tx * 1000, serv.get_last_schedule());
 
 	// Should now transmit (TCXO warmup skipped on first TX after submerge)
 	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 0);
-	mock().expectOneCall("send").onObject(mock_kineis).withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2).
-			withUnsignedIntParameter("size_bits", 192);
+	mock()
+	    .expectOneCall("send")
+	    .onObject(mock_kineis)
+	    .withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2)
+	    .withUnsignedIntParameter("size_bits", 192);
 	t += serv.get_last_schedule();
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 	system_scheduler->run();
 }
 
-TEST(ArgosTxService, LastTxIsUpdated)
-{
+TEST(ArgosTxService, LastTxIsUpdated) {
 	double frequency = 900.22;
 	BaseArgosMode mode = BaseArgosMode::LEGACY;
 	BaseArgosPower power = BaseArgosPower::POWER_1000_MW;
@@ -1333,15 +1353,18 @@ TEST(ArgosTxService, LastTxIsUpdated)
 	ArgosTxService serv(*mock_kineis);
 
 	std::time_t t = 1652105502000;
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 
 	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
 	serv.start();
 
 	// First TX is time sync burst
-	mock().expectOneCall("send").onObject(mock_kineis).withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2).
-			withUnsignedIntParameter("size_bits", 96);
+	mock()
+	    .expectOneCall("send")
+	    .onObject(mock_kineis)
+	    .withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2)
+	    .withUnsignedIntParameter("size_bits", 96);
 
 	inject_gps_location(1, 11.8768, -33.8232, t);
 	system_scheduler->run();
@@ -1356,10 +1379,9 @@ TEST(ArgosTxService, LastTxIsUpdated)
 	serv.stop();
 }
 
-TEST(ArgosTxService, DPHardFaultPartialDepthPile)
-{
+TEST(ArgosTxService, DPHardFaultPartialDepthPile) {
 	DepthPile<GPSLogEntry> dp;
-	std::vector<GPSLogEntry*> v;
+	std::vector<GPSLogEntry *> v;
 	GPSLogEntry e;
 
 	// Load up full depth pile with burst count of 0
@@ -1375,8 +1397,7 @@ TEST(ArgosTxService, DPHardFaultPartialDepthPile)
 	CHECK_EQUAL(3, v.size());
 }
 
-TEST(ArgosTxService, UnderwaterFor24HoursDryTimeZero)
-{
+TEST(ArgosTxService, UnderwaterFor24HoursDryTimeZero) {
 	// Relies on the cached fix staying transmittable across the dive
 	// (NTRY_PER_MESSAGE default 0 = unlimited replay).
 	double frequency = 900.22;
@@ -1404,7 +1425,7 @@ TEST(ArgosTxService, UnderwaterFor24HoursDryTimeZero)
 	ArgosTxService serv(*mock_kineis);
 
 	std::time_t t = 1652105502000;
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 
 	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
@@ -1415,7 +1436,7 @@ TEST(ArgosTxService, UnderwaterFor24HoursDryTimeZero)
 	// Do initial transmit
 	mock().expectOneCall("send").onObject(mock_kineis).ignoreOtherParameters();
 	t += serv.get_last_schedule();
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 	system_scheduler->run();
 
@@ -1429,7 +1450,7 @@ TEST(ArgosTxService, UnderwaterFor24HoursDryTimeZero)
 
 	// Keep UW for 25 hours
 	t += 25 * 3600 * 1000;
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 	system_scheduler->run();
 
@@ -1442,16 +1463,15 @@ TEST(ArgosTxService, UnderwaterFor24HoursDryTimeZero)
 	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 0);
 	mock().expectOneCall("send").onObject(mock_kineis).ignoreOtherParameters();
 	t += serv.get_last_schedule();
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 	system_scheduler->run();
 }
 
-TEST(ArgosTxService, SurfacingBurstDopplerPhase)
-{
+TEST(ArgosTxService, SurfacingBurstDopplerPhase) {
 	// Test SURFACING_BURST mode: verify progressive Doppler intervals
 	BaseArgosMode mode = BaseArgosMode::SURFACING_BURST;
-	unsigned int dry_time = 1; // 1s dry time to separate scheduling from notification
+	unsigned int dry_time = 1;  // 1s dry time to separate scheduling from notification
 
 	fake_config_store->write_param(ParamID::ARGOS_DEPTH_PILE, BaseDepthPile::DEPTH_PILE_1);
 	fake_config_store->write_param(ParamID::ARGOS_MODE, mode);
@@ -1468,7 +1488,7 @@ TEST(ArgosTxService, SurfacingBurstDopplerPhase)
 	ArgosTxService serv(*mock_kineis);
 
 	std::time_t t = 1652105502000;
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 
 	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
@@ -1482,7 +1502,7 @@ TEST(ArgosTxService, SurfacingBurstDopplerPhase)
 
 	// Advance time underwater
 	t += 60000;
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 
 	// Surface — first Doppler scheduled immediately (0ms)
@@ -1491,8 +1511,11 @@ TEST(ArgosTxService, SurfacingBurstDopplerPhase)
 
 	// Fire first Doppler TX
 	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 0);
-	mock().expectOneCall("send").onObject(mock_kineis).withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2).
-			withUnsignedIntParameter("size_bits", 24);
+	mock()
+	    .expectOneCall("send")
+	    .onObject(mock_kineis)
+	    .withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2)
+	    .withUnsignedIntParameter("size_bits", 24);
 	system_scheduler->run();
 
 	// Complete TX → reschedule with INIT interval (5s)
@@ -1501,10 +1524,13 @@ TEST(ArgosTxService, SurfacingBurstDopplerPhase)
 	CHECK_EQUAL(5000U, serv.get_last_schedule());
 
 	// Advance and fire second Doppler
-	mock().expectOneCall("send").onObject(mock_kineis).withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2).
-			withUnsignedIntParameter("size_bits", 24);
+	mock()
+	    .expectOneCall("send")
+	    .onObject(mock_kineis)
+	    .withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2)
+	    .withUnsignedIntParameter("size_bits", 24);
 	t += serv.get_last_schedule();
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 	system_scheduler->run();
 
@@ -1513,8 +1539,7 @@ TEST(ArgosTxService, SurfacingBurstDopplerPhase)
 	CHECK_EQUAL(15000U, serv.get_last_schedule());
 }
 
-TEST(ArgosTxService, SurfacingBurstSwitchToGNSS)
-{
+TEST(ArgosTxService, SurfacingBurstSwitchToGNSS) {
 	// Test switch from Doppler to GNSS when GPS fix arrives
 	fake_config_store->write_param(ParamID::ARGOS_DEPTH_PILE, BaseDepthPile::DEPTH_PILE_1);
 	fake_config_store->write_param(ParamID::ARGOS_MODE, BaseArgosMode::SURFACING_BURST);
@@ -1531,7 +1556,7 @@ TEST(ArgosTxService, SurfacingBurstSwitchToGNSS)
 	ArgosTxService serv(*mock_kineis);
 
 	std::time_t t = 1652105502000;
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 
 	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
@@ -1544,7 +1569,7 @@ TEST(ArgosTxService, SurfacingBurstSwitchToGNSS)
 	notify_underwater_state(true);
 
 	t += 60000;
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 
 	// Surface
@@ -1552,28 +1577,33 @@ TEST(ArgosTxService, SurfacingBurstSwitchToGNSS)
 
 	// Fire first Doppler TX
 	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 0);
-	mock().expectOneCall("send").onObject(mock_kineis).withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2).
-			withUnsignedIntParameter("size_bits", 24);
+	mock()
+	    .expectOneCall("send")
+	    .onObject(mock_kineis)
+	    .withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2)
+	    .withUnsignedIntParameter("size_bits", 24);
 	system_scheduler->run();
 
 	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
 	mock_kineis->notify(KineisEventTxComplete({}));
 
 	// Inject GPS fix → should switch to GNSS phase and reschedule
-	inject_gps_location(true, 11.8768, -33.8232, t/1000);
+	inject_gps_location(true, 11.8768, -33.8232, t / 1000);
 	CHECK_FALSE(Service::SCHEDULE_DISABLED == serv.get_last_schedule());
 
 	// Fire TX → should be GNSS short packet (96 bits), not Doppler (24 bits)
-	mock().expectOneCall("send").onObject(mock_kineis).withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2).
-			withUnsignedIntParameter("size_bits", 96);
+	mock()
+	    .expectOneCall("send")
+	    .onObject(mock_kineis)
+	    .withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2)
+	    .withUnsignedIntParameter("size_bits", 96);
 	t += serv.get_last_schedule();
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 	system_scheduler->run();
 }
 
-TEST(ArgosTxService, SurfacingBurstResetOnDive)
-{
+TEST(ArgosTxService, SurfacingBurstResetOnDive) {
 	// Test that diving resets the burst state
 	fake_config_store->write_param(ParamID::ARGOS_DEPTH_PILE, BaseDepthPile::DEPTH_PILE_1);
 	fake_config_store->write_param(ParamID::ARGOS_MODE, BaseArgosMode::SURFACING_BURST);
@@ -1590,7 +1620,7 @@ TEST(ArgosTxService, SurfacingBurstResetOnDive)
 	ArgosTxService serv(*mock_kineis);
 
 	std::time_t t = 1652105502000;
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 
 	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
@@ -1602,15 +1632,18 @@ TEST(ArgosTxService, SurfacingBurstResetOnDive)
 	mock().expectOneCall("stop_send").onObject(mock_kineis);
 	notify_underwater_state(true);
 	t += 60000;
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 	notify_underwater_state(false);
 	CHECK_EQUAL(0U, serv.get_last_schedule());  // First burst msg immediate
 
 	// Fire first TX
 	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 0);
-	mock().expectOneCall("send").onObject(mock_kineis).withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2).
-			withUnsignedIntParameter("size_bits", 24);
+	mock()
+	    .expectOneCall("send")
+	    .onObject(mock_kineis)
+	    .withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2)
+	    .withUnsignedIntParameter("size_bits", 24);
 	system_scheduler->run();
 
 	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
@@ -1626,14 +1659,13 @@ TEST(ArgosTxService, SurfacingBurstResetOnDive)
 
 	// Surface again → burst restarts from 0
 	t += 60000;
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 	notify_underwater_state(false);
 	CHECK_EQUAL(0U, serv.get_last_schedule());  // Immediate again (reset)
 }
 
-TEST(ArgosTxService, SurfacingBurstFirstGnssTxImmediate)
-{
+TEST(ArgosTxService, SurfacingBurstFirstGnssTxImmediate) {
 	// Test that the first GNSS TX after fix is immediate (delay=0), not TR_NOM
 	fake_config_store->write_param(ParamID::ARGOS_DEPTH_PILE, BaseDepthPile::DEPTH_PILE_1);
 	fake_config_store->write_param(ParamID::ARGOS_MODE, BaseArgosMode::SURFACING_BURST);
@@ -1650,7 +1682,7 @@ TEST(ArgosTxService, SurfacingBurstFirstGnssTxImmediate)
 	ArgosTxService serv(*mock_kineis);
 
 	std::time_t t = 1652105502000;
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 
 	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
@@ -1662,7 +1694,7 @@ TEST(ArgosTxService, SurfacingBurstFirstGnssTxImmediate)
 	mock().expectOneCall("stop_send").onObject(mock_kineis);
 	notify_underwater_state(true);
 	t += 60000;
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 
 	// Surface
@@ -1671,8 +1703,11 @@ TEST(ArgosTxService, SurfacingBurstFirstGnssTxImmediate)
 
 	// Fire Doppler TX #1
 	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 0);
-	mock().expectOneCall("send").onObject(mock_kineis).withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2).
-			withUnsignedIntParameter("size_bits", 24);
+	mock()
+	    .expectOneCall("send")
+	    .onObject(mock_kineis)
+	    .withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2)
+	    .withUnsignedIntParameter("size_bits", 24);
 	system_scheduler->run();
 
 	// TX complete
@@ -1684,26 +1719,28 @@ TEST(ArgosTxService, SurfacingBurstFirstGnssTxImmediate)
 	// the spacing guard correctly defers TX#1 to maintain ≥ 5 s between any
 	// pair of TX (2026-05 fix: protects TCXO + CLS rate-limit).
 	t += 6000;
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 
 	// Inject GPS fix → switch to GNSS phase
-	inject_gps_location(true, 11.8768, -33.8232, t/1000);
+	inject_gps_location(true, 11.8768, -33.8232, t / 1000);
 
 	// GNSS TX #1 fires immediately now that the spacing window has elapsed.
 	CHECK_EQUAL(0U, serv.get_last_schedule());
 
 	// Fire GNSS TX
-	mock().expectOneCall("send").onObject(mock_kineis).withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2).
-			withUnsignedIntParameter("size_bits", 96);
+	mock()
+	    .expectOneCall("send")
+	    .onObject(mock_kineis)
+	    .withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2)
+	    .withUnsignedIntParameter("size_bits", 96);
 	t += serv.get_last_schedule();
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 	system_scheduler->run();
 }
 
-TEST(ArgosTxService, SurfacingBurstDopplerMaxMsg)
-{
+TEST(ArgosTxService, SurfacingBurstDopplerMaxMsg) {
 	// Test that Doppler phase stops after SURFACING_BURST_MAX_MSG
 	fake_config_store->write_param(ParamID::ARGOS_DEPTH_PILE, BaseDepthPile::DEPTH_PILE_1);
 	fake_config_store->write_param(ParamID::ARGOS_MODE, BaseArgosMode::SURFACING_BURST);
@@ -1721,7 +1758,7 @@ TEST(ArgosTxService, SurfacingBurstDopplerMaxMsg)
 	ArgosTxService serv(*mock_kineis);
 
 	std::time_t t = 1652105502000;
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 
 	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
@@ -1733,7 +1770,7 @@ TEST(ArgosTxService, SurfacingBurstDopplerMaxMsg)
 	mock().expectOneCall("stop_send").onObject(mock_kineis);
 	notify_underwater_state(true);
 	t += 60000;
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 	notify_underwater_state(false);
 
@@ -1747,7 +1784,7 @@ TEST(ArgosTxService, SurfacingBurstDopplerMaxMsg)
 	// Doppler #2
 	mock().expectOneCall("send").onObject(mock_kineis).ignoreOtherParameters();
 	t += serv.get_last_schedule();
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 	system_scheduler->run();
 	mock_kineis->notify(KineisEventTxComplete({}));
@@ -1756,8 +1793,7 @@ TEST(ArgosTxService, SurfacingBurstDopplerMaxMsg)
 	CHECK_TRUE(Service::SCHEDULE_DISABLED == serv.get_last_schedule());
 }
 
-TEST(ArgosTxService, SurfacingBurstAdaptiveModulationPreSwitch)
-{
+TEST(ArgosTxService, SurfacingBurstAdaptiveModulationPreSwitch) {
 	// Test that after TX complete in adaptive mode, pre-switch to VLDA4 happens
 	fake_config_store->write_param(ParamID::ARGOS_DEPTH_PILE, BaseDepthPile::DEPTH_PILE_1);
 	fake_config_store->write_param(ParamID::ARGOS_MODE, BaseArgosMode::SURFACING_BURST);
@@ -1777,7 +1813,7 @@ TEST(ArgosTxService, SurfacingBurstAdaptiveModulationPreSwitch)
 	ArgosTxService serv(*mock_kineis);
 
 	std::time_t t = 1652105502000;
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 
 	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
@@ -1789,7 +1825,7 @@ TEST(ArgosTxService, SurfacingBurstAdaptiveModulationPreSwitch)
 	mock().expectOneCall("stop_send").onObject(mock_kineis);
 	notify_underwater_state(true);
 	t += 60000;
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 
 	// Surface → Doppler VLDA4
@@ -1797,11 +1833,16 @@ TEST(ArgosTxService, SurfacingBurstAdaptiveModulationPreSwitch)
 
 	// Fire Doppler TX (VLDA4 mode)
 	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 0);
-	mock().expectOneCall("switch_modulation").onObject(mock_kineis)
-		.withUnsignedIntParameter("mode", (unsigned int)KineisModulation::VLDA4)
-		.withStringParameter("rconf", "550b4bec21009c7a7b5bebaa937cdb41");
-	mock().expectOneCall("send").onObject(mock_kineis).withUnsignedIntParameter("mode", (unsigned int)KineisModulation::VLDA4).
-			withUnsignedIntParameter("size_bits", 24);
+	mock()
+	    .expectOneCall("switch_modulation")
+	    .onObject(mock_kineis)
+	    .withUnsignedIntParameter("mode", (unsigned int)KineisModulation::VLDA4)
+	    .withStringParameter("rconf", "550b4bec21009c7a7b5bebaa937cdb41");
+	mock()
+	    .expectOneCall("send")
+	    .onObject(mock_kineis)
+	    .withUnsignedIntParameter("mode", (unsigned int)KineisModulation::VLDA4)
+	    .withUnsignedIntParameter("size_bits", 24);
 	system_scheduler->run();
 
 	// TX complete → TCXO restored, no pre-switch needed (already VLDA4)
@@ -1809,38 +1850,44 @@ TEST(ArgosTxService, SurfacingBurstAdaptiveModulationPreSwitch)
 	mock_kineis->notify(KineisEventTxComplete({}));
 
 	// Inject GPS fix
-	inject_gps_location(true, 11.8768, -33.8232, t/1000);
+	inject_gps_location(true, 11.8768, -33.8232, t / 1000);
 
 	// Fire GNSS TX → should switch to LDK
-	mock().expectOneCall("switch_modulation").onObject(mock_kineis)
-		.withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDK)
-		.withStringParameter("rconf", "03921fb104b92859209b18abd009de96");
-	mock().expectOneCall("send").onObject(mock_kineis).withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDK).
-			withUnsignedIntParameter("size_bits", 96);
+	mock()
+	    .expectOneCall("switch_modulation")
+	    .onObject(mock_kineis)
+	    .withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDK)
+	    .withStringParameter("rconf", "03921fb104b92859209b18abd009de96");
+	mock()
+	    .expectOneCall("send")
+	    .onObject(mock_kineis)
+	    .withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDK)
+	    .withUnsignedIntParameter("size_bits", 96);
 	t += serv.get_last_schedule();
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 	system_scheduler->run();
 
 	// TX complete → should pre-switch back to VLDA4
-	mock().expectOneCall("switch_modulation").onObject(mock_kineis)
-		.withUnsignedIntParameter("mode", (unsigned int)KineisModulation::VLDA4)
-		.withStringParameter("rconf", "550b4bec21009c7a7b5bebaa937cdb41");
+	mock()
+	    .expectOneCall("switch_modulation")
+	    .onObject(mock_kineis)
+	    .withUnsignedIntParameter("mode", (unsigned int)KineisModulation::VLDA4)
+	    .withStringParameter("rconf", "550b4bec21009c7a7b5bebaa937cdb41");
 	mock_kineis->notify(KineisEventTxComplete({}));
 
 	// Verify device is back to VLDA4
 	CHECK_EQUAL((unsigned int)KineisModulation::VLDA4, (unsigned int)mock_kineis->get_current_modulation());
 }
 
-TEST(ArgosTxService, DepthPileManagerSensorTimeout)
-{
+TEST(ArgosTxService, DepthPileManagerSensorTimeout) {
 	bool enable = true;
 	BaseSensorEnableTxMode mode = BaseSensorEnableTxMode::ONESHOT;
 	fake_config_store->write_param(ParamID::ALS_SENSOR_ENABLE, enable);
 	fake_config_store->write_param(ParamID::ALS_SENSOR_ENABLE_TX_MODE, mode);
 
 	std::time_t t = 1652105502000;
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 
 	DepthPileManager man;
@@ -1864,22 +1911,21 @@ TEST(ArgosTxService, DepthPileManagerSensorTimeout)
 
 	// Sensor timeout
 	t += 2000;
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 	system_scheduler->run();
 
 	CHECK_TRUE(man.eligible());
 }
 
-TEST(ArgosTxService, DepthPileManagerSensorRx)
-{
+TEST(ArgosTxService, DepthPileManagerSensorRx) {
 	bool enable = true;
 	BaseSensorEnableTxMode mode = BaseSensorEnableTxMode::ONESHOT;
 	fake_config_store->write_param(ParamID::ALS_SENSOR_ENABLE, enable);
 	fake_config_store->write_param(ParamID::ALS_SENSOR_ENABLE_TX_MODE, mode);
 
 	std::time_t t = 1652105502000;
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 
 	DepthPileManager man;
@@ -1908,8 +1954,7 @@ TEST(ArgosTxService, DepthPileManagerSensorRx)
 	CHECK_TRUE(man.eligible());
 }
 
-TEST(ArgosTxService, DepthPileManagerTestSensorValueConversion)
-{
+TEST(ArgosTxService, DepthPileManagerTestSensorValueConversion) {
 	bool enable = true;
 	BaseSensorEnableTxMode mode = BaseSensorEnableTxMode::ONESHOT;
 	fake_config_store->write_param(ParamID::ALS_SENSOR_ENABLE, enable);
@@ -1987,7 +2032,7 @@ TEST(ArgosTxService, DepthPileManagerTestSensorValueConversion)
 
 // Helper: verify a built LDA2 sensor packet has the right size, the expected data prefix,
 // and a self-consistent CRC8 in the last byte.
-static void check_lda2_sensor_packet(const std::string& packet, const std::string& expected_data_prefix) {
+static void check_lda2_sensor_packet(const std::string &packet, const std::string &expected_data_prefix) {
 	CHECK_EQUAL(ArgosPacketBuilder::LDA2_FRAME_BYTES, packet.size());
 	std::string hex = Binascii::hexlify(packet);
 	std::string prefix = hex.substr(0, expected_data_prefix.size());
@@ -2002,33 +2047,36 @@ TEST(ArgosTxService, BuildSensorPacketAll) {
 	ServiceSensorData als, ph, pressure, sea_temp;
 	std::string x;
 
-	als.port[0] = 10000; // 10000 lux
-	ph.port[0] = 7000; // 7.0 ph
-	pressure.port[0] = 1000; // 1.0 bar
-	pressure.port[1] = 4000; // 0C
-	sea_temp.port[0] = 126000; // 0C
+	als.port[0] = 10000;        // 10000 lux
+	ph.port[0] = 7000;          // 7.0 ph
+	pressure.port[0] = 1000;    // 1.0 bar
+	pressure.port[1] = 4000;    // 0C
+	sea_temp.port[0] = 126000;  // 0C
 
 	// LDA2 sensor packets are now always 24 bytes (192-bit frame) with header 001 (Type 1)
 	// at bit 0, 5-bit sensor mask at bit 78, then sensor data, then CRC8 at byte 23.
 	// Mask bits (MSB-first): ALS, PH, Pressure, SeaTemp, AXL.
-	x = ArgosPacketBuilder::build_sensor_packet(&e, nullptr, nullptr, nullptr, nullptr, nullptr, false, false, size_bits);
+	x = ArgosPacketBuilder::build_sensor_packet(&e, nullptr, nullptr, nullptr, nullptr, nullptr, false, false,
+	                                            size_bits);
 	CHECK_EQUAL(ArgosPacketBuilder::LDA2_FRAME_BITS, size_bits);
-	check_lda2_sensor_packet(x, "297166C6600781E00258");                              // mask=00000
+	check_lda2_sensor_packet(x, "297166C6600781E00258");  // mask=00000
 	x = ArgosPacketBuilder::build_sensor_packet(&e, &als, &ph, &pressure, &sea_temp, nullptr, false, false, size_bits);
 	CHECK_EQUAL(ArgosPacketBuilder::LDA2_FRAME_BITS, size_bits);
-	check_lda2_sensor_packet(x, "297166C6600781E0025BC27106D601F41F401EC3");          // mask=11110 (all 4 non-AXL)
-	x = ArgosPacketBuilder::build_sensor_packet(&e, nullptr, &ph, &pressure, &sea_temp, nullptr, false, false, size_bits);
+	check_lda2_sensor_packet(x, "297166C6600781E0025BC27106D601F41F401EC3");  // mask=11110 (all 4 non-AXL)
+	x = ArgosPacketBuilder::build_sensor_packet(&e, nullptr, &ph, &pressure, &sea_temp, nullptr, false, false,
+	                                            size_bits);
 	CHECK_EQUAL(ArgosPacketBuilder::LDA2_FRAME_BITS, size_bits);
-	check_lda2_sensor_packet(x, "297166C6600781E00259CDAC03E83E803D86");              // mask=01110 (no ALS)
-	x = ArgosPacketBuilder::build_sensor_packet(&e, &als, nullptr, &pressure, &sea_temp, nullptr, false, false, size_bits);
+	check_lda2_sensor_packet(x, "297166C6600781E00259CDAC03E83E803D86");  // mask=01110 (no ALS)
+	x = ArgosPacketBuilder::build_sensor_packet(&e, &als, nullptr, &pressure, &sea_temp, nullptr, false, false,
+	                                            size_bits);
 	CHECK_EQUAL(ArgosPacketBuilder::LDA2_FRAME_BITS, size_bits);
-	check_lda2_sensor_packet(x, "297166C6600781E0025AC271007D07D007B0C0");            // mask=10110 (no PH)
+	check_lda2_sensor_packet(x, "297166C6600781E0025AC271007D07D007B0C0");  // mask=10110 (no PH)
 	x = ArgosPacketBuilder::build_sensor_packet(&e, &als, &ph, nullptr, &sea_temp, nullptr, false, false, size_bits);
 	CHECK_EQUAL(ArgosPacketBuilder::LDA2_FRAME_BITS, size_bits);
-	check_lda2_sensor_packet(x, "297166C6600781E0025B427106D603D860");                // mask=11010 (no Pressure)
+	check_lda2_sensor_packet(x, "297166C6600781E0025B427106D603D860");  // mask=11010 (no Pressure)
 	x = ArgosPacketBuilder::build_sensor_packet(&e, &als, &ph, &pressure, nullptr, nullptr, false, false, size_bits);
 	CHECK_EQUAL(ArgosPacketBuilder::LDA2_FRAME_BITS, size_bits);
-	check_lda2_sensor_packet(x, "297166C6600781E0025B827106D601F41F40");              // mask=11100 (no SeaTemp)
+	check_lda2_sensor_packet(x, "297166C6600781E0025B827106D601F41F40");  // mask=11100 (no SeaTemp)
 }
 
 TEST(ArgosTxService, BuildSensorPacketSeaTemp) {
@@ -2037,23 +2085,23 @@ TEST(ArgosTxService, BuildSensorPacketSeaTemp) {
 	ServiceSensorData sea_temp;
 	std::string x;
 
-	sea_temp.port[0] = 147100; // 21.1C
+	sea_temp.port[0] = 147100;  // 21.1C
 
-	x = ArgosPacketBuilder::build_sensor_packet(&e, nullptr, nullptr, nullptr, &sea_temp, nullptr, false, false, size_bits);
+	x = ArgosPacketBuilder::build_sensor_packet(&e, nullptr, nullptr, nullptr, &sea_temp, nullptr, false, false,
+	                                            size_bits);
 	CHECK_EQUAL(ArgosPacketBuilder::LDA2_FRAME_BITS, size_bits);
-	check_lda2_sensor_packet(x, "297166C6600781E00258423E9C");                        // mask=00010 (SeaTemp only)
+	check_lda2_sensor_packet(x, "297166C6600781E00258423E9C");  // mask=00010 (SeaTemp only)
 }
 
 
-TEST(ArgosTxService, DepthPileManagerTestThermistorConversion)
-{
+TEST(ArgosTxService, DepthPileManagerTestThermistorConversion) {
 	bool enable = true;
 	BaseSensorEnableTxMode mode = BaseSensorEnableTxMode::ONESHOT;
 	fake_config_store->write_param(ParamID::THERMISTOR_SENSOR_ENABLE, enable);
 	fake_config_store->write_param(ParamID::THERMISTOR_SENSOR_ENABLE_TX_MODE, mode);
 
 	std::time_t t = 1652105502000;
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 
 	DepthPileManager man;
@@ -2106,7 +2154,7 @@ TEST(ArgosTxService, BuildSensorPacketWithAXL) {
 
 	x = ArgosPacketBuilder::build_sensor_packet(&e, nullptr, nullptr, nullptr, nullptr, &axl, false, false, size_bits);
 	// Should include GPS + AXL data (temp 14 bits + X 15 bits + Y 15 bits + Z 15 bits + Activity 8 bits = 67 bits)
-	CHECK_TRUE(size_bits > 83); // Must be larger than GPS-only (83 bits)
+	CHECK_TRUE(size_bits > 83);  // Must be larger than GPS-only (83 bits)
 }
 
 TEST(ArgosTxService, BuildSensorPacketOutOfZone) {
@@ -2115,11 +2163,13 @@ TEST(ArgosTxService, BuildSensorPacketOutOfZone) {
 	std::string x;
 
 	// LDA2 sensor packets are always emitted as 192-bit frames since CRC8 lives at byte 23.
-	x = ArgosPacketBuilder::build_sensor_packet(&e, nullptr, nullptr, nullptr, nullptr, nullptr, true, false, size_bits);
+	x = ArgosPacketBuilder::build_sensor_packet(&e, nullptr, nullptr, nullptr, nullptr, nullptr, true, false,
+	                                            size_bits);
 	CHECK_EQUAL(ArgosPacketBuilder::LDA2_FRAME_BITS, size_bits);
 	CHECK_EQUAL(ArgosPacketBuilder::LDA2_FRAME_BYTES, x.size());
 
-	x = ArgosPacketBuilder::build_sensor_packet(&e, nullptr, nullptr, nullptr, nullptr, nullptr, false, true, size_bits);
+	x = ArgosPacketBuilder::build_sensor_packet(&e, nullptr, nullptr, nullptr, nullptr, nullptr, false, true,
+	                                            size_bits);
 	CHECK_EQUAL(ArgosPacketBuilder::LDA2_FRAME_BITS, size_bits);
 	CHECK_EQUAL(ArgosPacketBuilder::LDA2_FRAME_BYTES, x.size());
 }
@@ -2152,8 +2202,7 @@ TEST(ArgosTxService, BuildDopplerPacket) {
 //
 // The output parameter is gone: choosing the modulation is a policy decision and
 // it belongs to the service.
-TEST(ArgosTxService, PassPredictHonoursConfiguredModulation)
-{
+TEST(ArgosTxService, PassPredictHonoursConfiguredModulation) {
 	fake_config_store->write_param(ParamID::ARGOS_MODE, BaseArgosMode::PASS_PREDICTION);
 	fake_config_store->write_param(ParamID::ARGOS_DEPTH_PILE, BaseDepthPile::DEPTH_PILE_1);
 	fake_config_store->write_param(ParamID::ARGOS_HEXID, (unsigned int)0x01234567U);
@@ -2167,40 +2216,44 @@ TEST(ArgosTxService, PassPredictHonoursConfiguredModulation)
 	mock_kineis->test_set_current_modulation(KineisModulation::LDK);
 
 	// A very wide satellite pass, so the window is certain to be found.
-	BasePassPredict pass_predict = {
-		/* version_code */ 0,
-		1,
-		{
-			{ 0xA, SAT_DNLK_ON, SAT_UPLK_ON_ARGOS_3,
-			  { 2020, 1, 26, 22, 59, 44 }, 7195.550f, 98.5444f, 327.835f,
-			  -25.341f, 101.3587f, 0.00f }
-		}
-	};
+	BasePassPredict pass_predict = { /* version_code */ 0,
+	                                 1,
+	                                 { { 0xA,
+		                                 SAT_DNLK_ON,
+		                                 SAT_UPLK_ON_ARGOS_3,
+		                                 { 2020, 1, 26, 22, 59, 44 },
+		                                 7195.550f,
+		                                 98.5444f,
+		                                 327.835f,
+		                                 -25.341f,
+		                                 101.3587f,
+		                                 0.00f } } };
 	fake_config_store->write_pass_predict(pass_predict);
 
 	ArgosTxService serv(*mock_kineis);
 	std::time_t t = 1580083200000;  // ms
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 
 	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
 	serv.start();
 
-	inject_gps_location(1, 11.8768, -33.8232, t/1000);
+	inject_gps_location(1, 11.8768, -33.8232, t / 1000);
 
 	// LDK et non LDA2: c'est tout l'objet de la regression.
-	mock().expectOneCall("send").onObject(mock_kineis)
-		.withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDK)
-		.ignoreOtherParameters();
+	mock()
+	    .expectOneCall("send")
+	    .onObject(mock_kineis)
+	    .withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDK)
+	    .ignoreOtherParameters();
 	t += serv.get_last_schedule();
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 	system_scheduler->run();
 	mock().checkExpectations();
 }
 
-IGNORE_TEST(ArgosTxService, PassPredictWithSensorDataPayload)
-{
+IGNORE_TEST(ArgosTxService, PassPredictWithSensorDataPayload) {
 	double frequency = 900.22;
 	BaseArgosMode mode = BaseArgosMode::PASS_PREDICTION;
 	BaseArgosPower power = BaseArgosPower::POWER_1000_MW;
@@ -2221,26 +2274,85 @@ IGNORE_TEST(ArgosTxService, PassPredictWithSensorDataPayload)
 	fake_config_store->write_param(ParamID::ALS_SENSOR_ENABLE, enable);
 	fake_config_store->write_param(ParamID::ALS_SENSOR_ENABLE_TX_MODE, sensor_mode);
 
-	BasePassPredict pass_predict = {
-		/* version_code */ 0,
-		7,
-		{
-		    { 0xA, SAT_DNLK_ON, SAT_UPLK_ON_ARGOS_3, { 2020, 1, 26, 22, 59, 44 }, 7195.550f, 98.5444f, 327.835f, -25.341f, 101.3587f, 0.00f },
-			{ 0x9, SAT_DNLK_OFF, SAT_UPLK_ON_ARGOS_3, { 2020, 1, 26, 22, 33, 39 }, 7195.632f, 98.7141f, 344.177f, -25.340f, 101.3600f, 0.00f },
-			{ 0xB, SAT_DNLK_ON, SAT_UPLK_ON_ARGOS_3, { 2020, 1, 26, 23, 29, 29 }, 7194.917f, 98.7183f, 330.404f, -25.336f, 101.3449f, 0.00f },
-			{ 0x5, SAT_DNLK_OFF, SAT_UPLK_ON_ARGOS_3, { 2020, 1, 26, 23, 50, 6 }, 7180.549f, 98.7298f, 289.399f, -25.260f, 101.0419f, -1.78f },
-			{ 0x8, SAT_DNLK_OFF, SAT_UPLK_ON_ARGOS_3, { 2020, 1, 26, 22, 12, 6 }, 7226.170f, 99.0661f, 343.180f, -25.499f, 102.0039f, -1.80f },
-			{ 0xC, SAT_DNLK_OFF, SAT_UPLK_ON_ARGOS_3, { 2020, 1, 26, 22, 3, 52 }, 7226.509f, 99.1913f, 291.936f, -25.500f, 102.0108f, -1.98f },
-			{ 0xD, SAT_DNLK_ON, SAT_UPLK_ON_ARGOS_3, { 2020, 1, 26, 22, 3, 53 }, 7160.246f, 98.5358f, 118.029f, -25.154f, 100.6148f, 0.00f }
-		}
-	};
+	BasePassPredict pass_predict = { /* version_code */ 0,
+	                                 7,
+	                                 { { 0xA,
+		                                 SAT_DNLK_ON,
+		                                 SAT_UPLK_ON_ARGOS_3,
+		                                 { 2020, 1, 26, 22, 59, 44 },
+		                                 7195.550f,
+		                                 98.5444f,
+		                                 327.835f,
+		                                 -25.341f,
+		                                 101.3587f,
+		                                 0.00f },
+		                               { 0x9,
+		                                 SAT_DNLK_OFF,
+		                                 SAT_UPLK_ON_ARGOS_3,
+		                                 { 2020, 1, 26, 22, 33, 39 },
+		                                 7195.632f,
+		                                 98.7141f,
+		                                 344.177f,
+		                                 -25.340f,
+		                                 101.3600f,
+		                                 0.00f },
+		                               { 0xB,
+		                                 SAT_DNLK_ON,
+		                                 SAT_UPLK_ON_ARGOS_3,
+		                                 { 2020, 1, 26, 23, 29, 29 },
+		                                 7194.917f,
+		                                 98.7183f,
+		                                 330.404f,
+		                                 -25.336f,
+		                                 101.3449f,
+		                                 0.00f },
+		                               { 0x5,
+		                                 SAT_DNLK_OFF,
+		                                 SAT_UPLK_ON_ARGOS_3,
+		                                 { 2020, 1, 26, 23, 50, 6 },
+		                                 7180.549f,
+		                                 98.7298f,
+		                                 289.399f,
+		                                 -25.260f,
+		                                 101.0419f,
+		                                 -1.78f },
+		                               { 0x8,
+		                                 SAT_DNLK_OFF,
+		                                 SAT_UPLK_ON_ARGOS_3,
+		                                 { 2020, 1, 26, 22, 12, 6 },
+		                                 7226.170f,
+		                                 99.0661f,
+		                                 343.180f,
+		                                 -25.499f,
+		                                 102.0039f,
+		                                 -1.80f },
+		                               { 0xC,
+		                                 SAT_DNLK_OFF,
+		                                 SAT_UPLK_ON_ARGOS_3,
+		                                 { 2020, 1, 26, 22, 3, 52 },
+		                                 7226.509f,
+		                                 99.1913f,
+		                                 291.936f,
+		                                 -25.500f,
+		                                 102.0108f,
+		                                 -1.98f },
+		                               { 0xD,
+		                                 SAT_DNLK_ON,
+		                                 SAT_UPLK_ON_ARGOS_3,
+		                                 { 2020, 1, 26, 22, 3, 53 },
+		                                 7160.246f,
+		                                 98.5358f,
+		                                 118.029f,
+		                                 -25.154f,
+		                                 100.6148f,
+		                                 0.00f } } };
 
 	fake_config_store->write_pass_predict(pass_predict);
 
 	ArgosTxService serv(*mock_kineis);
 
 	std::time_t t = 1580083200000;
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 
 	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
@@ -2275,7 +2387,7 @@ IGNORE_TEST(ArgosTxService, PassPredictWithSensorDataPayload)
 	for (unsigned int i = 0; i < 10; i++) {
 		mock().expectOneCall("send").onObject(mock_kineis).ignoreOtherParameters();
 		t += serv.get_last_schedule();
-		fake_rtc->settime(t/1000);
+		fake_rtc->settime(t / 1000);
 		fake_timer->set_counter(t);
 		system_scheduler->run();
 		mock_kineis->notify(KineisEventTxComplete({}));
@@ -2287,12 +2399,11 @@ IGNORE_TEST(ArgosTxService, PassPredictWithSensorDataPayload)
 // Fastloc packet builder tests
 // ============================================================================
 
-TEST(ArgosTxService, FastlocSatellitePacketEncoding)
-{
+TEST(ArgosTxService, FastlocSatellitePacketEncoding) {
 	// Build a fastloc GPS entry with degraded fix
 	GPSLogEntry log = make_gps_location(true, -33.8232, 11.8768, 1580083200, false, 0, 5000, 3800);
 	log.info.event_type = GPSEventType::FASTLOC;
-	log.info.fixType = 2;   // 2D fix
+	log.info.fixType = 2;  // 2D fix
 	log.info.numSV = 5;
 	log.info.hAcc = 500000;  // 500m in mm
 
@@ -2306,8 +2417,7 @@ TEST(ArgosTxService, FastlocSatellitePacketEncoding)
 	CHECK_EQUAL(ArgosPacketBuilder::FASTLOC_PACKET_HEADER, header);
 }
 
-TEST(ArgosTxService, FastlocSatellitePacketQualityFields)
-{
+TEST(ArgosTxService, FastlocSatellitePacketQualityFields) {
 	// Test that different quality values produce different encoded packets
 	GPSLogEntry log1 = make_gps_location(true, 10.0, 20.0, 1580083200, false, 0, 0, 3800);
 	log1.info.event_type = GPSEventType::FASTLOC;
@@ -2328,8 +2438,7 @@ TEST(ArgosTxService, FastlocSatellitePacketQualityFields)
 	CHECK(p1 != p2);
 }
 
-TEST(ArgosTxService, FastlocPacketHeaderAndSize)
-{
+TEST(ArgosTxService, FastlocPacketHeaderAndSize) {
 	// Verify fastloc packet uses LDA2 format (24 bytes) with correct header
 	GPSLogEntry log = make_gps_location(true, -33.8232, 11.8768, 1580083200, true, 50000, 5000, 3800);
 	log.info.event_type = GPSEventType::FASTLOC;
@@ -2352,8 +2461,7 @@ TEST(ArgosTxService, FastlocPacketHeaderAndSize)
 	CHECK(short_pkt.size() != fastloc_pkt.size());
 }
 
-TEST(ArgosTxService, FastlocHAccEncoding16bit)
-{
+TEST(ArgosTxService, FastlocHAccEncoding16bit) {
 	// Test hAcc encoding with 16-bit resolution (0-65535m)
 	GPSLogEntry log = make_gps_location(true, 10.0, 20.0, 1580083200, false, 0, 0, 3800);
 	log.info.event_type = GPSEventType::FASTLOC;
@@ -2394,8 +2502,7 @@ TEST(ArgosTxService, FastlocHAccEncoding16bit)
 // COOLDOWN TESTS
 // ============================================================================
 
-TEST(ArgosTxService, CooldownBlocksSecondSurfacing)
-{
+TEST(ArgosTxService, CooldownBlocksSecondSurfacing) {
 	// After a successful TX cycle, cooldown prevents new TX on next surfacing
 	fake_config_store->write_param(ParamID::ARGOS_MODE, BaseArgosMode::SURFACING_BURST);
 	fake_config_store->write_param(ParamID::ARGOS_DEPTH_PILE, BaseDepthPile::DEPTH_PILE_1);
@@ -2404,13 +2511,13 @@ TEST(ArgosTxService, CooldownBlocksSecondSurfacing)
 	fake_config_store->write_param(ParamID::ARGOS_TX_JITTER_EN, (bool)false);
 	fake_config_store->write_param(ParamID::DRY_TIME_BEFORE_TX, 0U);
 	fake_config_store->write_param(ParamID::MIN_SURFACE_CYCLE_INTERVAL_S, 2700U);
-	fake_config_store->write_param(ParamID::COOLDOWN_TRIGGER_MODE, 3U); // AFTER_LAST_TX
+	fake_config_store->write_param(ParamID::COOLDOWN_TRIGGER_MODE, 3U);  // AFTER_LAST_TX
 
 	ArgosTxService serv(*mock_kineis);
 
 	// Use a distinct epoch far from other cooldown tests to avoid static state leaks
 	std::time_t t = 1700000000000;
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 
 	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
@@ -2424,7 +2531,7 @@ TEST(ArgosTxService, CooldownBlocksSecondSurfacing)
 
 	// Advance 60s underwater
 	t += 60000;
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 
 	// Surface → first burst starts
@@ -2446,7 +2553,7 @@ TEST(ArgosTxService, CooldownBlocksSecondSurfacing)
 
 	// Advance only 120s (well within 2700s cooldown)
 	t += 120000;
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 
 	// Surface again → should be blocked by cooldown
@@ -2457,8 +2564,7 @@ TEST(ArgosTxService, CooldownBlocksSecondSurfacing)
 	mock().checkExpectations();
 }
 
-TEST(ArgosTxService, CooldownExpiresAllowsNewBurst)
-{
+TEST(ArgosTxService, CooldownExpiresAllowsNewBurst) {
 	// After cooldown expires, a new surfacing should trigger TX
 	fake_config_store->write_param(ParamID::ARGOS_MODE, BaseArgosMode::SURFACING_BURST);
 	fake_config_store->write_param(ParamID::ARGOS_DEPTH_PILE, BaseDepthPile::DEPTH_PILE_1);
@@ -2466,14 +2572,14 @@ TEST(ArgosTxService, CooldownExpiresAllowsNewBurst)
 	fake_config_store->write_param(ParamID::UNDERWATER_EN, (bool)true);
 	fake_config_store->write_param(ParamID::ARGOS_TX_JITTER_EN, (bool)false);
 	fake_config_store->write_param(ParamID::DRY_TIME_BEFORE_TX, 0U);
-	fake_config_store->write_param(ParamID::MIN_SURFACE_CYCLE_INTERVAL_S, 60U); // Short cooldown for test
+	fake_config_store->write_param(ParamID::MIN_SURFACE_CYCLE_INTERVAL_S, 60U);  // Short cooldown for test
 	fake_config_store->write_param(ParamID::COOLDOWN_TRIGGER_MODE, 3U);
 
 	ArgosTxService serv(*mock_kineis);
 
 	// Use a distinct epoch far from other cooldown tests to avoid static state leaks
 	std::time_t t = 1750000000000;
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 
 	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
@@ -2485,7 +2591,7 @@ TEST(ArgosTxService, CooldownExpiresAllowsNewBurst)
 	mock().expectOneCall("stop_send").onObject(mock_kineis);
 	notify_underwater_state(true);
 	t += 30000;
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 	notify_underwater_state(false);
 
@@ -2502,7 +2608,7 @@ TEST(ArgosTxService, CooldownExpiresAllowsNewBurst)
 
 	// Advance PAST cooldown (60s + margin)
 	t += 120000;
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 
 	// Surface again → cooldown expired → TX should be scheduled
@@ -2516,8 +2622,7 @@ TEST(ArgosTxService, CooldownExpiresAllowsNewBurst)
 // CooldownExpiresAllowsNewBurst (which both use AFTER_LAST_TX = 3).
 // ============================================================================
 
-TEST(ArgosTxService, CooldownAtSurfaceDoesNotExtendOnBounce)
-{
+TEST(ArgosTxService, CooldownAtSurfaceDoesNotExtendOnBounce) {
 	// AT_SURFACE mode: surface → dive starts cooldown. If a passive surface
 	// bounce happens during cooldown, m_cooldown_armed must NOT be re-armed
 	// (otherwise the next dive would call set_cycle_complete(now) and reset
@@ -2529,12 +2634,12 @@ TEST(ArgosTxService, CooldownAtSurfaceDoesNotExtendOnBounce)
 	fake_config_store->write_param(ParamID::ARGOS_TX_JITTER_EN, (bool)false);
 	fake_config_store->write_param(ParamID::DRY_TIME_BEFORE_TX, 0U);
 	fake_config_store->write_param(ParamID::MIN_SURFACE_CYCLE_INTERVAL_S, 600U);
-	fake_config_store->write_param(ParamID::COOLDOWN_TRIGGER_MODE, 0U); // AT_SURFACE
+	fake_config_store->write_param(ParamID::COOLDOWN_TRIGGER_MODE, 0U);  // AT_SURFACE
 
 	ArgosTxService serv(*mock_kineis);
 
 	std::time_t t = 1751000000000;
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 
 	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
@@ -2546,7 +2651,7 @@ TEST(ArgosTxService, CooldownAtSurfaceDoesNotExtendOnBounce)
 	mock().expectOneCall("stop_send").onObject(mock_kineis);
 	notify_underwater_state(true);
 	t += 60000;
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 	notify_underwater_state(false);  // arm AT_SURFACE
 
@@ -2560,7 +2665,7 @@ TEST(ArgosTxService, CooldownAtSurfaceDoesNotExtendOnBounce)
 
 	// 30s into cooldown — passive surface bounce (should NOT re-arm)
 	t += 30000;
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 	notify_underwater_state(false);
 
@@ -2568,7 +2673,7 @@ TEST(ArgosTxService, CooldownAtSurfaceDoesNotExtendOnBounce)
 	// (re-armed by AT_SURFACE), triggering set_cycle_complete(t_dive_2) which
 	// would RESET the cooldown timer to 600s remaining.
 	t += 5000;
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 0);
 	mock().expectOneCall("power_off_immediate").onObject(mock_kineis);
@@ -2583,8 +2688,7 @@ TEST(ArgosTxService, CooldownAtSurfaceDoesNotExtendOnBounce)
 	mock().checkExpectations();
 }
 
-TEST(ArgosTxService, IsInCooldownTrueWhenSetAndCheckedSameTick)
-{
+TEST(ArgosTxService, IsInCooldownTrueWhenSetAndCheckedSameTick) {
 	// Regression: get_cooldown_remaining_s used to return 0 when
 	// now == m_last_successful_cycle_time (the `<=` branch). The fix
 	// (changing to `<`) ensures set_cycle_complete(now) followed by
@@ -2614,8 +2718,7 @@ TEST(ArgosTxService, IsInCooldownTrueWhenSetAndCheckedSameTick)
 // NTRY_PER_MESSAGE (depth pile burst counter) TESTS
 // ============================================================================
 
-TEST(ArgosTxService, NtryPerMessageLimitsGnssTx)
-{
+TEST(ArgosTxService, NtryPerMessageLimitsGnssTx) {
 	// NTRY_PER_MESSAGE=2 → each GPS fix sent exactly 2 times, then no more
 	fake_config_store->write_param(ParamID::ARGOS_MODE, BaseArgosMode::SURFACING_BURST);
 	fake_config_store->write_param(ParamID::ARGOS_DEPTH_PILE, BaseDepthPile::DEPTH_PILE_1);
@@ -2623,13 +2726,13 @@ TEST(ArgosTxService, NtryPerMessageLimitsGnssTx)
 	fake_config_store->write_param(ParamID::UNDERWATER_EN, (bool)true);
 	fake_config_store->write_param(ParamID::ARGOS_TX_JITTER_EN, (bool)false);
 	fake_config_store->write_param(ParamID::DRY_TIME_BEFORE_TX, 0U);
-	fake_config_store->write_param(ParamID::TR_NOM, 10U); // 10s for fast test
+	fake_config_store->write_param(ParamID::TR_NOM, 10U);  // 10s for fast test
 	fake_config_store->write_param(ParamID::NTRY_PER_MESSAGE, 2U);
 
 	ArgosTxService serv(*mock_kineis);
 
 	std::time_t t = 1652105502000;
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 
 	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
@@ -2641,7 +2744,7 @@ TEST(ArgosTxService, NtryPerMessageLimitsGnssTx)
 	mock().expectOneCall("stop_send").onObject(mock_kineis);
 	notify_underwater_state(true);
 	t += 60000;
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 	notify_underwater_state(false);
 
@@ -2653,12 +2756,12 @@ TEST(ArgosTxService, NtryPerMessageLimitsGnssTx)
 	mock_kineis->notify(KineisEventTxComplete({}));
 
 	// Inject GPS fix → switches to GNSS phase
-	inject_gps_location(true, 55.27, -21.01, t/1000, true);
+	inject_gps_location(true, 55.27, -21.01, t / 1000, true);
 
 	// GNSS TX #1
 	mock().expectOneCall("send").onObject(mock_kineis).ignoreOtherParameters();
 	t += 1000;
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 	system_scheduler->run();
 	mock_kineis->notify(KineisEventTxComplete({}));
@@ -2666,22 +2769,21 @@ TEST(ArgosTxService, NtryPerMessageLimitsGnssTx)
 	// GNSS TX #2 (last allowed by NTRY=2)
 	mock().expectOneCall("send").onObject(mock_kineis).ignoreOtherParameters();
 	t += 10000;
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 	system_scheduler->run();
 	mock_kineis->notify(KineisEventTxComplete({}));
 
 	// GNSS TX #3 should NOT happen (burst_counter exhausted)
 	t += 10000;
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 	system_scheduler->run();
 	// No send expected — verify
 	mock().checkExpectations();
 }
 
-TEST(ArgosTxService, NtryZeroSendsOnce)
-{
+TEST(ArgosTxService, NtryZeroSendsOnce) {
 	// NTRY_PER_MESSAGE=0 → in surfacing burst mode, each fix sent exactly once
 	fake_config_store->write_param(ParamID::ARGOS_MODE, BaseArgosMode::SURFACING_BURST);
 	fake_config_store->write_param(ParamID::ARGOS_DEPTH_PILE, BaseDepthPile::DEPTH_PILE_1);
@@ -2690,12 +2792,12 @@ TEST(ArgosTxService, NtryZeroSendsOnce)
 	fake_config_store->write_param(ParamID::ARGOS_TX_JITTER_EN, (bool)false);
 	fake_config_store->write_param(ParamID::DRY_TIME_BEFORE_TX, 0U);
 	fake_config_store->write_param(ParamID::TR_NOM, 10U);
-	fake_config_store->write_param(ParamID::NTRY_PER_MESSAGE, 0U); // 0 = once in burst mode
+	fake_config_store->write_param(ParamID::NTRY_PER_MESSAGE, 0U);  // 0 = once in burst mode
 
 	ArgosTxService serv(*mock_kineis);
 
 	std::time_t t = 1652105502000;
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 
 	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
@@ -2707,7 +2809,7 @@ TEST(ArgosTxService, NtryZeroSendsOnce)
 	mock().expectOneCall("stop_send").onObject(mock_kineis);
 	notify_underwater_state(true);
 	t += 60000;
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 	notify_underwater_state(false);
 
@@ -2718,19 +2820,19 @@ TEST(ArgosTxService, NtryZeroSendsOnce)
 	mock_kineis->notify(KineisEventTxComplete({}));
 
 	// GPS fix → GNSS phase
-	inject_gps_location(true, 55.27, -21.01, t/1000, true);
+	inject_gps_location(true, 55.27, -21.01, t / 1000, true);
 
 	// GNSS TX #1 (only one allowed)
 	mock().expectOneCall("send").onObject(mock_kineis).ignoreOtherParameters();
 	t += 1000;
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 	system_scheduler->run();
 	mock_kineis->notify(KineisEventTxComplete({}));
 
 	// GNSS TX #2 should NOT happen
 	t += 10000;
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 	system_scheduler->run();
 	mock().checkExpectations();
@@ -2740,8 +2842,7 @@ TEST(ArgosTxService, NtryZeroSendsOnce)
 // replay — once a valid fix is in the depth pile it keeps being retransmitted
 // every TR_NOM until evicted by newer fixes. (Without a valid fix nothing is
 // cached — silence.)
-TEST(ArgosTxService, LegacyNtryZeroUnlimitedReplay)
-{
+TEST(ArgosTxService, LegacyNtryZeroUnlimitedReplay) {
 	fake_config_store->write_param(ParamID::ARGOS_MODE, BaseArgosMode::LEGACY);
 	fake_config_store->write_param(ParamID::ARGOS_DEPTH_PILE, BaseDepthPile::DEPTH_PILE_1);
 	fake_config_store->write_param(ParamID::ARGOS_HEXID, (unsigned int)0x01234567U);
@@ -2752,19 +2853,19 @@ TEST(ArgosTxService, LegacyNtryZeroUnlimitedReplay)
 
 	ArgosTxService serv(*mock_kineis);
 	std::time_t t = 1652105502000;  // ms
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 
 	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
 	serv.start();
 
-	inject_gps_location(1, 11.8768, -33.8232, t/1000);
+	inject_gps_location(1, 11.8768, -33.8232, t / 1000);
 
 	// Far more cycles than any bounded counter would allow — every one must TX
 	for (unsigned int i = 0; i < 8; i++) {
 		mock().expectOneCall("send").onObject(mock_kineis).ignoreOtherParameters();
 		t += serv.get_last_schedule();
-		fake_rtc->settime(t/1000);
+		fake_rtc->settime(t / 1000);
 		fake_timer->set_counter(t);
 		system_scheduler->run();
 		mock_kineis->notify(KineisEventTxComplete({}));
@@ -2775,8 +2876,7 @@ TEST(ArgosTxService, LegacyNtryZeroUnlimitedReplay)
 // LEGACY: NTRY_PER_MESSAGE=3 → the pile is swept exactly 3 times (each entry
 // TX'd 3 times), then all entries are inert and the service goes silent until
 // a new fix arrives.
-TEST(ArgosTxService, LegacyNtryBoundsPileSweeps)
-{
+TEST(ArgosTxService, LegacyNtryBoundsPileSweeps) {
 	fake_config_store->write_param(ParamID::ARGOS_MODE, BaseArgosMode::LEGACY);
 	fake_config_store->write_param(ParamID::ARGOS_DEPTH_PILE, BaseDepthPile::DEPTH_PILE_1);
 	fake_config_store->write_param(ParamID::ARGOS_HEXID, (unsigned int)0x01234567U);
@@ -2787,19 +2887,19 @@ TEST(ArgosTxService, LegacyNtryBoundsPileSweeps)
 
 	ArgosTxService serv(*mock_kineis);
 	std::time_t t = 1652105502000;  // ms
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 
 	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
 	serv.start();
 
-	inject_gps_location(1, 11.8768, -33.8232, t/1000);
+	inject_gps_location(1, 11.8768, -33.8232, t / 1000);
 
 	// Exactly 3 transmissions of the single-entry pile
 	for (unsigned int i = 0; i < 3; i++) {
 		mock().expectOneCall("send").onObject(mock_kineis).ignoreOtherParameters();
 		t += serv.get_last_schedule();
-		fake_rtc->settime(t/1000);
+		fake_rtc->settime(t / 1000);
 		fake_timer->set_counter(t);
 		system_scheduler->run();
 		mock_kineis->notify(KineisEventTxComplete({}));
@@ -2807,7 +2907,7 @@ TEST(ArgosTxService, LegacyNtryBoundsPileSweeps)
 
 	// 4th cycle: burst_counter exhausted → no send
 	t += 10000;
-	fake_rtc->settime(t/1000);
+	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 	system_scheduler->run();
 	mock().checkExpectations();
@@ -2816,13 +2916,15 @@ TEST(ArgosTxService, LegacyNtryBoundsPileSweeps)
 // Depth pile sweep semantics behind NTRY: pile [A,B,C] with burst_counter=2 →
 // retrieve() rotates newest-first through the pile (C,B,A), completes 2 full
 // sweeps, then everything is inert.
-TEST(ArgosTxService, DepthPileNtrySweepRotation)
-{
+TEST(ArgosTxService, DepthPileNtrySweepRotation) {
 	DepthPile<GPSLogEntry> dp;
 	dp.set_max_size(4);
-	GPSLogEntry a{}; a.info.day = 1;
-	GPSLogEntry b{}; b.info.day = 2;
-	GPSLogEntry c{}; c.info.day = 3;
+	GPSLogEntry a{};
+	a.info.day = 1;
+	GPSLogEntry b{};
+	b.info.day = 2;
+	GPSLogEntry c{};
+	c.info.day = 3;
 	dp.store(a, 2);
 	dp.store(b, 2);
 	dp.store(c, 2);
@@ -2830,7 +2932,7 @@ TEST(ArgosTxService, DepthPileNtrySweepRotation)
 	// retrieve(depth=4, max_messages=1): one entry per TX slot, newest-first
 	int expected[6] = { 3, 2, 1, 3, 2, 1 };  // two full sweeps C,B,A
 	for (unsigned int i = 0; i < 6; i++) {
-		std::vector<GPSLogEntry*> v = dp.retrieve(4, 1);
+		std::vector<GPSLogEntry *> v = dp.retrieve(4, 1);
 		CHECK_EQUAL(1u, (unsigned int)v.size());
 		CHECK_EQUAL(expected[i], (int)v.at(0)->info.day);
 	}
@@ -2842,11 +2944,12 @@ TEST(ArgosTxService, DepthPileNtrySweepRotation)
 
 // === BaseGnssStrategy::REUSE_LAST helpers (Plan 1 step 1) =================
 
-TEST(ArgosTxService, DepthPilePeekBackReturnsLatestWithoutConsuming)
-{
+TEST(ArgosTxService, DepthPilePeekBackReturnsLatestWithoutConsuming) {
 	DepthPile<GPSLogEntry> dp;
-	GPSLogEntry e1{}; e1.info.day = 1;
-	GPSLogEntry e2{}; e2.info.day = 2;
+	GPSLogEntry e1{};
+	e1.info.day = 1;
+	GPSLogEntry e2{};
+	e2.info.day = 2;
 	dp.store(e1, 3);  // burst_counter = 3
 	dp.store(e2, 1);  // burst_counter = 1
 
@@ -2869,29 +2972,25 @@ TEST(ArgosTxService, DepthPilePeekBackReturnsLatestWithoutConsuming)
 	CHECK_EQUAL(2, peeked->info.day);
 }
 
-TEST(ArgosTxService, DepthPilePeekBackOnEmptyReturnsNull)
-{
+TEST(ArgosTxService, DepthPilePeekBackOnEmptyReturnsNull) {
 	DepthPile<GPSLogEntry> dp;
 	CHECK(dp.peek_back() == nullptr);
 }
 
-TEST(ArgosTxService, ComputeGpsLogAgeSecondsNormalEntry)
-{
+TEST(ArgosTxService, ComputeGpsLogAgeSecondsNormalEntry) {
 	GPSLogEntry e = make_gps_location();  // stamps header with rtc->gettime() = 1580083200
 	// 90 seconds later
 	unsigned int age = ArgosTxService::compute_gps_log_age_seconds(e, 1580083200 + 90);
 	CHECK_EQUAL(90u, age);
 }
 
-TEST(ArgosTxService, ComputeGpsLogAgeSecondsZeroYearIsInvalid)
-{
+TEST(ArgosTxService, ComputeGpsLogAgeSecondsZeroYearIsInvalid) {
 	GPSLogEntry e{};  // year == 0 — cold-boot / unset RTC sentinel
 	unsigned int age = ArgosTxService::compute_gps_log_age_seconds(e, 1580083200);
 	CHECK_EQUAL(UINT_MAX, age);
 }
 
-TEST(ArgosTxService, ComputeGpsLogAgeSecondsFutureEntryIsInvalid)
-{
+TEST(ArgosTxService, ComputeGpsLogAgeSecondsFutureEntryIsInvalid) {
 	GPSLogEntry e = make_gps_location();  // stamped at rtc = 1580083200
 	// `now` BEFORE the entry timestamp → corruption / RTC roll-back. Must reject
 	// rather than report age=0 which would falsely qualify as "fresh".
@@ -2901,8 +3000,7 @@ TEST(ArgosTxService, ComputeGpsLogAgeSecondsFutureEntryIsInvalid)
 
 // === RateLimiter (Plan 1 step 2) ==========================================
 
-TEST(ArgosTxService, RateLimiterDisabledNeverBlocks)
-{
+TEST(ArgosTxService, RateLimiterDisabledNeverBlocks) {
 	RateLimiter::reset_for_tests();
 	// Default: RATE_LIMIT_EN = false. Cap could be exhausted yet still allowed.
 	for (unsigned int i = 0; i < 20; i++)
@@ -2911,8 +3009,7 @@ TEST(ArgosTxService, RateLimiterDisabledNeverBlocks)
 	CHECK_FALSE(RateLimiter::is_blocked(2000, rs));
 }
 
-TEST(ArgosTxService, RateLimiterBlocksOnceCapReached)
-{
+TEST(ArgosTxService, RateLimiterBlocksOnceCapReached) {
 	RateLimiter::reset_for_tests();
 	fake_config_store->write_param(ParamID::RATE_LIMIT_EN, (bool)true);
 	fake_config_store->write_param(ParamID::RATE_LIMIT_WINDOW_S, 100U);
@@ -2930,8 +3027,7 @@ TEST(ArgosTxService, RateLimiterBlocksOnceCapReached)
 	CHECK_EQUAL(75u, rs);
 }
 
-TEST(ArgosTxService, RateLimiterUnblocksOnceOldestRollsOut)
-{
+TEST(ArgosTxService, RateLimiterUnblocksOnceOldestRollsOut) {
 	RateLimiter::reset_for_tests();
 	fake_config_store->write_param(ParamID::RATE_LIMIT_EN, (bool)true);
 	fake_config_store->write_param(ParamID::RATE_LIMIT_WINDOW_S, 100U);
@@ -2947,8 +3043,7 @@ TEST(ArgosTxService, RateLimiterUnblocksOnceOldestRollsOut)
 	CHECK_FALSE(RateLimiter::is_blocked(1101, rs));
 }
 
-TEST(ArgosTxService, RateLimiterIgnoresFutureDatedEntries)
-{
+TEST(ArgosTxService, RateLimiterIgnoresFutureDatedEntries) {
 	RateLimiter::reset_for_tests();
 	fake_config_store->write_param(ParamID::RATE_LIMIT_EN, (bool)true);
 	fake_config_store->write_param(ParamID::RATE_LIMIT_WINDOW_S, 100U);
@@ -2963,8 +3058,7 @@ TEST(ArgosTxService, RateLimiterIgnoresFutureDatedEntries)
 	CHECK_FALSE(RateLimiter::is_blocked(1050, rs));  // only 1 in-window, cap=2
 }
 
-TEST(ArgosTxService, RateLimiterZeroCapDisables)
-{
+TEST(ArgosTxService, RateLimiterZeroCapDisables) {
 	RateLimiter::reset_for_tests();
 	fake_config_store->write_param(ParamID::RATE_LIMIT_EN, (bool)true);
 	fake_config_store->write_param(ParamID::RATE_LIMIT_WINDOW_S, 100U);
@@ -2979,8 +3073,7 @@ TEST(ArgosTxService, RateLimiterZeroCapDisables)
 
 // === HauledModeService (Plan 1 step 3) ====================================
 
-TEST(ArgosTxService, HauledModeDisabledNeverHauls)
-{
+TEST(ArgosTxService, HauledModeDisabledNeverHauls) {
 	HauledModeService::reset_for_tests();
 	// HAULED_DETECT_EN defaults to false. Even with a stale last_uw_event,
 	// evaluate() must keep us at AT_SEA.
@@ -2989,8 +3082,7 @@ TEST(ArgosTxService, HauledModeDisabledNeverHauls)
 	CHECK_FALSE(HauledModeService::is_hauled());
 }
 
-TEST(ArgosTxService, HauledModeHaulsAfterIdleThreshold)
-{
+TEST(ArgosTxService, HauledModeHaulsAfterIdleThreshold) {
 	HauledModeService::reset_for_tests();
 	fake_config_store->write_param(ParamID::HAULED_DETECT_EN, (bool)true);
 	fake_config_store->write_param(ParamID::HAULED_IDLE_THRESHOLD_H, 2U);  // 2h
@@ -3005,8 +3097,7 @@ TEST(ArgosTxService, HauledModeHaulsAfterIdleThreshold)
 	CHECK_TRUE(HauledModeService::is_hauled());
 }
 
-TEST(ArgosTxService, HauledModeReturnsAfterReturnEvents)
-{
+TEST(ArgosTxService, HauledModeReturnsAfterReturnEvents) {
 	HauledModeService::reset_for_tests();
 	fake_config_store->write_param(ParamID::HAULED_DETECT_EN, (bool)true);
 	fake_config_store->write_param(ParamID::HAULED_IDLE_THRESHOLD_H, 1U);
@@ -3028,8 +3119,7 @@ TEST(ArgosTxService, HauledModeReturnsAfterReturnEvents)
 	CHECK_EQUAL(0u, HauledModeService::uw_events_since_hauled());
 }
 
-TEST(ArgosTxService, HauledModeOverrideAppliesToArgosConfig)
-{
+TEST(ArgosTxService, HauledModeOverrideAppliesToArgosConfig) {
 	HauledModeService::reset_for_tests();
 	fake_config_store->write_param(ParamID::HAULED_DETECT_EN, (bool)true);
 	fake_config_store->write_param(ParamID::HAULED_IDLE_THRESHOLD_H, 1U);
@@ -3054,8 +3144,7 @@ TEST(ArgosTxService, HauledModeOverrideAppliesToArgosConfig)
 	CHECK_FALSE(ac.gnss_en);  // HAULED_GNSS_EN=false → off
 }
 
-TEST(ArgosTxService, HauledModeGnssStratOffForcesGnssOff)
-{
+TEST(ArgosTxService, HauledModeGnssStratOffForcesGnssOff) {
 	HauledModeService::reset_for_tests();
 	fake_config_store->write_param(ParamID::HAULED_DETECT_EN, (bool)true);
 	fake_config_store->write_param(ParamID::HAULED_IDLE_THRESHOLD_H, 1U);
@@ -3080,13 +3169,12 @@ TEST(ArgosTxService, HauledModeGnssStratOffForcesGnssOff)
 // and falls back gracefully when the depth pile has no usable entry. Each test
 // sets HAULED active so the strategy field is populated by the config store.
 
-TEST(ArgosTxService, ReuseLastEngagesGnssStrategyInHauled)
-{
+TEST(ArgosTxService, ReuseLastEngagesGnssStrategyInHauled) {
 	HauledModeService::reset_for_tests();
 	fake_config_store->write_param(ParamID::HAULED_DETECT_EN, (bool)true);
 	fake_config_store->write_param(ParamID::HAULED_IDLE_THRESHOLD_H, 1U);
-	fake_config_store->write_param(ParamID::HAULED_GNSS_EN, (bool)true);   // ignored when STRAT=REUSE_LAST
-	fake_config_store->write_param(ParamID::HAULED_GNSS_STRAT, 1U);        // REUSE_LAST
+	fake_config_store->write_param(ParamID::HAULED_GNSS_EN, (bool)true);  // ignored when STRAT=REUSE_LAST
+	fake_config_store->write_param(ParamID::HAULED_GNSS_STRAT, 1U);       // REUSE_LAST
 
 	HauledModeService::on_underwater_event(true, 1000);
 	HauledModeService::evaluate(1000 + 3601);
@@ -3099,13 +3187,12 @@ TEST(ArgosTxService, ReuseLastEngagesGnssStrategyInHauled)
 	CHECK_TRUE(ac.gnss_strategy == BaseGnssStrategy::REUSE_LAST);
 }
 
-TEST(ArgosTxService, ReuseLastFreshHauledStillAcquires)
-{
+TEST(ArgosTxService, ReuseLastFreshHauledStillAcquires) {
 	HauledModeService::reset_for_tests();
 	fake_config_store->write_param(ParamID::HAULED_DETECT_EN, (bool)true);
 	fake_config_store->write_param(ParamID::HAULED_IDLE_THRESHOLD_H, 1U);
 	fake_config_store->write_param(ParamID::HAULED_GNSS_EN, (bool)true);
-	fake_config_store->write_param(ParamID::HAULED_GNSS_STRAT, 0U);        // FRESH
+	fake_config_store->write_param(ParamID::HAULED_GNSS_STRAT, 0U);  // FRESH
 
 	HauledModeService::on_underwater_event(true, 1000);
 	HauledModeService::evaluate(1000 + 3601);
@@ -3119,8 +3206,7 @@ TEST(ArgosTxService, ReuseLastFreshHauledStillAcquires)
 
 // === New mitigations (R5 auto-promote, M1b rollback recovery, K+L RTC sync) ===
 
-TEST(ArgosTxService, HauledArgosModeAutoPromotesSurfacingBurstToLegacy)
-{
+TEST(ArgosTxService, HauledArgosModeAutoPromotesSurfacingBurstToLegacy) {
 	// HMP10 allowed_values now excludes SURFACING_BURST (5) at DTE write,
 	// but legacy configs persisted with that value must auto-promote at
 	// read time to avoid a TX-less HAULED mode (no dives = no burst).
@@ -3140,8 +3226,7 @@ TEST(ArgosTxService, HauledArgosModeAutoPromotesSurfacingBurstToLegacy)
 	CHECK_TRUE(ac.mode == BaseArgosMode::LEGACY);
 }
 
-TEST(ArgosTxService, HauledRollbackReBaselinesInsteadOfFreezing)
-{
+TEST(ArgosTxService, HauledRollbackReBaselinesInsteadOfFreezing) {
 	// M1b (2026-05): a WDT reset puts RTC back to 1 while noinit may still
 	// have a large last_uw_event_rtc from the previous session. The old
 	// behavior was "return — wait it out" which leaves HAULED engagement
@@ -3161,8 +3246,7 @@ TEST(ArgosTxService, HauledRollbackReBaselinesInsteadOfFreezing)
 	CHECK_EQUAL((std::time_t)1, HauledModeService::last_uw_event_rtc());
 }
 
-TEST(ArgosTxService, HauledResetForRtcSyncReAnchorsTimestamp)
-{
+TEST(ArgosTxService, HauledResetForRtcSyncReAnchorsTimestamp) {
 	// K (2026-05): when GPS first syncs RTC from virtual epoch to real UTC,
 	// `last_uw_event_rtc` (computed in virtual frame) must be re-anchored
 	// to the new real-time frame, otherwise the next evaluate() sees a
@@ -3177,8 +3261,7 @@ TEST(ArgosTxService, HauledResetForRtcSyncReAnchorsTimestamp)
 	CHECK_EQUAL(real_rtc, HauledModeService::last_uw_event_rtc());
 }
 
-TEST(ArgosTxService, RateLimiterResetForRtcSyncClearsRing)
-{
+TEST(ArgosTxService, RateLimiterResetForRtcSyncClearsRing) {
 	// L (2026-05): clear ring on virtual→real RTC transition. Pre-sync ring
 	// entries are in the virtual frame and meaningless post-sync.
 	RateLimiter::reset_for_tests();
@@ -3195,8 +3278,7 @@ TEST(ArgosTxService, RateLimiterResetForRtcSyncClearsRing)
 	CHECK_EQUAL(0u, RateLimiter::count_in_window(200, 100));
 }
 
-TEST(ArgosTxService, NonHauledKeepsFreshStrategy)
-{
+TEST(ArgosTxService, NonHauledKeepsFreshStrategy) {
 	HauledModeService::reset_for_tests();
 	// HAULED detection disabled — config returns NORMAL branch.
 	fake_config_store->write_param(ParamID::HAULED_DETECT_EN, (bool)false);
@@ -3216,8 +3298,7 @@ TEST(ArgosTxService, NonHauledKeepsFreshStrategy)
 // process_gnss_burst_from_cached calls read_cached_last_fix → returns false →
 // falls through to process_doppler_burst — the existing Doppler path.)
 
-TEST(ArgosTxService, HauledModeLowBatteryWins)
-{
+TEST(ArgosTxService, HauledModeLowBatteryWins) {
 	// Priority cascade per Plan 1 §5: LOW_BATTERY > HAULED. When both
 	// conditions are met, HAULED must not override LB params.
 	HauledModeService::reset_for_tests();

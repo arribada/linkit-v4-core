@@ -6,20 +6,16 @@
 
 class MockCommsScheduler : public ServiceScheduler {
 public:
-	void start(std::function<void(ServiceEvent&)> data_notification_callback = nullptr) {
+	void start(std::function<void(ServiceEvent &)> data_notification_callback = nullptr) {
 		(void)data_notification_callback;
 		mock().actualCall("start").onObject(this);
 	}
-	void stop() {
-		mock().actualCall("stop").onObject(this);
-	}
+	void stop() { mock().actualCall("stop").onObject(this); }
 	void notify_underwater_state(bool state) {
 		DEBUG_TRACE("MockCommsScheduler: notify_underwater_state");
 		mock().actualCall("notify_underwater_state").onObject(this).withParameter("state", state);
 	}
-	void notify_sensor_log_update() {
-		mock().actualCall("notify_sensor_log_update").onObject(this);
-	}
+	void notify_sensor_log_update() { mock().actualCall("notify_sensor_log_update").onObject(this); }
 };
 
-#endif // __MOCK_COMMS_HPP_
+#endif  // __MOCK_COMMS_HPP_

@@ -17,7 +17,6 @@
 extern BatteryMonitor *battery_monitor;
 
 class LFSConfigurationStore : public ConfigurationStore {
-
 protected:
 	bool m_is_pass_predict_valid;
 	bool m_is_config_valid;
@@ -33,12 +32,11 @@ protected:
 
 	/// @brief Serialize a single config entry (key + zero-padded binary data) to file.
 	bool serialize_config_entry(LFSFile &f, unsigned int index) {
-		if (index >= MAX_CONFIG_ITEMS)
-			return false;
-		const BaseMap* entry = &param_map[index];
+		if (index >= MAX_CONFIG_ITEMS) return false;
+		const BaseMap *entry = &param_map[index];
 		struct Serializer {
 			uint8_t entry_buffer[BASE_TEXT_MAX_LENGTH];
-			void operator()(std::string& s) {
+			void operator()(std::string &s) {
 				std::memset(entry_buffer, 0, sizeof(entry_buffer));
 				std::memcpy(entry_buffer, s.data(), s.size());
 			};
@@ -114,155 +112,149 @@ protected:
 				std::memset(entry_buffer, 0, sizeof(entry_buffer));
 				std::memcpy(entry_buffer, &s, sizeof(s));
 			};
-			void operator()(BaseRawData &) {
-			};
+			void operator()(BaseRawData &) {};
 		} s;
 		std::visit(s, m_params.at(index));
 
-		return f.write((void *)entry->key.data(), entry->key.size()) == (lfs_ssize_t)entry->key.size() &&
-				f.write(s.entry_buffer, sizeof(s.entry_buffer)) == sizeof(s.entry_buffer);
+		return f.write((void *)entry->key.data(), entry->key.size()) == (lfs_ssize_t)entry->key.size()
+		       && f.write(s.entry_buffer, sizeof(s.entry_buffer)) == sizeof(s.entry_buffer);
 	}
 
 	/// @brief Deserialize a single config entry from file and validate key match.
 	bool deserialize_config_entry(LFSFile &f, unsigned int index) {
-		if (index >= MAX_CONFIG_ITEMS)
-			return false;
-		const BaseMap* entry = &param_map[index];
+		if (index >= MAX_CONFIG_ITEMS) return false;
+		const BaseMap *entry = &param_map[index];
 		uint8_t entry_buffer[KEY_LENGTH + BASE_TEXT_MAX_LENGTH];
 
 		// Read entry from file
-		if (f.read(entry_buffer, KEY_LENGTH + BASE_TEXT_MAX_LENGTH) != KEY_LENGTH + BASE_TEXT_MAX_LENGTH)
-			return false;
+		if (f.read(entry_buffer, KEY_LENGTH + BASE_TEXT_MAX_LENGTH) != KEY_LENGTH + BASE_TEXT_MAX_LENGTH) return false;
 
 		// Check param key matches
-		if (std::string((const char *)entry_buffer, KEY_LENGTH) != entry->key)
-			return false;
+		if (std::string((const char *)entry_buffer, KEY_LENGTH) != entry->key) return false;
 
 		uint8_t *param_value = &entry_buffer[KEY_LENGTH];
 
 		switch (entry->encoding) {
-		case BaseEncoding::DECIMAL:
-		{
-			int value; std::memcpy(&value, param_value, sizeof(value));
+		case BaseEncoding::DECIMAL: {
+			int value;
+			std::memcpy(&value, param_value, sizeof(value));
 			m_params.at(index) = value;
 			break;
 		}
 		case BaseEncoding::AQPERIOD:
 		case BaseEncoding::HEXADECIMAL:
-		case BaseEncoding::UINT:
-		{
-			unsigned int value; std::memcpy(&value, param_value, sizeof(value));
+		case BaseEncoding::UINT: {
+			unsigned int value;
+			std::memcpy(&value, param_value, sizeof(value));
 			m_params.at(index) = value;
 			break;
 		}
-		case BaseEncoding::TEXT:
-		{
+		case BaseEncoding::TEXT: {
 			std::string value((const char *)param_value, strnlen((const char *)param_value, BASE_TEXT_MAX_LENGTH));
 			m_params.at(index) = value;
 			break;
 		}
-		case BaseEncoding::DATESTRING:
-		{
-			std::time_t value; std::memcpy(&value, param_value, sizeof(value));
+		case BaseEncoding::DATESTRING: {
+			std::time_t value;
+			std::memcpy(&value, param_value, sizeof(value));
 			m_params.at(index) = value;
 			break;
 		}
-		case BaseEncoding::BOOLEAN:
-		{
-			bool value; std::memcpy(&value, param_value, sizeof(value));
+		case BaseEncoding::BOOLEAN: {
+			bool value;
+			std::memcpy(&value, param_value, sizeof(value));
 			m_params.at(index) = value;
 			break;
 		}
 		case BaseEncoding::ARGOSFREQ:
-		case BaseEncoding::FLOAT:
-		{
-			double value; std::memcpy(&value, param_value, sizeof(value));
+		case BaseEncoding::FLOAT: {
+			double value;
+			std::memcpy(&value, param_value, sizeof(value));
 			m_params.at(index) = value;
 			break;
 		}
-		case BaseEncoding::DEPTHPILE:
-		{
-			BaseDepthPile value; std::memcpy(&value, param_value, sizeof(value));
+		case BaseEncoding::DEPTHPILE: {
+			BaseDepthPile value;
+			std::memcpy(&value, param_value, sizeof(value));
 			m_params.at(index) = value;
 			break;
 		}
-		case BaseEncoding::ARGOSMODE:
-		{
-			BaseArgosMode value; std::memcpy(&value, param_value, sizeof(value));
+		case BaseEncoding::ARGOSMODE: {
+			BaseArgosMode value;
+			std::memcpy(&value, param_value, sizeof(value));
 			m_params.at(index) = value;
 			break;
 		}
-		case BaseEncoding::ARGOSPOWER:
-		{
-			BaseArgosPower value; std::memcpy(&value, param_value, sizeof(value));
+		case BaseEncoding::ARGOSPOWER: {
+			BaseArgosPower value;
+			std::memcpy(&value, param_value, sizeof(value));
 			m_params.at(index) = value;
 			break;
 		}
-		case BaseEncoding::UWDETECTSOURCE:
-		{
-			BaseUnderwaterDetectSource value; std::memcpy(&value, param_value, sizeof(value));
+		case BaseEncoding::UWDETECTSOURCE: {
+			BaseUnderwaterDetectSource value;
+			std::memcpy(&value, param_value, sizeof(value));
 			m_params.at(index) = value;
 			break;
 		}
-		case BaseEncoding::GNSSFIXMODE:
-		{
-			BaseGNSSFixMode value; std::memcpy(&value, param_value, sizeof(value));
+		case BaseEncoding::GNSSFIXMODE: {
+			BaseGNSSFixMode value;
+			std::memcpy(&value, param_value, sizeof(value));
 			m_params.at(index) = value;
 			break;
 		}
-		case BaseEncoding::GNSSDYNMODEL:
-		{
-			BaseGNSSDynModel value; std::memcpy(&value, param_value, sizeof(value));
+		case BaseEncoding::GNSSDYNMODEL: {
+			BaseGNSSDynModel value;
+			std::memcpy(&value, param_value, sizeof(value));
 			m_params.at(index) = value;
 			break;
 		}
-		case BaseEncoding::LEDMODE:
-		{
-			BaseLEDMode value; std::memcpy(&value, param_value, sizeof(value));
+		case BaseEncoding::LEDMODE: {
+			BaseLEDMode value;
+			std::memcpy(&value, param_value, sizeof(value));
 			m_params.at(index) = value;
 			break;
 		}
-		case BaseEncoding::ZONETYPE:
-		{
-			BaseZoneType value; std::memcpy(&value, param_value, sizeof(value));
+		case BaseEncoding::ZONETYPE: {
+			BaseZoneType value;
+			std::memcpy(&value, param_value, sizeof(value));
 			m_params.at(index) = value;
 			break;
 		}
-		case BaseEncoding::MODULATION:
-		{
-			BaseArgosModulation value; std::memcpy(&value, param_value, sizeof(value));
+		case BaseEncoding::MODULATION: {
+			BaseArgosModulation value;
+			std::memcpy(&value, param_value, sizeof(value));
 			m_params.at(index) = value;
 			break;
 		}
-		case BaseEncoding::DEBUGMODE:
-		{
-			BaseDebugMode value; std::memcpy(&value, param_value, sizeof(value));
+		case BaseEncoding::DEBUGMODE: {
+			BaseDebugMode value;
+			std::memcpy(&value, param_value, sizeof(value));
 			m_params.at(index) = value;
 			break;
 		}
-		case BaseEncoding::PRESSURESENSORLOGGINGMODE:
-		{
-			BasePressureSensorLoggingMode value; std::memcpy(&value, param_value, sizeof(value));
+		case BaseEncoding::PRESSURESENSORLOGGINGMODE: {
+			BasePressureSensorLoggingMode value;
+			std::memcpy(&value, param_value, sizeof(value));
 			m_params.at(index) = value;
 			break;
 		}
-		case BaseEncoding::PRESSURESENSORFULLSCALE:
-		{
-			BasePressureSensorFullScale value; std::memcpy(&value, param_value, sizeof(value));
+		case BaseEncoding::PRESSURESENSORFULLSCALE: {
+			BasePressureSensorFullScale value;
+			std::memcpy(&value, param_value, sizeof(value));
 			m_params.at(index) = value;
 			break;
 		}
-		case BaseEncoding::SENSORENABLETXMODE:
-		{
-			BaseSensorEnableTxMode value; std::memcpy(&value, param_value, sizeof(value));
+		case BaseEncoding::SENSORENABLETXMODE: {
+			BaseSensorEnableTxMode value;
+			std::memcpy(&value, param_value, sizeof(value));
 			m_params.at(index) = value;
 			break;
 		}
 		case BaseEncoding::KEY_LIST:
 		case BaseEncoding::KEY_VALUE_LIST:
 		case BaseEncoding::BASE64:
-		default:
-			return false;
+		default: return false;
 		}
 
 		return true;
@@ -276,10 +268,10 @@ protected:
 		unsigned int config_version_code = 0;
 
 		// Read configuration version field
-		if (f.read(&config_version_code, sizeof(config_version_code)) != sizeof(config_version_code) ||
-				config_version_code != m_config_version_code) {
-
-			DEBUG_WARN("deserialize_config: configuration version mismatch; try to recover protected & reset all others");
+		if (f.read(&config_version_code, sizeof(config_version_code)) != sizeof(config_version_code)
+		    || config_version_code != m_config_version_code) {
+			DEBUG_WARN(
+			    "deserialize_config: configuration version mismatch; try to recover protected & reset all others");
 
 			// Try to recover the protected fields
 			if (!deserialize_config_entry(f, (unsigned int)ParamID::ARGOS_DECID))
@@ -296,13 +288,12 @@ protected:
 		}
 
 		for (unsigned int i = 0; i < MAX_CONFIG_ITEMS; i++) {
-
 			// Skip non-implemented/disabled parameters (reserved slots, disabled sensors)
-			if (!param_map[i].is_implemented)
-				continue;
+			if (!param_map[i].is_implemented) continue;
 
 			if (!deserialize_config_entry(f, i)) {
-				DEBUG_WARN("deserialize_config: unable to deserialize param %s - resetting...", param_map[i].name.c_str());
+				DEBUG_WARN("deserialize_config: unable to deserialize param %s - resetting...",
+				           param_map[i].name.c_str());
 				// Reset parameter to factory default
 				m_params.at(i) = default_params.at(i);
 				m_requires_serialization = true;
@@ -312,9 +303,7 @@ protected:
 			// Check variant index (type) matches default parameters
 			if (m_params.at(i).index() != default_params.at(i).index()) {
 				DEBUG_WARN("deserialize_config: param %s variant index mismatch expected %u but got %u - resetting...",
-						param_map[i].name.c_str(),
-						default_params.at(i).index(),
-						m_params.at(i).index());
+				           param_map[i].name.c_str(), default_params.at(i).index(), m_params.at(i).index());
 				// Reset parameter to factory default
 				m_params.at(i) = default_params.at(i);
 				m_requires_serialization = true;
@@ -338,17 +327,13 @@ protected:
 		}
 
 		for (unsigned int i = 0; i < MAX_CONFIG_ITEMS; i++) {
-
 			// Skip non-implemented/disabled parameters (reserved slots, disabled sensors)
-			if (!param_map[i].is_implemented)
-				continue;
+			if (!param_map[i].is_implemented) continue;
 
 			// Check variant index (type) matches default parameter
 			if (m_params.at(i).index() != default_params.at(i).index()) {
 				DEBUG_WARN("serialize_config: param %s variant index mismatch expected %u but got %u - resetting...",
-						param_map[i].name.c_str(),
-						default_params.at(i).index(),
-						m_params.at(i).index());
+				           param_map[i].name.c_str(), default_params.at(i).index(), m_params.at(i).index());
 				// Reset parameter to back to factory default
 				m_params.at(i) = default_params.at(i);
 			}
@@ -398,7 +383,7 @@ protected:
 	/// @brief Reset pass prediction to factory default AOP data.
 	void create_default_prepass() {
 		DEBUG_TRACE("ConfigurationStoreLFS::create_default_prepass");
-		write_pass_predict((BasePassPredict&)default_prepass);
+		write_pass_predict((BasePassPredict &)default_prepass);
 	}
 
 	/// @brief Refresh cached battery level/voltage from BatteryMonitor.
@@ -410,8 +395,8 @@ protected:
 		// that holds both the config store and the monitor.
 		try {
 			battery_monitor->set_thresholds(
-				static_cast<uint8_t>(read_param<unsigned int>(ParamID::LB_THRESHOLD)),
-				static_cast<uint8_t>(read_param<unsigned int>(ParamID::LB_CRITICAL_THRESH)));
+			    static_cast<uint8_t>(read_param<unsigned int>(ParamID::LB_THRESHOLD)),
+			    static_cast<uint8_t>(read_param<unsigned int>(ParamID::LB_CRITICAL_THRESH)));
 		} catch (...) {
 			// Store unreadable: keep whatever the monitor already had rather than
 			// letting a battery refresh throw into its callers.
@@ -424,7 +409,7 @@ protected:
 
 private:
 	FileSystem &m_filesystem;
-	bool        m_requires_serialization;
+	bool m_requires_serialization;
 
 	/// @brief Serialize only protected params (DECID, HEXID) — used during factory_reset recovery.
 	void serialize_protected_config() {
@@ -434,13 +419,12 @@ private:
 		if (f.write((void *)&m_config_version_code, sizeof(m_config_version_code)) != sizeof(m_config_version_code))
 			throw CONFIG_STORE_CORRUPTED;
 
-		for (unsigned int i = 0; i <= (unsigned int)ParamID::ARGOS_HEXID ; i++) {
+		for (unsigned int i = 0; i <= (unsigned int)ParamID::ARGOS_HEXID; i++) {
 			// Check variant index (type) matches default parameter
 			if (m_params.at(i).index() != default_params.at(i).index()) {
-				DEBUG_TRACE("serialize_config: protected param %u variant index mismatch expected %u but got %u - repairing",
-						i,
-						default_params.at(i).index(),
-						m_params.at(i).index());
+				DEBUG_TRACE(
+				    "serialize_config: protected param %u variant index mismatch expected %u but got %u - repairing", i,
+				    default_params.at(i).index(), m_params.at(i).index());
 				// Reset parameter to back to factory default
 				m_params.at(i) = default_params.at(i);
 			}
@@ -455,12 +439,13 @@ private:
 	}
 
 	/// @brief Persist all sensor calibration data to flash.
-	void save_calibration_data() {
-		CalibratableManager::save_all(true);
-	}
+	void save_calibration_data() { CalibratableManager::save_all(true); }
 
 public:
-	LFSConfigurationStore(FileSystem &filesystem) : m_is_pass_predict_valid(false), m_is_config_valid(false), m_filesystem(filesystem) {}
+	LFSConfigurationStore(FileSystem &filesystem)
+	    : m_is_pass_predict_valid(false),
+	      m_is_config_valid(false),
+	      m_filesystem(filesystem) {}
 
 	/// @brief Init: deserialize config + prepass from flash, create defaults if missing.
 	/// @throws CONFIG_STORE_CORRUPTED on unrecoverable flash error.
@@ -483,12 +468,11 @@ public:
 			m_requires_serialization = true;
 		}
 
-		if (m_requires_serialization)
-			serialize_config();
+		if (m_requires_serialization) serialize_config();
 
 		if (!m_is_config_valid) {
 			m_filesystem.power_down();
-			throw CONFIG_STORE_CORRUPTED; // This is a non-recoverable error
+			throw CONFIG_STORE_CORRUPTED;  // This is a non-recoverable error
 		}
 
 		// Read in prepass file
@@ -502,9 +486,7 @@ public:
 		m_filesystem.power_down();
 	}
 
-	bool is_valid() override {
-		return m_is_config_valid;
-	}
+	bool is_valid() override { return m_is_config_valid; }
 
 	/// @brief Factory reset: format flash, preserve DECID/HEXID + calibration data.
 	void factory_reset() override {
@@ -512,21 +494,21 @@ public:
 		m_filesystem.umount();
 		m_filesystem.format();
 		m_filesystem.mount();
-		serialize_protected_config(); // Recover "protected" parameters
+		serialize_protected_config();  // Recover "protected" parameters
 		save_calibration_data();
 		m_is_config_valid = false;
 		m_is_pass_predict_valid = false;
 		m_filesystem.power_down();
 	}
 
-	BasePassPredict& read_pass_predict() override {
+	BasePassPredict &read_pass_predict() override {
 		if (m_is_pass_predict_valid) {
 			return m_pass_predict;
 		}
 		throw CONFIG_DOES_NOT_EXIST;
 	}
 
-	void write_pass_predict(BasePassPredict& value) override {
+	void write_pass_predict(BasePassPredict &value) override {
 		m_filesystem.power_up();
 		m_pass_predict = value;
 		serialize_pass_predict();

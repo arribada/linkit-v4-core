@@ -38,15 +38,14 @@ private:
 
 	void toggle_led() {
 		InterruptLock lock;
-		if (!m_is_flashing)
-			return;
-		set_color_raw(m_pin_red, m_pin_green, m_pin_blue,
-			m_flash_state ? m_flash_color : m_flash_color_alt);
+		if (!m_is_flashing) return;
+		set_color_raw(m_pin_red, m_pin_green, m_pin_blue, m_flash_state ? m_flash_color : m_flash_color_alt);
 		m_flash_state = !m_flash_state;
-		m_led_timer = system_timer->add_schedule([this]() {
-			if (m_is_flashing)
-				toggle_led();
-		}, system_timer->get_counter() + m_flash_interval);
+		m_led_timer = system_timer->add_schedule(
+		    [this]() {
+			    if (m_is_flashing) toggle_led();
+		    },
+		    system_timer->get_counter() + m_flash_interval);
 	}
 
 public:
@@ -63,29 +62,47 @@ public:
 	static void set_color_raw(int pin_red, int pin_green, int pin_blue, RGBLedColor color) {
 		bool r = false, g = false, b = false;
 		switch (color) {
-		case RGBLedColor::BLACK:   break;
-		case RGBLedColor::RED:     r = true; break;
-		case RGBLedColor::GREEN:   g = true; break;
-		case RGBLedColor::BLUE:    b = true; break;
-		case RGBLedColor::CYAN:    g = true; b = true; break;
-		case RGBLedColor::MAGENTA: r = true; b = true; break;
-		case RGBLedColor::YELLOW:  r = true; g = true; break;
-		case RGBLedColor::WHITE:   r = true; g = true; b = true; break;
+		case RGBLedColor::BLACK: break;
+		case RGBLedColor::RED: r = true; break;
+		case RGBLedColor::GREEN: g = true; break;
+		case RGBLedColor::BLUE: b = true; break;
+		case RGBLedColor::CYAN:
+			g = true;
+			b = true;
+			break;
+		case RGBLedColor::MAGENTA:
+			r = true;
+			b = true;
+			break;
+		case RGBLedColor::YELLOW:
+			r = true;
+			g = true;
+			break;
+		case RGBLedColor::WHITE:
+			r = true;
+			g = true;
+			b = true;
+			break;
 		default: break;
 		}
 		// Active-low: clear = LED ON, set = LED OFF
-		r ? GPIOPins::clear(pin_red)   : GPIOPins::set(pin_red);
+		r ? GPIOPins::clear(pin_red) : GPIOPins::set(pin_red);
 		g ? GPIOPins::clear(pin_green) : GPIOPins::set(pin_green);
-		b ? GPIOPins::clear(pin_blue)  : GPIOPins::set(pin_blue);
+		b ? GPIOPins::clear(pin_blue) : GPIOPins::set(pin_blue);
 	}
 
 	NrfRGBLed(const char *name, int red, int green, int blue, RGBLedColor color = RGBLedColor::BLACK)
-		: m_pin_red(red), m_pin_green(green), m_pin_blue(blue),
-		  m_color(color), m_flash_color(RGBLedColor::BLACK),
-		  m_flash_color_alt(RGBLedColor::BLACK),
-		  m_is_flashing(false), m_flash_state(false),
-		  m_flash_interval(500), m_name(name), m_led_timer{}
-	{
+	    : m_pin_red(red),
+	      m_pin_green(green),
+	      m_pin_blue(blue),
+	      m_color(color),
+	      m_flash_color(RGBLedColor::BLACK),
+	      m_flash_color_alt(RGBLedColor::BLACK),
+	      m_is_flashing(false),
+	      m_flash_state(false),
+	      m_flash_interval(500),
+	      m_name(name),
+	      m_led_timer{} {
 		set(color);
 	}
 
@@ -97,9 +114,7 @@ public:
 		set_color_raw(m_pin_red, m_pin_green, m_pin_blue, color);
 	}
 
-	void off() override {
-		set(RGBLedColor::BLACK);
-	}
+	void off() override { set(RGBLedColor::BLACK); }
 
 	void flash(RGBLedColor color, unsigned int interval_ms = 500) override {
 		InterruptLock lock;

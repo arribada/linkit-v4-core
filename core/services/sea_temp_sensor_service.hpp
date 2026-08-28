@@ -21,23 +21,20 @@ struct __attribute__((packed)) SeaTempLogEntry {
 
 class SeaTempLogFormatter : public LogFormatter {
 public:
-	const std::string header() override {
-		return "log_datetime,sea_temp\r\n";
-	}
-	const std::string log_entry(const LogEntry& e) override {
+	const std::string header() override { return "log_datetime,sea_temp\r\n"; }
+	const std::string log_entry(const LogEntry &e) override {
 		char entry[512], d1[128];
 		const auto *log = reinterpret_cast<const SeaTempLogEntry *>(&e);
 		std::time_t t;
 		std::tm *tm;
 
-		t = convert_epochtime(log->header.year, log->header.month, log->header.day, log->header.hours, log->header.minutes, log->header.seconds);
+		t = convert_epochtime(log->header.year, log->header.month, log->header.day, log->header.hours,
+		                      log->header.minutes, log->header.seconds);
 		tm = std::gmtime(&t);
 		std::strftime(d1, sizeof(d1), "%d/%m/%Y %H:%M:%S", tm);
 
 		// Convert to CSV
-		snprintf(entry, sizeof(entry), "%s,%f\r\n",
-				d1,
-				log->sea_temp);
+		snprintf(entry, sizeof(entry), "%s,%f\r\n", d1, log->sea_temp);
 		return std::string(entry);
 	}
 };
@@ -45,13 +42,13 @@ public:
 
 class SeaTempSensorService : public SensorService {
 public:
-	SeaTempSensorService(Sensor& sensor, Logger *logger) : SensorService(sensor, ServiceIdentifier::SEA_TEMP_SENSOR, "SEA_TEMP", logger) {}
+	SeaTempSensorService(Sensor &sensor, Logger *logger)
+	    : SensorService(sensor, ServiceIdentifier::SEA_TEMP_SENSOR, "SEA_TEMP", logger) {}
 
 private:
-
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Warray-bounds"
-	void sensor_populate_log_entry(LogEntry *e, ServiceSensorData& data) override {
+	void sensor_populate_log_entry(LogEntry *e, ServiceSensorData &data) override {
 		auto *log = reinterpret_cast<SeaTempLogEntry *>(e);
 		log->sea_temp = data.port[0];
 		service_set_log_header_time(log->header, service_current_time());
@@ -64,13 +61,10 @@ private:
 
 	unsigned int sensor_num_channels() override { return 1U; }
 
-	bool sensor_is_enabled() override {
-		return service_read_param<bool>(ParamID::SEA_TEMP_SENSOR_ENABLE);
-	}
+	bool sensor_is_enabled() override { return service_read_param<bool>(ParamID::SEA_TEMP_SENSOR_ENABLE); }
 
 	unsigned int sensor_periodic() override {
-		unsigned int schedule =
-				1000 * service_read_param<unsigned int>(ParamID::SEA_TEMP_SENSOR_PERIODIC);
+		unsigned int schedule = 1000 * service_read_param<unsigned int>(ParamID::SEA_TEMP_SENSOR_PERIODIC);
 		return schedule == 0 ? Service::SCHEDULE_DISABLED : schedule;
 	}
 

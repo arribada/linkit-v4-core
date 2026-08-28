@@ -23,7 +23,8 @@ extern ConfigurationStore *configuration_store;
 /// @brief Base class for all periodic services (GPS, Argos TX/RX, sensors, SWS, camera, etc.).
 class Service {
 public:
-	static constexpr unsigned int SCHEDULE_DISABLED = 0xFFFFFFFF;  ///< Returned by service_next_schedule_in_ms to disable scheduling.
+	static constexpr unsigned int SCHEDULE_DISABLED =
+	    0xFFFFFFFF;  ///< Returned by service_next_schedule_in_ms to disable scheduling.
 
 	Service(ServiceIdentifier service_id, const char *name, Logger *logger = nullptr);
 	virtual ~Service();
@@ -32,9 +33,9 @@ public:
 	ServiceIdentifier get_service_id();
 	Logger *get_logger();
 	void set_logger(Logger *logger);
-	void start(std::function<void(ServiceEvent&)> data_notification_callback = nullptr);
+	void start(std::function<void(ServiceEvent &)> data_notification_callback = nullptr);
 	void stop();
-	virtual void notify_peer_event(ServiceEvent& event);
+	virtual void notify_peer_event(ServiceEvent &event);
 	bool is_started();
 	unsigned int get_last_schedule();
 	bool is_underwater_deferred();
@@ -48,8 +49,8 @@ public:
 	/// footprint. SCHEDULE_DISABLED means "nothing planned"; the reason string says
 	/// which branch decided it.
 	unsigned int bench_sched_ms() const { return m_bench_sched_ms; }
-	const char  *bench_sched_why() const { return m_bench_sched_why; }
-	const char  *bench_name() const { return m_name; }
+	const char *bench_sched_why() const { return m_bench_sched_why; }
+	const char *bench_name() const { return m_name; }
 #endif
 
 private:
@@ -59,19 +60,19 @@ private:
 	bool m_is_initiated = false;
 	Scheduler::TaskHandle m_task_period;
 	Scheduler::TaskHandle m_task_timeout;
-	std::function<void(ServiceEvent&)> m_data_notification_callback;
+	std::function<void(ServiceEvent &)> m_data_notification_callback;
 	ServiceIdentifier m_service_id = ServiceIdentifier::UNKNOWN;
 	unsigned int m_unique_id = 0;
 	Logger *m_logger = nullptr;
 	unsigned int m_last_schedule = SCHEDULE_DISABLED;
 #ifdef BENCH_TEST
-	unsigned int  m_bench_sched_ms  = SCHEDULE_DISABLED;
-	const char   *m_bench_sched_why = "never";
+	unsigned int m_bench_sched_ms = SCHEDULE_DISABLED;
+	const char *m_bench_sched_why = "never";
 #endif
 
 	void reschedule(bool immediate = false);
 	void deschedule();
-	void notify_log_updated(ServiceEventData& data);
+	void notify_log_updated(ServiceEventData &data);
 	void notify_service_active();
 	void notify_service_inactive();
 	void notify_underwater_state(bool state);
@@ -93,7 +94,6 @@ protected:
 	void notify_service_event(ServiceEventType type);
 
 private:
-
 protected:
 	// === Virtual interface — subclasses must/may override ===
 
@@ -118,7 +118,7 @@ protected:
 	/// @brief Check if this service should reschedule on surfacing.
 	/// @param[out] immediate  true if service should fire immediately.
 	/// @return true if surfacing triggers this service.
-	virtual bool service_is_triggered_on_surfaced(bool&) { return false; }
+	virtual bool service_is_triggered_on_surfaced(bool &) { return false; }
 	/// @brief Check if this service can operate underwater (default: no).
 	/// @return true if service should keep running when submerged.
 	virtual bool service_is_usable_underwater() { return false; }
@@ -126,7 +126,7 @@ protected:
 	/// @param[in] event      Peer event.
 	/// @param[out] immediate true if service should fire immediately.
 	/// @return true if this event triggers rescheduling.
-	virtual bool service_is_triggered_on_event(ServiceEvent&, bool&) { return false; }
+	virtual bool service_is_triggered_on_event(ServiceEvent &, bool &) { return false; }
 	/// @brief Check if service is active after initiate (for async services).
 	/// @return true if initiate starts an async operation (default: true).
 	virtual bool service_is_active_on_initiate() { return true; }
@@ -152,14 +152,17 @@ protected:
 	/// synthetic completion (e.g. GPSService::bench_inject_fix) runs the FULL
 	/// service_complete() path — including service_log() → SERVICE_LOG_UPDATED
 	/// broadcast — instead of bailing on "!m_is_initiated". Zero prod footprint.
-	void bench_force_initiated() { m_is_started = true; m_is_initiated = true; }
+	void bench_force_initiated() {
+		m_is_started = true;
+		m_is_initiated = true;
+	}
 #endif
 	/// @brief Notify peers that this service is now active.
 	void service_active();
 	/// @brief Fill log header date/time fields from epoch time.
 	/// @param[out] header  Log header to fill.
 	/// @param time         Epoch time (seconds).
-	void service_set_log_header_time(LogHeader& header, std::time_t time);
+	void service_set_log_header_time(LogHeader &header, std::time_t time);
 	/// @brief Get current RTC time.
 	/// @return Epoch time in seconds.
 	std::time_t service_current_time();
@@ -177,10 +180,10 @@ protected:
 	bool service_is_battery_level_low();
 	/// @brief Get current hardware timer counter (ms).
 	uint64_t service_current_timer();
-	template <typename T> T& service_read_param(ParamID param_id) {
+	template <typename T> T &service_read_param(ParamID param_id) {
 		return configuration_store->read_param<T>(param_id);
 	}
-	template <typename T> void service_write_param(ParamID param_id, T& value) {
+	template <typename T> void service_write_param(ParamID param_id, T &value) {
 		configuration_store->write_param(param_id, value);
 	}
 
@@ -192,29 +195,28 @@ public:
 };
 
 /// @brief Global service orchestrator — manages all Service instances, peer events, cooldown.
-class ServiceManager
-{
+class ServiceManager {
 private:
-	static inline std::function<void(ServiceEvent&)> m_data_notification_callback = nullptr;
+	static inline std::function<void(ServiceEvent &)> m_data_notification_callback = nullptr;
 	static inline unsigned int m_unique_identifier = 0;
-	static inline std::map<unsigned int, Service&> m_map;
+	static inline std::map<unsigned int, Service &> m_map;
 	static inline std::time_t m_last_successful_cycle_time = 0;
 	static inline unsigned int m_passive_surfacing_count = 0;
 
 public:
-	static unsigned int add(Service& s);
-	static void remove(Service& s);
+	static unsigned int add(Service &s);
+	static void remove(Service &s);
 	/// @brief Clear ALL static state (registered services, id counter, cooldown
 	///        and cycle bookkeeping). TEST-ONLY: production never resets the
 	///        ServiceManager. Lets a unit-test fixture guarantee a clean global
 	///        between tests so a leftover registration or deferred continuation
 	///        from a prior test cannot bleed into the next one.
 	static void reset();
-	static void startall(std::function<void(ServiceEvent&)> data_notification_callback = nullptr);
+	static void startall(std::function<void(ServiceEvent &)> data_notification_callback = nullptr);
 	static void stopall();
 	static void notify_underwater_state(bool state);
-	static void notify_peer_event(ServiceEvent& event);
-	static void inject_event(ServiceEvent& event);
+	static void notify_peer_event(ServiceEvent &event);
+	static void inject_event(ServiceEvent &event);
 	static Logger *get_logger(ServiceIdentifier service_id);
 	static unsigned int get_unique_id(const char *name);
 	static void set_cycle_complete(std::time_t t);

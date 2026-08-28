@@ -19,8 +19,8 @@
 /// @brief Argos satellite TX service — builds and transmits packets via KineisDevice.
 class ArgosTxService : public Service, KineisEventListener {
 public:
-	ArgosTxService(KineisDevice& device);
-	void notify_peer_event(ServiceEvent& e) override;
+	ArgosTxService(KineisDevice &device);
+	void notify_peer_event(ServiceEvent &e) override;
 
 	// Compute the age in seconds of a GPS log entry against a reference RTC time.
 	// Returns UINT_MAX when the entry timestamp is invalid (zero year) or in the
@@ -48,7 +48,7 @@ protected:
 	bool service_is_active_on_initiate() override;
 
 private:
-	KineisDevice& m_kineis;
+	KineisDevice &m_kineis;
 	DepthPileManager m_depth_pile_manager;
 	ArgosTxScheduler m_sched;
 	bool m_is_first_tx = true;
@@ -94,7 +94,7 @@ private:
 	// m_kineis.send() and consumed by the TxComplete handler to emit a
 	// [VAL-TX] line with type + spacing. Cheap unconditional storage (~16 B)
 	// even when VALIDATION_LOG_ENABLE is off — keeps the header stable.
-	const char* m_last_val_tx_type = "none";
+	const char *m_last_val_tx_type = "none";
 	std::time_t m_last_val_tx_t = 0;
 
 	// Pre-warm of the first surfacing-burst Doppler packet. While underwater
@@ -137,9 +137,7 @@ private:
 	// least min_spacing_s seconds after m_last_tx_uptime_ms. If clamped,
 	// also reschedules m_sched at the deferred time. No-op if no prior TX
 	// has completed (m_last_tx_uptime_ms == 0).
-	unsigned int apply_spacing_guard(unsigned int proposed_delay_ms,
-	                                 unsigned int min_spacing_s,
-	                                 std::time_t now);
+	unsigned int apply_spacing_guard(unsigned int proposed_delay_ms, unsigned int min_spacing_s, std::time_t now);
 
 	// FastLoc priority (2026-05): peek depth pile; if the latest entry is a
 	// FastLoc (or real FIX/UPDATE) less than max_age_s old, returns true and
@@ -158,13 +156,12 @@ private:
 	/// @param[out] age_s AOP age in seconds (0 if unknown)
 	/// Without valid AOP no window can be computed: the caller must then
 	/// fall back to periodic transmission rather than staying silent.
-	AopEtat aop_etat(const ArgosConfig& config, std::time_t now, unsigned int& age_s);
-	bool aop_is_usable(const ArgosConfig& config, std::time_t now, unsigned int& age_s);
+	AopEtat aop_etat(const ArgosConfig &config, std::time_t now, unsigned int &age_s);
+	bool aop_is_usable(const ArgosConfig &config, std::time_t now, unsigned int &age_s);
 	static const char *aop_etat_texte(AopEtat e);
 
 	/// @brief Updates the status parameters readable by STATR.
-	void refresh_prepass_status(const ArgosConfig& config, std::time_t now,
-	                            std::time_t next_pass_epoch);
+	void refresh_prepass_status(const ArgosConfig &config, std::time_t now, std::time_t next_pass_epoch);
 
 	// BaseGnssStrategy::REUSE_LAST plumbing: read the most recent depth-pile fix
 	// if it is fresh enough per ParamID::GNSS_REUSE_FIX_MAX_AGE_S. Returns false
@@ -207,6 +204,6 @@ private:
 	// Device error backoff
 	static constexpr unsigned int DEVICE_ERROR_MAX_CONSECUTIVE = 3;
 	static constexpr unsigned int DEVICE_ERROR_BACKOFF_BASE_MS = 60000;
-	static constexpr unsigned int DEVICE_ERROR_BACKOFF_MAX_MS  = 600000;
+	static constexpr unsigned int DEVICE_ERROR_BACKOFF_MAX_MS = 600000;
 	unsigned int m_consecutive_device_errors = 0;
 };

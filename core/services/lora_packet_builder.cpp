@@ -39,7 +39,9 @@ unsigned int LoRaPacketBuilder::convert_speed(double x) {
 ///   - If `encoded == 127` → display "≥ 5.24 V"
 ///   - Otherwise → display 2700 + (encoded * 20) mV
 unsigned int LoRaPacketBuilder::convert_battery_voltage(unsigned int battery_voltage) {
-	return std::min(127u, static_cast<unsigned int>(std::max(static_cast<int>(battery_voltage) - static_cast<int>(REF_BATT_MV), 0)) / MV_PER_UNIT);
+	return std::min(
+	    127u, static_cast<unsigned int>(std::max(static_cast<int>(battery_voltage) - static_cast<int>(REF_BATT_MV), 0))
+	              / MV_PER_UNIT);
 }
 
 /// @brief Encode latitude as 21-bit unsigned (bit 20 = sign for negative).
@@ -76,25 +78,24 @@ unsigned int LoRaPacketBuilder::convert_heading(double x) {
 /// @param x  Altitude in mm above MSL.
 /// @return Encoded altitude (0-254, 255=invalid).
 unsigned int LoRaPacketBuilder::convert_altitude(double x) {
-	return static_cast<unsigned int>(std::min(static_cast<double>(MAX_ALTITUDE), std::max(static_cast<double>(MIN_ALTITUDE), x / (MM_PER_METER * METRES_PER_UNIT))));
+	return static_cast<unsigned int>(
+	    std::min(static_cast<double>(MAX_ALTITUDE),
+		         std::max(static_cast<double>(MIN_ALTITUDE), x / (MM_PER_METER * METRES_PER_UNIT))));
 }
 
 unsigned int LoRaPacketBuilder::max_gps_entries(unsigned int max_payload_bytes) {
 	unsigned int max_bits = max_payload_bytes * BITS_PER_BYTE;
 	// GPS_MULTI v2 overhead: header(14) + count(4) + first_gps_full(86) = 104 bits
 	unsigned int overhead_bits = BITS_HEADER + BITS_GPS_COUNT + BITS_GPS_FULL;
-	if (max_bits < overhead_bits)
-		return 0;
+	if (max_bits < overhead_bits) return 0;
 	// Each additional delta entry is 66 bits (lat + lon + speed + delta_t_min)
 	unsigned int remaining = max_bits - overhead_bits;
 	return 1 + remaining / BITS_GPS_DELTA;
 }
 
-KineisPacket LoRaPacketBuilder::build_gps_packet(std::vector<GPSLogEntry*>& v,
-		bool is_out_of_zone, bool is_low_battery,
-		unsigned int max_payload_bytes,
-		unsigned int& size_bits) {
-
+KineisPacket LoRaPacketBuilder::build_gps_packet(std::vector<GPSLogEntry *> &v, bool is_out_of_zone,
+                                                 bool is_low_battery, unsigned int max_payload_bytes,
+                                                 unsigned int &size_bits) {
 	DEBUG_TRACE("LoRaPacketBuilder::build_gps_packet: %u entries, max=%u bytes", v.size(), max_payload_bytes);
 
 	unsigned int max_entries = max_gps_entries(max_payload_bytes);
@@ -103,13 +104,11 @@ KineisPacket LoRaPacketBuilder::build_gps_packet(std::vector<GPSLogEntry*>& v,
 	// `retrieve()` produces oldest-first; GPS_MULTI v2 emits newest-first so
 	// entry[0] carries the absolute timestamp and subsequent entries encode
 	// minutes-back deltas. Reverse only the working window we actually emit.
-	if (num_entries > 0)
-		std::reverse(v.begin(), v.begin() + num_entries);
+	if (num_entries > 0) std::reverse(v.begin(), v.begin() + num_entries);
 
 	// Compute packet size — GPS_MULTI v2 has no global delta_time field.
 	size_bits = BITS_HEADER + BITS_GPS_COUNT + BITS_GPS_FULL;
-	if (num_entries > 1)
-		size_bits += (num_entries - 1) * BITS_GPS_DELTA;
+	if (num_entries > 1) size_bits += (num_entries - 1) * BITS_GPS_DELTA;
 
 	unsigned int packet_bytes = (size_bits + 7) / 8;
 	KineisPacket packet;
@@ -123,15 +122,13 @@ KineisPacket LoRaPacketBuilder::build_gps_packet(std::vector<GPSLogEntry*>& v,
 
 	// Flags (4 bits): out_of_zone, low_battery, valid, fastloc=0
 	bool valid = (num_entries > 0 && v[0]->info.valid);
-	unsigned int flags = ((is_out_of_zone ? 1U : 0U) << 3) |
-	                     ((is_low_battery ? 1U : 0U) << 2) |
-	                     ((valid ? 1U : 0U) << 1);
+	unsigned int flags =
+	    ((is_out_of_zone ? 1U : 0U) << 3) | ((is_low_battery ? 1U : 0U) << 2) | ((valid ? 1U : 0U) << 1);
 	PACK_BITS(flags, packet, base_pos, BITS_FLAGS);
 
 	// Voltage from newest entry (or 0)
 	unsigned int batt = 0;
-	if (num_entries > 0)
-		batt = convert_battery_voltage((unsigned int)v[0]->info.batt_voltage);
+	if (num_entries > 0) batt = convert_battery_voltage((unsigned int)v[0]->info.batt_voltage);
 	PACK_BITS(batt, packet, base_pos, BITS_VOLTAGE);
 
 	// GPS count
@@ -139,7 +136,7 @@ KineisPacket LoRaPacketBuilder::build_gps_packet(std::vector<GPSLogEntry*>& v,
 
 	// Newest entry — full record with absolute timestamp
 	if (num_entries > 0) {
-		GPSLogEntry* gps = v[0];
+		GPSLogEntry *gps = v[0];
 		uint16_t year;
 		uint8_t month, day, hour, min, sec;
 		convert_datetime_to_epoch(gps->info.schedTime, year, month, day, hour, min, sec);
@@ -178,7 +175,7 @@ KineisPacket LoRaPacketBuilder::build_gps_packet(std::vector<GPSLogEntry*>& v,
 	// Older entries — lat + lon + speed + per-entry minutes-back delta.
 	// delta is computed against the PREVIOUS entry (one step closer to "now").
 	for (unsigned int i = 1; i < num_entries; i++) {
-		GPSLogEntry* gps = v[i];
+		GPSLogEntry *gps = v[i];
 		if (gps->info.valid) {
 			unsigned int lat = convert_latitude(gps->info.lat);
 			PACK_BITS(lat, packet, base_pos, BITS_LATITUDE);
@@ -201,26 +198,21 @@ KineisPacket LoRaPacketBuilder::build_gps_packet(std::vector<GPSLogEntry*>& v,
 		} else {
 			std::time_t delta_s = prev_t - curr_t;
 			std::time_t delta_m = delta_s / 60;
-			delta_t_min = (delta_m >= (std::time_t)DELTA_T_MIN_MAX)
-			              ? DELTA_T_MIN_MAX
-			              : (unsigned int)delta_m;
+			delta_t_min = (delta_m >= (std::time_t)DELTA_T_MIN_MAX) ? DELTA_T_MIN_MAX : (unsigned int)delta_m;
 		}
 		PACK_BITS(delta_t_min, packet, base_pos, BITS_DELTA_T_MIN);
 	}
 
-	DEBUG_INFO("LoRaPacketBuilder::build_gps_packet: entries=%u data=%s sz=%u bits",
-			num_entries, Binascii::hexlify(packet).c_str(), size_bits);
+	DEBUG_INFO("LoRaPacketBuilder::build_gps_packet: entries=%u data=%s sz=%u bits", num_entries,
+	           Binascii::hexlify(packet).c_str(), size_bits);
 
 	return packet;
 }
 
-KineisPacket LoRaPacketBuilder::build_sensor_packet(GPSLogEntry* gps,
-		ServiceSensorData* als, ServiceSensorData* ph,
-		ServiceSensorData* pressure, ServiceSensorData* sea_temp,
-		ServiceSensorData* axl,
-		bool is_out_of_zone, bool is_low_battery,
-		unsigned int& size_bits) {
-
+KineisPacket LoRaPacketBuilder::build_sensor_packet(GPSLogEntry *gps, ServiceSensorData *als, ServiceSensorData *ph,
+                                                    ServiceSensorData *pressure, ServiceSensorData *sea_temp,
+                                                    ServiceSensorData *axl, bool is_out_of_zone, bool is_low_battery,
+                                                    unsigned int &size_bits) {
 	DEBUG_TRACE("LoRaPacketBuilder::build_sensor_packet");
 
 	// Detect fastloc
@@ -228,22 +220,22 @@ KineisPacket LoRaPacketBuilder::build_sensor_packet(GPSLogEntry* gps,
 
 	// Compute presence bitmask
 	uint8_t mask = 0;
-	if (gps != nullptr)       mask |= 0x20;  // bit 5
-	if (als != nullptr)       mask |= 0x10;  // bit 4
-	if (ph != nullptr)        mask |= 0x08;  // bit 3
-	if (pressure != nullptr)  mask |= 0x04;  // bit 2
-	if (sea_temp != nullptr)  mask |= 0x02;  // bit 1
-	if (axl != nullptr)       mask |= 0x01;  // bit 0
+	if (gps != nullptr) mask |= 0x20;       // bit 5
+	if (als != nullptr) mask |= 0x10;       // bit 4
+	if (ph != nullptr) mask |= 0x08;        // bit 3
+	if (pressure != nullptr) mask |= 0x04;  // bit 2
+	if (sea_temp != nullptr) mask |= 0x02;  // bit 1
+	if (axl != nullptr) mask |= 0x01;       // bit 0
 
 	// Compute total size
 	size_bits = BITS_HEADER + BITS_SENSOR_MASK;
-	if (gps)      size_bits += BITS_GPS_FULL;
+	if (gps) size_bits += BITS_GPS_FULL;
 	if (is_fastloc) size_bits += BITS_FASTLOC_QUALITY;
-	if (als)      size_bits += BITS_ALS;
-	if (ph)       size_bits += BITS_PH;
+	if (als) size_bits += BITS_ALS;
+	if (ph) size_bits += BITS_PH;
 	if (pressure) size_bits += BITS_PRESSURE_FULL;
 	if (sea_temp) size_bits += BITS_SEA_TEMP;
-	if (axl)      size_bits += BITS_AXL_FULL;
+	if (axl) size_bits += BITS_AXL_FULL;
 
 	unsigned int packet_bytes = (size_bits + 7) / 8;
 	KineisPacket packet;
@@ -256,10 +248,8 @@ KineisPacket LoRaPacketBuilder::build_sensor_packet(GPSLogEntry* gps,
 
 	// Flags (4 bits): out_of_zone, low_battery, valid, fastloc
 	bool valid = (gps != nullptr && gps->info.valid);
-	unsigned int flags = ((is_out_of_zone ? 1U : 0U) << 3) |
-	                     ((is_low_battery ? 1U : 0U) << 2) |
-	                     ((valid ? 1U : 0U) << 1) |
-	                     (is_fastloc ? 1U : 0U);
+	unsigned int flags = ((is_out_of_zone ? 1U : 0U) << 3) | ((is_low_battery ? 1U : 0U) << 2)
+	                     | ((valid ? 1U : 0U) << 1) | (is_fastloc ? 1U : 0U);
 	PACK_BITS(flags, packet, base_pos, BITS_FLAGS);
 
 	// Voltage
@@ -352,18 +342,17 @@ KineisPacket LoRaPacketBuilder::build_sensor_packet(GPSLogEntry* gps,
 		PACK_BITS((unsigned int)axl->port[4], packet, base_pos, BITS_AXL_ACT);
 	}
 
-	DEBUG_INFO("LoRaPacketBuilder::build_sensor_packet: mask=0x%02x data=%s sz=%u bits",
-			mask, Binascii::hexlify(packet).c_str(), size_bits);
+	DEBUG_INFO("LoRaPacketBuilder::build_sensor_packet: mask=0x%02x data=%s sz=%u bits", mask,
+	           Binascii::hexlify(packet).c_str(), size_bits);
 
 	return packet;
 }
 
-KineisPacket LoRaPacketBuilder::build_status_packet(unsigned int battery_voltage,
-		bool is_low_battery, unsigned int& size_bits) {
-
+KineisPacket LoRaPacketBuilder::build_status_packet(unsigned int battery_voltage, bool is_low_battery,
+                                                    unsigned int &size_bits) {
 	DEBUG_TRACE("LoRaPacketBuilder::build_status_packet");
 
-	size_bits = BITS_HEADER;  // 14 bits
+	size_bits = BITS_HEADER;                          // 14 bits
 	unsigned int packet_bytes = (size_bits + 7) / 8;  // 2 bytes
 	KineisPacket packet;
 	packet.assign(packet_bytes, 0);
@@ -379,16 +368,15 @@ KineisPacket LoRaPacketBuilder::build_status_packet(unsigned int battery_voltage
 	unsigned int batt = convert_battery_voltage(battery_voltage);
 	PACK_BITS(batt, packet, base_pos, BITS_VOLTAGE);
 
-	DEBUG_INFO("LoRaPacketBuilder::build_status_packet: data=%s sz=%u bits",
-			Binascii::hexlify(packet).c_str(), size_bits);
+	DEBUG_INFO("LoRaPacketBuilder::build_status_packet: data=%s sz=%u bits", Binascii::hexlify(packet).c_str(),
+	           size_bits);
 
 	return packet;
 }
 
-KineisPacket LoRaPacketBuilder::build_cloudlocate_packet(const uint8_t* blob, unsigned int blob_size,
-		uint8_t format_id, bool is_low_battery, unsigned int battery_voltage,
-		unsigned int& size_bits, uint32_t capture_rtc) {
-
+KineisPacket LoRaPacketBuilder::build_cloudlocate_packet(const uint8_t *blob, unsigned int blob_size, uint8_t format_id,
+                                                         bool is_low_battery, unsigned int battery_voltage,
+                                                         unsigned int &size_bits, uint32_t capture_rtc) {
 	DEBUG_TRACE("LoRaPacketBuilder::build_cloudlocate_packet: format=%u blob_size=%u", format_id, blob_size);
 
 	// type(3) + format(2) + flags(4) + voltage(7) + blob(blob_size*8)
@@ -432,7 +420,7 @@ KineisPacket LoRaPacketBuilder::build_cloudlocate_packet(const uint8_t* blob, un
 	}
 
 	DEBUG_INFO("LoRaPacketBuilder::build_cloudlocate_packet: format=%u blob_size=%u t_present=%u data=%s sz=%u bits",
-			format_id, blob_size, (unsigned)(capture_rtc != 0), Binascii::hexlify(packet).c_str(), size_bits);
+	           format_id, blob_size, (unsigned)(capture_rtc != 0), Binascii::hexlify(packet).c_str(), size_bits);
 
 	return packet;
 }

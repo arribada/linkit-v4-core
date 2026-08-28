@@ -18,7 +18,7 @@
 #ifndef CPPUTEST
 #include "crc16.h"
 #else
-#define crc16_compute(x, y, z)  0xFFFF
+#define crc16_compute(x, y, z) 0xFFFF
 #endif
 
 // Default voltage divider gain if not defined in BSP
@@ -29,13 +29,13 @@
 /// @name SOC hysteresis thresholds (percentage points)
 /// @{
 static constexpr uint8_t CRITICAL_SOC_HYSTERESIS = 3;
-static constexpr uint8_t LOW_BATT_THRESHOLD      = 5;
+static constexpr uint8_t LOW_BATT_THRESHOLD = 5;
 /// @}
 
 /// @name ADC conversion constants
 /// @{
-static constexpr int     ADC_MAX_VALUE = 16384;    ///< 2^14 (14-bit resolution)
-static constexpr float   ADC_REFERENCE = 0.6f;     ///< Internal reference voltage (V)
+static constexpr int ADC_MAX_VALUE = 16384;   ///< 2^14 (14-bit resolution)
+static constexpr float ADC_REFERENCE = 0.6f;  ///< Internal reference voltage (V)
 /// @}
 
 /// @name Battery discharge profiles
@@ -47,16 +47,16 @@ static constexpr unsigned int BATT_LUT_ENTRIES = 11;
 struct BatteryProfile {
 	uint16_t min_mv;
 	uint16_t max_mv;
-	uint8_t  soc_lut[BATT_LUT_ENTRIES];
+	uint8_t soc_lut[BATT_LUT_ENTRIES];
 };
 
 static constexpr BatteryProfile battery_profiles[] = {
 	// S18650_2600              — Li-ion 3.2-4.2 V
-	{ 3200, 4200, { 100, 91, 79, 62, 42, 12,  2,  0, 0, 0, 0 } },
+	{ 3200, 4200, { 100, 91, 79, 62, 42, 12, 2, 0, 0, 0, 0 } },
 	// CGR18650_2250            — Li-ion 3.2-4.2 V
-	{ 3200, 4200, { 100, 93, 84, 75, 64, 52, 22,  9, 0, 0, 0 } },
+	{ 3200, 4200, { 100, 93, 84, 75, 64, 52, 22, 9, 0, 0, 0 } },
 	// NCR18650_3100_3400       — Li-ion 3.2-4.2 V
-	{ 3200, 4200, { 100, 94, 83, 59, 50, 33, 15,  6, 0, 0, 0 } },
+	{ 3200, 4200, { 100, 94, 83, 59, 50, 33, 15, 6, 0, 0, 0 } },
 	// LS17500_2P (Li-SOCl2 plateau profile, 2 cells in parallel, 2.7-3.7 V).
 	// Index:        3700 3600 3500 3400 3300 3200 3100 3000 2900 2800 2700  mV
 	// Plateau 100 % until 3.55 V then progressive drop to the cliff at 3.0 V.
@@ -70,16 +70,14 @@ static constexpr BatteryProfile battery_profiles[] = {
 	//   of graceful-shutdown time at 50 µA sleep after the cells truly die.
 	// - Supercap recharge from cells takes ~6 min for a full 1 V refill (200 mA continuous,
 	//   2 cells) — don't burst TX too fast when SOC is low or the cap won't recover.
-	{ 2700, 3700, { 100, 99, 95, 80, 50, 20,  5,  1, 0, 0, 0 } },
+	{ 2700, 3700, { 100, 99, 95, 80, 50, 20, 5, 1, 0, 0, 0 } },
 };
 
-static_assert(sizeof(battery_profiles) / sizeof(battery_profiles[0]) ==
-              static_cast<unsigned>(BATT_CHEM_LS17500_2P) + 1,
+static_assert(sizeof(battery_profiles) / sizeof(battery_profiles[0]) == static_cast<unsigned>(BATT_CHEM_LS17500_2P) + 1,
               "battery_profiles[] must have one entry per BatteryChemistry enum value");
 /// @}
 
-static void nrfx_saadc_event_handler(nrfx_saadc_evt_t const *p_event)
-{
+static void nrfx_saadc_event_handler(nrfx_saadc_evt_t const *p_event) {
 	(void)p_event;
 }
 
@@ -94,12 +92,9 @@ static __attribute__((section(".noinit"))) volatile uint16_t m_crc;
 static constexpr uint32_t ADC_CAL_TIMEOUT = 10000;
 
 
-NrfBatteryMonitor::NrfBatteryMonitor(uint8_t adc_channel,
-		BatteryChemistry chem,
-		uint8_t critical_level,
-		uint8_t low_level)
-		: BatteryMonitor(low_level, critical_level)
-{
+NrfBatteryMonitor::NrfBatteryMonitor(uint8_t adc_channel, BatteryChemistry chem, uint8_t critical_level,
+                                     uint8_t low_level)
+    : BatteryMonitor(low_level, critical_level) {
 	// One-time SAADC calibration (retained until power reset, survives init/uninit)
 	nrfx_saadc_init(&BSP::ADC_Inits.config, nrfx_saadc_event_handler);
 	nrfx_saadc_calibrate_offset();
@@ -133,8 +128,7 @@ NrfBatteryMonitor::NrfBatteryMonitor(uint8_t adc_channel,
  *
  * @return Raw voltage in millivolts (before divider gain correction).
  */
-float NrfBatteryMonitor::sample_adc()
-{
+float NrfBatteryMonitor::sample_adc() {
 	nrf_saadc_value_t raw = 0;
 
 #ifdef BAT_READ_ENABLE
@@ -164,22 +158,20 @@ float NrfBatteryMonitor::sample_adc()
  *  - Once SOC drops below critical_level, it must recover to (critical_level + 3%)
  *  - Once SOC drops below low_level, it must recover to (low_level + 5%)
  */
-void NrfBatteryMonitor::internal_update()
-{
-	uint16_t mv    = convert_voltage(sample_adc());
-	uint8_t  level = convert_level(mv);
+void NrfBatteryMonitor::internal_update() {
+	uint16_t mv = convert_voltage(sample_adc());
+	uint8_t level = convert_level(mv);
 
 	// Check CRC of previously stored filtered values (.noinit RAM)
-	uint16_t crc = crc16_compute(reinterpret_cast<const uint8_t *>(const_cast<const uint16_t *>(m_filtered_values)), sizeof(m_filtered_values), nullptr);
+	uint16_t crc = crc16_compute(reinterpret_cast<const uint8_t *>(const_cast<const uint16_t *>(m_filtered_values)),
+	                             sizeof(m_filtered_values), nullptr);
 	if (crc == m_crc) {
 		// Previous values valid — apply hysteresis
 		m_filtered_values[0] = mv;
 		if (m_filtered_values[1] < m_critical_level) {
-			if (level >= (m_critical_level + CRITICAL_SOC_HYSTERESIS))
-				m_filtered_values[1] = level;
+			if (level >= (m_critical_level + CRITICAL_SOC_HYSTERESIS)) m_filtered_values[1] = level;
 		} else if (m_filtered_values[1] < m_low_level) {
-			if (level >= (m_low_level + LOW_BATT_THRESHOLD))
-				m_filtered_values[1] = level;
+			if (level >= (m_low_level + LOW_BATT_THRESHOLD)) m_filtered_values[1] = level;
 		} else {
 			m_filtered_values[1] = level;
 		}
@@ -190,7 +182,8 @@ void NrfBatteryMonitor::internal_update()
 	}
 
 	// Update CRC
-	m_crc = crc16_compute(reinterpret_cast<const uint8_t *>(const_cast<const uint16_t *>(m_filtered_values)), sizeof(m_filtered_values), nullptr);
+	m_crc = crc16_compute(reinterpret_cast<const uint8_t *>(const_cast<const uint16_t *>(m_filtered_values)),
+	                      sizeof(m_filtered_values), nullptr);
 
 	// Apply to base class members
 	m_last_voltage_mv = mv;
@@ -206,13 +199,11 @@ void NrfBatteryMonitor::internal_update()
  * @param mv Battery voltage in millivolts.
  * @return SOC percentage (0-100).
  */
-uint8_t NrfBatteryMonitor::convert_level(uint16_t mv)
-{
+uint8_t NrfBatteryMonitor::convert_level(uint16_t mv) {
 	unsigned int chem = static_cast<unsigned int>(m_chem);
-	if (chem >= sizeof(battery_profiles) / sizeof(battery_profiles[0]))
-		chem = 0;
+	if (chem >= sizeof(battery_profiles) / sizeof(battery_profiles[0])) chem = 0;
 
-	const BatteryProfile& profile = battery_profiles[chem];
+	const BatteryProfile &profile = battery_profiles[chem];
 	int lut_index = (BATT_LUT_ENTRIES - 1) - ((mv / 100) - (profile.min_mv / 100));
 
 	if (lut_index <= 0) {
@@ -235,12 +226,10 @@ uint8_t NrfBatteryMonitor::convert_level(uint16_t mv)
  * @param adc_mv Raw ADC reading in millivolts.
  * @return Battery voltage in millivolts.
  */
-uint16_t NrfBatteryMonitor::convert_voltage(float adc_mv)
-{
+uint16_t NrfBatteryMonitor::convert_voltage(float adc_mv) {
 #ifdef BATTERY_NOT_FITTED
 	unsigned int chem = static_cast<unsigned int>(m_chem);
-	if (chem >= sizeof(battery_profiles) / sizeof(battery_profiles[0]))
-		chem = 0;
+	if (chem >= sizeof(battery_profiles) / sizeof(battery_profiles[0])) chem = 0;
 	return battery_profiles[chem].max_mv;
 #else
 	return static_cast<uint16_t>(adc_mv * V_DIV_GAIN);

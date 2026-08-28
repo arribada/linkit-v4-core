@@ -11,20 +11,16 @@
 /// @brief Dive mode — disables reed switch when submerged for configurable duration.
 class DiveModeService : public Service {
 public:
-	enum class DiveState {
-		Idle,
-		StartPending,
-		Engaged
-	};
+	enum class DiveState { Idle, StartPending, Engaged };
 
-	DiveModeService(Switch& reed) : Service(ServiceIdentifier::DIVE_MODE, "DIVE", nullptr),
-		m_reed(reed), m_dive_state(DiveState::Idle) {}
+	DiveModeService(Switch &reed)
+	    : Service(ServiceIdentifier::DIVE_MODE, "DIVE", nullptr),
+	      m_reed(reed),
+	      m_dive_state(DiveState::Idle) {}
 
-	void notify_peer_event(ServiceEvent& e) {
-
+	void notify_peer_event(ServiceEvent &e) {
 		// Check for UW event
-		if (e.event_source != ServiceIdentifier::UW_SENSOR ||
-		    e.event_type != ServiceEventType::SERVICE_LOG_UPDATED) {
+		if (e.event_source != ServiceIdentifier::UW_SENSOR || e.event_type != ServiceEventType::SERVICE_LOG_UPDATED) {
 			return;
 		}
 
@@ -69,7 +65,7 @@ public:
 	}
 
 private:
-	Switch& m_reed;
+	Switch &m_reed;
 	DiveState m_dive_state;
 
 protected:
@@ -94,15 +90,11 @@ protected:
 		}
 	}
 
-	bool service_is_enabled() override {
-		return service_read_param<bool>(ParamID::UW_DIVE_MODE_ENABLE);
-	}
+	bool service_is_enabled() override { return service_read_param<bool>(ParamID::UW_DIVE_MODE_ENABLE); }
 
 	bool service_is_usable_underwater() override { return true; }
 
-	void service_init() override {
-		m_dive_state = DiveState::Idle;
-	}
+	void service_init() override { m_dive_state = DiveState::Idle; }
 
 	void service_term() override {
 		// Restore reed to default-active on shutdown, regardless of whether

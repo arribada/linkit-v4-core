@@ -14,11 +14,10 @@ static double lat_offset_m(double metres) {
 	return metres / 111194.926644559;
 }
 
-static constexpr double BASE_LAT = 34.7500;   // Limassol-ish
+static constexpr double BASE_LAT = 34.7500;  // Limassol-ish
 static constexpr double BASE_LON = 33.0300;
 
-TEST_GROUP(MooredMode)
-{
+TEST_GROUP(MooredMode) {
 	FakeConfigurationStore *fake_config_store;
 	FakeRTC *fake_rtc;
 
@@ -40,8 +39,8 @@ TEST_GROUP(MooredMode)
 	}
 
 	/// Enable detection with the production defaults, overridable per test.
-	void enable(unsigned int radius_m = 150, unsigned int enter_fixes = 3,
-	            unsigned int exit_events = 2, unsigned int holdoff_s = 0) {
+	void enable(unsigned int radius_m = 150, unsigned int enter_fixes = 3, unsigned int exit_events = 2,
+	            unsigned int holdoff_s = 0) {
 		fake_config_store->write_param(ParamID::MOORED_DETECT_EN, (bool)true);
 		fake_config_store->write_param(ParamID::MOORED_RADIUS_M, radius_m);
 		fake_config_store->write_param(ParamID::MOORED_ENTER_FIXES, enter_fixes);
@@ -57,15 +56,14 @@ TEST_GROUP(MooredMode)
 
 	/// Anchor + exactly enough stationary fixes to engage MOORED (default cfg).
 	void moor_it() {
-		feed_still(4);            // 1 plants the anchor, 3 count toward MRP02
+		feed_still(4);  // 1 plants the anchor, 3 count toward MRP02
 		CHECK_TRUE(MooredModeService::is_moored());
 	}
 };
 
 // === Master switch =========================================================
 
-TEST(MooredMode, DisabledNeverMoors)
-{
+TEST(MooredMode, DisabledNeverMoors) {
 	// MOORED_DETECT_EN defaults to false: no amount of evidence may engage it,
 	// and no state may accumulate. This is the guarantee that turtle and RSPB
 	// deployments are byte-identical.
@@ -75,8 +73,7 @@ TEST(MooredMode, DisabledNeverMoors)
 	CHECK_EQUAL(0, (int)MooredModeService::stationary_fixes());
 }
 
-TEST(MooredMode, DisablingForcesUnderway)
-{
+TEST(MooredMode, DisablingForcesUnderway) {
 	enable();
 	moor_it();
 	fake_config_store->write_param(ParamID::MOORED_DETECT_EN, (bool)false);
@@ -86,8 +83,7 @@ TEST(MooredMode, DisablingForcesUnderway)
 
 // === Entering MOORED =======================================================
 
-TEST(MooredMode, FirstFixOnlyPlantsTheAnchor)
-{
+TEST(MooredMode, FirstFixOnlyPlantsTheAnchor) {
 	enable();
 	// A single point carries no displacement information: it must set the
 	// reference and count for nothing.
@@ -97,46 +93,42 @@ TEST(MooredMode, FirstFixOnlyPlantsTheAnchor)
 	CHECK_FALSE(MooredModeService::is_moored());
 }
 
-TEST(MooredMode, MoorsAfterEnterFixes)
-{
+TEST(MooredMode, MoorsAfterEnterFixes) {
 	enable(150, 3);
-	feed_still(3);   // anchor + 2 stationary
+	feed_still(3);  // anchor + 2 stationary
 	CHECK_FALSE(MooredModeService::is_moored());
 	feed_still(1, 2000);
 	CHECK_TRUE(MooredModeService::is_moored());
 }
 
-TEST(MooredMode, GnssNoiseInsideRadiusStillMoors)
-{
+TEST(MooredMode, GnssNoiseInsideRadiusStillMoors) {
 	enable(150, 3);
 	// +/- 5 m of receiver noise around the berth must not reset the counter.
 	MooredModeService::on_gnss_fix(BASE_LAT, BASE_LON, 0, 1000);
-	MooredModeService::on_gnss_fix(BASE_LAT + lat_offset_m(5),  BASE_LON, 0, 1060);
-	MooredModeService::on_gnss_fix(BASE_LAT - lat_offset_m(4),  BASE_LON, 0, 1120);
-	MooredModeService::on_gnss_fix(BASE_LAT + lat_offset_m(3),  BASE_LON, 0, 1180);
+	MooredModeService::on_gnss_fix(BASE_LAT + lat_offset_m(5), BASE_LON, 0, 1060);
+	MooredModeService::on_gnss_fix(BASE_LAT - lat_offset_m(4), BASE_LON, 0, 1120);
+	MooredModeService::on_gnss_fix(BASE_LAT + lat_offset_m(3), BASE_LON, 0, 1180);
 	CHECK_TRUE(MooredModeService::is_moored());
 }
 
-TEST(MooredMode, OneFixOutsideRadiusResetsTheCounter)
-{
+TEST(MooredMode, OneFixOutsideRadiusResetsTheCounter) {
 	enable(150, 3);
-	feed_still(3);                                                    // anchor + 2
+	feed_still(3);  // anchor + 2
 	MooredModeService::on_gnss_fix(BASE_LAT + lat_offset_m(200), BASE_LON, 0, 1200);
 	CHECK_FALSE(MooredModeService::is_moored());
 	CHECK_EQUAL(0, (int)MooredModeService::stationary_fixes());
 	// And the anchor moved with the vessel, so the next still run is measured
 	// from where it actually stopped.
 	feed_still(3, 1300);
-	CHECK_FALSE(MooredModeService::is_moored());   // those 3 are 200 m from the NEW anchor
+	CHECK_FALSE(MooredModeService::is_moored());  // those 3 are 200 m from the NEW anchor
 }
 
-TEST(MooredMode, RadiusIsFlooredAtTenMetres)
-{
+TEST(MooredMode, RadiusIsFlooredAtTenMetres) {
 	// LittleFS does not checksum file DATA, so a corrupted 0 can reach the
 	// classifier even though DTE clamps writes to >= 10 m. A 0 radius would
 	// make every fix "movement" and silently kill the economy.
 	enable(0, 2);
-    fake_config_store->write_param(ParamID::MOORED_RADIUS_M, 0U);
+	fake_config_store->write_param(ParamID::MOORED_RADIUS_M, 0U);
 	MooredModeService::on_gnss_fix(BASE_LAT, BASE_LON, 0, 1000);
 	MooredModeService::on_gnss_fix(BASE_LAT + lat_offset_m(5), BASE_LON, 0, 1060);
 	MooredModeService::on_gnss_fix(BASE_LAT + lat_offset_m(3), BASE_LON, 0, 1120);
@@ -145,16 +137,14 @@ TEST(MooredMode, RadiusIsFlooredAtTenMetres)
 
 // === Leaving MOORED on GNSS evidence =======================================
 
-TEST(MooredMode, ExitsOnDisplacement)
-{
+TEST(MooredMode, ExitsOnDisplacement) {
 	enable();
 	moor_it();
 	MooredModeService::on_gnss_fix(BASE_LAT + lat_offset_m(500), BASE_LON, 0, 3000);
 	CHECK_FALSE(MooredModeService::is_moored());
 }
 
-TEST(MooredMode, ExitsOnGroundSpeedEvenWithoutDisplacement)
-{
+TEST(MooredMode, ExitsOnGroundSpeedEvenWithoutDisplacement) {
 	enable();
 	moor_it();
 	// Same coordinates, but the receiver reports 2 m/s: the vessel is under way
@@ -163,24 +153,21 @@ TEST(MooredMode, ExitsOnGroundSpeedEvenWithoutDisplacement)
 	CHECK_FALSE(MooredModeService::is_moored());
 }
 
-TEST(MooredMode, SpeedBelowThresholdDoesNotExit)
-{
+TEST(MooredMode, SpeedBelowThresholdDoesNotExit) {
 	enable();
 	moor_it();
-	MooredModeService::on_gnss_fix(BASE_LAT, BASE_LON,
-	                               MooredModeService::UNDERWAY_SPEED_MMS, 3000);
-	CHECK_TRUE(MooredModeService::is_moored());   // strictly greater-than
+	MooredModeService::on_gnss_fix(BASE_LAT, BASE_LON, MooredModeService::UNDERWAY_SPEED_MMS, 3000);
+	CHECK_TRUE(MooredModeService::is_moored());  // strictly greater-than
 }
 
-TEST(MooredMode, SlowDriftAccumulatesAgainstFixedAnchorAndExits)
-{
+TEST(MooredMode, SlowDriftAccumulatesAgainstFixedAnchorAndExits) {
 	// The property the whole design hangs on: the reference is NOT re-centred
 	// while stationary. A vessel creeping 30 m per fix stays "inside the
 	// radius" relative to its previous position forever, but accumulates
 	// against the anchor and eventually crosses it.
 	enable(150, 3);
-	MooredModeService::on_gnss_fix(BASE_LAT, BASE_LON, 0, 1000);          // anchor
-	for (unsigned int step = 1; step <= 3; step++)                        // +30, +60, +90
+	MooredModeService::on_gnss_fix(BASE_LAT, BASE_LON, 0, 1000);  // anchor
+	for (unsigned int step = 1; step <= 3; step++)                // +30, +60, +90
 		MooredModeService::on_gnss_fix(BASE_LAT + lat_offset_m(30.0 * step), BASE_LON, 0, 1000 + step);
 	CHECK_TRUE(MooredModeService::is_moored());
 
@@ -189,11 +176,10 @@ TEST(MooredMode, SlowDriftAccumulatesAgainstFixedAnchorAndExits)
 	MooredModeService::on_gnss_fix(BASE_LAT + lat_offset_m(149), BASE_LON, 0, 1005);
 	CHECK_TRUE(MooredModeService::is_moored());
 	MooredModeService::on_gnss_fix(BASE_LAT + lat_offset_m(180), BASE_LON, 0, 1006);
-	CHECK_FALSE(MooredModeService::is_moored());   // drifted off the mooring
+	CHECK_FALSE(MooredModeService::is_moored());  // drifted off the mooring
 }
 
-TEST(MooredMode, ReMoorsAtTheNewBerth)
-{
+TEST(MooredMode, ReMoorsAtTheNewBerth) {
 	enable(150, 3);
 	moor_it();
 	MooredModeService::on_gnss_fix(BASE_LAT + lat_offset_m(900), BASE_LON, 0, 3000);
@@ -206,18 +192,16 @@ TEST(MooredMode, ReMoorsAtTheNewBerth)
 
 // === Leaving MOORED on accelerometer evidence ==============================
 
-TEST(MooredMode, MotionEventsExitAfterExitEvents)
-{
+TEST(MooredMode, MotionEventsExitAfterExitEvents) {
 	enable(150, 3, 2, 0);
 	moor_it();
 	MooredModeService::on_motion_event(2000);
-	CHECK_TRUE(MooredModeService::is_moored());    // one wave is not a departure
+	CHECK_TRUE(MooredModeService::is_moored());  // one wave is not a departure
 	MooredModeService::on_motion_event(2010);
 	CHECK_FALSE(MooredModeService::is_moored());
 }
 
-TEST(MooredMode, MotionEventsIgnoredWhenAlreadyUnderway)
-{
+TEST(MooredMode, MotionEventsIgnoredWhenAlreadyUnderway) {
 	enable(150, 3, 2, 0);
 	MooredModeService::on_motion_event(1000);
 	MooredModeService::on_motion_event(1010);
@@ -226,8 +210,7 @@ TEST(MooredMode, MotionEventsIgnoredWhenAlreadyUnderway)
 	CHECK_EQUAL(0, (int)MooredModeService::motion_events());
 }
 
-TEST(MooredMode, HoldoffSuppressesRepeatedMotionExits)
-{
+TEST(MooredMode, HoldoffSuppressesRepeatedMotionExits) {
 	// Swell trips the accelerometer over and over. Without the hold-off each
 	// trip costs a GNSS acquisition (via GNSS_TRIGGER_ON_AXL_WAKEUP) and the
 	// economy evaporates.
@@ -235,7 +218,7 @@ TEST(MooredMode, HoldoffSuppressesRepeatedMotionExits)
 	moor_it();
 	MooredModeService::on_motion_event(2000);
 	MooredModeService::on_motion_event(2010);
-	CHECK_FALSE(MooredModeService::is_moored());   // first exit at t=2010
+	CHECK_FALSE(MooredModeService::is_moored());  // first exit at t=2010
 
 	// Re-moor at the same berth.
 	feed_still(3, 2100);
@@ -253,8 +236,7 @@ TEST(MooredMode, HoldoffSuppressesRepeatedMotionExits)
 	CHECK_FALSE(MooredModeService::is_moored());
 }
 
-TEST(MooredMode, HoldoffZeroAllowsBackToBackExits)
-{
+TEST(MooredMode, HoldoffZeroAllowsBackToBackExits) {
 	enable(150, 3, 1, 0);
 	moor_it();
 	MooredModeService::on_motion_event(2000);
@@ -267,15 +249,14 @@ TEST(MooredMode, HoldoffZeroAllowsBackToBackExits)
 
 // === Robustness ============================================================
 
-TEST(MooredMode, RtcRollbackDoesNotFreezeTheHoldoffForever)
-{
+TEST(MooredMode, RtcRollbackDoesNotFreezeTheHoldoffForever) {
 	// A WDT reset can bring the RTC back to the virtual epoch while .noinit
 	// still holds real-epoch timestamps. Left alone, the hold-off comparison
 	// would suppress every accelerometer exit for ~50 years — the tracker would
 	// stay moored while the boat sailed away.
 	enable(150, 3, 1, 900);
 	moor_it();
-	MooredModeService::on_motion_event(1580083200);   // exit, stamps a real epoch
+	MooredModeService::on_motion_event(1580083200);  // exit, stamps a real epoch
 	CHECK_FALSE(MooredModeService::is_moored());
 
 	// RTC rolls back to the virtual frame.
@@ -288,16 +269,14 @@ TEST(MooredMode, RtcRollbackDoesNotFreezeTheHoldoffForever)
 	CHECK_FALSE(MooredModeService::is_moored());
 }
 
-TEST(MooredMode, RestoreStateKeepsAValidCrcState)
-{
+TEST(MooredMode, RestoreStateKeepsAValidCrcState) {
 	enable();
 	moor_it();
-	MooredModeService::restore_state();   // CRC matches -> state survives
+	MooredModeService::restore_state();  // CRC matches -> state survives
 	CHECK_TRUE(MooredModeService::is_moored());
 }
 
-TEST(MooredMode, StatePublishedToReadOnlyParam)
-{
+TEST(MooredMode, StatePublishedToReadOnlyParam) {
 	enable();
 	moor_it();
 	CHECK_EQUAL(1U, fake_config_store->read_param<unsigned int>(ParamID::MOORED_STATE));
@@ -305,12 +284,9 @@ TEST(MooredMode, StatePublishedToReadOnlyParam)
 	CHECK_EQUAL(0U, fake_config_store->read_param<unsigned int>(ParamID::MOORED_STATE));
 }
 
-TEST(MooredMode, DistanceToReferenceIsNegativeBeforeFirstFix)
-{
+TEST(MooredMode, DistanceToReferenceIsNegativeBeforeFirstFix) {
 	enable();
 	DOUBLES_EQUAL(-1.0, MooredModeService::distance_to_reference_m(BASE_LAT, BASE_LON), 0.001);
 	MooredModeService::on_gnss_fix(BASE_LAT, BASE_LON, 0, 1000);
-	DOUBLES_EQUAL(100.0,
-	              MooredModeService::distance_to_reference_m(BASE_LAT + lat_offset_m(100), BASE_LON),
-	              1.0);
+	DOUBLES_EQUAL(100.0, MooredModeService::distance_to_reference_m(BASE_LAT + lat_offset_m(100), BASE_LON), 1.0);
 }

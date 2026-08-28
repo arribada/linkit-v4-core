@@ -23,34 +23,25 @@ struct __attribute__((packed)) CDTLogEntry {
 	};
 };
 
-enum class CDTSensorPort : unsigned int {
-	CONDUCTIVITY,
-	DEPTH,
-	TEMPERATURE
-};
+enum class CDTSensorPort : unsigned int { CONDUCTIVITY, DEPTH, TEMPERATURE };
 
 /// @brief CSV log formatter for CDT entries (used by DUMPD command).
 class CDTLogFormatter : public LogFormatter {
 public:
-	const std::string header() override {
-		return "log_datetime,conductivity,depth,temperature\r\n";
-	}
-	const std::string log_entry(const LogEntry& e) override {
+	const std::string header() override { return "log_datetime,conductivity,depth,temperature\r\n"; }
+	const std::string log_entry(const LogEntry &e) override {
 		char entry[512], d1[128];
 		const auto *log = reinterpret_cast<const CDTLogEntry *>(&e);
 		std::time_t t;
 		std::tm *tm;
 
-		t = convert_epochtime(log->header.year, log->header.month, log->header.day, log->header.hours, log->header.minutes, log->header.seconds);
+		t = convert_epochtime(log->header.year, log->header.month, log->header.day, log->header.hours,
+		                      log->header.minutes, log->header.seconds);
 		tm = std::gmtime(&t);
 		std::strftime(d1, sizeof(d1), "%d/%m/%Y %H:%M:%S", tm);
 
 		// Convert to CSV
-		snprintf(entry, sizeof(entry), "%s,%f,%f,%f\r\n",
-				d1,
-				log->conductivity,
-				log->depth,
-				log->temperature);
+		snprintf(entry, sizeof(entry), "%s,%f,%f,%f\r\n", d1, log->conductivity, log->depth, log->temperature);
 		return std::string(entry);
 	}
 };
@@ -59,12 +50,13 @@ public:
 /// @brief CDT sensor service — reads conductivity/depth/temperature, logs periodically.
 class CDTSensorService : public SensorService {
 public:
-	CDTSensorService(Sensor& sensor, Logger *logger) : SensorService(sensor, ServiceIdentifier::CDT_SENSOR, "CDT", logger) {}
+	CDTSensorService(Sensor &sensor, Logger *logger)
+	    : SensorService(sensor, ServiceIdentifier::CDT_SENSOR, "CDT", logger) {}
 
 private:
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Warray-bounds"
-	void sensor_populate_log_entry(LogEntry *e, ServiceSensorData& data) override {
+	void sensor_populate_log_entry(LogEntry *e, ServiceSensorData &data) override {
 		auto *log = reinterpret_cast<CDTLogEntry *>(e);
 		log->conductivity = data.port[static_cast<unsigned int>(CDTSensorPort::CONDUCTIVITY)];
 		log->depth = data.port[static_cast<unsigned int>(CDTSensorPort::DEPTH)];
@@ -75,13 +67,10 @@ private:
 
 	unsigned int sensor_num_channels() override { return 3U; }
 
-	bool sensor_is_enabled() override {
-		return service_read_param<bool>(ParamID::CDT_SENSOR_ENABLE);
-	}
+	bool sensor_is_enabled() override { return service_read_param<bool>(ParamID::CDT_SENSOR_ENABLE); }
 
 	unsigned int sensor_periodic() override {
-		unsigned int schedule =
-				1000 * service_read_param<unsigned int>(ParamID::CDT_SENSOR_PERIODIC);
+		unsigned int schedule = 1000 * service_read_param<unsigned int>(ParamID::CDT_SENSOR_PERIODIC);
 		return schedule == 0 ? Service::SCHEDULE_DISABLED : schedule;
 	}
 };

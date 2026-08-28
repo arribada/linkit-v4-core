@@ -29,27 +29,22 @@ public:
 /// @brief Global sensor registry — find sensors by name for config store reads.
 class SensorManager {
 private:
-	static inline std::map<std::string, Sensor&> m_map;
+	static inline std::map<std::string, Sensor &> m_map;
 
 public:
-	static void add(Sensor& s, const char *name) {
-		if (m_map.count(std::string(name)))
-			throw ErrorCode::KEY_ALREADY_EXISTS; // Don't allow duplicate keys
-		m_map.insert({std::string(name), s});
+	static void add(Sensor &s, const char *name) {
+		if (m_map.count(std::string(name))) throw ErrorCode::KEY_ALREADY_EXISTS;  // Don't allow duplicate keys
+		m_map.insert({ std::string(name), s });
 	}
-	static void remove(Sensor& s) {
+	static void remove(Sensor &s) {
 		for (auto const &p : m_map) {
 			if (&p.second == &s) {
 				m_map.erase(p.first);
 				return;
 			}
 		}
-		throw ErrorCode::KEY_DOES_NOT_EXIST; // Don't allow a remove that doesn't exist
+		throw ErrorCode::KEY_DOES_NOT_EXIST;  // Don't allow a remove that doesn't exist
 	}
-	static Sensor &find_by_name(const char *name) {
-		return m_map.at(std::string(name));
-	}
-	static void clear() {
-		m_map.clear();
-	}
+	static Sensor &find_by_name(const char *name) { return m_map.at(std::string(name)); }
+	static void clear() { m_map.clear(); }
 };

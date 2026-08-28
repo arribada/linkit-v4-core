@@ -18,22 +18,19 @@
 
 class AsyncLowLevel;
 
-enum UBXCommsMgaDbdStatus {
-	SUCCESS,
-	INCORRECT_NUM_MESSAGES
-};
+enum UBXCommsMgaDbdStatus { SUCCESS, INCORRECT_NUM_MESSAGES };
 struct UBXCommsEventNavReport {
-    UBX::NAV::PVT::MSG_PVT       pvt;
-    UBX::NAV::STATUS::MSG_STATUS status;
-    UBX::NAV::DOP::MSG_DOP       dop;
+	UBX::NAV::PVT::MSG_PVT pvt;
+	UBX::NAV::STATUS::MSG_STATUS status;
+	UBX::NAV::DOP::MSG_DOP dop;
 };
 struct UBXCommsEventSatReport {
-	UBX::NAV::SAT::MSG_SAT       sat;
+	UBX::NAV::SAT::MSG_SAT sat;
 };
 struct UBXCommsEventSent {};
 struct UBXCommsEventError {
-    unsigned int error_type;
-    UBXCommsEventError(unsigned int a) : error_type(a) {}
+	unsigned int error_type;
+	UBXCommsEventError(unsigned int a) : error_type(a) {}
 };
 struct UBXCommsEventDebug {
 	uint8_t *buffer;
@@ -56,9 +53,9 @@ struct UBXCommsEventMgaAck {
 	UBXCommsEventMgaAck(bool a, unsigned int b) : ack(a), num_dbd_messages(b) {}
 };
 struct UBXCommsEventMgaDBD {
-	uint8_t * const database;
-	unsigned int    length;
-	UBXCommsEventMgaDBD(uint8_t * const a, unsigned int b) : database(a), length(b) {}
+	uint8_t *const database;
+	unsigned int length;
+	UBXCommsEventMgaDBD(uint8_t *const a, unsigned int b) : database(a), length(b) {}
 };
 
 struct UBXCommsEventRawMeasurement {
@@ -105,28 +102,27 @@ struct UBXCommsEventSecUniqId {
 class UBXCommsEventListener {
 public:
 	virtual ~UBXCommsEventListener() {}
-	virtual void react(const UBXCommsEventSendComplete&) {}
-	virtual void react(const UBXCommsEventAckNack&) {}
-	virtual void react(const UBXCommsEventCfgValget&) {}
-	virtual void react(const UBXCommsEventMgaAck&) {}
-	virtual void react(const UBXCommsEventNavReport&) {}
-    virtual void react(const UBXCommsEventSatReport&) {}
-	virtual void react(const UBXCommsEventMgaDBD&) {}
-	virtual void react(const UBXCommsEventMonVer&) {}
-	virtual void react(const UBXCommsEventSecUniqId&) {}
-	virtual void react(const UBXCommsEventRawMeasurement&) {}
-	virtual void react(const UBXCommsEventDebug&) {}
-	virtual void react(const UBXCommsEventError&) {}
+	virtual void react(const UBXCommsEventSendComplete &) {}
+	virtual void react(const UBXCommsEventAckNack &) {}
+	virtual void react(const UBXCommsEventCfgValget &) {}
+	virtual void react(const UBXCommsEventMgaAck &) {}
+	virtual void react(const UBXCommsEventNavReport &) {}
+	virtual void react(const UBXCommsEventSatReport &) {}
+	virtual void react(const UBXCommsEventMgaDBD &) {}
+	virtual void react(const UBXCommsEventMonVer &) {}
+	virtual void react(const UBXCommsEventSecUniqId &) {}
+	virtual void react(const UBXCommsEventRawMeasurement &) {}
+	virtual void react(const UBXCommsEventDebug &) {}
+	virtual void react(const UBXCommsEventError &) {}
 };
 
 class UBXComms : public EventEmitter<UBXCommsEventListener> {
 public:
 	UBXComms(unsigned int libuarte_async_instance = 0);
 	template <typename T>
-	void send_packet_with_expect(UBX::MessageClass cls, uint8_t id, const T& content,
-								UBX::MessageClass resp_cls = UBX::MessageClass::MSG_CLASS_ACK,
-								uint8_t resp_msg_id = UBX::ACK::ID_ACK, 
-								size_t dynamic_size = 0) {
+	void send_packet_with_expect(UBX::MessageClass cls, uint8_t id, const T &content,
+	                             UBX::MessageClass resp_cls = UBX::MessageClass::MSG_CLASS_ACK,
+	                             uint8_t resp_msg_id = UBX::ACK::ID_ACK, size_t dynamic_size = 0) {
 		unsigned int content_size;
 		if constexpr (std::is_same<T, UBX::Empty>::value) {
 			content_size = 0;
@@ -144,7 +140,8 @@ public:
 		msg->msgLength = content_size;
 		std::memcpy(msg->payload, &content, content_size);
 
-		compute_crc((const uint8_t * const)&msg->msgClass, content_size + sizeof(UBX::Header) - 2, msg->payload[msg->msgLength], msg->payload[msg->msgLength+1]);
+		compute_crc((const uint8_t *const)&msg->msgClass, content_size + sizeof(UBX::Header) - 2,
+		            msg->payload[msg->msgLength], msg->payload[msg->msgLength + 1]);
 		send_with_expect(m_tx_buffer, content_size + sizeof(UBX::Header) + 2, resp_cls, resp_msg_id);
 	}
 
@@ -152,19 +149,17 @@ public:
 	void deinit();
 
 	// Send raw bytes to UART (for bridge/passthrough mode)
-	bool send_raw(const uint8_t* data, size_t len);
+	bool send_raw(const uint8_t *data, size_t len);
 
 	// Bridge/passthrough mode: forward raw UART RX to callback instead of parsing UBX
-	using PassthroughCallback = std::function<void(const uint8_t*, size_t)>;
+	using PassthroughCallback = std::function<void(const uint8_t *, size_t)>;
 	void set_passthrough(bool active, PassthroughCallback callback = nullptr);
 	bool is_passthrough() const { return m_passthrough_active; }
 
 	// Call from main context to forward ISR-buffered passthrough data
 	void process_passthrough_rx();
 
-	template <typename T>
-	void send_packet(UBX::MessageClass cls, uint8_t id, T content) {
-
+	template <typename T> void send_packet(UBX::MessageClass cls, uint8_t id, T content) {
 		wait_tx_idle();
 
 		unsigned int content_size;
@@ -180,14 +175,17 @@ public:
 		msg->msgId = id;
 		msg->msgLength = content_size;
 		std::memcpy(msg->payload, &content, content_size);
-		compute_crc((const uint8_t * const)&msg->msgClass, content_size + sizeof(UBX::Header) - 2, msg->payload[msg->msgLength], msg->payload[msg->msgLength+1]);
+		compute_crc((const uint8_t *const)&msg->msgClass, content_size + sizeof(UBX::Header) - 2,
+		            msg->payload[msg->msgLength], msg->payload[msg->msgLength + 1]);
 		send(m_tx_buffer, content_size + sizeof(UBX::Header) + 2);
 	}
 
 	void filter_buffer(uint8_t *buffer, unsigned int length);
 	void cancel_expect();
 	void expect(UBX::MessageClass resp_cls, uint8_t resp_msg_id);
-	void send_with_expect(uint8_t *buffer, unsigned int sz, UBX::MessageClass resp_cls = UBX::MessageClass::MSG_CLASS_ACK, uint8_t resp_msg_id = UBX::ACK::ID_ACK);
+	void send_with_expect(uint8_t *buffer, unsigned int sz,
+	                      UBX::MessageClass resp_cls = UBX::MessageClass::MSG_CLASS_ACK,
+	                      uint8_t resp_msg_id = UBX::ACK::ID_ACK);
 	void send(uint8_t *buffer, unsigned int sz, bool notify_sent = false, bool use_ext_buffer = false);
 	void wait_send() { wait_tx_idle(); }
 	void set_baudrate(unsigned int baudrate);
@@ -202,43 +200,39 @@ public:
 	void restart_rx();
 	void start_dbd_filter();
 	void stop_dbd_filter();
-	bool is_expected_msg_count(uint8_t *buffer, unsigned int length, unsigned int expected,
-			unsigned int& actual_count,
-			UBX::MessageClass msg_cls, uint8_t msg_id);
-	void copy_mga_ano_to_buffer(File& file, uint8_t *dest_buffer, const unsigned int buffer_size, std::time_t now,
-			unsigned int& num_bytes_copied, unsigned int& num_msg_copied,
-			unsigned int& ano_start_pos,
-			unsigned int ano_stale_threshold_s = 24*3600);
-	void set_debug_enable(bool e) {
-	    m_debug_enable = e;
-	}
+	bool is_expected_msg_count(uint8_t *buffer, unsigned int length, unsigned int expected, unsigned int &actual_count,
+	                           UBX::MessageClass msg_cls, uint8_t msg_id);
+	void copy_mga_ano_to_buffer(File &file, uint8_t *dest_buffer, const unsigned int buffer_size, std::time_t now,
+	                            unsigned int &num_bytes_copied, unsigned int &num_msg_copied,
+	                            unsigned int &ano_start_pos, unsigned int ano_stale_threshold_s = 24 * 3600);
+	void set_debug_enable(bool e) { m_debug_enable = e; }
 
 private:
 	// Passthrough/bridge state
 	volatile bool m_passthrough_active = false;
 	PassthroughCallback m_passthrough_callback;
-	uint8_t m_pt_isr_buf[1024];        // ISR buffer for passthrough mode
+	uint8_t m_pt_isr_buf[1024];  // ISR buffer for passthrough mode
 	volatile uint16_t m_pt_isr_buf_len = 0;
 
 	UBXCommsEventNavReport m_nav_report;
-    UBXCommsEventSatReport m_sat_report;
+	UBXCommsEventSatReport m_sat_report;
 	UBXCommsEventRawMeasurement m_raw_meas;
 	unsigned int m_instance;
 	volatile bool m_is_send_busy;
-	bool         m_notify_sent;
+	bool m_notify_sent;
 	unsigned int m_nav_report_iTOW;
 	bool m_dbd_filter_en;
 	bool m_debug_enable;
 	struct Expect {
-		bool    enable;
+		bool enable;
 		uint8_t req_cls;
 		uint8_t req_msg_id;
 		uint8_t resp_cls;
 		uint8_t resp_msg_id;
 	} m_expect;
 	uint8_t m_tx_buffer[256];
-    uint8_t m_rx_buffer[1024];
-    unsigned int m_rx_buffer_offset;
+	uint8_t m_rx_buffer[1024];
+	unsigned int m_rx_buffer_offset;
 	bool m_is_init;
 	/// RX arrete par handle_error() et pas encore relance. Evite un double
 	/// start_rx (qui re-armerait les buffers DMA du libuarte).
@@ -250,12 +244,12 @@ private:
 
 	void handle_error(unsigned int);
 	void handle_tx_done();
-	void handle_rx_buffer(uint8_t * buffer, unsigned int length);
-	UBX::HeaderAndPayloadCRC *parse_message(uint8_t ** buffer, unsigned int *length);
-	void compute_crc(const uint8_t * const buffer, const unsigned int length, uint8_t &ck_a, uint8_t &ck_b);
-	void run_expect_filter(const UBX::HeaderAndPayloadCRC * const msg);
-	void run_nav_filter(const UBX::HeaderAndPayloadCRC * const msg);
-	void run_rxm_filter(const UBX::HeaderAndPayloadCRC * const msg);
+	void handle_rx_buffer(uint8_t *buffer, unsigned int length);
+	UBX::HeaderAndPayloadCRC *parse_message(uint8_t **buffer, unsigned int *length);
+	void compute_crc(const uint8_t *const buffer, const unsigned int length, uint8_t &ck_a, uint8_t &ck_b);
+	void run_expect_filter(const UBX::HeaderAndPayloadCRC *const msg);
+	void run_nav_filter(const UBX::HeaderAndPayloadCRC *const msg);
+	void run_rxm_filter(const UBX::HeaderAndPayloadCRC *const msg);
 	void run_dbd_filter(uint8_t *buffer, unsigned int length);
 
 	friend AsyncLowLevel;

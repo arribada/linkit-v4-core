@@ -39,8 +39,7 @@ void PMU::kick_watchdog() {
 	// (ErrorState, BatteryCriticalState) added extra kick_watchdog() calls.
 }
 
-void PMU::print_stack() {
-}
+void PMU::print_stack() {}
 
 void PMU::save_stack(PMULogType type) {
 	// No-op in host tests — real PMU logs the crash type to .noinit RAM
@@ -54,11 +53,11 @@ ResetCause PMU::reset_cause() {
 	return ResetCause::POWER_ON;
 }
 
-const char* PMU::reset_cause_str() {
+const char *PMU::reset_cause_str() {
 	return "UNKNOWN";
 }
 
-const char* PMU::hardware_version() {
+const char *PMU::hardware_version() {
 	return "simulator";
 }
 
@@ -67,8 +66,7 @@ uint32_t PMU::device_identifier() {
 }
 
 uint64_t PMU::get_timestamp_ms() {
-	if (system_timer)
-		return system_timer->get_counter();
+	if (system_timer) return system_timer->get_counter();
 	static auto start = std::chrono::steady_clock::now();
 	auto now = std::chrono::steady_clock::now();
 	return std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count();
@@ -78,14 +76,11 @@ bool PMU::was_firmware_updated() {
 	return false;
 }
 
-void PMU::set_firmware_updated_flag() {
-}
+void PMU::set_firmware_updated_flag() {}
 
-void PMU::reduce_power_rails() {
-}
+void PMU::reduce_power_rails() {}
 
-void PMU::restore_power_rails() {
-}
+void PMU::restore_power_rails() {}
 
 int PMU::get_die_temperature_c() {
 	return 25;  // Mock sentinel — matches the real PMU error fallback.

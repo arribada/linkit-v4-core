@@ -21,73 +21,72 @@
 #include "nrf_gpio.h"
 
 SmdSatCmdSpi::SmdSatCmdSpi()
-    : m_nrf_spim(nullptr)
-    , m_protocol_mode(SpiProtocolMode::APLUS)
-    , m_sequence_number(0)
-    , m_protocol_detected(true)
-    , m_seq_reset_attempted(false)
-    , m_dfu_mode(false)
-{
-    memset(&m_dfu_info, 0, sizeof(m_dfu_info));
+    : m_nrf_spim(nullptr),
+      m_protocol_mode(SpiProtocolMode::APLUS),
+      m_sequence_number(0),
+      m_protocol_detected(true),
+      m_seq_reset_attempted(false),
+      m_dfu_mode(false) {
+	memset(&m_dfu_info, 0, sizeof(m_dfu_info));
 }
 
 SmdSatCmdSpi::~SmdSatCmdSpi() {
-    deinit();
+	deinit();
 }
 
 void SmdSatCmdSpi::init() {
-    if (m_nrf_spim == nullptr) {
-        m_nrf_spim = new (std::nothrow) NrfSPIM(SPI_SATELLITE);
-        if (m_nrf_spim == nullptr) {
-            DEBUG_ERROR("SmdSatCmdSpi::init: SPI allocation failed");
-            throw ErrorCode::RESOURCE_NOT_AVAILABLE;
-        }
-        // CS is managed by NrfSPIM::transfer() — do NOT force it low here
-    }
-    m_protocol_mode = SpiProtocolMode::APLUS;
-    m_protocol_detected = true;
-    m_sequence_number = 0;
-    m_seq_reset_attempted = false;
+	if (m_nrf_spim == nullptr) {
+		m_nrf_spim = new (std::nothrow) NrfSPIM(SPI_SATELLITE);
+		if (m_nrf_spim == nullptr) {
+			DEBUG_ERROR("SmdSatCmdSpi::init: SPI allocation failed");
+			throw ErrorCode::RESOURCE_NOT_AVAILABLE;
+		}
+		// CS is managed by NrfSPIM::transfer() — do NOT force it low here
+	}
+	m_protocol_mode = SpiProtocolMode::APLUS;
+	m_protocol_detected = true;
+	m_sequence_number = 0;
+	m_seq_reset_attempted = false;
 }
 
 void SmdSatCmdSpi::deinit() {
-    if (m_nrf_spim) {
-        delete m_nrf_spim;
-        m_nrf_spim = nullptr;
-        nrf_gpio_cfg_output(BSP::SPI_Inits[SPI_SATELLITE].config.ss_pin);
-        nrf_gpio_pin_clear(BSP::SPI_Inits[SPI_SATELLITE].config.ss_pin);
-        nrf_gpio_cfg_input(BSP::SPI_Inits[SPI_SATELLITE].config.mosi_pin, NRF_GPIO_PIN_PULLDOWN);
-        nrf_gpio_cfg_input(BSP::SPI_Inits[SPI_SATELLITE].config.miso_pin, NRF_GPIO_PIN_PULLDOWN);
-        nrf_gpio_cfg_input(BSP::SPI_Inits[SPI_SATELLITE].config.sck_pin, NRF_GPIO_PIN_PULLDOWN);
-    }
+	if (m_nrf_spim) {
+		delete m_nrf_spim;
+		m_nrf_spim = nullptr;
+		nrf_gpio_cfg_output(BSP::SPI_Inits[SPI_SATELLITE].config.ss_pin);
+		nrf_gpio_pin_clear(BSP::SPI_Inits[SPI_SATELLITE].config.ss_pin);
+		nrf_gpio_cfg_input(BSP::SPI_Inits[SPI_SATELLITE].config.mosi_pin, NRF_GPIO_PIN_PULLDOWN);
+		nrf_gpio_cfg_input(BSP::SPI_Inits[SPI_SATELLITE].config.miso_pin, NRF_GPIO_PIN_PULLDOWN);
+		nrf_gpio_cfg_input(BSP::SPI_Inits[SPI_SATELLITE].config.sck_pin, NRF_GPIO_PIN_PULLDOWN);
+	}
 }
 
 void SmdSatCmdSpi::read_byte(uint8_t *byte_read) {
-    nrf_delay_ms(SMDSAT_DELAY_CMD_MS);
-    uint8_t read_cmd = SMDSAT_CMD_NONE;
-    int ret;
+	nrf_delay_ms(SMDSAT_DELAY_CMD_MS);
+	uint8_t read_cmd = SMDSAT_CMD_NONE;
+	int ret;
 
-    ret = m_nrf_spim->transfer(&read_cmd, byte_read, sizeof(read_cmd));
-    if (ret) {
-       throw ErrorCode::SPI_COMMS_ERROR;
+	ret = m_nrf_spim->transfer(&read_cmd, byte_read, sizeof(read_cmd));
+	if (ret) {
+		throw ErrorCode::SPI_COMMS_ERROR;
 	}
 }
 
 void SmdSatCmdSpi::send_command(uint8_t command) {
-    uint8_t buffer_read;
-    int ret;
-	DEBUG_TRACE("%s::Send %u",__func__, command);
+	uint8_t buffer_read;
+	int ret;
+	DEBUG_TRACE("%s::Send %u", __func__, command);
 
-    ret = m_nrf_spim->transfer(&command, &buffer_read, sizeof(command));
-    if (ret) {
-       throw ErrorCode::SPI_COMMS_ERROR;
+	ret = m_nrf_spim->transfer(&command, &buffer_read, sizeof(command));
+	if (ret) {
+		throw ErrorCode::SPI_COMMS_ERROR;
 	}
 }
 
 void SmdSatCmdSpi::send_command(const uint8_t *tx_data, uint8_t *rx_data, uint16_t size) {
-    int ret = m_nrf_spim->transfer(tx_data, rx_data, size);
-    if (ret) {
-       throw ErrorCode::SPI_COMMS_ERROR;
+	int ret = m_nrf_spim->transfer(tx_data, rx_data, size);
+	if (ret) {
+		throw ErrorCode::SPI_COMMS_ERROR;
 	}
 }
 
@@ -102,133 +101,133 @@ void SmdSatCmdSpi::send_command(const uint8_t *tx_data, uint8_t *rx_data, uint16
 // ============================================================================
 
 uint16_t SmdSatCmdSpi::build_aplus_frame(uint8_t *frame, uint8_t cmd, const uint8_t *data, uint16_t data_len) {
-    // Max data that fits in a single 64-byte frame: 64 - 4(header) - 1(CRC) = 59
-    constexpr uint16_t single_frame_capacity = SPI_PROTOCOL_APLUS_FRAME_SIZE
-        - SPI_PROTOCOL_APLUS_HEADER_LEN - SPI_PROTOCOL_APLUS_CRC_LEN;
-    if (data_len > single_frame_capacity) {
-        DEBUG_ERROR("SmdSatCmdSpi::%s: Data too long for single frame (%u > %u)", __func__, data_len, single_frame_capacity);
-        return 0;
-    }
+	// Max data that fits in a single 64-byte frame: 64 - 4(header) - 1(CRC) = 59
+	constexpr uint16_t single_frame_capacity =
+	    SPI_PROTOCOL_APLUS_FRAME_SIZE - SPI_PROTOCOL_APLUS_HEADER_LEN - SPI_PROTOCOL_APLUS_CRC_LEN;
+	if (data_len > single_frame_capacity) {
+		DEBUG_ERROR("SmdSatCmdSpi::%s: Data too long for single frame (%u > %u)", __func__, data_len,
+		            single_frame_capacity);
+		return 0;
+	}
 
-    // Initialize frame with padding
-    memset(frame, SPI_PROTOCOL_APLUS_PAD_BYTE, SPI_PROTOCOL_APLUS_FRAME_SIZE);
+	// Initialize frame with padding
+	memset(frame, SPI_PROTOCOL_APLUS_PAD_BYTE, SPI_PROTOCOL_APLUS_FRAME_SIZE);
 
-    uint16_t idx = 0;
+	uint16_t idx = 0;
 
-    // Build frame: [MAGIC][SEQ][CMD][LEN][DATA][CRC8][PADDING...]
-    frame[idx++] = SPI_PROTOCOL_APLUS_MAGIC_REQUEST;
-    frame[idx++] = m_sequence_number;
-    frame[idx++] = cmd;
-    frame[idx++] = static_cast<uint8_t>(data_len);
+	// Build frame: [MAGIC][SEQ][CMD][LEN][DATA][CRC8][PADDING...]
+	frame[idx++] = SPI_PROTOCOL_APLUS_MAGIC_REQUEST;
+	frame[idx++] = m_sequence_number;
+	frame[idx++] = cmd;
+	frame[idx++] = static_cast<uint8_t>(data_len);
 
-    // Copy data if any
-    if (data != nullptr && data_len > 0) {
-        memcpy(&frame[idx], data, data_len);
-        idx += data_len;
-    }
+	// Copy data if any
+	if (data != nullptr && data_len > 0) {
+		memcpy(&frame[idx], data, data_len);
+		idx += data_len;
+	}
 
-    // Calculate CRC-8 over MAGIC + SEQ + CMD + LEN + DATA (includes MAGIC!)
-    uint8_t crc = spi_crc8_ccitt(frame, idx);
-    frame[idx++] = crc;
+	// Calculate CRC-8 over MAGIC + SEQ + CMD + LEN + DATA (includes MAGIC!)
+	uint8_t crc = spi_crc8_ccitt(frame, idx);
+	frame[idx++] = crc;
 
-    DEBUG_TRACE("SmdSatCmdSpi::%s: Frame built - SEQ=%u | CMD=0x%02X | LEN=%u | CRC=0x%02X",
-                __func__, m_sequence_number, cmd, data_len, crc);
+	DEBUG_TRACE("SmdSatCmdSpi::%s: Frame built - SEQ=%u | CMD=0x%02X | LEN=%u | CRC=0x%02X", __func__,
+	            m_sequence_number, cmd, data_len, crc);
 
-    // Return fixed frame size for SPI transfer
-    return SPI_PROTOCOL_APLUS_FRAME_SIZE;
+	// Return fixed frame size for SPI transfer
+	return SPI_PROTOCOL_APLUS_FRAME_SIZE;
 }
 
 bool SmdSatCmdSpi::parse_aplus_response(const uint8_t *rx_buffer, uint16_t rx_len, SpiAplusResponse *response) {
-    if (response == nullptr || rx_buffer == nullptr) {
-        return false;
-    }
+	if (response == nullptr || rx_buffer == nullptr) {
+		return false;
+	}
 
-    response->valid = false;
-    response->data_len = 0;
-    response->crc_error = false;
-    response->raw_status = 0;
+	response->valid = false;
+	response->data_len = 0;
+	response->crc_error = false;
+	response->raw_status = 0;
 
-    // Scan for response magic byte, skipping IDLE (0xAA) and padding (0xFF)
-    // (matches Zephyr parse_response_frame behavior)
-    uint16_t offset = 0;
-    while (offset < rx_len) {
-        if (rx_buffer[offset] == SPI_PROTOCOL_APLUS_MAGIC_RESPONSE) {
-            break;
-        }
-        if (rx_buffer[offset] == SPI_PROTOCOL_APLUS_BUSY_PATTERN) {
-            DEBUG_TRACE("SmdSatCmdSpi::%s: BUSY pattern at offset %u", __func__, offset);
-            response->status = SPI_APLUS_STATUS_BUSY;
-            return false;
-        }
-        if (rx_buffer[offset] != SPI_PROTOCOL_APLUS_IDLE_PATTERN &&
-            rx_buffer[offset] != SPI_PROTOCOL_APLUS_PAD_BYTE) {
-            break;
-        }
-        offset++;
-    }
+	// Scan for response magic byte, skipping IDLE (0xAA) and padding (0xFF)
+	// (matches Zephyr parse_response_frame behavior)
+	uint16_t offset = 0;
+	while (offset < rx_len) {
+		if (rx_buffer[offset] == SPI_PROTOCOL_APLUS_MAGIC_RESPONSE) {
+			break;
+		}
+		if (rx_buffer[offset] == SPI_PROTOCOL_APLUS_BUSY_PATTERN) {
+			DEBUG_TRACE("SmdSatCmdSpi::%s: BUSY pattern at offset %u", __func__, offset);
+			response->status = SPI_APLUS_STATUS_BUSY;
+			return false;
+		}
+		if (rx_buffer[offset] != SPI_PROTOCOL_APLUS_IDLE_PATTERN && rx_buffer[offset] != SPI_PROTOCOL_APLUS_PAD_BYTE) {
+			break;
+		}
+		offset++;
+	}
 
-    if (offset >= rx_len || rx_buffer[offset] != SPI_PROTOCOL_APLUS_MAGIC_RESPONSE) {
-        if (rx_buffer[0] == SPI_PROTOCOL_APLUS_IDLE_PATTERN) {
-            DEBUG_TRACE("SmdSatCmdSpi::%s: IDLE pattern - no response ready", __func__);
-            response->status = SPI_APLUS_STATUS_NOT_READY;
-        } else {
-            DEBUG_TRACE("SmdSatCmdSpi::%s: No response magic found (first byte: 0x%02X)", __func__, rx_buffer[0]);
-            response->status = SPI_APLUS_STATUS_FRAME_ERROR;
-        }
-        return false;
-    }
+	if (offset >= rx_len || rx_buffer[offset] != SPI_PROTOCOL_APLUS_MAGIC_RESPONSE) {
+		if (rx_buffer[0] == SPI_PROTOCOL_APLUS_IDLE_PATTERN) {
+			DEBUG_TRACE("SmdSatCmdSpi::%s: IDLE pattern - no response ready", __func__);
+			response->status = SPI_APLUS_STATUS_NOT_READY;
+		} else {
+			DEBUG_TRACE("SmdSatCmdSpi::%s: No response magic found (first byte: 0x%02X)", __func__, rx_buffer[0]);
+			response->status = SPI_APLUS_STATUS_FRAME_ERROR;
+		}
+		return false;
+	}
 
-    // Minimum frame: MAGIC + SEQ + STATUS + LEN + CRC = 5 bytes
-    if (rx_len - offset < SPI_PROTOCOL_APLUS_HEADER_LEN + SPI_PROTOCOL_APLUS_CRC_LEN) {
-        DEBUG_WARN("SmdSatCmdSpi::%s: Response too short after offset %u", __func__, offset);
-        return false;
-    }
+	// Minimum frame: MAGIC + SEQ + STATUS + LEN + CRC = 5 bytes
+	if (rx_len - offset < SPI_PROTOCOL_APLUS_HEADER_LEN + SPI_PROTOCOL_APLUS_CRC_LEN) {
+		DEBUG_WARN("SmdSatCmdSpi::%s: Response too short after offset %u", __func__, offset);
+		return false;
+	}
 
-    // Parse header at offset
-    response->seq = rx_buffer[offset + 1];
-    response->status = static_cast<SpiAplusStatus>(rx_buffer[offset + 2]);
-    response->raw_status = rx_buffer[offset + 2];  // preserve real status even if CRC later fails
-    uint8_t data_len = rx_buffer[offset + 3];
+	// Parse header at offset
+	response->seq = rx_buffer[offset + 1];
+	response->status = static_cast<SpiAplusStatus>(rx_buffer[offset + 2]);
+	response->raw_status = rx_buffer[offset + 2];  // preserve real status even if CRC later fails
+	uint8_t data_len = rx_buffer[offset + 3];
 
-    if (data_len > SPI_PROTOCOL_APLUS_MAX_DATA_LEN) {
-        DEBUG_WARN("SmdSatCmdSpi::%s: Invalid data length %u", __func__, data_len);
-        response->status = SPI_APLUS_STATUS_SIZE_ERROR;
-        return false;
-    }
+	if (data_len > SPI_PROTOCOL_APLUS_MAX_DATA_LEN) {
+		DEBUG_WARN("SmdSatCmdSpi::%s: Invalid data length %u", __func__, data_len);
+		response->status = SPI_APLUS_STATUS_SIZE_ERROR;
+		return false;
+	}
 
-    // Bounds check: header + data + CRC must fit in remaining buffer
-    uint16_t expected_len = SPI_PROTOCOL_APLUS_HEADER_LEN + data_len + SPI_PROTOCOL_APLUS_CRC_LEN;
-    if (rx_len - offset < expected_len) {
-        DEBUG_WARN("SmdSatCmdSpi::%s: Response incomplete: got %u | expected %u",
-                   __func__, rx_len - offset, expected_len);
-        response->status = SPI_APLUS_STATUS_FRAME_ERROR;
-        return false;
-    }
+	// Bounds check: header + data + CRC must fit in remaining buffer
+	uint16_t expected_len = SPI_PROTOCOL_APLUS_HEADER_LEN + data_len + SPI_PROTOCOL_APLUS_CRC_LEN;
+	if (rx_len - offset < expected_len) {
+		DEBUG_WARN("SmdSatCmdSpi::%s: Response incomplete: got %u | expected %u", __func__, rx_len - offset,
+		           expected_len);
+		response->status = SPI_APLUS_STATUS_FRAME_ERROR;
+		return false;
+	}
 
-    // Copy data
-    response->data_len = data_len;
-    if (data_len > 0) {
-        memcpy(response->data, &rx_buffer[offset + 4], data_len);
-    }
+	// Copy data
+	response->data_len = data_len;
+	if (data_len > 0) {
+		memcpy(response->data, &rx_buffer[offset + 4], data_len);
+	}
 
-    // Validate CRC-8 over MAGIC + SEQ + STATUS + LEN + DATA
-    uint16_t crc_data_len = SPI_PROTOCOL_APLUS_HEADER_LEN + data_len;
-    uint8_t received_crc = rx_buffer[offset + crc_data_len];
-    uint8_t calculated_crc = spi_crc8_ccitt(&rx_buffer[offset], crc_data_len);
+	// Validate CRC-8 over MAGIC + SEQ + STATUS + LEN + DATA
+	uint16_t crc_data_len = SPI_PROTOCOL_APLUS_HEADER_LEN + data_len;
+	uint8_t received_crc = rx_buffer[offset + crc_data_len];
+	uint8_t calculated_crc = spi_crc8_ccitt(&rx_buffer[offset], crc_data_len);
 
-    if (received_crc != calculated_crc) {
-        DEBUG_WARN("SmdSatCmdSpi::%s: CRC mismatch (recv=0x%02X | calc=0x%02X)",
-                   __func__, received_crc, calculated_crc);
-        response->status = SPI_APLUS_STATUS_FRAME_CRC_ERROR;
-        response->crc_error = true;  // frame structure valid, only CRC8 failed (data already copied above)
-        return false;
-    }
+	if (received_crc != calculated_crc) {
+		DEBUG_WARN("SmdSatCmdSpi::%s: CRC mismatch (recv=0x%02X | calc=0x%02X)", __func__, received_crc,
+		           calculated_crc);
+		response->status = SPI_APLUS_STATUS_FRAME_CRC_ERROR;
+		response->crc_error = true;  // frame structure valid, only CRC8 failed (data already copied above)
+		return false;
+	}
 
-    response->valid = true;
-    DEBUG_TRACE("SmdSatCmdSpi::%s: Response parsed - SEQ=%u | STATUS=%u | LEN=%u",
-                __func__, response->seq, static_cast<int>(response->status), response->data_len);
+	response->valid = true;
+	DEBUG_TRACE("SmdSatCmdSpi::%s: Response parsed - SEQ=%u | STATUS=%u | LEN=%u", __func__, response->seq,
+	            static_cast<int>(response->status), response->data_len);
 
-    return true;
+	return true;
 }
 
 // True if the command triggers a flash/NVM write on the STM32 side, which
@@ -238,283 +237,271 @@ bool SmdSatCmdSpi::parse_aplus_response(const uint8_t *rx_buffer, uint16_t rx_le
 // (e.g. READ_SPIMAC_STATE polled during RF) and causes seq_num desync
 // (per the Zephyr-derived comment in send_command_aplus).
 static bool is_flash_command(uint8_t cmd) {
-    switch (cmd) {
-        case SMDSAT_CMD_DFU_ERASE:
-        case SMDSAT_CMD_DFU_WRITE_DATA:
-        case SMDSAT_CMD_DFU_SET_HEADER:
-        case SMDSAT_CMD_WRITE_RCONF:
-        case SMDSAT_CMD_WRITE_KMAC:
-        case SMDSAT_CMD_WRITE_SECKEY:
-        case SMDSAT_CMD_SAVE_RCONF:
-        case SMDSAT_CMD_WRITE_ID:
-        case SMDSAT_CMD_WRITE_ADDR:
-        case SMDSAT_CMD_WRITE_LPM:
-        case SMDSAT_CMD_WRITE_TCXO:
-        case SMDSAT_CMD_WRITE_CW:
-        case SMDSAT_CMD_WRITE_PREPASSEN:
-        case SMDSAT_CMD_WRITE_UDATE:
-            return true;
-        default:
-            return false;
-    }
+	switch (cmd) {
+	case SMDSAT_CMD_DFU_ERASE:
+	case SMDSAT_CMD_DFU_WRITE_DATA:
+	case SMDSAT_CMD_DFU_SET_HEADER:
+	case SMDSAT_CMD_WRITE_RCONF:
+	case SMDSAT_CMD_WRITE_KMAC:
+	case SMDSAT_CMD_WRITE_SECKEY:
+	case SMDSAT_CMD_SAVE_RCONF:
+	case SMDSAT_CMD_WRITE_ID:
+	case SMDSAT_CMD_WRITE_ADDR:
+	case SMDSAT_CMD_WRITE_LPM:
+	case SMDSAT_CMD_WRITE_TCXO:
+	case SMDSAT_CMD_WRITE_CW:
+	case SMDSAT_CMD_WRITE_PREPASSEN:
+	case SMDSAT_CMD_WRITE_UDATE: return true;
+	default: return false;
+	}
 }
 
 // Command-specific delay (matches Zephyr timing constants)
 static uint32_t get_command_delay(uint8_t cmd) {
-    switch (cmd) {
-        case SMDSAT_CMD_DFU_ERASE:
-            return SMDSAT_TIMING_ERASE_MS;
-        case SMDSAT_CMD_DFU_WRITE_DATA:
-        case SMDSAT_CMD_DFU_SET_HEADER:
-        case SMDSAT_CMD_WRITE_RCONF:
-        case SMDSAT_CMD_WRITE_KMAC:
-        case SMDSAT_CMD_WRITE_SECKEY:
-        case SMDSAT_CMD_SAVE_RCONF:
-        case SMDSAT_CMD_WRITE_ID:
-        case SMDSAT_CMD_WRITE_ADDR:
-        case SMDSAT_CMD_WRITE_LPM:
-        case SMDSAT_CMD_WRITE_TCXO:
-        case SMDSAT_CMD_WRITE_CW:
-        case SMDSAT_CMD_WRITE_PREPASSEN:
-        case SMDSAT_CMD_WRITE_UDATE:
-            return SMDSAT_TIMING_WRITE_MS;
-        case SMDSAT_CMD_WRITE_TX:
-            return SMDSAT_SPI_POST_TX_DELAY_MS;   // 100ms async processing after TX data
-        case SMDSAT_CMD_READ_SPIMAC_STATE:
-            // Polled at every state_transmitting tick — but during active RF the
-            // STM is busy and cannot serve a fast SPI response in the standard
-            // 30 ms window. Reading a half-filled response buffer yields random
-            // IDLE bytes sometimes containing a bit-shifted 0x55 that the parser
-            // mistakes for MAGIC, then the byte at offset+3 is treated as
-            // data_len and produces "Response incomplete: got 64 | expected N"
-            // WARN cascades. 150 ms (2026-05 second field-test bump) gives the
-            // STM ample time to finish RF housekeeping and fill the response
-            // buffer cleanly. Costs ~120 ms per is_tx_finished poll, negligible
-            // vs the seconds the TX itself takes.
-            return 150;
-        case SMDSAT_CMD_DFU_RESET:
-        case SMDSAT_CMD_DFU_JUMP:
-            return SMDSAT_TIMING_RESET_MS;
-        default:
-            return SMDSAT_TIMING_STANDARD_MS;
-    }
+	switch (cmd) {
+	case SMDSAT_CMD_DFU_ERASE: return SMDSAT_TIMING_ERASE_MS;
+	case SMDSAT_CMD_DFU_WRITE_DATA:
+	case SMDSAT_CMD_DFU_SET_HEADER:
+	case SMDSAT_CMD_WRITE_RCONF:
+	case SMDSAT_CMD_WRITE_KMAC:
+	case SMDSAT_CMD_WRITE_SECKEY:
+	case SMDSAT_CMD_SAVE_RCONF:
+	case SMDSAT_CMD_WRITE_ID:
+	case SMDSAT_CMD_WRITE_ADDR:
+	case SMDSAT_CMD_WRITE_LPM:
+	case SMDSAT_CMD_WRITE_TCXO:
+	case SMDSAT_CMD_WRITE_CW:
+	case SMDSAT_CMD_WRITE_PREPASSEN:
+	case SMDSAT_CMD_WRITE_UDATE: return SMDSAT_TIMING_WRITE_MS;
+	case SMDSAT_CMD_WRITE_TX: return SMDSAT_SPI_POST_TX_DELAY_MS;  // 100ms async processing after TX data
+	case SMDSAT_CMD_READ_SPIMAC_STATE:
+		// Polled at every state_transmitting tick — but during active RF the
+		// STM is busy and cannot serve a fast SPI response in the standard
+		// 30 ms window. Reading a half-filled response buffer yields random
+		// IDLE bytes sometimes containing a bit-shifted 0x55 that the parser
+		// mistakes for MAGIC, then the byte at offset+3 is treated as
+		// data_len and produces "Response incomplete: got 64 | expected N"
+		// WARN cascades. 150 ms (2026-05 second field-test bump) gives the
+		// STM ample time to finish RF housekeeping and fill the response
+		// buffer cleanly. Costs ~120 ms per is_tx_finished poll, negligible
+		// vs the seconds the TX itself takes.
+		return 150;
+	case SMDSAT_CMD_DFU_RESET:
+	case SMDSAT_CMD_DFU_JUMP: return SMDSAT_TIMING_RESET_MS;
+	default: return SMDSAT_TIMING_STANDARD_MS;
+	}
 }
 
 // Check if RX buffer is all IDLE or all BUSY (slave not ready)
 static bool is_slave_not_ready(const uint8_t *buf, uint8_t check_len) {
-    bool all_idle = true, all_busy = true;
-    for (uint8_t i = 0; i < check_len; i++) {
-        if (buf[i] != SPI_PROTOCOL_APLUS_IDLE_PATTERN) all_idle = false;
-        if (buf[i] != SPI_PROTOCOL_APLUS_BUSY_PATTERN) all_busy = false;
-    }
-    return all_idle || all_busy;
+	bool all_idle = true, all_busy = true;
+	for (uint8_t i = 0; i < check_len; i++) {
+		if (buf[i] != SPI_PROTOCOL_APLUS_IDLE_PATTERN) all_idle = false;
+		if (buf[i] != SPI_PROTOCOL_APLUS_BUSY_PATTERN) all_busy = false;
+	}
+	return all_idle || all_busy;
 }
 
 bool SmdSatCmdSpi::send_command_aplus(uint8_t command, const uint8_t *tx_data, uint16_t tx_len,
-                                SpiAplusResponse *response) {
-    // Inter-transaction delay: wait for STM32 DMA re-arm from previous transaction
-    nrf_delay_ms(smdsat_spi_inter_tx_delay_ms());
+                                      SpiAplusResponse *response) {
+	// Inter-transaction delay: wait for STM32 DMA re-arm from previous transaction
+	nrf_delay_ms(smdsat_spi_inter_tx_delay_ms());
 
-    // Build the A+ CMD frame (fixed 64 bytes)
-    uint8_t tx_frame[SPI_PROTOCOL_APLUS_FRAME_SIZE];
-    uint8_t rx_frame[SPI_PROTOCOL_APLUS_FRAME_SIZE];
+	// Build the A+ CMD frame (fixed 64 bytes)
+	uint8_t tx_frame[SPI_PROTOCOL_APLUS_FRAME_SIZE];
+	uint8_t rx_frame[SPI_PROTOCOL_APLUS_FRAME_SIZE];
 
-    uint16_t frame_len = build_aplus_frame(tx_frame, command, tx_data, tx_len);
-    if (frame_len == 0) {
-        DEBUG_ERROR("SmdSatCmdSpi::%s: Failed to build frame", __func__);
-        return false;
-    }
+	uint16_t frame_len = build_aplus_frame(tx_frame, command, tx_data, tx_len);
+	if (frame_len == 0) {
+		DEBUG_ERROR("SmdSatCmdSpi::%s: Failed to build frame", __func__);
+		return false;
+	}
 
-    memset(rx_frame, 0, sizeof(rx_frame));
+	memset(rx_frame, 0, sizeof(rx_frame));
 
-    // Transaction 1: Send command (response will be in transaction 2)
-    int ret = m_nrf_spim->transfer(tx_frame, rx_frame, SPI_PROTOCOL_APLUS_FRAME_SIZE);
-    if (ret) {
-        DEBUG_ERROR("SmdSatCmdSpi::%s: SPI transfer failed", __func__);
-        throw ErrorCode::SPI_COMMS_ERROR;
-    }
+	// Transaction 1: Send command (response will be in transaction 2)
+	int ret = m_nrf_spim->transfer(tx_frame, rx_frame, SPI_PROTOCOL_APLUS_FRAME_SIZE);
+	if (ret) {
+		DEBUG_ERROR("SmdSatCmdSpi::%s: SPI transfer failed", __func__);
+		throw ErrorCode::SPI_COMMS_ERROR;
+	}
 
-    // Wait for STM32 to process command (command-specific delay)
-    // Kick WDT for long delays to prevent watchdog timeout
-    uint32_t cmd_delay = get_command_delay(command);
-    while (cmd_delay > 500) {
-        PMU::kick_watchdog();
-        nrf_delay_ms(500);
-        cmd_delay -= 500;
-    }
-    if (cmd_delay > 0) {
-        nrf_delay_ms(cmd_delay);
-    }
+	// Wait for STM32 to process command (command-specific delay)
+	// Kick WDT for long delays to prevent watchdog timeout
+	uint32_t cmd_delay = get_command_delay(command);
+	while (cmd_delay > 500) {
+		PMU::kick_watchdog();
+		nrf_delay_ms(500);
+		cmd_delay -= 500;
+	}
+	if (cmd_delay > 0) {
+		nrf_delay_ms(cmd_delay);
+	}
 
-    // Transaction 2+: Send NOP to retrieve response (pipelined protocol)
-    m_sequence_number++;
+	// Transaction 2+: Send NOP to retrieve response (pipelined protocol)
+	m_sequence_number++;
 
-    uint8_t nop_frame[SPI_PROTOCOL_APLUS_FRAME_SIZE];
-    uint8_t response_frame[SPI_PROTOCOL_APLUS_FRAME_SIZE];
+	uint8_t nop_frame[SPI_PROTOCOL_APLUS_FRAME_SIZE];
+	uint8_t response_frame[SPI_PROTOCOL_APLUS_FRAME_SIZE];
 
-    // Zephyr behavior: only retry NOP polling for flash/NVM write operations.
-    // For standard commands, send ONE NOP and accept whatever comes back.
-    // Retrying NOPs for non-flash commands causes sequence number desync with STM32.
-    // 2026-05 fix: was `cmd_delay >= SMDSAT_TIMING_WRITE_MS` which misclassified
-    // any slow read (e.g. READ_SPIMAC_STATE @150ms) as a flash op and triggered
-    // the retry-with-seq-bump path — the very cascade the long cmd_delay was
-    // meant to suppress. Whitelist by opcode now.
-    bool is_flash_op = is_flash_command(command);
-    uint8_t max_retries = is_flash_op ? SMDSAT_SPI_BUSY_MAX_RETRIES : 0;
+	// Zephyr behavior: only retry NOP polling for flash/NVM write operations.
+	// For standard commands, send ONE NOP and accept whatever comes back.
+	// Retrying NOPs for non-flash commands causes sequence number desync with STM32.
+	// 2026-05 fix: was `cmd_delay >= SMDSAT_TIMING_WRITE_MS` which misclassified
+	// any slow read (e.g. READ_SPIMAC_STATE @150ms) as a flash op and triggered
+	// the retry-with-seq-bump path — the very cascade the long cmd_delay was
+	// meant to suppress. Whitelist by opcode now.
+	bool is_flash_op = is_flash_command(command);
+	uint8_t max_retries = is_flash_op ? SMDSAT_SPI_BUSY_MAX_RETRIES : 0;
 
-    for (uint8_t retry = 0; retry <= max_retries; retry++) {
-        build_aplus_frame(nop_frame, SMDSAT_CMD_NONE, nullptr, 0);
-        memset(response_frame, 0, sizeof(response_frame));
+	for (uint8_t retry = 0; retry <= max_retries; retry++) {
+		build_aplus_frame(nop_frame, SMDSAT_CMD_NONE, nullptr, 0);
+		memset(response_frame, 0, sizeof(response_frame));
 
-        ret = m_nrf_spim->transfer(nop_frame, response_frame, SPI_PROTOCOL_APLUS_FRAME_SIZE);
-        if (ret) {
-            DEBUG_ERROR("SmdSatCmdSpi::%s: Failed to read response", __func__);
-            throw ErrorCode::SPI_COMMS_ERROR;
-        }
+		ret = m_nrf_spim->transfer(nop_frame, response_frame, SPI_PROTOCOL_APLUS_FRAME_SIZE);
+		if (ret) {
+			DEBUG_ERROR("SmdSatCmdSpi::%s: Failed to read response", __func__);
+			throw ErrorCode::SPI_COMMS_ERROR;
+		}
 
-        // For flash ops: check for BUSY/IDLE pattern and retry
-        if (is_flash_op && is_slave_not_ready(response_frame, 8) && retry < max_retries) {
-            bool is_busy = (response_frame[0] == SPI_PROTOCOL_APLUS_BUSY_PATTERN);
-            DEBUG_TRACE("SmdSatCmdSpi::%s: Slave %s (0x%02X) | retry %u/%u",
-                        __func__, is_busy ? "BUSY" : "not ready", response_frame[0], retry + 1, max_retries);
-            nrf_delay_ms(is_busy ? SMDSAT_SPI_BUSY_WAIT_MS : smdsat_spi_retry_delay_ms());
-            m_sequence_number++;
-            continue;
-        }
-        break;
-    }
+		// For flash ops: check for BUSY/IDLE pattern and retry
+		if (is_flash_op && is_slave_not_ready(response_frame, 8) && retry < max_retries) {
+			bool is_busy = (response_frame[0] == SPI_PROTOCOL_APLUS_BUSY_PATTERN);
+			DEBUG_TRACE("SmdSatCmdSpi::%s: Slave %s (0x%02X) | retry %u/%u", __func__, is_busy ? "BUSY" : "not ready",
+			            response_frame[0], retry + 1, max_retries);
+			nrf_delay_ms(is_busy ? SMDSAT_SPI_BUSY_WAIT_MS : smdsat_spi_retry_delay_ms());
+			m_sequence_number++;
+			continue;
+		}
+		break;
+	}
 
-    // Increment sequence number for next transaction (matches Zephyr seq_num++ at end)
-    m_sequence_number++;
+	// Increment sequence number for next transaction (matches Zephyr seq_num++ at end)
+	m_sequence_number++;
 
-    // Parse response if caller wants it
-    if (response != nullptr) {
-        bool parsed = parse_aplus_response(response_frame, SPI_PROTOCOL_APLUS_FRAME_SIZE, response);
-        if (!parsed && !SPI_APLUS_IS_RECOVERABLE(response->status)) {
-            return false;
-        }
-    }
+	// Parse response if caller wants it
+	if (response != nullptr) {
+		bool parsed = parse_aplus_response(response_frame, SPI_PROTOCOL_APLUS_FRAME_SIZE, response);
+		if (!parsed && !SPI_APLUS_IS_RECOVERABLE(response->status)) {
+			return false;
+		}
+	}
 
-    return true;
+	return true;
 }
 
-bool SmdSatCmdSpi::send_command_auto(uint8_t command, const uint8_t *tx_data, uint16_t tx_len,
-                               uint8_t *rx_data, uint16_t *rx_len) {
-    // Protocol A+ only (no legacy fallback)
-    SpiAplusResponse response;
+bool SmdSatCmdSpi::send_command_auto(uint8_t command, const uint8_t *tx_data, uint16_t tx_len, uint8_t *rx_data,
+                                     uint16_t *rx_len) {
+	// Protocol A+ only (no legacy fallback)
+	SpiAplusResponse response;
 
-    // Give each top-level command its own one-shot INVALID_CMD resync budget.
-    // Without this, a command that already consumed the resync (and failed)
-    // leaves the latch set, so the NEXT command in a cascade can no longer
-    // resync on its first INVALID_CMD — a cross-command desync trap. The
-    // within-call single-reset guarantee is preserved (the latch is re-set
-    // inside the loop after the first reset).
-    m_seq_reset_attempted = false;
+	// Give each top-level command its own one-shot INVALID_CMD resync budget.
+	// Without this, a command that already consumed the resync (and failed)
+	// leaves the latch set, so the NEXT command in a cascade can no longer
+	// resync on its first INVALID_CMD — a cross-command desync trap. The
+	// within-call single-reset guarantee is preserved (the latch is re-set
+	// inside the loop after the first reset).
+	m_seq_reset_attempted = false;
 
-    for (uint8_t retry = 0; retry < SMDSAT_SPI_MAX_RETRIES; retry++) {
-        if (send_command_aplus(command, tx_data, tx_len, &response)) {
-            // Copy response data if requested
-            if (rx_data != nullptr && rx_len != nullptr && *rx_len > 0 && response.data_len > 0) {
-                uint16_t copy_len = (response.data_len < *rx_len) ? response.data_len : *rx_len;
-                memcpy(rx_data, response.data, copy_len);
-                *rx_len = copy_len;
-            } else if (rx_len != nullptr) {
-                *rx_len = response.data_len;
-            }
+	for (uint8_t retry = 0; retry < SMDSAT_SPI_MAX_RETRIES; retry++) {
+		if (send_command_aplus(command, tx_data, tx_len, &response)) {
+			// Copy response data if requested
+			if (rx_data != nullptr && rx_len != nullptr && *rx_len > 0 && response.data_len > 0) {
+				uint16_t copy_len = (response.data_len < *rx_len) ? response.data_len : *rx_len;
+				memcpy(rx_data, response.data, copy_len);
+				*rx_len = copy_len;
+			} else if (rx_len != nullptr) {
+				*rx_len = response.data_len;
+			}
 
-            if (response.status == SPI_APLUS_STATUS_OK) {
-                m_seq_reset_attempted = false;  // Success — allow future resync attempts
-                return true;
-            }
+			if (response.status == SPI_APLUS_STATUS_OK) {
+				m_seq_reset_attempted = false;  // Success — allow future resync attempts
+				return true;
+			}
 
-            // INVALID_CMD (0x07): protocol desync — reset sequence and retry once.
-            // The STM32WL watchdog resets its SPI state after 5s of no valid command,
-            // so resetting our sequence number allows resynchronization.
-            if (response.status == SPI_APLUS_STATUS_INVALID_CMD && !m_seq_reset_attempted) {
-                DEBUG_WARN("SmdSatCmdSpi::%s: INVALID_CMD for cmd 0x%02X — resetting sequence (was %u)",
-                           __func__, command, m_sequence_number);
-                m_seq_reset_attempted = true;
-                m_sequence_number = 0;
-                nrf_delay_ms(smdsat_spi_retry_delay_ms());
-                continue;
-            }
+			// INVALID_CMD (0x07): protocol desync — reset sequence and retry once.
+			// The STM32WL watchdog resets its SPI state after 5s of no valid command,
+			// so resetting our sequence number allows resynchronization.
+			if (response.status == SPI_APLUS_STATUS_INVALID_CMD && !m_seq_reset_attempted) {
+				DEBUG_WARN("SmdSatCmdSpi::%s: INVALID_CMD for cmd 0x%02X — resetting sequence (was %u)", __func__,
+				           command, m_sequence_number);
+				m_seq_reset_attempted = true;
+				m_sequence_number = 0;
+				nrf_delay_ms(smdsat_spi_retry_delay_ms());
+				continue;
+			}
 
-            if (!SPI_APLUS_IS_RECOVERABLE(response.status)) {
-                DEBUG_WARN("SmdSatCmdSpi::%s: Non-recoverable error %u for cmd 0x%02X",
-                           __func__, static_cast<int>(response.status), command);
-                return false;
-            }
-        }
+			if (!SPI_APLUS_IS_RECOVERABLE(response.status)) {
+				DEBUG_WARN("SmdSatCmdSpi::%s: Non-recoverable error %u for cmd 0x%02X", __func__,
+				           static_cast<int>(response.status), command);
+				return false;
+			}
+		}
 
-        DEBUG_TRACE("SmdSatCmdSpi::%s: Retry %u/%u for cmd 0x%02X",
-                    __func__, retry + 1, SMDSAT_SPI_MAX_RETRIES, command);
-        nrf_delay_ms(smdsat_spi_retry_delay_ms());
-    }
+		DEBUG_TRACE("SmdSatCmdSpi::%s: Retry %u/%u for cmd 0x%02X", __func__, retry + 1, SMDSAT_SPI_MAX_RETRIES,
+		            command);
+		nrf_delay_ms(smdsat_spi_retry_delay_ms());
+	}
 
-    return false;
+	return false;
 }
 
 // 2-phase write helper (matches Zephyr argos_spi_write_2phase)
 // Phase 1: Send REQ command to prepare STM32 for data reception
 // Phase 2: Send WRITE command with actual data
-bool SmdSatCmdSpi::send_command_2phase(uint8_t req_cmd, uint8_t write_cmd,
-                                  const uint8_t *data, uint16_t len) {
-    DEBUG_TRACE("SmdSatCmdSpi::%s: REQ=0x%02X | WRITE=0x%02X | len=%u", __func__, req_cmd, write_cmd, len);
+bool SmdSatCmdSpi::send_command_2phase(uint8_t req_cmd, uint8_t write_cmd, const uint8_t *data, uint16_t len) {
+	DEBUG_TRACE("SmdSatCmdSpi::%s: REQ=0x%02X | WRITE=0x%02X | len=%u", __func__, req_cmd, write_cmd, len);
 
-    // Phase 1: Send REQ command
-    if (!send_command_auto(req_cmd)) {
-        DEBUG_ERROR("SmdSatCmdSpi::%s: REQ 0x%02X failed", __func__, req_cmd);
-        return false;
-    }
+	// Phase 1: Send REQ command
+	if (!send_command_auto(req_cmd)) {
+		DEBUG_ERROR("SmdSatCmdSpi::%s: REQ 0x%02X failed", __func__, req_cmd);
+		return false;
+	}
 
-    // Small delay for STM32 to prepare RX buffer
-    nrf_delay_ms(1);
+	// Small delay for STM32 to prepare RX buffer
+	nrf_delay_ms(1);
 
-    // Phase 2: Send WRITE command with data
-    if (!send_command_auto(write_cmd, data, len)) {
-        DEBUG_ERROR("SmdSatCmdSpi::%s: WRITE 0x%02X failed", __func__, write_cmd);
-        return false;
-    }
+	// Phase 2: Send WRITE command with data
+	if (!send_command_auto(write_cmd, data, len)) {
+		DEBUG_ERROR("SmdSatCmdSpi::%s: WRITE 0x%02X failed", __func__, write_cmd);
+		return false;
+	}
 
-    return true;
+	return true;
 }
 
 // Argos MAC message counter (MC) — 9-bit (0-511), little-endian over SPI.
 // Returns false (graceful) if the module firmware does not implement the
 // command: send_command_auto() returns false on INVALID_CMD after one resync.
-bool SmdSatCmdSpi::read_message_counter(uint16_t *mc)
-{
-    if (mc == nullptr) return false;
-    uint8_t rx[4] = {0};
-    uint16_t rx_len = sizeof(rx);
-    if (!send_command_auto(SMDSAT_CMD_READ_MC, nullptr, 0, rx, &rx_len)) {
-        DEBUG_TRACE("SmdSatCmdSpi::%s: READ_MC unsupported/failed", __func__);
-        return false;
-    }
-    if (rx_len < 2) {
-        DEBUG_TRACE("SmdSatCmdSpi::%s: READ_MC short response (%u)", __func__, rx_len);
-        return false;
-    }
-    *mc = static_cast<uint16_t>(rx[0] | (rx[1] << 8)) & 0x01FF;  // 9-bit
-    DEBUG_TRACE("SmdSatCmdSpi::%s: MC=%u", __func__, *mc);
-    return true;
+bool SmdSatCmdSpi::read_message_counter(uint16_t *mc) {
+	if (mc == nullptr) return false;
+	uint8_t rx[4] = { 0 };
+	uint16_t rx_len = sizeof(rx);
+	if (!send_command_auto(SMDSAT_CMD_READ_MC, nullptr, 0, rx, &rx_len)) {
+		DEBUG_TRACE("SmdSatCmdSpi::%s: READ_MC unsupported/failed", __func__);
+		return false;
+	}
+	if (rx_len < 2) {
+		DEBUG_TRACE("SmdSatCmdSpi::%s: READ_MC short response (%u)", __func__, rx_len);
+		return false;
+	}
+	*mc = static_cast<uint16_t>(rx[0] | (rx[1] << 8)) & 0x01FF;  // 9-bit
+	DEBUG_TRACE("SmdSatCmdSpi::%s: MC=%u", __func__, *mc);
+	return true;
 }
 
-bool SmdSatCmdSpi::set_message_counter(uint16_t mc)
-{
-    uint16_t v = mc & 0x01FF;  // clamp to 9-bit
-    uint8_t data[2] = { static_cast<uint8_t>(v & 0xFF),
-                        static_cast<uint8_t>((v >> 8) & 0xFF) };
-    if (!send_command_2phase(SMDSAT_CMD_WRITE_MC_REQ, SMDSAT_CMD_WRITE_MC, data, sizeof(data))) {
-        DEBUG_TRACE("SmdSatCmdSpi::%s: WRITE_MC unsupported/failed", __func__);
-        return false;
-    }
-    DEBUG_TRACE("SmdSatCmdSpi::%s: MC set to %u", __func__, v);
-    return true;
+bool SmdSatCmdSpi::set_message_counter(uint16_t mc) {
+	uint16_t v = mc & 0x01FF;  // clamp to 9-bit
+	uint8_t data[2] = { static_cast<uint8_t>(v & 0xFF), static_cast<uint8_t>((v >> 8) & 0xFF) };
+	if (!send_command_2phase(SMDSAT_CMD_WRITE_MC_REQ, SMDSAT_CMD_WRITE_MC, data, sizeof(data))) {
+		DEBUG_TRACE("SmdSatCmdSpi::%s: WRITE_MC unsupported/failed", __func__);
+		return false;
+	}
+	DEBUG_TRACE("SmdSatCmdSpi::%s: MC set to %u", __func__, v);
+	return true;
 }
 
-void SmdSatCmdSpi::load_kmac_profil(uint8_t profile, const uint8_t* ctx, uint8_t ctx_len)
-{
+void SmdSatCmdSpi::load_kmac_profil(uint8_t profile, const uint8_t *ctx, uint8_t ctx_len) {
 	// CMD_WRITE_KMAC payload = [profile_id][ctx...]. BASIC/NONE send the id only
 	// (1 byte, unchanged — backward-compatible). BLIND appends the 7-byte packed
 	// ctx: feat-blind firmware parses it; older firmware ignores the extra bytes
@@ -535,7 +522,7 @@ void SmdSatCmdSpi::load_kmac_profil(uint8_t profile, const uint8_t* ctx, uint8_t
 }
 
 void SmdSatCmdSpi::read_kmac(uint8_t *profile) {
-	uint8_t rx[4] = {0};
+	uint8_t rx[4] = { 0 };
 	uint16_t rx_len = sizeof(rx);
 	if (!send_command_auto(SMDSAT_CMD_READ_KMAC, nullptr, 0, rx, &rx_len)) {
 		DEBUG_ERROR("SmdSatCmdSpi::%s: Failed to read KMAC profile", __func__);
@@ -556,7 +543,7 @@ void SmdSatCmdSpi::read_rconf_raw(uint8_t *rconf_raw, uint16_t *len) {
 }
 
 void SmdSatCmdSpi::read_spimac_state(uint8_t *spi_state, uint8_t *mac_state) {
-	uint8_t rx[4] = {0};
+	uint8_t rx[4] = { 0 };
 	uint16_t rx_len = sizeof(rx);
 	if (!send_command_auto(SMDSAT_CMD_READ_SPIMAC_STATE, nullptr, 0, rx, &rx_len)) {
 		DEBUG_ERROR("SmdSatCmdSpi::%s: Failed to read SPI MAC state", __func__);
@@ -680,7 +667,7 @@ void SmdSatCmdSpi::sync() {
 }
 
 void SmdSatCmdSpi::get_status(uint8_t *status) {
-	uint8_t rx[4] = {0};
+	uint8_t rx[4] = { 0 };
 	uint16_t rx_len = sizeof(rx);
 	if (!send_command_auto(SMDSAT_CMD_SPI_STATUS, nullptr, 0, rx, &rx_len)) {
 		DEBUG_ERROR("SmdSatCmdSpi::%s: Failed to read SPI status", __func__);
@@ -692,7 +679,7 @@ void SmdSatCmdSpi::get_status(uint8_t *status) {
 }
 
 void SmdSatCmdSpi::get_kmac_status(uint8_t *status) {
-	uint8_t rx[4] = {0};
+	uint8_t rx[4] = { 0 };
 	uint16_t rx_len = sizeof(rx);
 	if (!send_command_auto(SMDSAT_CMD_MAC_STATUS, nullptr, 0, rx, &rx_len)) {
 		DEBUG_ERROR("SmdSatCmdSpi::%s: Failed to read KMAC status", __func__);
@@ -706,12 +693,12 @@ void SmdSatCmdSpi::get_kmac_status(uint8_t *status) {
 void SmdSatCmdSpi::set_radio_conf(smd_uint8_array_t *radio_conf) {
 	DEBUG_TRACE("SmdSatCmdSpi::%s", __func__);
 	if (radio_conf->size != SMDSAT_CMD_WRITECONF_LEN - 1) {
-		DEBUG_ERROR("SmdSatCmdSpi::%s: Size mismatch %u != %u",
-			__func__, radio_conf->size, SMDSAT_CMD_WRITECONF_LEN - 1);
+		DEBUG_ERROR("SmdSatCmdSpi::%s: Size mismatch %u != %u", __func__, radio_conf->size,
+		            SMDSAT_CMD_WRITECONF_LEN - 1);
 		throw ErrorCode::SPI_COMMS_ERROR;
 	}
-	if (!send_command_2phase(SMDSAT_CMD_WRITE_RCONF_REQ, SMDSAT_CMD_WRITE_RCONF,
-	                         radio_conf->p_data, radio_conf->size)) {
+	if (!send_command_2phase(SMDSAT_CMD_WRITE_RCONF_REQ, SMDSAT_CMD_WRITE_RCONF, radio_conf->p_data,
+	                         radio_conf->size)) {
 		DEBUG_ERROR("SmdSatCmdSpi::%s: Failed to set radio conf", __func__);
 		throw ErrorCode::SPI_COMMS_ERROR;
 	}
@@ -719,15 +706,17 @@ void SmdSatCmdSpi::set_radio_conf(smd_uint8_array_t *radio_conf) {
 
 void SmdSatCmdSpi::read_radio_conf(SmdArgosModulation *modulation) {
 	DEBUG_TRACE("SmdSatCmdSpi::%s", __func__);
-	uint8_t rx[SMDSAT_CMD_READCONF_LEN] = {0};
+	uint8_t rx[SMDSAT_CMD_READCONF_LEN] = { 0 };
 	uint16_t rx_len = sizeof(rx);
 	if (!send_command_auto(SMDSAT_CMD_READ_RCONF, nullptr, 0, rx, &rx_len)) {
 		DEBUG_ERROR("SmdSatCmdSpi::%s: Failed to read radio conf", __func__);
 		throw ErrorCode::SPI_COMMS_ERROR;
 	}
 
-	uint32_t min_frequency = (static_cast<uint32_t>(rx[3]) << 24) | (static_cast<uint32_t>(rx[2]) << 16) | (static_cast<uint32_t>(rx[1]) << 8) | rx[0];
-	uint32_t max_frequency = (static_cast<uint32_t>(rx[7]) << 24) | (static_cast<uint32_t>(rx[6]) << 16) | (static_cast<uint32_t>(rx[5]) << 8) | rx[4];
+	uint32_t min_frequency = (static_cast<uint32_t>(rx[3]) << 24) | (static_cast<uint32_t>(rx[2]) << 16)
+	                         | (static_cast<uint32_t>(rx[1]) << 8) | rx[0];
+	uint32_t max_frequency = (static_cast<uint32_t>(rx[7]) << 24) | (static_cast<uint32_t>(rx[6]) << 16)
+	                         | (static_cast<uint32_t>(rx[5]) << 8) | rx[4];
 	int8_t rf_level = rx[8];
 	// rx[9] is the STM32 KNS_tx_mod_t enum (LDA2=2, LDA2L=3, VLDA4=4, HDA4=5,
 	// LDK=6) — NOT the SmdArgosModulation enum (LDA2=0, LDK=1, VLDA4=2).
@@ -736,14 +725,15 @@ void SmdSatCmdSpi::read_radio_conf(SmdArgosModulation *modulation) {
 	// smd_spi_test().
 	uint8_t kineis_mod = rx[9];
 	switch (kineis_mod) {
-		case 2: case 3: *modulation = ARGOS_MOD_LDA2; break;   // KNS_TX_MOD_LDA2 / LDA2L
-		case 4:         *modulation = ARGOS_MOD_VLDA4; break;  // KNS_TX_MOD_VLDA4
-		case 6:         *modulation = ARGOS_MOD_LDK; break;    // KNS_TX_MOD_LDK
-		default:        *modulation = ARGOS_MOD_LDA2; break;   // safe fallback
+	case 2:
+	case 3: *modulation = ARGOS_MOD_LDA2; break;   // KNS_TX_MOD_LDA2 / LDA2L
+	case 4: *modulation = ARGOS_MOD_VLDA4; break;  // KNS_TX_MOD_VLDA4
+	case 6: *modulation = ARGOS_MOD_LDK; break;    // KNS_TX_MOD_LDK
+	default: *modulation = ARGOS_MOD_LDA2; break;  // safe fallback
 	}
 
 	DEBUG_INFO("SmdSatCmdSpi::%s: KineisMod=%u (-> enum=%d) | Min Freq: %u | Max Freq: %u | RF Level %d", __func__,
-		kineis_mod, static_cast<int>(*modulation), min_frequency, max_frequency, rf_level);
+	           kineis_mod, static_cast<int>(*modulation), min_frequency, max_frequency, rf_level);
 }
 
 bool SmdSatCmdSpi::save_radio_conf() {
@@ -758,7 +748,7 @@ bool SmdSatCmdSpi::save_radio_conf() {
 
 void SmdSatCmdSpi::read_lpm(uint8_t *lpm_mode) {
 	DEBUG_TRACE("SmdSatCmdSpi::%s", __func__);
-	uint8_t rx[4] = {0};
+	uint8_t rx[4] = { 0 };
 	uint16_t rx_len = sizeof(rx);
 	if (!send_command_auto(SMDSAT_CMD_READ_LPM, nullptr, 0, rx, &rx_len)) {
 		DEBUG_ERROR("SmdSatCmdSpi::%s: Failed to read LPM", __func__);
@@ -778,7 +768,7 @@ void SmdSatCmdSpi::write_lpm(uint8_t *lpm_mode) {
 
 void SmdSatCmdSpi::read_version(uint8_t *version) {
 	DEBUG_TRACE("SmdSatCmdSpi::%s", __func__);
-	uint8_t rx[SPI_PROTOCOL_APLUS_MAX_DATA_LEN] = {0};
+	uint8_t rx[SPI_PROTOCOL_APLUS_MAX_DATA_LEN] = { 0 };
 	uint16_t rx_len = sizeof(rx);
 	if (!send_command_auto(SMDSAT_CMD_READ_VERSION, nullptr, 0, rx, &rx_len)) {
 		DEBUG_ERROR("SmdSatCmdSpi::%s: Failed to read version", __func__);
@@ -786,14 +776,13 @@ void SmdSatCmdSpi::read_version(uint8_t *version) {
 	}
 	// Copy full version string (not just first byte)
 	memcpy(version, rx, rx_len);
-	DEBUG_INFO("SmdSatCmdSpi::SMD SPI Version: %.*s", (int)rx_len, (char*)rx);
+	DEBUG_INFO("SmdSatCmdSpi::SMD SPI Version: %.*s", (int)rx_len, (char *)rx);
 }
 
 void SmdSatCmdSpi::read_address(smd_uint8_array_t *address) {
 	DEBUG_TRACE("SmdSatCmdSpi::%s", __func__);
 	if (address->size != SMDSAT_CMD_READ_ADDR_LEN) {
-		DEBUG_ERROR("SmdSatCmdSpi::%s: Size mismatch %u != %u",
-			__func__, address->size, SMDSAT_CMD_READ_ADDR_LEN);
+		DEBUG_ERROR("SmdSatCmdSpi::%s: Size mismatch %u != %u", __func__, address->size, SMDSAT_CMD_READ_ADDR_LEN);
 		return;
 	}
 	uint16_t rx_len = address->size;
@@ -806,12 +795,10 @@ void SmdSatCmdSpi::read_address(smd_uint8_array_t *address) {
 void SmdSatCmdSpi::set_address(smd_uint8_array_t *address) {
 	DEBUG_TRACE("SmdSatCmdSpi::%s", __func__);
 	if (address->size != SMDSAT_CMD_WRITE_ADDR_LEN - 1) {
-		DEBUG_ERROR("SmdSatCmdSpi::%s: Size mismatch %u != %u",
-			__func__, address->size, SMDSAT_CMD_WRITE_ADDR_LEN - 1);
+		DEBUG_ERROR("SmdSatCmdSpi::%s: Size mismatch %u != %u", __func__, address->size, SMDSAT_CMD_WRITE_ADDR_LEN - 1);
 		return;
 	}
-	if (!send_command_2phase(SMDSAT_CMD_WRITE_ADDR_REQ, SMDSAT_CMD_WRITE_ADDR,
-	                         address->p_data, address->size)) {
+	if (!send_command_2phase(SMDSAT_CMD_WRITE_ADDR_REQ, SMDSAT_CMD_WRITE_ADDR, address->p_data, address->size)) {
 		DEBUG_ERROR("SmdSatCmdSpi::%s: Failed to set address", __func__);
 		throw ErrorCode::SPI_COMMS_ERROR;
 	}
@@ -820,8 +807,7 @@ void SmdSatCmdSpi::set_address(smd_uint8_array_t *address) {
 void SmdSatCmdSpi::read_seckey(smd_uint8_array_t *seckey) {
 	DEBUG_TRACE("SmdSatCmdSpi::%s", __func__);
 	if (seckey->size != SMDSAT_CMD_READ_SECKEY_LEN) {
-		DEBUG_ERROR("SmdSatCmdSpi::%s: Size mismatch %u != %u",
-			__func__, seckey->size, SMDSAT_CMD_READ_SECKEY_LEN);
+		DEBUG_ERROR("SmdSatCmdSpi::%s: Size mismatch %u != %u", __func__, seckey->size, SMDSAT_CMD_READ_SECKEY_LEN);
 		return;
 	}
 	uint16_t rx_len = seckey->size;
@@ -834,12 +820,10 @@ void SmdSatCmdSpi::read_seckey(smd_uint8_array_t *seckey) {
 void SmdSatCmdSpi::set_seckey(smd_uint8_array_t *seckey) {
 	DEBUG_TRACE("SmdSatCmdSpi::%s", __func__);
 	if (seckey->size != SMDSAT_CMD_WRITE_SECKEY_LEN - 1) {
-		DEBUG_ERROR("SmdSatCmdSpi::%s: Size mismatch %u != %u",
-			__func__, seckey->size, SMDSAT_CMD_WRITE_SECKEY_LEN);
+		DEBUG_ERROR("SmdSatCmdSpi::%s: Size mismatch %u != %u", __func__, seckey->size, SMDSAT_CMD_WRITE_SECKEY_LEN);
 		return;
 	}
-	if (!send_command_2phase(SMDSAT_CMD_WRITE_SECKEY_REQ, SMDSAT_CMD_WRITE_SECKEY,
-	                         seckey->p_data, seckey->size)) {
+	if (!send_command_2phase(SMDSAT_CMD_WRITE_SECKEY_REQ, SMDSAT_CMD_WRITE_SECKEY, seckey->p_data, seckey->size)) {
 		DEBUG_ERROR("SmdSatCmdSpi::%s: Failed to set seckey", __func__);
 		throw ErrorCode::SPI_COMMS_ERROR;
 	}
@@ -850,7 +834,7 @@ void SmdSatCmdSpi::read_id(uint32_t *id) {
 		DEBUG_ERROR("SmdSatCmdSpi::%s: id ptr is null", __func__);
 		return;
 	}
-	uint8_t rx[SMDSAT_CMD_READ_ID_LEN] = {0};
+	uint8_t rx[SMDSAT_CMD_READ_ID_LEN] = { 0 };
 	uint16_t rx_len = sizeof(rx);
 	if (!send_command_auto(SMDSAT_CMD_READ_ID, nullptr, 0, rx, &rx_len)) {
 		DEBUG_ERROR("SmdSatCmdSpi::%s: Failed to read ID", __func__);
@@ -878,7 +862,7 @@ void SmdSatCmdSpi::read_tcxo_warmup(uint32_t *time_ms) {
 		DEBUG_ERROR("SmdSatCmdSpi::%s: tcxo ptr is null", __func__);
 		return;
 	}
-	uint8_t rx[SMDSAT_CMD_READ_ID_LEN] = {0};
+	uint8_t rx[SMDSAT_CMD_READ_ID_LEN] = { 0 };
 	uint16_t rx_len = sizeof(rx);
 	if (!send_command_auto(SMDSAT_CMD_READ_TCXO, nullptr, 0, rx, &rx_len)) {
 		DEBUG_ERROR("SmdSatCmdSpi::%s: Failed to read TCXO warmup", __func__);
@@ -904,8 +888,7 @@ void SmdSatCmdSpi::write_tcxo_warmup(uint32_t time_ms) {
 void SmdSatCmdSpi::read_serial(smd_uint8_array_t *serial) {
 	DEBUG_TRACE("SmdSatCmdSpi::%s", __func__);
 	if (serial->size != SMDSAT_CMD_READ_SERIAL_LEN) {
-		DEBUG_ERROR("SmdSatCmdSpi::%s: Size mismatch %u != %u",
-			__func__, serial->size, SMDSAT_CMD_READ_SERIAL_LEN);
+		DEBUG_ERROR("SmdSatCmdSpi::%s: Size mismatch %u != %u", __func__, serial->size, SMDSAT_CMD_READ_SERIAL_LEN);
 		return;
 	}
 	uint16_t rx_len = serial->size;
@@ -915,8 +898,7 @@ void SmdSatCmdSpi::read_serial(smd_uint8_array_t *serial) {
 	}
 }
 
-void SmdSatCmdSpi::set_tcxo_warmup_internal(uint32_t time_s)
-{
+void SmdSatCmdSpi::set_tcxo_warmup_internal(uint32_t time_s) {
 	DEBUG_TRACE("SmdSatCmdSpi::%s", __func__);
 	this->write_tcxo_warmup(time_s * 1000);
 }
@@ -929,7 +911,7 @@ void SmdSatCmdSpi::set_tcxo_control(bool state) {
 void SmdSatCmdSpi::print_firmware_version() {
 	// CMD_READ_VERSION (0x05) via A+ - returns firmware version string
 	// (CMD_READ_FIRMWARE 0x06 is NOT supported in A+ by STM32 firmware)
-	uint8_t rx[SPI_PROTOCOL_APLUS_MAX_DATA_LEN] = {0};
+	uint8_t rx[SPI_PROTOCOL_APLUS_MAX_DATA_LEN] = { 0 };
 	uint16_t rx_len = sizeof(rx);
 
 	if (!send_command_auto(SMDSAT_CMD_READ_VERSION, nullptr, 0, rx, &rx_len)) {
@@ -938,20 +920,18 @@ void SmdSatCmdSpi::print_firmware_version() {
 	}
 
 	size_t len = 0;
-	while (len < rx_len && rx[len] != 0 &&
-	       rx[len] >= 0x20 && rx[len] < 0x7F) {
+	while (len < rx_len && rx[len] != 0 && rx[len] >= 0x20 && rx[len] < 0x7F) {
 		len++;
 	}
 
 	if (len > 0) {
-		DEBUG_INFO("SmdSatCmdSpi::%s: Firmware=%.*s", __func__, (int)len, (char*)rx);
+		DEBUG_INFO("SmdSatCmdSpi::%s: Firmware=%.*s", __func__, (int)len, (char *)rx);
 	} else {
 		DEBUG_WARN("SmdSatCmdSpi::%s: Empty firmware version (rx_len=%u)", __func__, rx_len);
 	}
 }
 
-bool SmdSatCmdSpi::ping()
-{
+bool SmdSatCmdSpi::ping() {
 	DEBUG_TRACE("SmdSatCmdSpi::%s", __func__);
 
 	for (uint8_t retry = 0; retry < SMDSAT_SPI_MAX_RETRIES; retry++) {
@@ -977,7 +957,7 @@ bool SmdSatCmdSpi::ping()
 bool SmdSatCmdSpi::is_tx_finished() {
 	DEBUG_TRACE("SmdSatCmdSpi::%s", __func__);
 
-	uint8_t rx[4] = {0};
+	uint8_t rx[4] = { 0 };
 	uint16_t rx_len = sizeof(rx);
 
 	if (!send_command_auto(SMDSAT_CMD_READ_SPIMAC_STATE, nullptr, 0, rx, &rx_len)) {
@@ -1018,7 +998,7 @@ bool SmdSatCmdSpi::is_tx_finished() {
 bool SmdSatCmdSpi::is_tx_in_progress() {
 	DEBUG_TRACE("SmdSatCmdSpi::%s", __func__);
 
-	uint8_t rx[4] = {0};
+	uint8_t rx[4] = { 0 };
 	uint16_t rx_len = sizeof(rx);
 
 	if (!send_command_auto(SMDSAT_CMD_READ_SPIMAC_STATE, nullptr, 0, rx, &rx_len)) {
@@ -1029,7 +1009,7 @@ bool SmdSatCmdSpi::is_tx_in_progress() {
 	return (rx[1] == MAC_TX_IN_PROGRESS);
 }
 
-bool SmdSatCmdSpi::initiate_tx(const KineisPacket& payload) {
+bool SmdSatCmdSpi::initiate_tx(const KineisPacket &payload) {
 	DEBUG_TRACE("SmdSatCmdSpi::%s: Size: %u", __func__, payload.size());
 
 	uint16_t size = payload.size();
@@ -1052,12 +1032,10 @@ bool SmdSatCmdSpi::initiate_tx(const KineisPacket& payload) {
 	// Step 3: WRITE_TX (0x16) - Send actual payload data
 	{
 		SpiAplusResponse response = {};
-		send_command_aplus(SMDSAT_CMD_WRITE_TX,
-		                   reinterpret_cast<const uint8_t*>(payload.data()), size,
-		                   &response);
+		send_command_aplus(SMDSAT_CMD_WRITE_TX, reinterpret_cast<const uint8_t *>(payload.data()), size, &response);
 		if (response.status != SPI_APLUS_STATUS_OK && response.valid) {
-			DEBUG_WARN("SmdSatCmdSpi::%s: TX DATA status=%u (non-fatal | data may be queued)",
-			           __func__, (unsigned)response.status);
+			DEBUG_WARN("SmdSatCmdSpi::%s: TX DATA status=%u (non-fatal | data may be queued)", __func__,
+			           (unsigned)response.status);
 		}
 	}
 
@@ -1084,13 +1062,13 @@ uint32_t SmdSatCmdSpi::calculate_crc32(const uint8_t *data, size_t len) {
 //   4. Re-poll if slave BUSY (0xBB) or transitional (0xAA)
 //   5. Parse response, increment sequence number
 SmdDfuResponse SmdSatCmdSpi::dfu_send_command(uint8_t cmd, const uint8_t *data, uint16_t data_len,
-                                        uint8_t *response_data, uint16_t *response_len) {
+                                              uint8_t *response_data, uint16_t *response_len) {
 	DEBUG_TRACE("SmdSatCmdSpi::%s: cmd=0x%02X | data_len=%u | seq=%u", __func__, cmd, data_len, m_sequence_number);
 
 	// ═══ Step 1: Build Protocol A+ request frame ═══
 	// Format: [0xAA][SEQ][CMD][LEN][DATA...][CRC8]
 	constexpr uint16_t DFU_LARGE_TX_SIZE = 280;    // BL_SPI_TRANSACTION_SIZE in bootloader
-	constexpr uint16_t DFU_TRANSACTION_SIZE = 64;   // Standard poll transaction size
+	constexpr uint16_t DFU_TRANSACTION_SIZE = 64;  // Standard poll transaction size
 	constexpr uint8_t DFU_MAX_PAYLOAD = 255;
 	constexpr uint8_t DFU_BUSY_RETRY_COUNT = 10;
 	constexpr uint8_t DFU_BUSY_RETRY_DELAY_MS = 20;
@@ -1126,9 +1104,8 @@ SmdDfuResponse SmdSatCmdSpi::dfu_send_command(uint8_t cmd, const uint8_t *data, 
 		memset(&tx_buf[idx], SPI_PROTOCOL_APLUS_IDLE_PATTERN, tx_size - idx);
 	}
 
-	DEBUG_TRACE("SmdSatCmdSpi::%s: TX[cmd=0x%02X seq=%u len=%u]: %02X %02X %02X %02X %02X ...",
-	            __func__, cmd, m_sequence_number, data_len,
-	            tx_buf[0], tx_buf[1], tx_buf[2], tx_buf[3], tx_buf[4]);
+	DEBUG_TRACE("SmdSatCmdSpi::%s: TX[cmd=0x%02X seq=%u len=%u]: %02X %02X %02X %02X %02X ...", __func__, cmd,
+	            m_sequence_number, data_len, tx_buf[0], tx_buf[1], tx_buf[2], tx_buf[3], tx_buf[4]);
 
 	// ═══ Step 2: Transaction 1 — Send command ═══
 	// (RX contains idle pattern, ignore it)
@@ -1139,8 +1116,8 @@ SmdDfuResponse SmdSatCmdSpi::dfu_send_command(uint8_t cmd, const uint8_t *data, 
 		return DFU_RSP_ERROR;
 	}
 
-	DEBUG_TRACE("SmdSatCmdSpi::%s: RX1 (idle): %02X %02X %02X %02X",
-	            __func__, rx_buf[0], rx_buf[1], rx_buf[2], rx_buf[3]);
+	DEBUG_TRACE("SmdSatCmdSpi::%s: RX1 (idle): %02X %02X %02X %02X", __func__, rx_buf[0], rx_buf[1], rx_buf[2],
+	            rx_buf[3]);
 
 	// ═══ Step 3: Wait for slave to process command ═══
 	// For long delays (erase=3000ms), kick watchdog periodically
@@ -1163,9 +1140,8 @@ SmdDfuResponse SmdSatCmdSpi::dfu_send_command(uint8_t cmd, const uint8_t *data, 
 		return DFU_RSP_ERROR;
 	}
 
-	DEBUG_TRACE("SmdSatCmdSpi::%s: RX2: %02X %02X %02X %02X %02X %02X %02X %02X",
-	            __func__, rx_buf[0], rx_buf[1], rx_buf[2], rx_buf[3],
-	            rx_buf[4], rx_buf[5], rx_buf[6], rx_buf[7]);
+	DEBUG_TRACE("SmdSatCmdSpi::%s: RX2: %02X %02X %02X %02X %02X %02X %02X %02X", __func__, rx_buf[0], rx_buf[1],
+	            rx_buf[2], rx_buf[3], rx_buf[4], rx_buf[5], rx_buf[6], rx_buf[7]);
 
 	// ═══ Step 4b: Re-poll until valid response (0x55) received ═══
 	auto has_valid_response = [](const uint8_t *buf, uint16_t len) -> bool {
@@ -1183,11 +1159,10 @@ SmdDfuResponse SmdSatCmdSpi::dfu_send_command(uint8_t cmd, const uint8_t *data, 
 	};
 
 	uint8_t busy_retries = 0;
-	while (!has_valid_response(rx_buf, DFU_TRANSACTION_SIZE) &&
-	       busy_retries < DFU_BUSY_RETRY_COUNT) {
+	while (!has_valid_response(rx_buf, DFU_TRANSACTION_SIZE) && busy_retries < DFU_BUSY_RETRY_COUNT) {
 		if (is_busy_pattern(rx_buf, DFU_TRANSACTION_SIZE)) {
-			DEBUG_TRACE("SmdSatCmdSpi::%s: Slave BUSY (0xBB) | re-polling... (%u/%u)",
-			            __func__, busy_retries + 1, DFU_BUSY_RETRY_COUNT);
+			DEBUG_TRACE("SmdSatCmdSpi::%s: Slave BUSY (0xBB) | re-polling... (%u/%u)", __func__, busy_retries + 1,
+			            DFU_BUSY_RETRY_COUNT);
 		}
 		// Note: non-busy non-valid response also retries (same action as busy)
 
@@ -1201,9 +1176,8 @@ SmdDfuResponse SmdSatCmdSpi::dfu_send_command(uint8_t cmd, const uint8_t *data, 
 			return DFU_RSP_ERROR;
 		}
 
-		DEBUG_TRACE("SmdSatCmdSpi::%s: RX2 re-poll: %02X %02X %02X %02X %02X %02X %02X %02X",
-		            __func__, rx_buf[0], rx_buf[1], rx_buf[2], rx_buf[3],
-		            rx_buf[4], rx_buf[5], rx_buf[6], rx_buf[7]);
+		DEBUG_TRACE("SmdSatCmdSpi::%s: RX2 re-poll: %02X %02X %02X %02X %02X %02X %02X %02X", __func__, rx_buf[0],
+		            rx_buf[1], rx_buf[2], rx_buf[3], rx_buf[4], rx_buf[5], rx_buf[6], rx_buf[7]);
 
 		busy_retries++;
 	}
@@ -1261,7 +1235,7 @@ SmdDfuResponse SmdSatCmdSpi::dfu_send_command(uint8_t cmd, const uint8_t *data, 
 // Matches Zephyr dfu_send_with_retry() — wraps dfu_send_command with automatic
 // retry on recoverable errors (BUSY=0x06 and FRAME_CRC_ERROR=0x10).
 SmdDfuResponse SmdSatCmdSpi::dfu_send_with_retry(uint8_t cmd, const uint8_t *data, uint16_t data_len,
-                                            uint8_t *response_data, uint16_t *response_len) {
+                                                 uint8_t *response_data, uint16_t *response_len) {
 	for (int retry = 0; retry < SMDSAT_DFU_MAX_RETRIES; retry++) {
 		SmdDfuResponse result = dfu_send_command(cmd, data, data_len, response_data, response_len);
 
@@ -1270,11 +1244,10 @@ SmdDfuResponse SmdSatCmdSpi::dfu_send_with_retry(uint8_t cmd, const uint8_t *dat
 		}
 
 		// Check for recoverable errors (matches Zephyr argos_is_recoverable)
-		bool recoverable = (result == DFU_RSP_BUSY ||
-		                    result == static_cast<SmdDfuResponse>(0x10));  // FRAME_CRC_ERROR
+		bool recoverable = (result == DFU_RSP_BUSY || result == static_cast<SmdDfuResponse>(0x10));  // FRAME_CRC_ERROR
 		if (recoverable) {
-			DEBUG_WARN("SmdSatCmdSpi::%s: Recoverable error (0x%02X) | retry %d/%d",
-			           __func__, static_cast<int>(result), retry + 1, SMDSAT_DFU_MAX_RETRIES);
+			DEBUG_WARN("SmdSatCmdSpi::%s: Recoverable error (0x%02X) | retry %d/%d", __func__, static_cast<int>(result),
+			           retry + 1, SMDSAT_DFU_MAX_RETRIES);
 			nrf_delay_ms(smdsat_spi_retry_delay_ms());
 			continue;
 		}
@@ -1293,12 +1266,10 @@ SmdDfuResponse SmdSatCmdSpi::dfu_ping_bl() {
 	uint8_t response_data[4];
 	uint16_t response_len = sizeof(response_data);
 
-	SmdDfuResponse result = dfu_send_command(SMDSAT_CMD_DFU_PING, nullptr, 0,
-	                                         response_data, &response_len);
+	SmdDfuResponse result = dfu_send_command(SMDSAT_CMD_DFU_PING, nullptr, 0, response_data, &response_len);
 
 	if (result == DFU_RSP_OK && response_len >= 2) {
-		DEBUG_INFO("SmdSatCmdSpi::%s: Bootloader v%u.%u", __func__,
-		           response_data[0], response_data[1]);
+		DEBUG_INFO("SmdSatCmdSpi::%s: Bootloader v%u.%u", __func__, response_data[0], response_data[1]);
 	}
 
 	return result;
@@ -1314,24 +1285,23 @@ SmdDfuResponse SmdSatCmdSpi::dfu_get_info(SmdDfuInfo *info) {
 	uint8_t response_data[32];
 	uint16_t response_len = sizeof(response_data);
 
-	SmdDfuResponse result = dfu_send_command(SMDSAT_CMD_DFU_GET_INFO, nullptr, 0,
-	                                         response_data, &response_len);
+	SmdDfuResponse result = dfu_send_command(SMDSAT_CMD_DFU_GET_INFO, nullptr, 0, response_data, &response_len);
 
 	if (result == DFU_RSP_OK && response_len >= 15) {
 		info->version_major = response_data[0];
 		info->version_minor = response_data[1];
 		info->version_patch = response_data[2];
 		// Little-endian parsing (matches Zephyr argos_dfu_get_info)
-		info->app_start_addr = response_data[3] | (response_data[4] << 8) |
-		                       (response_data[5] << 16) | (response_data[6] << 24);
-		info->app_max_size = response_data[7] | (response_data[8] << 8) |
-		                     (response_data[9] << 16) | (response_data[10] << 24);
-		info->flash_page_size = response_data[11] | (response_data[12] << 8) |
-		                        (response_data[13] << 16) | (response_data[14] << 24);
+		info->app_start_addr =
+		    response_data[3] | (response_data[4] << 8) | (response_data[5] << 16) | (response_data[6] << 24);
+		info->app_max_size =
+		    response_data[7] | (response_data[8] << 8) | (response_data[9] << 16) | (response_data[10] << 24);
+		info->flash_page_size =
+		    response_data[11] | (response_data[12] << 8) | (response_data[13] << 16) | (response_data[14] << 24);
 
-		DEBUG_INFO("SmdSatCmdSpi::%s: Bootloader v%u.%u.%u | app_start=0x%08X | max_size=%u | page_size=%u",
-		           __func__, info->version_major, info->version_minor, info->version_patch,
-		           info->app_start_addr, info->app_max_size, info->flash_page_size);
+		DEBUG_INFO("SmdSatCmdSpi::%s: Bootloader v%u.%u.%u | app_start=0x%08X | max_size=%u | page_size=%u", __func__,
+		           info->version_major, info->version_minor, info->version_patch, info->app_start_addr,
+		           info->app_max_size, info->flash_page_size);
 	}
 
 	return result;
@@ -1454,7 +1424,8 @@ SmdDfuResponse SmdSatCmdSpi::dfu_jump() {
 
 	// Device may not respond after jump - that's OK (it has already jumped)
 	if (result != DFU_RSP_OK) {
-		DEBUG_WARN("SmdSatCmdSpi::%s: Jump response: 0x%02X (device may have jumped)", __func__, static_cast<int>(result));
+		DEBUG_WARN("SmdSatCmdSpi::%s: Jump response: 0x%02X (device may have jumped)", __func__,
+		           static_cast<int>(result));
 	}
 
 	m_dfu_mode = false;
@@ -1469,8 +1440,7 @@ SmdDfuResponse SmdSatCmdSpi::dfu_get_status(uint8_t *status) {
 	uint8_t response_data[4];
 	uint16_t response_len = sizeof(response_data);
 
-	SmdDfuResponse result = dfu_send_command(SMDSAT_CMD_DFU_GET_STATUS, nullptr, 0,
-	                                         response_data, &response_len);
+	SmdDfuResponse result = dfu_send_command(SMDSAT_CMD_DFU_GET_STATUS, nullptr, 0, response_data, &response_len);
 
 	if (result == DFU_RSP_OK && status != nullptr && response_len >= 1) {
 		*status = response_data[0];
@@ -1600,10 +1570,9 @@ bool SmdSatCmdSpi::dfu_enter() {
 			}
 
 			if (attempt < 20 || bootloader_detected || (attempt % 50 == 0)) {
-				DEBUG_INFO("SmdSatCmdSpi::%s: Sync %d RX: %02X %02X %02X %02X %02X %02X %02X %02X%s",
-				           __func__, attempt, sync_rx[0], sync_rx[1], sync_rx[2], sync_rx[3],
-				           sync_rx[4], sync_rx[5], sync_rx[6], sync_rx[7],
-				           bootloader_detected ? " <- IDLE" : "");
+				DEBUG_INFO("SmdSatCmdSpi::%s: Sync %d RX: %02X %02X %02X %02X %02X %02X %02X %02X%s", __func__, attempt,
+				           sync_rx[0], sync_rx[1], sync_rx[2], sync_rx[3], sync_rx[4], sync_rx[5], sync_rx[6],
+				           sync_rx[7], bootloader_detected ? " <- IDLE" : "");
 			}
 
 			if (bootloader_detected) {
@@ -1691,19 +1660,19 @@ std::string SmdSatCmdSpi::run_command_test() {
 	};
 
 	CmdTest tests[] = {
-		{ SMDSAT_CMD_PING,             "PING" },
-		{ SMDSAT_CMD_READ_VERSION,     "READ_VERSION" },
-		{ SMDSAT_CMD_SPI_STATUS,       "SPI_STATUS" },
-		{ SMDSAT_CMD_MAC_STATUS,       "MAC_STATUS" },
-		{ SMDSAT_CMD_READ_ID,          "READ_ID" },
-		{ SMDSAT_CMD_READ_ADDR,        "READ_ADDR" },
-		{ SMDSAT_CMD_READ_SN,          "READ_SN" },
-		{ SMDSAT_CMD_READ_RCONF,       "READ_RCONF" },
-		{ SMDSAT_CMD_READ_KMAC,        "READ_KMAC" },
-		{ SMDSAT_CMD_READ_LPM,         "READ_LPM" },
-		{ SMDSAT_CMD_READ_SECKEY,      "READ_SECKEY" },
-		{ SMDSAT_CMD_READ_SPIMAC_STATE,"READ_SPIMAC_STATE" },
-		{ SMDSAT_CMD_READ_RCONF_RAW,   "READ_RCONF_RAW" },
+		{ SMDSAT_CMD_PING, "PING" },
+		{ SMDSAT_CMD_READ_VERSION, "READ_VERSION" },
+		{ SMDSAT_CMD_SPI_STATUS, "SPI_STATUS" },
+		{ SMDSAT_CMD_MAC_STATUS, "MAC_STATUS" },
+		{ SMDSAT_CMD_READ_ID, "READ_ID" },
+		{ SMDSAT_CMD_READ_ADDR, "READ_ADDR" },
+		{ SMDSAT_CMD_READ_SN, "READ_SN" },
+		{ SMDSAT_CMD_READ_RCONF, "READ_RCONF" },
+		{ SMDSAT_CMD_READ_KMAC, "READ_KMAC" },
+		{ SMDSAT_CMD_READ_LPM, "READ_LPM" },
+		{ SMDSAT_CMD_READ_SECKEY, "READ_SECKEY" },
+		{ SMDSAT_CMD_READ_SPIMAC_STATE, "READ_SPIMAC_STATE" },
+		{ SMDSAT_CMD_READ_RCONF_RAW, "READ_RCONF_RAW" },
 	};
 
 	uint8_t pass_count = 0;
@@ -1755,9 +1724,9 @@ std::string SmdSatCmdSpi::run_tx_flow_test() {
 	uint8_t tx_total = 0;
 
 	// Payloads for each modulation
-	uint8_t dummy_lda2[ARGOS_TX_LDA2_MIN_BYTE_SIZE] = {0xFF, 0xFF, 0xFF, 0xFF};
+	uint8_t dummy_lda2[ARGOS_TX_LDA2_MIN_BYTE_SIZE] = { 0xFF, 0xFF, 0xFF, 0xFF };
 	uint8_t dummy_ldk[ARGOS_TX_LDK_PAYLOAD_BYTE_SIZE] = {};
-	uint8_t dummy_vlda4[ARGOS_TX_VLDA4_PAYLOAD_BYTE_SIZE] = {0x00, 0x92, 0x00};
+	uint8_t dummy_vlda4[ARGOS_TX_VLDA4_PAYLOAD_BYTE_SIZE] = { 0x00, 0x92, 0x00 };
 	memset(dummy_ldk, 0xFF, sizeof(dummy_ldk));
 	KineisPacket pkt_lda2(dummy_lda2, dummy_lda2 + sizeof(dummy_lda2));
 	KineisPacket pkt_ldk(dummy_ldk, dummy_ldk + sizeof(dummy_ldk));
@@ -1795,7 +1764,9 @@ std::string SmdSatCmdSpi::run_tx_flow_test() {
 		while (elapsed < timeout_ms) {
 			PMU::kick_watchdog();
 			uint8_t spi_st = 0, mac_st = 0;
-			try { read_spimac_state(&spi_st, &mac_st); } catch (...) {}
+			try {
+				read_spimac_state(&spi_st, &mac_st);
+			} catch (...) {}
 			if (mac_st == MAC_OK) return true;
 			nrf_delay_ms(100);
 			elapsed += 100;
@@ -1804,15 +1775,17 @@ std::string SmdSatCmdSpi::run_tx_flow_test() {
 	};
 
 	// Helper: run a single TX and return result string
-	auto run_tx = [&](const char *tag, const KineisPacket& pkt) -> bool {
+	auto run_tx = [&](const char *tag, const KineisPacket &pkt) -> bool {
 		PMU::kick_watchdog();
 		tx_total++;
 		bool tx_ok = initiate_tx(pkt);
 		if (!tx_ok) {
 			uint8_t spi_st = 0, mac_st = 0;
-			try { read_spimac_state(&spi_st, &mac_st); } catch (...) {}
-			result += std::string(tag) + ":REQ_FAIL(spi=" + std::to_string(spi_st) +
-			          ",mac=" + std::to_string(mac_st) + ") ";
+			try {
+				read_spimac_state(&spi_st, &mac_st);
+			} catch (...) {}
+			result +=
+			    std::string(tag) + ":REQ_FAIL(spi=" + std::to_string(spi_st) + ",mac=" + std::to_string(mac_st) + ") ";
 			return false;
 		}
 		uint8_t mac_result = poll_tx_result(6000);
@@ -1826,12 +1799,12 @@ std::string SmdSatCmdSpi::run_tx_flow_test() {
 	};
 
 	// Helper: get the right packet for a given modulation
-	auto pkt_for_mod = [&](SmdArgosModulation mod) -> const KineisPacket& {
+	auto pkt_for_mod = [&](SmdArgosModulation mod) -> const KineisPacket & {
 		switch (mod) {
-			case ARGOS_MOD_VLDA4: return pkt_vlda4;
-			case ARGOS_MOD_LDK:   return pkt_ldk;
-			case ARGOS_MOD_LDA2:
-			default:              return pkt_lda2;
+		case ARGOS_MOD_VLDA4: return pkt_vlda4;
+		case ARGOS_MOD_LDK: return pkt_ldk;
+		case ARGOS_MOD_LDA2:
+		default: return pkt_lda2;
 		}
 	};
 
@@ -1841,7 +1814,11 @@ std::string SmdSatCmdSpi::run_tx_flow_test() {
 		nrf_delay_ms(100);
 		if (!ping()) return ARGOS_MOD_LDA2;
 
-		try { load_kmac_profil(1); } catch (...) { return ARGOS_MOD_LDA2; }
+		try {
+			load_kmac_profil(1);
+		} catch (...) {
+			return ARGOS_MOD_LDA2;
+		}
 
 		if (!wait_mac_ok()) return ARGOS_MOD_LDA2;
 
@@ -1852,16 +1829,17 @@ std::string SmdSatCmdSpi::run_tx_flow_test() {
 		//   KNS_TX_MOD_LDA2=2, LDA2L=3, VLDA4=4, HDA4=5, LDK=6
 		// Our enum: ARGOS_MOD_LDA2=0, ARGOS_MOD_LDK=1, ARGOS_MOD_VLDA4=2
 		// We read the raw byte and map it ourselves.
-		uint8_t rx_rconf[13] = {0};
+		uint8_t rx_rconf[13] = { 0 };
 		uint16_t rx_len = sizeof(rx_rconf);
 		SmdArgosModulation mod = ARGOS_MOD_LDA2;
 		if (send_command_auto(SMDSAT_CMD_READ_RCONF, nullptr, 0, rx_rconf, &rx_len) && rx_len >= 10) {
 			uint8_t kineis_mod = rx_rconf[9];
 			switch (kineis_mod) {
-				case 2: case 3: mod = ARGOS_MOD_LDA2; break;   // KNS_TX_MOD_LDA2 / LDA2L
-				case 4:         mod = ARGOS_MOD_VLDA4; break;  // KNS_TX_MOD_VLDA4
-				case 6:         mod = ARGOS_MOD_LDK; break;    // KNS_TX_MOD_LDK
-				default:        mod = ARGOS_MOD_LDA2; break;
+			case 2:
+			case 3: mod = ARGOS_MOD_LDA2; break;   // KNS_TX_MOD_LDA2 / LDA2L
+			case 4: mod = ARGOS_MOD_VLDA4; break;  // KNS_TX_MOD_VLDA4
+			case 6: mod = ARGOS_MOD_LDK; break;    // KNS_TX_MOD_LDK
+			default: mod = ARGOS_MOD_LDA2; break;
 			}
 			DEBUG_INFO("SmdSatCmdSpi::%s: Kineis mod=%u → enum=%d", __func__, kineis_mod, (int)mod);
 		}
@@ -1877,7 +1855,8 @@ std::string SmdSatCmdSpi::run_tx_flow_test() {
 	// ================================================================
 	// T1: TX with current modulation (baseline)
 	// ================================================================
-	DEBUG_INFO("SmdSatCmdSpi::%s: [T1] TX mod=%d (%u bytes)", __func__, (int)cur_mod, (unsigned)pkt_for_mod(cur_mod).size());
+	DEBUG_INFO("SmdSatCmdSpi::%s: [T1] TX mod=%d (%u bytes)", __func__, (int)cur_mod,
+	           (unsigned)pkt_for_mod(cur_mod).size());
 	run_tx("T1", pkt_for_mod(cur_mod));
 	resync_after_tx();
 
@@ -1902,13 +1881,12 @@ uint8_t SmdSatCmdSpi::poll_tx_result(uint32_t timeout_ms) {
 	uint32_t elapsed = 0;
 	while (elapsed < timeout_ms) {
 		PMU::kick_watchdog();
-		uint8_t rx[4] = {0};
+		uint8_t rx[4] = { 0 };
 		uint16_t rx_len = sizeof(rx);
 		if (send_command_auto(SMDSAT_CMD_READ_SPIMAC_STATE, nullptr, 0, rx, &rx_len)) {
 			uint8_t mac_status = rx[1];
-			if (mac_status == MAC_TX_DONE || mac_status == MAC_TX_TIMEOUT ||
-			    mac_status == MAC_ERROR || mac_status == MAC_RF_ABORTED ||
-			    mac_status == MAC_TX_SIZE_ERROR) {
+			if (mac_status == MAC_TX_DONE || mac_status == MAC_TX_TIMEOUT || mac_status == MAC_ERROR
+			    || mac_status == MAC_RF_ABORTED || mac_status == MAC_TX_SIZE_ERROR) {
 				DEBUG_INFO("SmdSatCmdSpi::%s: result=%u after %ums", __func__, mac_status, elapsed);
 				return mac_status;
 			}

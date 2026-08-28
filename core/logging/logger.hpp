@@ -13,13 +13,7 @@
 
 #include "messages.hpp"
 
-enum LogLevel {
-	LOG_LEVEL_OFF,
-	LOG_LEVEL_ERROR,
-	LOG_LEVEL_WARN,
-	LOG_LEVEL_INFO,
-	LOG_LEVEL_DEBUG
-};
+enum LogLevel { LOG_LEVEL_OFF, LOG_LEVEL_ERROR, LOG_LEVEL_WARN, LOG_LEVEL_INFO, LOG_LEVEL_DEBUG };
 
 
 class LoggerManager;
@@ -30,16 +24,15 @@ public:
 	static const char *log_level_str(LogType t);
 	virtual ~LogFormatter() {}
 	virtual const std::string header() = 0;
-	virtual const std::string log_entry(const LogEntry& e) = 0;
+	virtual const std::string log_entry(const LogEntry &e) = 0;
 };
 
 /// @brief Abstract logger — write log entries, query by level (error/warn/info/trace).
 class Logger {
-
 private:
 	int m_log_level = LOG_LEVEL_DEBUG;
 	unsigned int m_unique_id;
-	LogFormatter* m_log_formatter;
+	LogFormatter *m_log_formatter;
 	const char *m_name;
 
 	static inline void sync_datetime(LogHeader &header);
@@ -49,8 +42,8 @@ public:
 	virtual ~Logger();
 
 	void set_log_level(int level);
-	void set_log_formatter(LogFormatter* formatter);
-	LogFormatter* get_log_formatter();
+	void set_log_formatter(LogFormatter *formatter);
+	LogFormatter *get_log_formatter();
 	void warn(const char *msg, ...);
 	void error(const char *msg, ...);
 	void info(const char *msg, ...);
@@ -69,15 +62,14 @@ public:
 
 
 /// @brief Global logger registry — manages all Logger instances.
-class LoggerManager
-{
+class LoggerManager {
 private:
 	static inline unsigned int m_unique_identifier = 0;
-	static inline std::map<unsigned int, Logger&> m_map;
+	static inline std::map<unsigned int, Logger &> m_map;
 
 public:
-	static unsigned int add(Logger& s);
-	static void remove(Logger& s);
+	static unsigned int add(Logger &s);
+	static void remove(Logger &s);
 	static void create();
 	static void truncate();
 	static Logger *find_by_name(const char *);

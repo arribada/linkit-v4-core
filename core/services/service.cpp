@@ -18,7 +18,7 @@
 #include "hauled_mode_service.hpp"
 #include "moored_mode_service.hpp"
 #if ENABLE_AXL_SENSOR
-#include "axl_sensor_service.hpp"   // AXLSensorPort::WAKEUP_TRIGGERED
+#include "axl_sensor_service.hpp"  // AXLSensorPort::WAKEUP_TRIGGERED
 #endif
 #include <cstddef>
 #ifdef BENCH_TEST
@@ -61,14 +61,14 @@ extern BatteryMonitor *battery_monitor;
 /// @brief Register a service and assign a unique ID.
 /// @param s  Service to register.
 /// @return Unique ID for this service instance.
-unsigned int ServiceManager::add(Service& s) {
-	m_map.insert({m_unique_identifier, s});
+unsigned int ServiceManager::add(Service &s) {
+	m_map.insert({ m_unique_identifier, s });
 	DEBUG_TRACE("ServiceManager::add: service=%s added id=%u", s.get_name(), m_unique_identifier);
 	return m_unique_identifier++;
 }
 
 /// @brief Unregister a service.
-void ServiceManager::remove(Service& s) {
+void ServiceManager::remove(Service &s) {
 	DEBUG_TRACE("ServiceManager::remove: service=%s added", s.get_name());
 	m_map.erase(s.get_unique_id());
 }
@@ -87,13 +87,13 @@ void ServiceManager::reset() {
 
 /// @brief Start all registered services (called on FSM transition to Operational).
 /// @param data_notification_callback  Global event callback for FSM.
-void ServiceManager::startall(std::function<void(ServiceEvent&)> data_notification_callback) {
+void ServiceManager::startall(std::function<void(ServiceEvent &)> data_notification_callback) {
 	m_data_notification_callback = data_notification_callback;
 	restore_cooldown_state();
 	RateLimiter::restore_state();
 	HauledModeService::restore_state();
 	MooredModeService::restore_state();
-	for (auto const& p : m_map) {
+	for (auto const &p : m_map) {
 		DEBUG_TRACE("ServiceManager::startall: starting %s id=%u", p.second.get_name(), p.first);
 		p.second.start(data_notification_callback);
 	}
@@ -127,16 +127,14 @@ void ServiceManager::stopall() {
 	// queued during an active cooldown could fire after we transition back
 	// into Operational and undo a fresh cooldown's SWS pause.
 	system_scheduler->cancel_task(m_cooldown_wake_task);
-	for (auto const& p : m_map) {
+	for (auto const &p : m_map) {
 		PMU::kick_watchdog();
 		try {
 			p.second.stop();
-		} catch (const std::exception& e) {
-			DEBUG_ERROR("ServiceManager::stopall: %s stop() threw std::exception: %s",
-			            p.second.get_name(), e.what());
+		} catch (const std::exception &e) {
+			DEBUG_ERROR("ServiceManager::stopall: %s stop() threw std::exception: %s", p.second.get_name(), e.what());
 		} catch (...) {
-			DEBUG_ERROR("ServiceManager::stopall: %s stop() threw unknown — continuing",
-			            p.second.get_name());
+			DEBUG_ERROR("ServiceManager::stopall: %s stop() threw unknown — continuing", p.second.get_name());
 		}
 	}
 	PMU::kick_watchdog();
@@ -144,12 +142,12 @@ void ServiceManager::stopall() {
 
 /// @brief Broadcast a peer event to all services except the originator.
 /// @param event  Service event to broadcast.
-void ServiceManager::notify_peer_event(ServiceEvent& event) {
+void ServiceManager::notify_peer_event(ServiceEvent &event) {
 	// HauledModeService funnel — feeds every UW transition (dive/surface) into
 	// the hauled classifier. Hooked here rather than in a Service subclass so
 	// there's a single ground-truth dispatch site (Plan 1 step 3).
-	if (event.event_source == ServiceIdentifier::UW_SENSOR &&
-	    event.event_type == ServiceEventType::SERVICE_LOG_UPDATED) {
+	if (event.event_source == ServiceIdentifier::UW_SENSOR
+	    && event.event_type == ServiceEventType::SERVICE_LOG_UPDATED) {
 		std::time_t now = (rtc && rtc->is_set()) ? rtc->gettime() : 0;
 		if (now > 0) {
 			HauledModeService::on_underwater_event(std::get<bool>(event.event_data), now);
@@ -164,13 +162,12 @@ void ServiceManager::notify_peer_event(ServiceEvent& event) {
 	// degraded PVT carry accuracy far coarser than a sensible MOORED_RADIUS_M
 	// (hundreds of metres to kilometres), and would read as movement on a
 	// vessel that never left its berth.
-	if (event.event_source == ServiceIdentifier::GNSS_SENSOR &&
-	    event.event_type == ServiceEventType::SERVICE_LOG_UPDATED) {
+	if (event.event_source == ServiceIdentifier::GNSS_SENSOR
+	    && event.event_type == ServiceEventType::SERVICE_LOG_UPDATED) {
 		if (auto *gps = std::get_if<GPSLogEntry>(&event.event_data)) {
 			if (gps->info.valid && gps->info.event_type == GPSEventType::FIX) {
 				std::time_t now = (rtc && rtc->is_set()) ? rtc->gettime() : 0;
-				MooredModeService::on_gnss_fix(gps->info.lat, gps->info.lon,
-				                               gps->info.gSpeed, now);
+				MooredModeService::on_gnss_fix(gps->info.lat, gps->info.lon, gps->info.gSpeed, now);
 			}
 		}
 	}
@@ -179,37 +176,33 @@ void ServiceManager::notify_peer_event(ServiceEvent& event) {
 	// Needs a real RTC — the hold-off that keeps swell from burning the budget
 	// is measured in wall-clock seconds, and running it against the virtual
 	// pre-fix epoch would make the debounce meaningless.
-	if (event.event_source == ServiceIdentifier::AXL_SENSOR &&
-	    event.event_type == ServiceEventType::SERVICE_LOG_UPDATED) {
+	if (event.event_source == ServiceIdentifier::AXL_SENSOR
+	    && event.event_type == ServiceEventType::SERVICE_LOG_UPDATED) {
 		if (auto *sensor = std::get_if<ServiceSensorData>(&event.event_data)) {
 			if (sensor->port[AXLSensorPort::WAKEUP_TRIGGERED]) {
 				std::time_t now = (rtc && rtc->is_set()) ? rtc->gettime() : 0;
-				if (now > 0)
-					MooredModeService::on_motion_event(now);
+				if (now > 0) MooredModeService::on_motion_event(now);
 			}
 		}
 	}
 #endif
 
-	for (auto const& p : m_map) {
-		if (p.first != event.event_originator_unique_id)
-			p.second.notify_peer_event(event);
+	for (auto const &p : m_map) {
+		if (p.first != event.event_originator_unique_id) p.second.notify_peer_event(event);
 	}
 }
 
 unsigned int ServiceManager::get_unique_id(const char *name) {
-	for (auto const& p : m_map) {
-		if (std::string(p.second.get_name()) == std::string(name))
-			return p.second.get_unique_id();
+	for (auto const &p : m_map) {
+		if (std::string(p.second.get_name()) == std::string(name)) return p.second.get_unique_id();
 	}
 
 	throw ErrorCode::RESOURCE_NOT_AVAILABLE;
 }
 
 Logger *ServiceManager::get_logger(ServiceIdentifier service_id) {
-	for (auto const& p : m_map) {
-		if (p.second.get_service_id() == service_id && p.second.get_logger())
-			return p.second.get_logger();
+	for (auto const &p : m_map) {
+		if (p.second.get_service_id() == service_id && p.second.get_logger()) return p.second.get_logger();
 	}
 
 	return nullptr;
@@ -217,9 +210,8 @@ Logger *ServiceManager::get_logger(ServiceIdentifier service_id) {
 
 /// @brief Inject an event directly to the FSM callback (bypasses peer broadcast).
 /// @param event  Event to inject.
-void ServiceManager::inject_event(ServiceEvent& event) {
-	if (m_data_notification_callback)
-		m_data_notification_callback(event);
+void ServiceManager::inject_event(ServiceEvent &event) {
+	if (m_data_notification_callback) m_data_notification_callback(event);
 }
 
 // Build-time guarantee that time_t is 64-bit. If the toolchain ever flips to
@@ -233,8 +225,8 @@ static_assert(sizeof(std::time_t) >= 8,
 // Noinit RAM structure for cooldown persistence across System OFF (PSEUDO_POWER_OFF)
 struct CooldownNoinit {
 	std::time_t last_cycle_time;
-	uint16_t    passive_count;
-	uint16_t    crc;
+	uint16_t passive_count;
+	uint16_t crc;
 };
 #ifndef CPPUTEST
 static CooldownNoinit s_cooldown_noinit __attribute__((section(".noinit")));
@@ -249,10 +241,8 @@ static uint16_t cooldown_noinit_crc() {
 	// CRC was prone to false-positive validations against random RAM
 	// patterns, leading to phantom cooldowns that would skip a GPS cycle
 	// at the start of deployment.
-	return crc16_compute(
-		reinterpret_cast<const uint8_t *>(&s_cooldown_noinit),
-		offsetof(decltype(s_cooldown_noinit), crc),
-		nullptr);
+	return crc16_compute(reinterpret_cast<const uint8_t *>(&s_cooldown_noinit),
+	                     offsetof(decltype(s_cooldown_noinit), crc), nullptr);
 }
 
 /// @brief Persist cooldown state to .noinit RAM (survives System OFF / pseudo power-off).
@@ -294,18 +284,17 @@ void ServiceManager::restore_cooldown_state() {
 		// would never wake any service until the next external event (magnet,
 		// AXL wakeup) — sealed turtle = dormant for the rest of the day.
 		if (rtc && rtc->is_set() && system_scheduler) {
-			unsigned int interval = configuration_store
-				? configuration_store->read_param<unsigned int>(ParamID::MIN_SURFACE_CYCLE_INTERVAL_S)
-				: 0;
+			unsigned int interval =
+			    configuration_store
+			        ? configuration_store->read_param<unsigned int>(ParamID::MIN_SURFACE_CYCLE_INTERVAL_S)
+			        : 0;
 			if (interval > 0) {
 				std::time_t now = rtc->gettime();
-				std::time_t elapsed = (now > m_last_successful_cycle_time)
-					? (now - m_last_successful_cycle_time) : 0;
+				std::time_t elapsed = (now > m_last_successful_cycle_time) ? (now - m_last_successful_cycle_time) : 0;
 				if (elapsed < (std::time_t)interval) {
 					unsigned int remaining_ms = (interval - (unsigned int)elapsed) * 1000;
-					m_cooldown_wake_task = system_scheduler->post_task_prio([]() {
-						exit_cooldown_sleep();
-					}, "CooldownWakeBoot", Scheduler::DEFAULT_PRIORITY, remaining_ms);
+					m_cooldown_wake_task = system_scheduler->post_task_prio(
+					    []() { exit_cooldown_sleep(); }, "CooldownWakeBoot", Scheduler::DEFAULT_PRIORITY, remaining_ms);
 					DEBUG_INFO("ServiceManager: cooldown boot-wake armed for %u s remaining",
 					           (interval - (unsigned int)elapsed));
 				} else {
@@ -360,9 +349,8 @@ void ServiceManager::set_cycle_complete(std::time_t t) {
 		if (interval > 0 && system_scheduler) {
 			unsigned int remaining_ms = interval * 1000;
 			system_scheduler->cancel_task(m_cooldown_wake_task);
-			m_cooldown_wake_task = system_scheduler->post_task_prio([]() {
-				exit_cooldown_sleep();
-			}, "CooldownWakeNoRTC", Scheduler::DEFAULT_PRIORITY, remaining_ms);
+			m_cooldown_wake_task = system_scheduler->post_task_prio(
+			    []() { exit_cooldown_sleep(); }, "CooldownWakeNoRTC", Scheduler::DEFAULT_PRIORITY, remaining_ms);
 		}
 		return;
 	}
@@ -389,9 +377,8 @@ void ServiceManager::set_cycle_complete(std::time_t t) {
 	if (interval > 0 && system_scheduler) {
 		unsigned int remaining_ms = interval * 1000;
 		system_scheduler->cancel_task(m_cooldown_wake_task);
-		m_cooldown_wake_task = system_scheduler->post_task_prio([]() {
-			exit_cooldown_sleep();
-		}, "CooldownWake", Scheduler::DEFAULT_PRIORITY, remaining_ms);
+		m_cooldown_wake_task = system_scheduler->post_task_prio([]() { exit_cooldown_sleep(); }, "CooldownWake",
+		                                                        Scheduler::DEFAULT_PRIORITY, remaining_ms);
 		DEBUG_TRACE("ServiceManager::set_cycle_complete: wake timer set for %u s", interval);
 	}
 }
@@ -408,19 +395,15 @@ bool ServiceManager::is_in_cooldown(std::time_t now) {
 /// @return  Remaining cooldown seconds, or 0 if no active cooldown.
 unsigned int ServiceManager::get_cooldown_remaining_s(std::time_t now) {
 	unsigned int interval = configuration_store->read_param<unsigned int>(ParamID::MIN_SURFACE_CYCLE_INTERVAL_S);
-	if (interval == 0)
-		return 0;
-	if (m_last_successful_cycle_time == 0)
-		return 0;
-	if (now < m_last_successful_cycle_time)
-		return 0;  // RTC went backward — treat as cooldown expired
+	if (interval == 0) return 0;
+	if (m_last_successful_cycle_time == 0) return 0;
+	if (now < m_last_successful_cycle_time) return 0;  // RTC went backward — treat as cooldown expired
 	// `now == m_last_successful_cycle_time` falls through with elapsed=0,
 	// which correctly reports the full interval as remaining. This matters
 	// for callers that do set_cycle_complete(now) then is_in_cooldown(now)
 	// in the same tick (e.g. LoRaTxService dive handler).
 	std::time_t elapsed = now - m_last_successful_cycle_time;
-	if (elapsed >= (std::time_t)interval)
-		return 0;
+	if (elapsed >= (std::time_t)interval) return 0;
 	return (unsigned int)((std::time_t)interval - elapsed);
 }
 
@@ -431,8 +414,8 @@ void ServiceManager::notify_passive_surfacing() {
 #if VALIDATION_LOG_ENABLE
 	std::time_t now = (rtc && rtc->is_set()) ? rtc->gettime() : 0;
 	unsigned int remaining = get_cooldown_remaining_s(now);
-	DEBUG_INFO("[VAL-COOLDOWN] block passive #%u t=%u remaining_s=%u",
-	           (unsigned int)m_passive_surfacing_count, (unsigned int)now, remaining);
+	DEBUG_INFO("[VAL-COOLDOWN] block passive #%u t=%u remaining_s=%u", (unsigned int)m_passive_surfacing_count,
+	           (unsigned int)now, remaining);
 #endif
 }
 
@@ -446,15 +429,16 @@ void ServiceManager::enter_cooldown_sleep() {
 	if (rtc && rtc->is_set() && m_last_successful_cycle_time > 0) {
 		std::time_t now = rtc->gettime();
 		if (now > m_last_successful_cycle_time) {
-			unsigned int interval = configuration_store->read_param<unsigned int>(ParamID::MIN_SURFACE_CYCLE_INTERVAL_S);
+			unsigned int interval =
+			    configuration_store->read_param<unsigned int>(ParamID::MIN_SURFACE_CYCLE_INTERVAL_S);
 			std::time_t elapsed = now - m_last_successful_cycle_time;
 			remaining_s = (elapsed < (std::time_t)interval) ? (interval - (unsigned int)elapsed) : 0;
 		}
 	}
 	DEBUG_INFO("ServiceManager: entering cooldown sleep (remaining %u s) — stopping SWS", remaining_s);
-// #if VALIDATION_LOG_ENABLE
-// 	DEBUG_INFO("[VAL-SLEEP] cooldown_sws_pause remaining_s=%u", remaining_s);
-// #endif
+	// #if VALIDATION_LOG_ENABLE
+	// 	DEBUG_INFO("[VAL-SLEEP] cooldown_sws_pause remaining_s=%u", remaining_s);
+	// #endif
 
 	// Stop SWS (UW_SENSOR) to save power during cooldown — unless the user
 	// is actively running SWSTST,1 (bench/cable testing). Pausing SWS during
@@ -466,7 +450,7 @@ void ServiceManager::enter_cooldown_sleep() {
 #else
 	{
 #endif
-		for (auto& p : m_map) {
+		for (auto &p : m_map) {
 			if (p.second.get_service_id() == ServiceIdentifier::UW_SENSOR) {
 				p.second.pause_for_cooldown();
 			}
@@ -492,9 +476,8 @@ void ServiceManager::enter_cooldown_sleep() {
 		if (elapsed < (std::time_t)interval) {
 			unsigned int remaining_ms = (interval - (unsigned int)elapsed) * 1000;
 			system_scheduler->cancel_task(m_cooldown_wake_task);
-			m_cooldown_wake_task = system_scheduler->post_task_prio([]() {
-				exit_cooldown_sleep();
-			}, "CooldownWake", Scheduler::DEFAULT_PRIORITY, remaining_ms);
+			m_cooldown_wake_task = system_scheduler->post_task_prio([]() { exit_cooldown_sleep(); }, "CooldownWake",
+			                                                        Scheduler::DEFAULT_PRIORITY, remaining_ms);
 			DEBUG_TRACE("ServiceManager: cooldown wake timer set for %u s", (interval - (unsigned int)elapsed));
 		} else {
 			// Cooldown already expired — restart immediately
@@ -514,16 +497,16 @@ void ServiceManager::exit_cooldown_sleep() {
 	{
 		std::time_t now = (rtc && rtc->is_set()) ? rtc->gettime() : 0;
 		std::time_t elapsed = (now > m_last_successful_cycle_time && m_last_successful_cycle_time > 0)
-		                       ? (now - m_last_successful_cycle_time) : 0;
-		DEBUG_INFO("[VAL-COOLDOWN] exit t=%u elapsed_s=%u passive=%u",
-		           (unsigned int)now, (unsigned int)elapsed,
+		                          ? (now - m_last_successful_cycle_time)
+		                          : 0;
+		DEBUG_INFO("[VAL-COOLDOWN] exit t=%u elapsed_s=%u passive=%u", (unsigned int)now, (unsigned int)elapsed,
 		           (unsigned int)m_passive_surfacing_count);
 	}
 #endif
 
 	// Restart SWS with first-time flag — it will re-emit its current state
 	// on the next sample, triggering surface/UW notification to all peers.
-	for (auto& p : m_map) {
+	for (auto &p : m_map) {
 		if (p.second.get_service_id() == ServiceIdentifier::UW_SENSOR) {
 			p.second.reset_state_for_cooldown_exit();
 			p.second.resume_from_cooldown();
@@ -540,8 +523,7 @@ void Service::pause_for_cooldown() {
 /// @brief Resume service after cooldown — reschedule if still started.
 void Service::resume_from_cooldown() {
 	DEBUG_INFO("Service::resume_from_cooldown: %s", m_name);
-	if (m_is_started)
-		reschedule();
+	if (m_is_started) reschedule();
 }
 
 /// @brief Constructor — register with ServiceManager, init state.
@@ -562,11 +544,21 @@ Service::~Service() {
 	ServiceManager::remove(*this);
 }
 
-unsigned int Service::get_unique_id() { return m_unique_id; }
-const char *Service::get_name() { return m_name; }
-ServiceIdentifier Service::get_service_id() { return m_service_id; }
-Logger *Service::get_logger() { return m_logger; }
-void Service::set_logger(Logger *logger) { m_logger = logger; }
+unsigned int Service::get_unique_id() {
+	return m_unique_id;
+}
+const char *Service::get_name() {
+	return m_name;
+}
+ServiceIdentifier Service::get_service_id() {
+	return m_service_id;
+}
+Logger *Service::get_logger() {
+	return m_logger;
+}
+void Service::set_logger(Logger *logger) {
+	m_logger = logger;
+}
 
 /// @brief GNSS MED #4 audit fix impl — cancel the rescheduler's safety-net
 /// timeout. Used by derived services that short-circuit service_initiate.
@@ -576,7 +568,7 @@ void Service::cancel_safety_timeout() {
 
 /// @brief Start the service — init, register callback, schedule first execution.
 /// @param data_notification_callback  Global event callback.
-void Service::start(std::function<void(ServiceEvent&)> data_notification_callback) {
+void Service::start(std::function<void(ServiceEvent &)> data_notification_callback) {
 	DEBUG_TRACE("Service::start: service %s started", m_name);
 	m_is_started = true;
 	m_is_initiated = false;
@@ -593,8 +585,7 @@ void Service::stop() {
 		m_is_started = false;
 		deschedule();
 		service_cancel();
-		if (m_is_initiated)
-			notify_service_inactive();
+		if (m_is_initiated) notify_service_inactive();
 		m_is_initiated = false;
 		service_term();
 	}
@@ -611,15 +602,13 @@ bool Service::is_underwater_deferred() {
 /// @brief Handle underwater state change — deschedule when submerged, reschedule on surfacing.
 /// @param state  true = submerged, false = surfaced.
 void Service::notify_underwater_state(bool state) {
-	if (service_is_usable_underwater())
-		return; // Don't care since the sensor can be used underwater
+	if (service_is_usable_underwater()) return;  // Don't care since the sensor can be used underwater
 	//DEBUG_TRACE("Service::notify_underwater_state: service %s notify UW %u", m_name, state);
 	m_is_underwater = state;
 	if (m_is_underwater) {
 		deschedule();
 		service_cancel();
-		if (m_is_initiated)
-			notify_service_inactive();
+		if (m_is_initiated) notify_service_inactive();
 		m_is_initiated = false;
 	} else {
 		// Check cooldown: skip reschedule if a successful cycle completed recently
@@ -633,14 +622,13 @@ void Service::notify_underwater_state(bool state) {
 			return;
 		}
 		bool immediate;
-		if (service_is_triggered_on_surfaced(immediate))
-			reschedule(immediate);
+		if (service_is_triggered_on_surfaced(immediate)) reschedule(immediate);
 	}
 }
 
 /// @brief Handle peer events — routes UW state changes and triggered events.
 /// @param event  Peer service event. May be overridden by subclass for custom handling.
-void Service::notify_peer_event(ServiceEvent& event) {
+void Service::notify_peer_event(ServiceEvent &event) {
 	//DEBUG_TRACE("Service::notify_peer_event: src=%u type=%u", (unsigned int)event.event_source, (unsigned int)event.event_type);
 	bool immediate = true;
 	if (event.event_source == ServiceIdentifier::UW_SENSOR && event.event_type == ServiceEventType::SERVICE_LOG_UPDATED)
@@ -667,10 +655,8 @@ bool Service::service_is_scheduled() {
 }
 
 void Service::service_log(ServiceEventData *event_data, void *entry) {
-	if (m_logger && entry != nullptr)
-		m_logger->write(entry);
-	if (event_data)
-		notify_log_updated(*event_data);
+	if (m_logger && entry != nullptr) m_logger->write(entry);
+	if (event_data) notify_log_updated(*event_data);
 }
 
 /// @brief Mark service as complete — log, notify inactive, optionally reschedule.
@@ -691,23 +677,21 @@ void Service::service_complete(ServiceEventData *event_data, void *entry, bool s
 	m_is_initiated = false;
 	notify_service_inactive();
 	service_log(event_data, entry);
-	if (shall_reschedule)
-		reschedule();
+	if (shall_reschedule) reschedule();
 }
 
-void Service::service_set_log_header_time(LogHeader& header, std::time_t time)
-{
-    uint16_t year;
-    uint8_t month, day, hour, min, sec;
+void Service::service_set_log_header_time(LogHeader &header, std::time_t time) {
+	uint16_t year;
+	uint8_t month, day, hour, min, sec;
 
-    convert_datetime_to_epoch(time, year, month, day, hour, min, sec);
+	convert_datetime_to_epoch(time, year, month, day, hour, min, sec);
 
-    header.year = year;
-    header.month = month;
-    header.day = day;
-    header.hours = hour;
-    header.minutes = min;
-    header.seconds = sec;
+	header.year = year;
+	header.month = month;
+	header.day = day;
+	header.hours = hour;
+	header.minutes = min;
+	header.seconds = sec;
 }
 
 void Service::service_active() {
@@ -751,13 +735,17 @@ bool Service::service_is_battery_level_low() {
 /// EVERY branch of reschedule(), including those that plan nothing: a test that
 /// only sees the success path cannot tell "this mode scheduled an emission" from
 /// "this mode scheduled nothing and I am reading the previous mode's value".
-#define BENCH_SCHED_NOTE(ms, why) do { m_bench_sched_ms = (ms); m_bench_sched_why = (why); } while (0)
+#define BENCH_SCHED_NOTE(ms, why)  \
+	do {                           \
+		m_bench_sched_ms = (ms);   \
+		m_bench_sched_why = (why); \
+	} while (0)
 
 /// @brief Bench-only: one-line schedule report over ALL registered services.
 std::string ServiceManager::bench_schedule_report() {
 	std::string out;
-	for (auto const& kv : m_map) {
-		Service& s = kv.second;
+	for (auto const &kv : m_map) {
+		Service &s = kv.second;
 		char buf[96];
 		if (s.bench_sched_ms() == Service::SCHEDULE_DISABLED)
 			snprintf(buf, sizeof(buf), "%s=none(%s) ", s.bench_name(), s.bench_sched_why());
@@ -768,7 +756,9 @@ std::string ServiceManager::bench_schedule_report() {
 	return out;
 }
 #else
-#define BENCH_SCHED_NOTE(ms, why) do { } while (0)
+#define BENCH_SCHED_NOTE(ms, why) \
+	do {                          \
+	} while (0)
 #endif
 
 /// @brief Internal: compute next schedule, post task to scheduler, arm timeout.
@@ -800,83 +790,95 @@ void Service::reschedule(bool immediate) {
 					BENCH_SCHED_NOTE(next_schedule, "scheduled");
 					m_last_schedule = next_schedule;
 					m_task_period = system_scheduler->post_task_prio(
-						[this]() {
-						// Barrier against unhandled exceptions in service code.
-						// `service_initiate()` is virtual and runs user-defined logic that
-						// may throw (e.g. ConfigStore::CONFIG_STORE_CORRUPTED, ErrorCode
-						// enums, std::out_of_range from at(), bad_variant_access, etc.).
-						// Without this catch, the exception escapes the scheduler task
-						// runner and reaches std::terminate → __verbose_terminate_handler
-						// → abort(), which on this platform hangs in fputc until WDT.
-						// Catching here logs the failure and lets the service be
-						// rescheduled on the next event/timer instead of bricking the FW.
-						try {
-							unsigned int timeout_ms = service_next_timeout();
-							DEBUG_TRACE("Service::reschedule: service %s time out in %u msecs", m_name, timeout_ms);
-							if (timeout_ms) {
-								m_task_timeout = system_scheduler->post_task_prio(
-									[this]() {
-									try {
-										DEBUG_TRACE("Service::reschedule: service %s timed out", m_name);
-										service_cancel();
-										if (m_is_initiated)
-											notify_service_inactive();
-										m_is_initiated = false;
-										reschedule();
-									} catch (ErrorCode e) {
-										DEBUG_ERROR("Service::reschedule: timeout ErrorCode=%d in service %s — recovering", (int)e, m_name);
-										m_is_initiated = false;
-									} catch (const std::exception& e) {
-										DEBUG_ERROR("Service::reschedule: timeout std::exception in service %s: %s — recovering", m_name, e.what());
-										m_is_initiated = false;
-									} catch (...) {
-										DEBUG_ERROR("Service::reschedule: timeout unknown exception in service %s — recovering", m_name);
-										m_is_initiated = false;
-									}
-								}, "ServiceTimeoutPeriod", Scheduler::DEFAULT_PRIORITY, timeout_ms);
-							}
+					    [this]() {
+						    // Barrier against unhandled exceptions in service code.
+						    // `service_initiate()` is virtual and runs user-defined logic that
+						    // may throw (e.g. ConfigStore::CONFIG_STORE_CORRUPTED, ErrorCode
+						    // enums, std::out_of_range from at(), bad_variant_access, etc.).
+						    // Without this catch, the exception escapes the scheduler task
+						    // runner and reaches std::terminate → __verbose_terminate_handler
+						    // → abort(), which on this platform hangs in fputc until WDT.
+						    // Catching here logs the failure and lets the service be
+						    // rescheduled on the next event/timer instead of bricking the FW.
+						    try {
+							    unsigned int timeout_ms = service_next_timeout();
+							    DEBUG_TRACE("Service::reschedule: service %s time out in %u msecs", m_name, timeout_ms);
+							    if (timeout_ms) {
+								    m_task_timeout = system_scheduler->post_task_prio(
+								        [this]() {
+									        try {
+										        DEBUG_TRACE("Service::reschedule: service %s timed out", m_name);
+										        service_cancel();
+										        if (m_is_initiated) notify_service_inactive();
+										        m_is_initiated = false;
+										        reschedule();
+									        } catch (ErrorCode e) {
+										        DEBUG_ERROR("Service::reschedule: timeout ErrorCode=%d in service %s — "
+												            "recovering",
+												            (int)e, m_name);
+										        m_is_initiated = false;
+									        } catch (const std::exception &e) {
+										        DEBUG_ERROR("Service::reschedule: timeout std::exception in service "
+												            "%s: %s — recovering",
+												            m_name, e.what());
+										        m_is_initiated = false;
+									        } catch (...) {
+										        DEBUG_ERROR("Service::reschedule: timeout unknown exception in service "
+												            "%s — recovering",
+												            m_name);
+										        m_is_initiated = false;
+									        }
+								        },
+								        "ServiceTimeoutPeriod", Scheduler::DEFAULT_PRIORITY, timeout_ms);
+							    }
 
-							if (!m_is_underwater) {
-								DEBUG_TRACE("Service::reschedule: service %s active", m_name);
-								m_is_initiated = true;
-								if (service_is_active_on_initiate())
-									notify_service_active();
-								service_initiate();
-							} else {
-								DEBUG_TRACE("Service::reschedule: service %s can't run underwater", m_name);
-							}
-						} catch (ErrorCode e) {
-							// Firmware-thrown enum (CONFIG_STORE_CORRUPTED, RESOURCE_NOT_AVAILABLE, etc.)
-							DEBUG_ERROR("Service::reschedule: ErrorCode=%d in service %s task — recovering", (int)e, m_name);
-							// Cancel the safety-net timeout we just armed: otherwise the service
-							// is stuck waiting for `timeout_ms` before any retry. (See QA review B2.)
-							system_scheduler->cancel_task(m_task_timeout);
-							m_is_initiated = false;
-						} catch (const std::bad_variant_access& e) {
-							// Type mismatch when reading config_store params (variant<>).
-							DEBUG_ERROR("Service::reschedule: bad_variant_access in service %s task (config type mismatch?) — recovering", m_name);
-							system_scheduler->cancel_task(m_task_timeout);
-							m_is_initiated = false;
-						} catch (const std::out_of_range& e) {
-							// Index out of range — typically from std::array::at() or vector::at().
-							DEBUG_ERROR("Service::reschedule: out_of_range in service %s task (%s) — recovering", m_name, e.what());
-							system_scheduler->cancel_task(m_task_timeout);
-							m_is_initiated = false;
-						} catch (const std::exception& e) {
-							// Any other std exception (bad_alloc, runtime_error, …)
-							DEBUG_ERROR("Service::reschedule: std::exception in service %s task: %s — recovering", m_name, e.what());
-							system_scheduler->cancel_task(m_task_timeout);
-							m_is_initiated = false;
-						} catch (...) {
-							// Last-resort barrier. Without this, the exception escapes the
-							// scheduler runner and propagates up to terminate() →
-							// __verbose_terminate_handler → abort() → fputc-hang → WDT
-							// (15 min on this board). Log and recover instead.
-							DEBUG_ERROR("Service::reschedule: unknown exception in service %s task — recovering", m_name);
-							system_scheduler->cancel_task(m_task_timeout);
-							m_is_initiated = false;
-						}
-					}, "ServicePeriod", Scheduler::DEFAULT_PRIORITY, next_schedule);
+							    if (!m_is_underwater) {
+								    DEBUG_TRACE("Service::reschedule: service %s active", m_name);
+								    m_is_initiated = true;
+								    if (service_is_active_on_initiate()) notify_service_active();
+								    service_initiate();
+							    } else {
+								    DEBUG_TRACE("Service::reschedule: service %s can't run underwater", m_name);
+							    }
+						    } catch (ErrorCode e) {
+							    // Firmware-thrown enum (CONFIG_STORE_CORRUPTED, RESOURCE_NOT_AVAILABLE, etc.)
+							    DEBUG_ERROR("Service::reschedule: ErrorCode=%d in service %s task — recovering", (int)e,
+								            m_name);
+							    // Cancel the safety-net timeout we just armed: otherwise the service
+							    // is stuck waiting for `timeout_ms` before any retry. (See QA review B2.)
+							    system_scheduler->cancel_task(m_task_timeout);
+							    m_is_initiated = false;
+						    } catch (const std::bad_variant_access &e) {
+							    // Type mismatch when reading config_store params (variant<>).
+							    DEBUG_ERROR("Service::reschedule: bad_variant_access in service %s task (config type "
+								            "mismatch?) — recovering",
+								            m_name);
+							    system_scheduler->cancel_task(m_task_timeout);
+							    m_is_initiated = false;
+						    } catch (const std::out_of_range &e) {
+							    // Index out of range — typically from std::array::at() or vector::at().
+							    DEBUG_ERROR("Service::reschedule: out_of_range in service %s task (%s) — recovering",
+								            m_name, e.what());
+							    system_scheduler->cancel_task(m_task_timeout);
+							    m_is_initiated = false;
+						    } catch (const std::exception &e) {
+							    // Any other std exception (bad_alloc, runtime_error, …)
+							    DEBUG_ERROR("Service::reschedule: std::exception in service %s task: %s — recovering",
+								            m_name, e.what());
+							    system_scheduler->cancel_task(m_task_timeout);
+							    m_is_initiated = false;
+						    } catch (...) {
+							    // Last-resort barrier. Without this, the exception escapes the
+							    // scheduler runner and propagates up to terminate() →
+							    // __verbose_terminate_handler → abort() → fputc-hang → WDT
+							    // (15 min on this board). Log and recover instead.
+							    DEBUG_ERROR("Service::reschedule: unknown exception in service %s task — recovering",
+								            m_name);
+							    system_scheduler->cancel_task(m_task_timeout);
+							    m_is_initiated = false;
+						    }
+					    },
+					    "ServicePeriod", Scheduler::DEFAULT_PRIORITY, next_schedule);
 				} else {
 					DEBUG_TRACE("Service::reschedule: service %s schedule currently disabled", m_name);
 					BENCH_SCHED_NOTE(SCHEDULE_DISABLED, "no-schedule");
@@ -910,7 +912,7 @@ void Service::deschedule() {
 
 /// @brief Broadcast SERVICE_LOG_UPDATED event to all peers via callback.
 /// @param data  Event payload (GPS fix, sensor data, etc.).
-void Service::notify_log_updated(ServiceEventData& data) {
+void Service::notify_log_updated(ServiceEventData &data) {
 	if (m_data_notification_callback) {
 		ServiceEvent e;
 		e.event_type = ServiceEventType::SERVICE_LOG_UPDATED;

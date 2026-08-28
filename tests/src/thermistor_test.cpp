@@ -18,8 +18,7 @@ extern Scheduler *system_scheduler;
 extern RTC *rtc;
 
 
-TEST_GROUP(ThermistorSensor)
-{
+TEST_GROUP(ThermistorSensor) {
 	FakeConfigurationStore *fake_config_store;
 	FakeTimer *fake_timer;
 	FakeLog *fake_logger;
@@ -55,24 +54,21 @@ TEST_GROUP(ThermistorSensor)
 
 	void notify_gnss_active() {
 		ServiceEvent e;
-		e.event_type = ServiceEventType::SERVICE_ACTIVE,
-		e.event_source = ServiceIdentifier::GNSS_SENSOR;
+		e.event_type = ServiceEventType::SERVICE_ACTIVE, e.event_source = ServiceIdentifier::GNSS_SENSOR;
 		e.event_originator_unique_id = 0x12345678;
 		ServiceManager::notify_peer_event(e);
 	}
 
 	void notify_gnss_inactive() {
 		ServiceEvent e;
-		e.event_type = ServiceEventType::SERVICE_INACTIVE,
-		e.event_source = ServiceIdentifier::GNSS_SENSOR;
+		e.event_type = ServiceEventType::SERVICE_INACTIVE, e.event_source = ServiceIdentifier::GNSS_SENSOR;
 		e.event_originator_unique_id = 0x12345678;
 		ServiceManager::notify_peer_event(e);
 	}
 };
 
 
-TEST(ThermistorSensor, SensorDisabled)
-{
+TEST(ThermistorSensor, SensorDisabled) {
 	MockSensor drv;
 	ThermistorSensorService s(drv, logger);
 	unsigned int num_callbacks = 0;
@@ -92,7 +88,7 @@ TEST(ThermistorSensor, SensorDisabled)
 	});
 
 	for (unsigned int i = 0; i < 5; i++) {
-		fake_timer->increment_counter(period*1000);
+		fake_timer->increment_counter(period * 1000);
 		system_scheduler->run();
 	}
 
@@ -102,8 +98,7 @@ TEST(ThermistorSensor, SensorDisabled)
 	s.stop();
 }
 
-TEST(ThermistorSensor, SchedulingPeriodic)
-{
+TEST(ThermistorSensor, SchedulingPeriodic) {
 	MockSensor drv;
 	ThermistorSensorService s(drv, logger);
 	unsigned int num_callbacks = 0;
@@ -123,8 +118,9 @@ TEST(ThermistorSensor, SchedulingPeriodic)
 	});
 
 	for (unsigned int i = 0; i < 5; i++) {
-		mock().expectOneCall("read").onObject(&drv).withUnsignedIntParameter("port", 0).andReturnValue((double)(20.0 + i));
-		fake_timer->increment_counter(period*1000);
+		mock().expectOneCall("read").onObject(&drv).withUnsignedIntParameter("port", 0).andReturnValue(
+		    (double)(20.0 + i));
+		fake_timer->increment_counter(period * 1000);
 		system_scheduler->run();
 	}
 
@@ -140,8 +136,7 @@ TEST(ThermistorSensor, SchedulingPeriodic)
 	s.stop();
 }
 
-TEST(ThermistorSensor, SchedulingNoPeriodic)
-{
+TEST(ThermistorSensor, SchedulingNoPeriodic) {
 	MockSensor drv;
 	ThermistorSensorService s(drv, logger);
 	unsigned int num_callbacks = 0;
@@ -171,8 +166,7 @@ TEST(ThermistorSensor, SchedulingNoPeriodic)
 	s.stop();
 }
 
-TEST(ThermistorSensor, SchedulingTxEnableOneShot)
-{
+TEST(ThermistorSensor, SchedulingTxEnableOneShot) {
 	MockSensor drv;
 	ThermistorSensorService s(drv, logger);
 	unsigned int num_callbacks = 0;
@@ -197,7 +191,7 @@ TEST(ThermistorSensor, SchedulingTxEnableOneShot)
 
 	for (unsigned int i = 0; i < 1; i++) {
 		mock().expectOneCall("read").onObject(&drv).withUnsignedIntParameter("port", 0).andReturnValue((double)25.0);
-		fake_timer->increment_counter(period*1000);
+		fake_timer->increment_counter(period * 1000);
 		system_scheduler->run();
 	}
 
@@ -213,8 +207,7 @@ TEST(ThermistorSensor, SchedulingTxEnableOneShot)
 	s.stop();
 }
 
-TEST(ThermistorSensor, SchedulingTxEnableMean)
-{
+TEST(ThermistorSensor, SchedulingTxEnableMean) {
 	MockSensor drv;
 	ThermistorSensorService s(drv, logger);
 	unsigned int num_callbacks = 0;
@@ -234,7 +227,7 @@ TEST(ThermistorSensor, SchedulingTxEnableMean)
 	configuration_store->write_param(ParamID::THERMISTOR_SENSOR_ENABLE_TX_SAMPLE_PERIOD, tx_period);
 	configuration_store->write_param(ParamID::THERMISTOR_SENSOR_ENABLE_TX_MAX_SAMPLES, max_samples);
 
-	s.start([&num_callbacks,&sensorData](ServiceEvent &event) {
+	s.start([&num_callbacks, &sensorData](ServiceEvent &event) {
 		if (event.event_type == ServiceEventType::SERVICE_LOG_UPDATED) {
 			num_callbacks++;
 			sensorData = std::get<ServiceSensorData>(event.event_data);
@@ -261,8 +254,7 @@ TEST(ThermistorSensor, SchedulingTxEnableMean)
 	s.stop();
 }
 
-TEST(ThermistorSensor, SchedulingTxEnableMedian)
-{
+TEST(ThermistorSensor, SchedulingTxEnableMedian) {
 	MockSensor drv;
 	ThermistorSensorService s(drv, logger);
 	unsigned int num_callbacks = 0;
@@ -282,7 +274,7 @@ TEST(ThermistorSensor, SchedulingTxEnableMedian)
 	configuration_store->write_param(ParamID::THERMISTOR_SENSOR_ENABLE_TX_SAMPLE_PERIOD, tx_period);
 	configuration_store->write_param(ParamID::THERMISTOR_SENSOR_ENABLE_TX_MAX_SAMPLES, max_samples);
 
-	s.start([&num_callbacks,&sensorData](ServiceEvent &event) {
+	s.start([&num_callbacks, &sensorData](ServiceEvent &event) {
 		if (event.event_type == ServiceEventType::SERVICE_LOG_UPDATED) {
 			num_callbacks++;
 			sensorData = std::get<ServiceSensorData>(event.event_data);
@@ -309,8 +301,7 @@ TEST(ThermistorSensor, SchedulingTxEnableMedian)
 	s.stop();
 }
 
-TEST(ThermistorSensor, WakeupThresholdTriggersGNSS)
-{
+TEST(ThermistorSensor, WakeupThresholdTriggersGNSS) {
 	MockSensor drv;
 	ThermistorSensorService s(drv, logger);
 	unsigned int num_callbacks = 0;
@@ -340,14 +331,14 @@ TEST(ThermistorSensor, WakeupThresholdTriggersGNSS)
 	// Send values below threshold - no GNSS trigger
 	for (unsigned int i = 0; i < 2; i++) {
 		mock().expectOneCall("read").onObject(&drv).withUnsignedIntParameter("port", 0).andReturnValue((double)20.0);
-		fake_timer->increment_counter(period*1000);
+		fake_timer->increment_counter(period * 1000);
 		system_scheduler->run();
 	}
 
 	// Send values above threshold - should trigger after wakeup_samples consecutive
 	for (unsigned int i = 0; i < wakeup_samples; i++) {
 		mock().expectOneCall("read").onObject(&drv).withUnsignedIntParameter("port", 0).andReturnValue((double)35.0);
-		fake_timer->increment_counter(period*1000);
+		fake_timer->increment_counter(period * 1000);
 		system_scheduler->run();
 	}
 
@@ -356,8 +347,7 @@ TEST(ThermistorSensor, WakeupThresholdTriggersGNSS)
 	s.stop();
 }
 
-TEST(ThermistorSensor, WakeupThresholdDisabledWhenZeroSamples)
-{
+TEST(ThermistorSensor, WakeupThresholdDisabledWhenZeroSamples) {
 	MockSensor drv;
 	ThermistorSensorService s(drv, logger);
 	unsigned int num_callbacks = 0;
@@ -367,7 +357,7 @@ TEST(ThermistorSensor, WakeupThresholdDisabledWhenZeroSamples)
 	unsigned int period = 10;
 	bool sensor_en = true;
 	double threshold = 30.0;
-	unsigned int wakeup_samples = 0; // Disabled
+	unsigned int wakeup_samples = 0;  // Disabled
 
 	configuration_store->write_param(ParamID::THERMISTOR_SENSOR_ENABLE, sensor_en);
 	configuration_store->write_param(ParamID::THERMISTOR_SENSOR_PERIODIC, period);
@@ -383,7 +373,7 @@ TEST(ThermistorSensor, WakeupThresholdDisabledWhenZeroSamples)
 	// Send values above threshold - should NOT trigger GNSS because wakeup_samples = 0
 	for (unsigned int i = 0; i < 5; i++) {
 		mock().expectOneCall("read").onObject(&drv).withUnsignedIntParameter("port", 0).andReturnValue((double)35.0);
-		fake_timer->increment_counter(period*1000);
+		fake_timer->increment_counter(period * 1000);
 		system_scheduler->run();
 	}
 
@@ -393,8 +383,7 @@ TEST(ThermistorSensor, WakeupThresholdDisabledWhenZeroSamples)
 	s.stop();
 }
 
-TEST(ThermistorSensor, IsUsableUnderwater)
-{
+TEST(ThermistorSensor, IsUsableUnderwater) {
 	MockSensor drv;
 	ThermistorSensorService s(drv, logger);
 
@@ -409,7 +398,7 @@ TEST(ThermistorSensor, IsUsableUnderwater)
 
 	// Thermistor should be usable underwater
 	mock().expectOneCall("read").onObject(&drv).withUnsignedIntParameter("port", 0).andReturnValue((double)22.0);
-	fake_timer->increment_counter(period*1000);
+	fake_timer->increment_counter(period * 1000);
 	system_scheduler->run();
 
 	CHECK_EQUAL(1, logger->num_entries());

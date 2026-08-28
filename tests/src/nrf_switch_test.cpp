@@ -13,14 +13,12 @@
 extern Timer *system_timer;
 
 
-namespace BSP
-{
-	const GPIO_InitTypeDefAndInst_t GPIO_Inits[GPIO_TOTAL_NUMBER] = {};
+namespace BSP {
+const GPIO_InitTypeDefAndInst_t GPIO_Inits[GPIO_TOTAL_NUMBER] = {};
 };
 
 
-TEST_GROUP(NrfSwitch)
-{
+TEST_GROUP(NrfSwitch) {
 	FakeTimer *fake_timer;
 	void setup() {
 		fake_timer = new FakeTimer;
@@ -42,7 +40,10 @@ TEST(NrfSwitch, SwitchTriggeringCallbackNoHysteresis) {
 
 	// resume() reads initial pin state
 	mock().expectOneCall("value").withUnsignedIntParameter("pin", BSP::GPIO::GPIO_SWITCH).andReturnValue(0);
-	sw->start([&trigger_counter, &actual_state](bool state){ trigger_counter++; actual_state = state; });
+	sw->start([&trigger_counter, &actual_state](bool state) {
+		trigger_counter++;
+		actual_state = state;
+	});
 
 	// TOGGLE handler reads pin state, then debounce callback reads settled state
 	mock().expectOneCall("value").withUnsignedIntParameter("pin", BSP::GPIO::GPIO_SWITCH).andReturnValue(1);
@@ -76,7 +77,10 @@ TEST(NrfSwitch, SwitchTriggeringCallbackWithHysteresis) {
 
 	// resume() reads initial pin state
 	mock().expectOneCall("value").withUnsignedIntParameter("pin", BSP::GPIO::GPIO_SWITCH).andReturnValue(0);
-	sw->start([&trigger_counter, &actual_state](bool state){ trigger_counter++; actual_state = state; });
+	sw->start([&trigger_counter, &actual_state](bool state) {
+		trigger_counter++;
+		actual_state = state;
+	});
 
 	// 3 TOGGLE triggers read pin each time, plus debounce callback reads settled state
 	mock().expectOneCall("value").withUnsignedIntParameter("pin", BSP::GPIO::GPIO_SWITCH).andReturnValue(1);

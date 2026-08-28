@@ -8,17 +8,16 @@
 
 
 #define BLOCK_COUNT   (256)
-#define BLOCK_SIZE    (64*1024)
+#define BLOCK_SIZE    (64 * 1024)
 #define PAGE_SIZE     (256)
-#define MAX_FILE_SIZE (4*1024*1024)
+#define MAX_FILE_SIZE (4 * 1024 * 1024)
 
 
 extern FileSystem *main_filesystem;
 static LFSFileSystem *ram_filesystem;
 
 
-TEST_GROUP(Calibration)
-{
+TEST_GROUP(Calibration) {
 	RamFlash *ram_flash;
 
 	void setup() {
@@ -31,14 +30,14 @@ TEST_GROUP(Calibration)
 
 	void teardown() {
 		ram_filesystem->umount();
-		delete ram_filesystem; main_filesystem = nullptr;
+		delete ram_filesystem;
+		main_filesystem = nullptr;
 		delete ram_flash;
 	}
 };
 
 
-TEST(Calibration, CreateCalibrationPopulateSaveAndVerify)
-{
+TEST(Calibration, CreateCalibrationPopulateSaveAndVerify) {
 	{
 		Calibration cal("MYCAL");
 
@@ -60,8 +59,7 @@ TEST(Calibration, CreateCalibrationPopulateSaveAndVerify)
 }
 
 
-TEST(Calibration, CreateCalibrationWithoutSaving)
-{
+TEST(Calibration, CreateCalibrationWithoutSaving) {
 	{
 		Calibration cal("MYCAL");
 
@@ -76,8 +74,7 @@ TEST(Calibration, CreateCalibrationWithoutSaving)
 }
 
 
-TEST(Calibration, CreateCalibrationSaveResetAndVerifyEmpty)
-{
+TEST(Calibration, CreateCalibrationSaveResetAndVerifyEmpty) {
 	{
 		Calibration cal("MYCAL");
 

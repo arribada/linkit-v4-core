@@ -11,11 +11,9 @@
 
 /// @brief Underwater detector — samples a switch/sensor to determine surface vs submerged state.
 class UWDetectorService : public Service {
-
 public:
 	/// @param name  Service name (default "UWDetector").
-	UWDetectorService(const char *name = "UWDetector") :
-		Service(ServiceIdentifier::UW_SENSOR, name) {}
+	UWDetectorService(const char *name = "UWDetector") : Service(ServiceIdentifier::UW_SENSOR, name) {}
 	virtual ~UWDetectorService() {}
 
 protected:

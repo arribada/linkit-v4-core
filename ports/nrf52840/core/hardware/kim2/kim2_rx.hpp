@@ -24,15 +24,15 @@ namespace KIM2 {
 
 /// @brief Build date extracted from an AT+FW=? response.
 struct FwBuildDate {
-	bool     valid = false;  ///< True when a "Mon DD YYYY" pattern was found
-	unsigned year  = 0;
-	unsigned month = 0;      ///< 1..12
-	unsigned day   = 0;      ///< 1..31
+	bool valid = false;  ///< True when a "Mon DD YYYY" pattern was found
+	unsigned year = 0;
+	unsigned month = 0;  ///< 1..12
+	unsigned day = 0;    ///< 1..31
 };
 
 /// @name Minimum firmware build date allowing downlink reception
 /// @{
-static constexpr unsigned KIM2_RX_MIN_FW_YEAR  = 2026;
+static constexpr unsigned KIM2_RX_MIN_FW_YEAR = 2026;
 static constexpr unsigned KIM2_RX_MIN_FW_MONTH = 7;
 /// @}
 
@@ -46,18 +46,15 @@ static constexpr unsigned KIM2_RX_MIN_FW_MONTH = 7;
  * @param fw  Payload of the +FW= response (prefix already stripped).
  * @return Decoded date; @c valid is false when no date pattern was found.
  */
-inline FwBuildDate parse_fw_build_date(const std::string& fw)
-{
+inline FwBuildDate parse_fw_build_date(const std::string &fw) {
 	static const char *MONTHS[12] = {
-		"Jan", "Feb", "Mar", "Apr", "May", "Jun",
-		"Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+		"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
 	};
 	FwBuildDate out;
 
 	for (size_t i = 0; i + 3 <= fw.size(); i++) {
 		for (unsigned m = 0; m < 12; m++) {
-			if (fw.compare(i, 3, MONTHS[m]) != 0)
-				continue;
+			if (fw.compare(i, 3, MONTHS[m]) != 0) continue;
 
 			size_t p = i + 3;
 			unsigned day = 0, year = 0, year_digits = 0;
@@ -67,8 +64,7 @@ inline FwBuildDate parse_fw_build_date(const std::string& fw)
 			const size_t day_start = p;
 			while (p < fw.size() && fw[p] >= '0' && fw[p] <= '9')
 				day = day * 10 + static_cast<unsigned>(fw[p++] - '0');
-			if (p == day_start || day == 0 || day > 31)
-				continue;
+			if (p == day_start || day == 0 || day > 31) continue;
 
 			while (p < fw.size() && (fw[p] == ' ' || fw[p] == '_' || fw[p] == '-'))
 				p++;
@@ -76,13 +72,12 @@ inline FwBuildDate parse_fw_build_date(const std::string& fw)
 				year = year * 10 + static_cast<unsigned>(fw[p++] - '0');
 				year_digits++;
 			}
-			if (year_digits != 4 || year < 2000 || year > 2199)
-				continue;
+			if (year_digits != 4 || year < 2000 || year > 2199) continue;
 
 			out.valid = true;
-			out.year  = year;
+			out.year = year;
 			out.month = m + 1;
-			out.day   = day;
+			out.day = day;
 			return out;
 		}
 	}
@@ -97,14 +92,11 @@ inline FwBuildDate parse_fw_build_date(const std::string& fw)
  *         rejected: we would rather not drive AT+RX on a firmware we cannot
  *         identify.
  */
-inline bool fw_supports_rx(const std::string& fw)
-{
+inline bool fw_supports_rx(const std::string &fw) {
 	const FwBuildDate d = parse_fw_build_date(fw);
 
-	if (!d.valid)
-		return false;
-	if (d.year != KIM2_RX_MIN_FW_YEAR)
-		return d.year > KIM2_RX_MIN_FW_YEAR;
+	if (!d.valid) return false;
+	if (d.year != KIM2_RX_MIN_FW_YEAR) return d.year > KIM2_RX_MIN_FW_YEAR;
 	return d.month >= KIM2_RX_MIN_FW_MONTH;
 }
 
@@ -123,8 +115,7 @@ inline bool fw_supports_rx(const std::string& fw)
  * @param size_bits  Receives the useful size in bits (4 bits per nibble).
  * @return Raw bytes, or an empty string if a non-hex character is found.
  */
-inline std::string allcast_to_bytes(const std::string& hex, unsigned int& size_bits)
-{
+inline std::string allcast_to_bytes(const std::string &hex, unsigned int &size_bits) {
 	std::string out;
 	unsigned int nibbles = 0;
 	bool have_high = false;
@@ -136,10 +127,14 @@ inline std::string allcast_to_bytes(const std::string& hex, unsigned int& size_b
 		const char c = hex[i];
 		unsigned char v;
 
-		if (c >= '0' && c <= '9')      v = static_cast<unsigned char>(c - '0');
-		else if (c >= 'a' && c <= 'f') v = static_cast<unsigned char>(c - 'a' + 10);
-		else if (c >= 'A' && c <= 'F') v = static_cast<unsigned char>(c - 'A' + 10);
-		else return std::string();
+		if (c >= '0' && c <= '9')
+			v = static_cast<unsigned char>(c - '0');
+		else if (c >= 'a' && c <= 'f')
+			v = static_cast<unsigned char>(c - 'a' + 10);
+		else if (c >= 'A' && c <= 'F')
+			v = static_cast<unsigned char>(c - 'A' + 10);
+		else
+			return std::string();
 
 		nibbles++;
 		if (!have_high) {
@@ -151,11 +146,10 @@ inline std::string allcast_to_bytes(const std::string& hex, unsigned int& size_b
 		}
 	}
 	/* Odd nibble count: complete the byte with the protocol's zero padding. */
-	if (have_high)
-		out.push_back(static_cast<char>(high << 4));
+	if (have_high) out.push_back(static_cast<char>(high << 4));
 
 	size_bits = nibbles * 4;
 	return out;
 }
 
-} // namespace KIM2
+}  // namespace KIM2

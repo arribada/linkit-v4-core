@@ -9,21 +9,17 @@
 #include "debug.hpp"
 #include "pmu.hpp"
 
-RunCam::RunCam()
-{
+RunCam::RunCam() {
 	DEBUG_TRACE("RunCam: init (LDO controlled)");
 }
 
-RunCam::~RunCam()
-{
+RunCam::~RunCam() {
 	power_off();
 }
 
 /// @brief Power off: hold power button, release, cut LDO.
-void RunCam::power_off()
-{
-	if (m_state == State::POWERED_OFF)
-		return;
+void RunCam::power_off() {
+	if (m_state == State::POWERED_OFF) return;
 
 	DEBUG_TRACE("RunCam: power_off");
 	GPIOPins::set(CAM_PWR_BUTT);
@@ -36,10 +32,8 @@ void RunCam::power_off()
 }
 
 /// @brief Power on: enable LDO, simulate button press, increment capture counter.
-void RunCam::power_on()
-{
-	if (m_state == State::POWERED_ON)
-		return;
+void RunCam::power_on() {
+	if (m_state == State::POWERED_ON) return;
 
 	DEBUG_TRACE("RunCam: power_on");
 	GPIOPins::set(CAM_PWR_EN);
@@ -52,12 +46,10 @@ void RunCam::power_on()
 	notify<CAMEventPowerOn>({});
 }
 
-bool RunCam::is_powered_on()
-{
+bool RunCam::is_powered_on() {
 	return m_state == State::POWERED_ON;
 }
 
-unsigned int RunCam::get_num_captures()
-{
+unsigned int RunCam::get_num_captures() {
 	return m_num_captures;
 }

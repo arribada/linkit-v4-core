@@ -39,9 +39,9 @@ enum ATCmd {
 	AT_SET_KMAC_BASIC,
 	AT_SET_KMAC_BLIND,
 	AT_TX,
-	AT_GET_FW,      ///< AT+FW=? — firmware build string, gates RX (kim2_rx.hpp)
-	AT_DL_START,    ///< AT+DL=1[,<window_s>] — start reception (runtime mode)
-	AT_DL_STOP,     ///< AT+DL=0 — stop reception
+	AT_GET_FW,    ///< AT+FW=? — firmware build string, gates RX (kim2_rx.hpp)
+	AT_DL_START,  ///< AT+DL=1[,<window_s>] — start reception (runtime mode)
+	AT_DL_STOP,   ///< AT+DL=0 — stop reception
 	AT_UNKNOWN
 };
 
@@ -51,24 +51,24 @@ enum RespType {
 	RESP_ERROR,
 	RESP_CONFIG,
 	RESP_TX_STATUS,
-	RESP_ALLCAST,     ///< +DL_ALLCAST= — decoded allcast message (AOP / constellation status)
-	RESP_RX_END,      ///< empty +RX= / +DL= — the RX window actually ended
+	RESP_ALLCAST,  ///< +DL_ALLCAST= — decoded allcast message (AOP / constellation status)
+	RESP_RX_END,   ///< empty +RX= / +DL= — the RX window actually ended
 	RESP_UNKNOWN
 };
 
-static constexpr uint8_t SYNC_CHAR  = '+';
+static constexpr uint8_t SYNC_CHAR = '+';
 static constexpr uint8_t END_CHAR_1 = '\r';
 static constexpr uint8_t END_CHAR_2 = '\n';
 
 /// @name Response prefix strings
 /// @{
-static constexpr const char *OK_RESPONSE   = "+OK";
-static constexpr const char *ID_RESPONSE   = "+ID=";
+static constexpr const char *OK_RESPONSE = "+OK";
+static constexpr const char *ID_RESPONSE = "+ID=";
 static constexpr const char *ADDR_RESPONSE = "+ADDR=";
 static constexpr const char *RCONF_RESPONSE = "+RCONF=";
-static constexpr const char *TX_RESPONSE   = "+TX=";
-static constexpr const char *ERR_RESPONSE  = "+ERROR=";
-static constexpr const char *HDLR_RESPONSE = "+HDLR=";   // new-stack AT+TX immediate ack (before +OK)
+static constexpr const char *TX_RESPONSE = "+TX=";
+static constexpr const char *ERR_RESPONSE = "+ERROR=";
+static constexpr const char *HDLR_RESPONSE = "+HDLR=";  // new-stack AT+TX immediate ack (before +OK)
 /// @brief Version banner the module prints SPONTANEOUSLY at every start-up. The
 ///        integration manual allows for lines like this (§3.A: "Spontaneous
 ///        notifications can also be sent from the module with the format
@@ -78,7 +78,7 @@ static constexpr const char *HDLR_RESPONSE = "+HDLR=";   // new-stack AT+TX imme
 ///        burst, the module resets itself on its own retransmission deadline and
 ///        reprints this line, with no way for the firmware to see it. We
 ///        recognise it so we can act on it.
-static constexpr const char *FW_RESPONSE   = "+FW=";
+static constexpr const char *FW_RESPONSE = "+FW=";
 /// @name RX-side unsolicited lines (firmware built with USE_RX_STACK)
 /// The driver drives reception in RUNTIME mode (AT+DL), where the module only
 /// reports decoded downlink messages. The test-mode lines (raw +RX= frames and
@@ -86,36 +86,36 @@ static constexpr const char *FW_RESPONSE   = "+FW=";
 /// through the bridge does not flood the log with unknown lines.
 /// @{
 static constexpr const char *DL_ALLCAST_RESPONSE = "+DL_ALLCAST=";  ///< decoded allcast frame
-static constexpr const char *DL_USERBC_RESPONSE  = "+DL_USERBC=";   ///< decoded beacon command
-static constexpr const char *DL_RESPONSE         = "+DL=";          ///< empty = window end (runtime mode)
-static constexpr const char *RX_RESPONSE         = "+RX=";          ///< raw frame, or empty = window end (test mode)
-static constexpr const char *SATDET_RESPONSE     = "+SATDET=";      ///< satellite detected (test mode)
-static constexpr const char *SATLOST_RESPONSE    = "+SATLOST=";     ///< satellite lost (test mode)
-static constexpr const char *N0_RESPONSE         = "+N0=";          ///< noise density report (test mode)
+static constexpr const char *DL_USERBC_RESPONSE = "+DL_USERBC=";    ///< decoded beacon command
+static constexpr const char *DL_RESPONSE = "+DL=";                  ///< empty = window end (runtime mode)
+static constexpr const char *RX_RESPONSE = "+RX=";                  ///< raw frame, or empty = window end (test mode)
+static constexpr const char *SATDET_RESPONSE = "+SATDET=";          ///< satellite detected (test mode)
+static constexpr const char *SATLOST_RESPONSE = "+SATLOST=";        ///< satellite lost (test mode)
+static constexpr const char *N0_RESPONSE = "+N0=";                  ///< noise density report (test mode)
 /// @}
 /// @}
 
-static constexpr uint8_t ID_SIZE   = 6;   ///< Decimal ID string length
-static constexpr uint8_t ADDR_SIZE = 8;   ///< Hex address string length
+static constexpr uint8_t ID_SIZE = 6;    ///< Decimal ID string length
+static constexpr uint8_t ADDR_SIZE = 8;  ///< Hex address string length
 
 /// @brief Decoded payload of an AT+RCONF=? response.
 /// Format per KIM2 Integration Manual v0.8:
 ///   +RCONF=<min_freq_Hz>,<max_freq_Hz>,<rf_level_dBm>,<modulation_name>
 /// where modulation_name is one of: LDA2, LDA2L, VLDA4, HDA4, LDK, UNKNOWN.
 struct RConfDecoded {
-	bool         valid        = false;  ///< True if all 4 fields parsed successfully
-	unsigned int min_freq_hz  = 0;
-	unsigned int max_freq_hz  = 0;
-	int          rf_level_dbm = 0;
-	std::string  modulation;            ///< Upper-case modulation name from the module
+	bool valid = false;  ///< True if all 4 fields parsed successfully
+	unsigned int min_freq_hz = 0;
+	unsigned int max_freq_hz = 0;
+	int rf_level_dbm = 0;
+	std::string modulation;  ///< Upper-case modulation name from the module
 };
 
 /// @brief Parse the trailing payload of a "+RCONF=..." response into its 4 fields.
 /// @param info  Payload portion (already stripped of the "+RCONF=" prefix).
 /// @return Decoded struct. On parse failure, RConfDecoded::valid is false.
-RConfDecoded parse_rconf_info(const std::string& info);
+RConfDecoded parse_rconf_info(const std::string &info);
 
-} // namespace KIM2
+}  // namespace KIM2
 
 /// @name KIM2 communication events
 /// @{
@@ -142,12 +142,12 @@ struct KIM2CommEventUartError {
 class KIM2CommEventListener {
 public:
 	virtual ~KIM2CommEventListener() = default;
-	virtual void react(const KIM2CommEventTxDone&) {}
-	virtual void react(const KIM2CommEventAllcast&) {}
-	virtual void react(const KIM2CommEventRxWindowEnd&) {}
-	virtual void react(const KIM2CommEventRespOk&) {}
-	virtual void react(const KIM2CommEventRespError&) {}
-	virtual void react(const KIM2CommEventUartError&) {}
+	virtual void react(const KIM2CommEventTxDone &) {}
+	virtual void react(const KIM2CommEventAllcast &) {}
+	virtual void react(const KIM2CommEventRxWindowEnd &) {}
+	virtual void react(const KIM2CommEventRespOk &) {}
+	virtual void react(const KIM2CommEventRespError &) {}
+	virtual void react(const KIM2CommEventUartError &) {}
 };
 
 /**
@@ -158,9 +158,9 @@ public:
  */
 class KIM2Comm : public NrfUartAsync, public EventEmitter<KIM2CommEventListener> {
 public:
-	unsigned int m_kineis_id = 0;      ///< Device ID from +ID= response
-	unsigned int m_hex_addr = 0;       ///< Device address from +ADDR= response
-	uint16_t m_tx_status = 0xFFFF;     ///< Last TX status from +TX= response
+	unsigned int m_kineis_id = 0;   ///< Device ID from +ID= response
+	unsigned int m_hex_addr = 0;    ///< Device address from +ADDR= response
+	uint16_t m_tx_status = 0xFFFF;  ///< Last TX status from +TX= response
 	// KIM +TX response format is FIRMWARE-VERSION dependent, NOT MAC-profile
 	// dependent:
 	//   old stack (any profile): +TX=<status>[,<data>]           (status FIRST)
@@ -175,7 +175,7 @@ public:
 	bool m_blind_active = false;
 	bool m_hdlr_seen = false;
 	void set_blind_active(bool active) { m_blind_active = active; }
-	std::string m_rconf_info;          ///< Last +RCONF=? response payload (diag)
+	std::string m_rconf_info;  ///< Last +RCONF=? response payload (diag)
 	/// @brief Version annoncee par la derniere banniere +FW= recue.
 	std::string m_module_banner;
 
@@ -189,22 +189,22 @@ public:
 	void deinit();
 
 	/// @brief Send an AT command (non-blocking).
-	bool send(KIM2::ATCmd cmd, const std::optional<std::string>& params = std::nullopt);
+	bool send(KIM2::ATCmd cmd, const std::optional<std::string> &params = std::nullopt);
 
 	/// @brief Send raw bytes (bridge mode).
-	bool send_raw_data(const uint8_t* data, size_t len);
+	bool send_raw_data(const uint8_t *data, size_t len);
 
 	/// @brief Process ISR-buffered RX data. Call periodically from main context.
 	void process_rx();
 
 	// Bridge/passthrough mode: forward raw UART RX to callback instead of parsing
-	using PassthroughCallback = std::function<void(const uint8_t*, size_t)>;
+	using PassthroughCallback = std::function<void(const uint8_t *, size_t)>;
 	void set_passthrough(bool active, PassthroughCallback callback = nullptr);
 	bool is_passthrough() const { return m_passthrough_active; }
 
 protected:
 	/// @brief Parse a complete RX line and emit events (KIM2 protocol).
-	void on_rx_line(std::string& line) override;
+	void on_rx_line(std::string &line) override;
 
 	/// @brief Handle UART error — emit event.
 	void on_rx_error(unsigned int error_type) override;
@@ -213,6 +213,6 @@ private:
 	bool m_passthrough_active = false;
 	PassthroughCallback m_passthrough_callback;
 
-	bool send_at_cmd(KIM2::ATCmd cmd, const std::optional<std::string>& params = std::nullopt);
-	KIM2::RespType parse_rx_line_protocol(const std::string& line);
+	bool send_at_cmd(KIM2::ATCmd cmd, const std::optional<std::string> &params = std::nullopt);
+	KIM2::RespType parse_rx_line_protocol(const std::string &line);
 };

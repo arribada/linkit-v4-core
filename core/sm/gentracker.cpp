@@ -95,15 +95,16 @@ using buzz_handle = BuzzState;
 /// @brief Free-function bridge read by the LED state machine (ledsm.hpp) to give
 /// the confirmation-gesture blink priority over transient background LED events.
 /// Kept as a free function so ledsm stays decoupled from the GenTracker header.
-bool led_confirmation_gesture_pending() { return GenTracker::is_confirmation_gesture_pending(); }
+bool led_confirmation_gesture_pending() {
+	return GenTracker::is_confirmation_gesture_pending();
+}
 
 
 /// @brief Default event handler — ignore unhandled events.
-void GenTracker::react(tinyfsm::Event const &) { }
+void GenTracker::react(tinyfsm::Event const &) {}
 
 /// @brief Cancel pending reed switch confirmation gesture and clear timeout.
-void GenTracker::cancel_confirmation()
-{
+void GenTracker::cancel_confirmation() {
 	system_scheduler->cancel_task(m_confirmation_timeout_task);
 	m_confirmation_pending = ConfirmationPending::NONE;
 	m_awaiting_re_engage = false;
@@ -111,8 +112,7 @@ void GenTracker::cancel_confirmation()
 
 /// @brief Reed switch gesture handler — confirmation pattern: hold 3s/6s, release, re-engage within 3s.
 /// @param event  Gesture type (ENGAGE, SHORT_HOLD, LONG_HOLD, RELEASE).
-void GenTracker::react(ReedSwitchEvent const &event)
-{
+void GenTracker::react(ReedSwitchEvent const &event) {
 	DEBUG_INFO("react: ReedSwitchEvent: %u", (int)event.state);
 
 	// During coin-cell backup charge: only ENGAGE stops the charge; all other
@@ -169,20 +169,22 @@ void GenTracker::react(ReedSwitchEvent const &event)
 			// cancelling this timeout — so a busy device no longer drops a valid
 			// confirmation.
 			system_scheduler->cancel_task(m_confirmation_timeout_task);
-			m_confirmation_timeout_task = system_scheduler->post_task_prio([this](){
-				DEBUG_INFO("Reed confirmation timeout");
-				m_confirmation_pending = ConfirmationPending::NONE;
-				m_awaiting_re_engage = false;
-				buzz_handle::dispatch<SetBuzzMagnetDisengaged>({});
-				// Restore LED to current GenTracker state
-				if (is_in_state<ConfigurationState>()) {
-					led_handle::dispatch<SetLEDConfigNotConnected>({});
-				} else if (is_in_state<PreOperationalState>()) {
-					transit<OperationalState>();
-				} else {
-					led_handle::dispatch<SetLEDOff>({});
-				}
-			}, "ReedConfirmTimeout", Scheduler::DEFAULT_PRIORITY, CONFIRMATION_TIMEOUT_MS);
+			m_confirmation_timeout_task = system_scheduler->post_task_prio(
+			    [this]() {
+				    DEBUG_INFO("Reed confirmation timeout");
+				    m_confirmation_pending = ConfirmationPending::NONE;
+				    m_awaiting_re_engage = false;
+				    buzz_handle::dispatch<SetBuzzMagnetDisengaged>({});
+				    // Restore LED to current GenTracker state
+				    if (is_in_state<ConfigurationState>()) {
+					    led_handle::dispatch<SetLEDConfigNotConnected>({});
+				    } else if (is_in_state<PreOperationalState>()) {
+					    transit<OperationalState>();
+				    } else {
+					    led_handle::dispatch<SetLEDOff>({});
+				    }
+			    },
+			    "ReedConfirmTimeout", Scheduler::DEFAULT_PRIORITY, CONFIRMATION_TIMEOUT_MS);
 			return;
 		}
 		led_handle::dispatch<SetLEDMagnetDisengaged>({});
@@ -213,8 +215,8 @@ void GenTracker::react(ErrorEvent const &event) {
 	transit<ErrorState>();
 }
 
-void GenTracker::entry(void) { };
-void GenTracker::exit(void)  { };
+void GenTracker::entry(void) {};
+void GenTracker::exit(void) {};
 
 // =====================================================================
 // Boot-fail counter — sealed-device recovery infrastructure.
@@ -237,8 +239,8 @@ void GenTracker::exit(void)  { };
 
 struct BootFailNoinit {
 	uint16_t consecutive_failures;
-	uint8_t  factory_reset_attempted;
-	uint8_t  _pad;
+	uint8_t factory_reset_attempted;
+	uint8_t _pad;
 	uint16_t crc;
 };
 
@@ -248,16 +250,15 @@ static __attribute__((section(".noinit"))) volatile BootFailNoinit s_bootfail_no
 static BootFailNoinit s_bootfail_noinit;
 #endif
 
-static constexpr uint8_t BOOT_RETRY_MAX = 5;                ///< Total reset retries before OffState
-static constexpr uint8_t BOOT_RETRY_BEFORE_FACTORY = 3;     ///< Retries before attempting factory_reset
+static constexpr uint8_t BOOT_RETRY_MAX = 5;             ///< Total reset retries before OffState
+static constexpr uint8_t BOOT_RETRY_BEFORE_FACTORY = 3;  ///< Retries before attempting factory_reset
 
 static uint16_t bootfail_compute_crc() {
 	BootFailNoinit snapshot;
-	snapshot.consecutive_failures   = s_bootfail_noinit.consecutive_failures;
+	snapshot.consecutive_failures = s_bootfail_noinit.consecutive_failures;
 	snapshot.factory_reset_attempted = s_bootfail_noinit.factory_reset_attempted;
-	snapshot._pad                    = s_bootfail_noinit._pad;
-	return crc16_compute(reinterpret_cast<const uint8_t *>(&snapshot),
-	                     offsetof(BootFailNoinit, crc), nullptr);
+	snapshot._pad = s_bootfail_noinit._pad;
+	return crc16_compute(reinterpret_cast<const uint8_t *>(&snapshot), offsetof(BootFailNoinit, crc), nullptr);
 }
 
 static void bootfail_save() {
@@ -269,9 +270,9 @@ static void bootfail_save() {
 /// reset to zero in that case.
 static void bootfail_load() {
 	if (s_bootfail_noinit.crc != bootfail_compute_crc()) {
-		s_bootfail_noinit.consecutive_failures   = 0;
+		s_bootfail_noinit.consecutive_failures = 0;
 		s_bootfail_noinit.factory_reset_attempted = 0;
-		s_bootfail_noinit._pad                    = 0;
+		s_bootfail_noinit._pad = 0;
 		bootfail_save();
 	}
 }
@@ -297,9 +298,9 @@ static void bootfail_increment() {
 /// factory reset, and that wipes the Argos credentials. If the counter ever
 /// stopped clearing on a healthy boot, three reboots would brick the device --
 /// and nothing outside .noinit RAM would show it coming.
-void bench_bootfail_read(unsigned int& failures, unsigned int& factory_attempted) {
+void bench_bootfail_read(unsigned int &failures, unsigned int &factory_attempted) {
 	bootfail_load();
-	failures          = s_bootfail_noinit.consecutive_failures;
+	failures = s_bootfail_noinit.consecutive_failures;
 	factory_attempted = s_bootfail_noinit.factory_reset_attempted;
 }
 #endif
@@ -308,13 +309,11 @@ void bench_bootfail_read(unsigned int& failures, unsigned int& factory_attempted
 /// to mark that a successful boot has occurred.
 static void bootfail_reset() {
 	bootfail_load();
-	if (s_bootfail_noinit.consecutive_failures > 0 ||
-	    s_bootfail_noinit.factory_reset_attempted) {
-		DEBUG_INFO("BootFail: clearing (was %u failures, factory_reset=%u)",
-		           s_bootfail_noinit.consecutive_failures,
+	if (s_bootfail_noinit.consecutive_failures > 0 || s_bootfail_noinit.factory_reset_attempted) {
+		DEBUG_INFO("BootFail: clearing (was %u failures, factory_reset=%u)", s_bootfail_noinit.consecutive_failures,
 		           s_bootfail_noinit.factory_reset_attempted);
 	}
-	s_bootfail_noinit.consecutive_failures   = 0;
+	s_bootfail_noinit.consecutive_failures = 0;
 	s_bootfail_noinit.factory_reset_attempted = 0;
 	bootfail_save();
 }
@@ -330,18 +329,16 @@ void GenTracker::notify_bad_filesystem_error() {
 void GenTracker::kick_watchdog() {
 	DEBUG_TRACE("GenTracker::kick_watchdog: calling PMU::kick_watchdog");
 	PMU::kick_watchdog();
-	system_scheduler->post_task_prio([](){
-		kick_watchdog();
-	}, "KickWatchdog", Scheduler::HIGHEST_PRIORITY, BSP::WDT_Inits[BSP::WDT].config.reload_value * 0.90);
+	system_scheduler->post_task_prio([]() { kick_watchdog(); }, "KickWatchdog", Scheduler::HIGHEST_PRIORITY,
+	                                 BSP::WDT_Inits[BSP::WDT].config.reload_value * 0.90);
 }
 
 // Periodic flush of config store to flash (counters live in RAM between flushes)
-static constexpr unsigned int CONFIG_FLUSH_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
+static constexpr unsigned int CONFIG_FLUSH_INTERVAL_MS = 30 * 60 * 1000;  // 30 minutes
 
 /// @brief Periodic config flush — save params + RTC to flash (called from scheduler).
 void GenTracker::periodic_config_flush() {
-	if (!m_config_flush_active)
-		return;
+	if (!m_config_flush_active) return;
 	if (configuration_store->is_valid()) {
 		// Mitigation M1a (2026-05): periodic LAST_KNOWN_RTC snapshot. Without
 		// this, a sealed device that never acquires GNSS only updates this
@@ -357,8 +354,7 @@ void GenTracker::periodic_config_flush() {
 		if (rtc && rtc->is_set()) {
 			std::time_t now = rtc->gettime();
 			if (now > 0) {
-				configuration_store->write_param(ParamID::LAST_KNOWN_RTC,
-					static_cast<unsigned int>(now));
+				configuration_store->write_param(ParamID::LAST_KNOWN_RTC, static_cast<unsigned int>(now));
 			}
 		}
 		DEBUG_TRACE("GenTracker::periodic_config_flush: saving counters to flash");
@@ -373,15 +369,13 @@ void GenTracker::periodic_config_flush() {
 		// re-arming the chain while an earlier task is still pending. Without
 		// this the two chains coexist for good.
 		system_scheduler->cancel_task(m_config_flush_task);
-		m_config_flush_task = system_scheduler->post_task_prio([](){
-			periodic_config_flush();
-		}, "ConfigFlush", Scheduler::DEFAULT_PRIORITY, CONFIG_FLUSH_INTERVAL_MS);
+		m_config_flush_task = system_scheduler->post_task_prio([]() { periodic_config_flush(); }, "ConfigFlush",
+		                                                       Scheduler::DEFAULT_PRIORITY, CONFIG_FLUSH_INTERVAL_MS);
 	}
 }
 
 /// @brief Boot entry — init PMU, check reset cause, mount filesystem, load config.
 void BootState::entry() {
-
 	DEBUG_INFO("entry: BootState");
 
 #ifdef CPPUTEST
@@ -393,7 +387,7 @@ void BootState::entry() {
 	// then bumps the counter, and after 3 starts the factory_reset branch
 	// fires unexpectedly (the legacy Sm tests don't mock factory_reset).
 	// Reset between test entries so each test sees a clean boot.
-	s_bootfail_noinit.consecutive_failures   = 0;
+	s_bootfail_noinit.consecutive_failures = 0;
 	s_bootfail_noinit.factory_reset_attempted = 0;
 	bootfail_save();
 #endif
@@ -403,8 +397,8 @@ void BootState::entry() {
 	// reach Operational, ErrorState consults this counter to decide between
 	// soft-reset retry, factory_reset attempt, or final OffState.
 	bootfail_increment();
-	if (s_bootfail_noinit.consecutive_failures >= BOOT_RETRY_BEFORE_FACTORY &&
-	    !s_bootfail_noinit.factory_reset_attempted) {
+	if (s_bootfail_noinit.consecutive_failures >= BOOT_RETRY_BEFORE_FACTORY
+	    && !s_bootfail_noinit.factory_reset_attempted) {
 		// Last-ditch recovery before giving up to OffState: wipe the config
 		// store and retry. factory_reset preserves DECID/HEXID/calibration.
 		DEBUG_ERROR("BootState: %u failed boots — attempting factory_reset before final retry",
@@ -452,12 +446,10 @@ void BootState::entry() {
 	PMU::kick_watchdog();
 
 	// If we can't mount the filesystem then try to format it first and retry
-	if (!main_filesystem->is_mounted() && main_filesystem->mount() < 0)
-	{
+	if (!main_filesystem->is_mounted() && main_filesystem->mount() < 0) {
 		DEBUG_TRACE("format filesystem");
 		PMU::kick_watchdog();  // format() is the longest LFS op — fresh budget
-		if (main_filesystem->format() < 0 || main_filesystem->mount() < 0)
-		{
+		if (main_filesystem->format() < 0 || main_filesystem->mount() < 0) {
 			// We can't mount a formatted filesystem, something bad has happened
 			system_scheduler->post_task_prio(notify_bad_filesystem_error, "GenTrackerFileSystemError");
 			return;
@@ -466,7 +458,11 @@ void BootState::entry() {
 	PMU::kick_watchdog();  // post-mount: fresh budget before configuration_store->init
 
 	// Start reed switch monitoring and dispatch events to state machine
-	reed_switch->start([](ReedSwitchGesture s) { ReedSwitchEvent e; e.state = s; dispatch(e); });
+	reed_switch->start([](ReedSwitchGesture s) {
+		ReedSwitchEvent e;
+		e.state = s;
+		dispatch(e);
+	});
 
 	// If the magnet is already present at boot, NrfSwitch::resume() syncs the
 	// debounced state to the live pin but deliberately suppresses the initial
@@ -486,7 +482,7 @@ void BootState::entry() {
 		// already yet exist
 		LoggerManager::create();
 		configuration_store->init();
-	    DEBUG_INFO("Firmware Version: %s", FW_APP_VERSION_STR_C);
+		DEBUG_INFO("Firmware Version: %s", FW_APP_VERSION_STR_C);
 		LoggerManager::show_info();
 		DEBUG_INFO("configuration_store: is_valid=%u", configuration_store->is_valid());
 		DEBUG_INFO("reset cause: %s", PMU::reset_cause_str());
@@ -502,20 +498,18 @@ void BootState::entry() {
 		}
 
 		// Transition to PreOperational state after initialisation
-		system_scheduler->post_task_prio([this](){
-			kick_watchdog();
-			transit<PreOperationalState>();
-		},
-		"GenTrackerBootStateTransitPreOperationalState",
-		Scheduler::DEFAULT_PRIORITY,
-		1000);
+		system_scheduler->post_task_prio(
+		    [this]() {
+			    kick_watchdog();
+			    transit<PreOperationalState>();
+		    },
+		    "GenTrackerBootStateTransitPreOperationalState", Scheduler::DEFAULT_PRIORITY, 1000);
 	} catch (...) {
 		system_scheduler->post_task_prio(notify_bad_filesystem_error, "GenTrackerFilesystemError");
 	}
 }
 
 void BootState::exit() {
-
 	DEBUG_INFO("exit: BootState");
 
 	// Turn status LED off to indicate exit from boot state
@@ -526,14 +520,14 @@ void BootState::exit() {
 void OffState::entry() {
 	DEBUG_INFO("entry: OffState");
 	led_handle::dispatch<SetLEDPowerDown>({});
-	m_off_state_task = system_scheduler->post_task_prio([](){
-		// Force LED off at hardware level before powerdown
-		status_led->off();
-		buzz_handle::dispatch<SetBuzzOff>({});
-		PMU::powerdown();
-	},
-	"GenTrackerOffStateTransitPowerDown",
-	Scheduler::DEFAULT_PRIORITY, OFF_LED_PERIOD_MS);
+	m_off_state_task = system_scheduler->post_task_prio(
+	    []() {
+		    // Force LED off at hardware level before powerdown
+		    status_led->off();
+		    buzz_handle::dispatch<SetBuzzOff>({});
+		    PMU::powerdown();
+	    },
+	    "GenTrackerOffStateTransitPowerDown", Scheduler::DEFAULT_PRIORITY, OFF_LED_PERIOD_MS);
 }
 
 void OffState::exit() {
@@ -559,8 +553,9 @@ void PreOperationalState::preop_transit_tick() {
 			transit<OperationalState>();
 			return;
 		}
-		m_preop_state_task = system_scheduler->post_task_prio([this](){ preop_transit_tick(); },
-			"GenTrackerPreOpRetransitOperationalState", Scheduler::DEFAULT_PRIORITY, TRANSIT_PERIOD_MS);
+		m_preop_state_task = system_scheduler->post_task_prio([this]() { preop_transit_tick(); },
+		                                                      "GenTrackerPreOpRetransitOperationalState",
+		                                                      Scheduler::DEFAULT_PRIORITY, TRANSIT_PERIOD_MS);
 		return;
 	}
 	m_preop_stuck_reed_ticks = 0;
@@ -586,49 +581,49 @@ void PreOperationalState::entry() {
 		else
 			led_handle::dispatch<SetLEDPreOperationalBatteryNominal>({});
 
-		m_preop_state_task = system_scheduler->post_task_prio([this](){
-			// If a confirmation gesture is in progress, don't transit yet —
-			// the confirmation handler or timeout will handle the transition.
-			//
-			// EXCEPT: a reed switch stuck CLOSED (manufacturing magnet residue
-			// or hardware short) would also leave m_confirmation_pending != NONE
-			// indefinitely, with no RELEASE event ever arriving to start the
-			// 2-s confirmation timeout. The previous code returned without
-			// rescheduling, wedging the device in PreOperationalState forever
-			// at full active current (~5-20 mA) — catastrophic drain for a
-			// sealed turtle. Now we re-arm the transit task and, after enough
-			// total time has elapsed, force-transit to Operational regardless.
-			if (m_confirmation_pending != ConfirmationPending::NONE) {
-				m_preop_stuck_reed_ticks++;
-				if (m_preop_stuck_reed_ticks * TRANSIT_PERIOD_MS >= PREOP_STUCK_REED_MAX_MS) {
-					DEBUG_WARN("PreOperationalState: reed appears stuck (%u ms in confirmation) — forcing Operational transit",
-					           m_preop_stuck_reed_ticks * TRANSIT_PERIOD_MS);
-					m_confirmation_pending = ConfirmationPending::NONE;
-					m_preop_stuck_reed_ticks = 0;
-					transit<OperationalState>();
-					return;
-				}
-				// H2 fix: re-arm with the SELF-REPOSTING tick, which re-increments
-				// m_preop_stuck_reed_ticks and re-checks the 20 s force-transit on
-				// every fire. The old re-arm posted a stripped lambda that never
-				// advanced the counter nor re-armed, so the stuck-reed escape never
-				// fired and the device wedged in PreOperationalState.
-				m_preop_state_task = system_scheduler->post_task_prio([this](){ preop_transit_tick(); },
-					"GenTrackerPreOpRetransitOperationalState", Scheduler::DEFAULT_PRIORITY, TRANSIT_PERIOD_MS);
-				return;
-			}
-			m_preop_stuck_reed_ticks = 0;
-			transit<OperationalState>();
-		},
-		"GenTrackerPreOperationalStateTransitOperationalState",
-		Scheduler::DEFAULT_PRIORITY, TRANSIT_PERIOD_MS);
+		m_preop_state_task = system_scheduler->post_task_prio(
+		    [this]() {
+			    // If a confirmation gesture is in progress, don't transit yet —
+			    // the confirmation handler or timeout will handle the transition.
+			    //
+			    // EXCEPT: a reed switch stuck CLOSED (manufacturing magnet residue
+			    // or hardware short) would also leave m_confirmation_pending != NONE
+			    // indefinitely, with no RELEASE event ever arriving to start the
+			    // 2-s confirmation timeout. The previous code returned without
+			    // rescheduling, wedging the device in PreOperationalState forever
+			    // at full active current (~5-20 mA) — catastrophic drain for a
+			    // sealed turtle. Now we re-arm the transit task and, after enough
+			    // total time has elapsed, force-transit to Operational regardless.
+			    if (m_confirmation_pending != ConfirmationPending::NONE) {
+				    m_preop_stuck_reed_ticks++;
+				    if (m_preop_stuck_reed_ticks * TRANSIT_PERIOD_MS >= PREOP_STUCK_REED_MAX_MS) {
+					    DEBUG_WARN("PreOperationalState: reed appears stuck (%u ms in confirmation) — forcing "
+						           "Operational transit",
+						           m_preop_stuck_reed_ticks * TRANSIT_PERIOD_MS);
+					    m_confirmation_pending = ConfirmationPending::NONE;
+					    m_preop_stuck_reed_ticks = 0;
+					    transit<OperationalState>();
+					    return;
+				    }
+				    // H2 fix: re-arm with the SELF-REPOSTING tick, which re-increments
+				    // m_preop_stuck_reed_ticks and re-checks the 20 s force-transit on
+				    // every fire. The old re-arm posted a stripped lambda that never
+				    // advanced the counter nor re-armed, so the stuck-reed escape never
+				    // fired and the device wedged in PreOperationalState.
+				    m_preop_state_task = system_scheduler->post_task_prio(
+				        [this]() { preop_transit_tick(); }, "GenTrackerPreOpRetransitOperationalState",
+				        Scheduler::DEFAULT_PRIORITY, TRANSIT_PERIOD_MS);
+				    return;
+			    }
+			    m_preop_stuck_reed_ticks = 0;
+			    transit<OperationalState>();
+		    },
+		    "GenTrackerPreOperationalStateTransitOperationalState", Scheduler::DEFAULT_PRIORITY, TRANSIT_PERIOD_MS);
 	} else {
 		led_handle::dispatch<SetLEDPreOperationalError>({});
-		m_preop_state_task = system_scheduler->post_task_prio([this](){
-			transit<ErrorState>();
-		},
-		"GenTrackerPreOperationalStateTransitErrorState",
-		Scheduler::DEFAULT_PRIORITY, TRANSIT_PERIOD_MS);
+		m_preop_state_task = system_scheduler->post_task_prio([this]() { transit<ErrorState>(); },
+		                                                      "GenTrackerPreOperationalStateTransitErrorState",
+		                                                      Scheduler::DEFAULT_PRIORITY, TRANSIT_PERIOD_MS);
 	}
 }
 
@@ -654,14 +649,12 @@ void OperationalState::entry() {
 	led_handle::dispatch<SetLEDOff>({});
 	buzz_handle::dispatch<SetBuzzOff>({});
 
-	ServiceManager::startall([this](ServiceEvent& e) {
-		service_event_handler(e);
-	});
+	ServiceManager::startall([this](ServiceEvent &e) { service_event_handler(e); });
 
 	BaseDebugMode debug_mode = configuration_store->read_param<BaseDebugMode>(ParamID::DEBUG_OUTPUT_MODE);
 	if (debug_mode == BaseDebugMode::BLE_NUS) {
 		set_ble_device_name();
-		ble_service->start([](BLEServiceEvent&){ return 0; });
+		ble_service->start([](BLEServiceEvent &) { return 0; });
 		g_debug_mode = debug_mode;
 	}
 }
@@ -669,15 +662,13 @@ void OperationalState::entry() {
 /// @brief Battery critical event — stop services, transition to BatteryCriticalState.
 void OperationalState::react(BatteryMonitorEventVoltageCritical const &) {
 	DEBUG_INFO("OperationalState::react: BatteryMonitorEventVoltageCritical");
-	system_scheduler->post_task_prio([this]() {
-		transit<BatteryCriticalState>();
-	}, "BatteryCriticalHandler", Scheduler::DEFAULT_PRIORITY, 1000);
+	system_scheduler->post_task_prio([this]() { transit<BatteryCriticalState>(); }, "BatteryCriticalHandler",
+	                                 Scheduler::DEFAULT_PRIORITY, 1000);
 }
 
 /// @brief Service event callback — dispatch to ServiceManager for peer notification.
 /// @param e  Service event from any active service.
-void OperationalState::service_event_handler(ServiceEvent& e) {
-
+void OperationalState::service_event_handler(ServiceEvent &e) {
 	// LED dispatch FIRST for UW_SENSOR transitions (2026-05 latency fix).
 	// The peer-service broadcast below cascades several LFS-backed DEBUG_INFO
 	// writes (ArgosTxService, GPSService, etc.), each blocking ~50-500 ms.
@@ -694,9 +685,8 @@ void OperationalState::service_event_handler(ServiceEvent& e) {
 #else
 	const bool sws_test_running = false;
 #endif
-	if (e.event_source == ServiceIdentifier::UW_SENSOR &&
-	    e.event_type == ServiceEventType::SERVICE_LOG_UPDATED &&
-	    !sws_test_running) {
+	if (e.event_source == ServiceIdentifier::UW_SENSOR && e.event_type == ServiceEventType::SERVICE_LOG_UPDATED
+	    && !sws_test_running) {
 		bool is_underwater = std::get<bool>(e.event_data);
 		if (is_underwater)
 			led_handle::dispatch<SetLEDDiveDetected>({});
@@ -745,22 +735,18 @@ void OperationalState::service_event_handler(ServiceEvent& e) {
 			led_handle::dispatch<SetLEDGNSSPowerOff>({});
 		}
 		return;
-	}
-	else if (e.event_source == ServiceIdentifier::UW_SENSOR) {
+	} else if (e.event_source == ServiceIdentifier::UW_SENSOR) {
 		// LED for UW_SENSOR already dispatched above (pre-broadcast). Nothing more
 		// to do here, just early-return so the ARGOS_TX/LORA_TX branch below
 		// doesn't accidentally fire on this event.
 		return;
-	}
-	else if (e.event_source == ServiceIdentifier::ARGOS_TX ||
-	         e.event_source == ServiceIdentifier::LORA_TX) {
+	} else if (e.event_source == ServiceIdentifier::ARGOS_TX || e.event_source == ServiceIdentifier::LORA_TX) {
 		// Same visual signal for both radio backends: MAGENTA while TX is in
 		// progress, off when complete. Let's the operator see any outgoing
 		// transmission (Argos or LoRaWAN) with a consistent LED pattern.
 		if (e.event_type == ServiceEventType::SERVICE_ACTIVE) {
 			led_handle::dispatch<SetLEDArgosTX>({});
-		}
-		else if (e.event_type == ServiceEventType::SERVICE_INACTIVE) {
+		} else if (e.event_type == ServiceEventType::SERVICE_INACTIVE) {
 			led_handle::dispatch<SetLEDArgosTXComplete>({});
 		}
 	}
@@ -779,16 +765,28 @@ void OperationalState::exit() {
 	// flag: if we re-enter Operational before it does, it re-arms itself.
 	system_scheduler->cancel_task(m_config_flush_task);
 	if (configuration_store->is_valid()) {
-		try { configuration_store->save_params(); }
-		catch (...) { DEBUG_ERROR("OperationalState::exit: save_params failed"); }
+		try {
+			configuration_store->save_params();
+		} catch (...) {
+			DEBUG_ERROR("OperationalState::exit: save_params failed");
+		}
 	}
-	try { led_handle::dispatch<SetLEDOff>({}); }
-	catch (...) { DEBUG_ERROR("OperationalState::exit: LED dispatch failed"); }
-	try { ServiceManager::stopall(); }
-	catch (...) { DEBUG_ERROR("OperationalState::exit: ServiceManager::stopall failed"); }
+	try {
+		led_handle::dispatch<SetLEDOff>({});
+	} catch (...) {
+		DEBUG_ERROR("OperationalState::exit: LED dispatch failed");
+	}
+	try {
+		ServiceManager::stopall();
+	} catch (...) {
+		DEBUG_ERROR("OperationalState::exit: ServiceManager::stopall failed");
+	}
 	BaseDebugMode debug_mode = BaseDebugMode::NONE;
-	try { debug_mode = configuration_store->read_param<BaseDebugMode>(ParamID::DEBUG_OUTPUT_MODE); }
-	catch (...) { DEBUG_ERROR("OperationalState::exit: read DEBUG_OUTPUT_MODE failed"); }
+	try {
+		debug_mode = configuration_store->read_param<BaseDebugMode>(ParamID::DEBUG_OUTPUT_MODE);
+	} catch (...) {
+		DEBUG_ERROR("OperationalState::exit: read DEBUG_OUTPUT_MODE failed");
+	}
 	if (debug_mode == BaseDebugMode::BLE_NUS) {
 		// Restore the compile-time default debug channel: NONE in release
 		// builds (silent operation), USB CDC in debug builds.
@@ -797,13 +795,19 @@ void OperationalState::exit() {
 #else
 		g_debug_mode = BaseDebugMode::USB_CDC;
 #endif
-		try { ble_service->stop(); }
-		catch (...) { DEBUG_ERROR("OperationalState::exit: ble_service->stop failed"); }
+		try {
+			ble_service->stop();
+		} catch (...) {
+			DEBUG_ERROR("OperationalState::exit: ble_service->stop failed");
+		}
 		DEBUG_TRACE("exit: OperationalState: BLE service stopped");
 		PMU::delay_ms(100);
 	}
-	try { battery_monitor->unsubscribe(*this); }
-	catch (...) { DEBUG_ERROR("OperationalState::exit: battery_monitor unsubscribe failed"); }
+	try {
+		battery_monitor->unsubscribe(*this);
+	} catch (...) {
+		DEBUG_ERROR("OperationalState::exit: battery_monitor unsubscribe failed");
+	}
 }
 
 /// @brief Config entry — start BLE advertising, USB polling, DTE handler.
@@ -818,33 +822,34 @@ void ConfigurationState::entry() {
 	m_backup_charge_mode = false;
 
 	set_ble_device_name();
-	ble_service->start([this](BLEServiceEvent& event) -> int { return on_ble_event(event); } );
+	ble_service->start([this](BLEServiceEvent &event) -> int { return on_ble_event(event); });
 	restart_inactivity_timeout();
 
 	if (gps_service) {
 		gps_service->set_backup_charge_callbacks(
-			[this]() {
-				// Charge started: cut BLE after 200ms (lets the $O; response TX complete).
-				m_backup_charge_mode = true;
-				// MED #6 audit fix: store the task handle so `exit()` can cancel
-				// it if the FSM transits out during the 200 ms window. Without
-				// this, the lambda fires with a dangling `this` → HardFault.
-				m_backup_charge_stop_ble_task = system_scheduler->post_task_prio([this]() {
-					ble_service->stop();
-					system_scheduler->cancel_task(m_ble_inactivity_timeout_task);
-					led_handle::dispatch<SetLEDOff>({});
-					// Start the visual heartbeat: yellow flash every 10 s while charging.
-					m_backup_charge_blink_task = system_scheduler->post_task_prio(
-						std::bind(&ConfigurationState::backup_charge_blink_fire, this),
-						"BackupChargeBlink", Scheduler::DEFAULT_PRIORITY, 10000);
-				}, "BackupChargeStopBLE", Scheduler::DEFAULT_PRIORITY, 200);
-			},
-			[this]() {
-				// Charge ended (reed, timer, or abort): resume normal operation.
-				m_backup_charge_mode = false;
-				transit<OperationalState>();
-			}
-		);
+		    [this]() {
+			    // Charge started: cut BLE after 200ms (lets the $O; response TX complete).
+			    m_backup_charge_mode = true;
+			    // MED #6 audit fix: store the task handle so `exit()` can cancel
+			    // it if the FSM transits out during the 200 ms window. Without
+			    // this, the lambda fires with a dangling `this` → HardFault.
+			    m_backup_charge_stop_ble_task = system_scheduler->post_task_prio(
+			        [this]() {
+				        ble_service->stop();
+				        system_scheduler->cancel_task(m_ble_inactivity_timeout_task);
+				        led_handle::dispatch<SetLEDOff>({});
+				        // Start the visual heartbeat: yellow flash every 10 s while charging.
+				        m_backup_charge_blink_task = system_scheduler->post_task_prio(
+				            std::bind(&ConfigurationState::backup_charge_blink_fire, this), "BackupChargeBlink",
+				            Scheduler::DEFAULT_PRIORITY, 10000);
+			        },
+			        "BackupChargeStopBLE", Scheduler::DEFAULT_PRIORITY, 200);
+		    },
+		    [this]() {
+			    // Charge ended (reed, timer, or abort): resume normal operation.
+			    m_backup_charge_mode = false;
+			    transit<OperationalState>();
+		    });
 	}
 
 #ifdef USB_DTE_ENABLED
@@ -852,9 +857,7 @@ void ConfigurationState::entry() {
 	// (see on_ble_event CONNECTED). Restored on BLE DISCONNECTED.
 	// This lets bridges (GNSSBR/KIMBR/LORABR) started over USB route
 	// raw UART RX back to the USB host via the DTEHandler async_write.
-	dte_handler->set_async_write([](const std::string& msg) {
-		UsbInterface::get_instance().write(msg);
-	});
+	dte_handler->set_async_write([](const std::string &msg) { UsbInterface::get_instance().write(msg); });
 
 	// Start USB DTE polling (runs in parallel with BLE)
 	DEBUG_TRACE("ConfigurationState: Starting DTE polling");
@@ -874,8 +877,11 @@ void ConfigurationState::exit() {
 	// operation with the BLE radio advertising permanently — on a sealed device,
 	// an invisible current leak. OperationalState::exit() was already protecting
 	// its own the same way.
-	try { ble_service->stop(); }
-	catch (...) { DEBUG_ERROR("exit: ConfigurationState: ble_service->stop failed"); }
+	try {
+		ble_service->stop();
+	} catch (...) {
+		DEBUG_ERROR("exit: ConfigurationState: ble_service->stop failed");
+	}
 
 	// Abandon any OTA still in flight, HERE rather than in the BLE DISCONNECTED
 	// handler. That handler used to be the only place calling this, which was
@@ -896,16 +902,15 @@ void ConfigurationState::exit() {
 			DEBUG_WARN("exit: ConfigurationState — aborting an unfinished OTA transfer");
 			ota_updater->abort_file_transfer();
 		}
+	} catch (...) {
+		DEBUG_ERROR("exit: ConfigurationState: abort_file_transfer failed");
 	}
-	catch (...) { DEBUG_ERROR("exit: ConfigurationState: abort_file_transfer failed"); }
 
 #ifdef USB_DTE_ENABLED
 	// Drop the async writer back onto USB. It may still be holding the lambda
 	// installed on BLE CONNECT, whose link is now gone — same reasoning as
 	// above: the DISCONNECTED handler used to do this and no longer runs.
-	dte_handler->set_async_write([](const std::string& msg) {
-		UsbInterface::get_instance().write(msg);
-	});
+	dte_handler->set_async_write([](const std::string &msg) { UsbInterface::get_instance().write(msg); });
 #endif
 
 	system_scheduler->cancel_task(m_ble_inactivity_timeout_task);
@@ -920,15 +925,12 @@ void ConfigurationState::exit() {
 #endif
 	// Ensure any active bridge is stopped before leaving configuration mode —
 	// otherwise the bridge would prevent services from using the underlying UART.
-	if (gps_device && gps_device->is_bridge_active())
-		gps_device->stop_bridge();
+	if (gps_device && gps_device->is_bridge_active()) gps_device->stop_bridge();
 #if defined(LORA_RAK3172) && (LORA_RAK3172 == 1)
-	if (lora_device_instance && lora_device_instance->is_bridge_active())
-		lora_device_instance->stop_bridge();
+	if (lora_device_instance && lora_device_instance->is_bridge_active()) lora_device_instance->stop_bridge();
 #endif
 #if !(defined(LORA_RAK3172) && (LORA_RAK3172 == 1)) && !(defined(ARGOS_SMD) && (ARGOS_SMD == 1))
-	if (kim2_device_instance && kim2_device_instance->is_bridge_active())
-		kim2_device_instance->stop_bridge();
+	if (kim2_device_instance && kim2_device_instance->is_bridge_active()) kim2_device_instance->stop_bridge();
 #endif
 #ifdef USB_DTE_ENABLED
 	// Restore USB console logs after stopping bridges — otherwise logs stay
@@ -962,7 +964,7 @@ void GenTracker::set_ble_device_name() {
 /// @brief BLE event callback — handle connect/disconnect, DTE data, OTA transfers.
 /// @param event  BLE service event (CONNECTED, DISCONNECTED, DTE_DATA, OTA_*).
 /// @return 0 on success.
-int ConfigurationState::on_ble_event(BLEServiceEvent& event) {
+int ConfigurationState::on_ble_event(BLEServiceEvent &event) {
 	int rc = 0;
 
 	switch (event.event_type) {
@@ -970,7 +972,7 @@ int ConfigurationState::on_ble_event(BLEServiceEvent& event) {
 		DEBUG_TRACE("ConfigurationState::on_ble_event: CONNECTED");
 		// Indicate DTE connection is made
 		dte_handler->reset_state();
-		dte_handler->set_async_write([](const std::string& msg) {
+		dte_handler->set_async_write([](const std::string &msg) {
 			if (ble_service) ble_service->write(msg);
 		});
 		led_handle::dispatch<SetLEDConfigConnected>({});
@@ -983,9 +985,7 @@ int ConfigurationState::on_ble_event(BLEServiceEvent& event) {
 		// Restore USB writer so future DTE async responses / USB-started
 		// bridges route to USB. Note: any bridge still active that captured
 		// the (now stale) BLE writer will silently drop RX until stopped.
-		dte_handler->set_async_write([](const std::string& msg) {
-			UsbInterface::get_instance().write(msg);
-		});
+		dte_handler->set_async_write([](const std::string &msg) { UsbInterface::get_instance().write(msg); });
 #endif
 		// During backup charge the device is silent — keep LED off instead of
 		// returning to the "waiting for BLE connection" blink.
@@ -998,7 +998,7 @@ int ConfigurationState::on_ble_event(BLEServiceEvent& event) {
 		DEBUG_TRACE("ConfigurationState::on_ble_event: DTE_DATA_RECEIVED");
 		restart_inactivity_timeout();
 		system_scheduler->post_task_prio(std::bind(&ConfigurationState::process_received_data, this),
-				"BLEProcessReceivedData");
+		                                 "BLEProcessReceivedData");
 		break;
 	case BLEServiceEventType::OTA_START:
 		DEBUG_INFO("ConfigurationState::on_ble_event: OTA_START");
@@ -1018,17 +1018,23 @@ int ConfigurationState::on_ble_event(BLEServiceEvent& event) {
 		// ErrorEvent that transits to ErrorState → OffState — bricking a
 		// sealed device on a recoverable OTA glitch. Log + swallow keeps
 		// the device in Configuration state so the operator can retry.
-		system_scheduler->post_task_prio([]() {
-			try {
-				ota_updater->apply_file_update();
-			} catch (ErrorCode e) {
-				DEBUG_ERROR("ConfigurationState: apply_file_update ErrorCode=%d — staying in Config for retry", (int)e);
-			} catch (const std::exception& ex) {
-				DEBUG_ERROR("ConfigurationState: apply_file_update std::exception: %s — staying in Config for retry", ex.what());
-			} catch (...) {
-				DEBUG_ERROR("ConfigurationState: apply_file_update unknown exception — staying in Config for retry");
-			}
-		}, "BLEApplyOTAFileUpdate");
+		system_scheduler->post_task_prio(
+		    []() {
+			    try {
+				    ota_updater->apply_file_update();
+			    } catch (ErrorCode e) {
+				    DEBUG_ERROR("ConfigurationState: apply_file_update ErrorCode=%d — staying in Config for retry",
+					            (int)e);
+			    } catch (const std::exception &ex) {
+				    DEBUG_ERROR(
+				        "ConfigurationState: apply_file_update std::exception: %s — staying in Config for retry",
+				        ex.what());
+			    } catch (...) {
+				    DEBUG_ERROR(
+				        "ConfigurationState: apply_file_update unknown exception — staying in Config for retry");
+			    }
+		    },
+		    "BLEApplyOTAFileUpdate");
 		break;
 	case BLEServiceEventType::OTA_ABORT:
 		DEBUG_INFO("ConfigurationState::on_ble_event: OTA_ABORT");
@@ -1041,8 +1047,7 @@ int ConfigurationState::on_ble_event(BLEServiceEvent& event) {
 		restart_inactivity_timeout();
 		ota_updater->write_file_data(event.data, event.length);
 		break;
-	default:
-		break;
+	default: break;
 	}
 
 	return rc;
@@ -1080,39 +1085,39 @@ void ConfigurationState::on_ble_inactivity_timeout() {
 void ConfigurationState::backup_charge_blink_fire() {
 	if (!m_backup_charge_mode) return;  // charge ended between schedule and fire
 	status_led->set(RGBLedColor::YELLOW);
-	system_scheduler->post_task_prio([this]() {
-		if (!m_backup_charge_mode) return;
-		status_led->off();
-		m_backup_charge_blink_task = system_scheduler->post_task_prio(
-			std::bind(&ConfigurationState::backup_charge_blink_fire, this),
-			"BackupChargeBlink", Scheduler::DEFAULT_PRIORITY, 10000);
-	}, "BackupChargeBlinkOff", Scheduler::DEFAULT_PRIORITY, 200);
+	system_scheduler->post_task_prio(
+	    [this]() {
+		    if (!m_backup_charge_mode) return;
+		    status_led->off();
+		    m_backup_charge_blink_task =
+		        system_scheduler->post_task_prio(std::bind(&ConfigurationState::backup_charge_blink_fire, this),
+				                                 "BackupChargeBlink", Scheduler::DEFAULT_PRIORITY, 10000);
+	    },
+	    "BackupChargeBlinkOff", Scheduler::DEFAULT_PRIORITY, 200);
 }
 
 /// @brief Reset the BLE inactivity timeout (called on every BLE activity).
 void ConfigurationState::restart_inactivity_timeout() {
 	//DEBUG_TRACE("Restart BLE inactivity timeout: %lu", system_timer->get_counter());
 	system_scheduler->cancel_task(m_ble_inactivity_timeout_task);
-	m_ble_inactivity_timeout_task = system_scheduler->post_task_prio(std::bind(&ConfigurationState::on_ble_inactivity_timeout, this),
-			"BLEInactivityTimeout",
-			Scheduler::DEFAULT_PRIORITY, BLE_INACTIVITY_TIMEOUT_MS);
+	m_ble_inactivity_timeout_task = system_scheduler->post_task_prio(
+	    std::bind(&ConfigurationState::on_ble_inactivity_timeout, this), "BLEInactivityTimeout",
+	    Scheduler::DEFAULT_PRIORITY, BLE_INACTIVITY_TIMEOUT_MS);
 }
 
 /// @brief Process BLE DTE command — parse, dispatch to DTEHandler, send response.
 void ConfigurationState::process_received_data() {
 	auto req = ble_service->read_line();
 
-	if (req.size())
-	{
+	if (req.size()) {
 		// Bridge mode: forward raw BLE bytes straight to the UART, bypassing
 		// the DTE parser. Mirrors the USB bridge path in process_usb_data().
 		// BLE NUS RX is line-buffered (\r triggers flush), so AT-based modules
 		// (KIM2/LoRa) work cleanly; GNSS binary UBX over BLE is limited by
 		// this line buffering — host should prefer USB for u-center.
 		// Exit sequence: user sends "+++\r" over BLE.
-		auto bridge_forward = [&req, this](auto* device) -> bool {
-			if (!device || !device->is_bridge_active())
-				return false;
+		auto bridge_forward = [&req, this](auto *device) -> bool {
+			if (!device || !device->is_bridge_active()) return false;
 
 			PMU::kick_watchdog();
 
@@ -1130,20 +1135,16 @@ void ConfigurationState::process_received_data() {
 			// Re-append CRLF for AT framing (safe no-op for payloads that
 			// already end in it, since we stripped above).
 			std::string data = line + "\r\n";
-			device->bridge_send(reinterpret_cast<const uint8_t*>(data.c_str()),
-					data.size());
+			device->bridge_send(reinterpret_cast<const uint8_t *>(data.c_str()), data.size());
 			return true;
 		};
 
-		if (bridge_forward(gps_device))
-			return;
+		if (bridge_forward(gps_device)) return;
 #if defined(LORA_RAK3172) && (LORA_RAK3172 == 1)
-		if (bridge_forward(lora_device_instance))
-			return;
+		if (bridge_forward(lora_device_instance)) return;
 #endif
 #if !(defined(LORA_RAK3172) && (LORA_RAK3172 == 1)) && !(defined(ARGOS_SMD) && (ARGOS_SMD == 1))
-		if (bridge_forward(kim2_device_instance))
-			return;
+		if (bridge_forward(kim2_device_instance)) return;
 #endif
 
 		DEBUG_TRACE("received %u bytes:", req.size());
@@ -1154,15 +1155,13 @@ void ConfigurationState::process_received_data() {
 		std::string resp;
 		DTEAction action;
 
-		do
-		{
+		do {
 			action = dte_handler->handle_dte_message(req, resp);
 
 			// Kick watchdog every iteration (not just when resp produced)
 			PMU::kick_watchdog();
 
-			if (resp.size())
-			{
+			if (resp.size()) {
 				DEBUG_TRACE("responding: %s", resp.c_str());
 				if (!ble_service->write(resp)) {
 					dte_handler->reset_state();
@@ -1175,33 +1174,23 @@ void ConfigurationState::process_received_data() {
 				restart_inactivity_timeout();
 			}
 
-			if (action == DTEAction::FACTR)
-			{
+			if (action == DTEAction::FACTR) {
 				DEBUG_INFO("Perform factory reset of configuration store");
 				configuration_store->factory_reset();
 
 				// After formatting the filesystem we must do a system reset so that
 				// the boot up procedure can repopulate files
 				PMU::reset(false);
-			}
-			else if (action == DTEAction::RESET)
-			{
+			} else if (action == DTEAction::RESET) {
 				DEBUG_INFO("Perform device reset");
 
 				// Execute this after 3 seconds to allow time for the BLE response to be sent
-				system_scheduler->post_task_prio([](){
-					PMU::reset(false);
-				},
-				"DTEActionPMUReset",
-				Scheduler::DEFAULT_PRIORITY, 3000);
-			}
-			else if (action == DTEAction::SECUR)
-			{
+				system_scheduler->post_task_prio([]() { PMU::reset(false); }, "DTEActionPMUReset",
+				                                 Scheduler::DEFAULT_PRIORITY, 3000);
+			} else if (action == DTEAction::SECUR) {
 				// TODO: add secure procedure
 				DEBUG_INFO("Perform secure procedure");
-			}
-			else if (action == DTEAction::CONFIG_UPDATED)
-			{
+			} else if (action == DTEAction::CONFIG_UPDATED) {
 				// Propagate runtime LoRa param changes to the RAK3172 module.
 				// reload_config_if_changed() is a no-op if no LORA_* param
 				// actually changed (cheap diff against the cached LoRaConfig),
@@ -1220,12 +1209,8 @@ void ConfigurationState::process_received_data() {
 
 #ifdef USB_DTE_ENABLED
 void ConfigurationState::schedule_usb_poll() {
-	m_usb_poll_task = system_scheduler->post_task_prio(
-		std::bind(&ConfigurationState::process_usb_data, this),
-		"USBDTEPoll",
-		Scheduler::DEFAULT_PRIORITY,
-		USB_POLL_INTERVAL_MS
-	);
+	m_usb_poll_task = system_scheduler->post_task_prio(std::bind(&ConfigurationState::process_usb_data, this),
+	                                                   "USBDTEPoll", Scheduler::DEFAULT_PRIORITY, USB_POLL_INTERVAL_MS);
 }
 
 /// @brief Suppress USB console logs while any bridge is active, restore when stopped.
@@ -1251,7 +1236,7 @@ static void sync_bridge_log_silencing() {
 }
 
 void ConfigurationState::process_usb_data() {
-	auto& usb = UsbInterface::get_instance();
+	auto &usb = UsbInterface::get_instance();
 
 	sync_bridge_log_silencing();
 
@@ -1276,16 +1261,15 @@ void ConfigurationState::process_usb_data() {
 					return;
 				}
 				// Also check with line ending
-				if (n >= 3 && buf[0] == '+' && buf[1] == '+' && buf[2] == '+' &&
-				    (n == 3 || buf[3] == '\r' || buf[3] == '\n')) {
+				if (n >= 3 && buf[0] == '+' && buf[1] == '+' && buf[2] == '+'
+				    && (n == 3 || buf[3] == '\r' || buf[3] == '\n')) {
 					gps_device->stop_bridge();
 					usb.write("\r\n[BRIDGE OFF]\r\n");
 					schedule_usb_poll();
 					return;
 				}
 
-				gps_device->bridge_send(
-					reinterpret_cast<const uint8_t*>(buf), n);
+				gps_device->bridge_send(reinterpret_cast<const uint8_t *>(buf), n);
 			}
 		}
 
@@ -1316,8 +1300,7 @@ void ConfigurationState::process_usb_data() {
 
 				// Forward to RAK3172 UART with \r\n termination
 				std::string data = line + "\r\n";
-				lora_device_instance->bridge_send(
-					reinterpret_cast<const uint8_t*>(data.c_str()), data.size());
+				lora_device_instance->bridge_send(reinterpret_cast<const uint8_t *>(data.c_str()), data.size());
 			}
 		}
 
@@ -1349,8 +1332,7 @@ void ConfigurationState::process_usb_data() {
 
 				// Forward to KIM2 UART with \r\n termination (AT command framing)
 				std::string data = line + "\r\n";
-				kim2_device_instance->bridge_send(
-					reinterpret_cast<const uint8_t*>(data.c_str()), data.size());
+				kim2_device_instance->bridge_send(reinterpret_cast<const uint8_t *>(data.c_str()), data.size());
 			}
 		}
 
@@ -1402,16 +1384,11 @@ void ConfigurationState::process_usb_data() {
 					DEBUG_INFO("Perform factory reset of configuration store (USB)");
 					configuration_store->factory_reset();
 					PMU::reset(false);
-				}
-				else if (action == DTEAction::RESET) {
+				} else if (action == DTEAction::RESET) {
 					DEBUG_INFO("Perform device reset (USB)");
-					system_scheduler->post_task_prio([](){
-						PMU::reset(false);
-					},
-					"DTEActionPMUReset",
-					Scheduler::DEFAULT_PRIORITY, 3000);
-				}
-				else if (action == DTEAction::SECUR) {
+					system_scheduler->post_task_prio([]() { PMU::reset(false); }, "DTEActionPMUReset",
+					                                 Scheduler::DEFAULT_PRIORITY, 3000);
+				} else if (action == DTEAction::SECUR) {
 					DEBUG_INFO("Perform secure procedure (USB)");
 				}
 
@@ -1447,11 +1424,9 @@ void BatteryCriticalState::entry() {
 #else
 	led_handle::dispatch<SetLEDBatteryCritical>({});
 	buzz_handle::dispatch<SetBuzzOff>({});
-	m_transit_task = system_scheduler->post_task_prio([this](){
-		transit<OffState>();
-	},
-	"GenTrackerBatteryCriticalTransitOffState",
-	Scheduler::DEFAULT_PRIORITY, BATTERY_CRITICAL_TIMEOUT_MS);
+	m_transit_task =
+	    system_scheduler->post_task_prio([this]() { transit<OffState>(); }, "GenTrackerBatteryCriticalTransitOffState",
+		                                 Scheduler::DEFAULT_PRIORITY, BATTERY_CRITICAL_TIMEOUT_MS);
 #endif
 }
 
@@ -1488,20 +1463,15 @@ void ErrorState::entry() {
 	if (soft_reset_retry) {
 		DEBUG_WARN("ErrorState: boot-fail counter %u/%u — scheduling soft reset retry",
 		           s_bootfail_noinit.consecutive_failures, BOOT_RETRY_MAX);
-		m_shutdown_task = system_scheduler->post_task_prio([](){
-			PMU::reset(false);
-		},
-		"GenTrackerErrorStateRebootRetry",
-		Scheduler::DEFAULT_PRIORITY, 5000);
+		m_shutdown_task = system_scheduler->post_task_prio(
+		    []() { PMU::reset(false); }, "GenTrackerErrorStateRebootRetry", Scheduler::DEFAULT_PRIORITY, 5000);
 	} else {
-		DEBUG_ERROR("ErrorState: %u consecutive boot failures (max %u reached, factory_reset_attempted=%u) — falling through to OffState (real HW fault)",
-		            s_bootfail_noinit.consecutive_failures, BOOT_RETRY_MAX,
-		            s_bootfail_noinit.factory_reset_attempted);
-		m_shutdown_task = system_scheduler->post_task_prio([this](){
-			transit<OffState>();
-		},
-		"GenTrackerErrorStateTransitOffState",
-		Scheduler::DEFAULT_PRIORITY, 5000);
+		DEBUG_ERROR("ErrorState: %u consecutive boot failures (max %u reached, factory_reset_attempted=%u) — falling "
+		            "through to OffState (real HW fault)",
+		            s_bootfail_noinit.consecutive_failures, BOOT_RETRY_MAX, s_bootfail_noinit.factory_reset_attempted);
+		m_shutdown_task =
+		    system_scheduler->post_task_prio([this]() { transit<OffState>(); }, "GenTrackerErrorStateTransitOffState",
+			                                 Scheduler::DEFAULT_PRIORITY, 5000);
 	}
 }
 

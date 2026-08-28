@@ -45,17 +45,10 @@ void nrfx_gpiote_switch_handler(nrfx_gpiote_pin_t pin, nrf_gpiote_polarity_t act
 	if (!obj) return;
 
 	switch (action) {
-	case NRF_GPIOTE_POLARITY_LOTOHI:
-		obj->process_event(true);
-		break;
-	case NRF_GPIOTE_POLARITY_HITOLO:
-		obj->process_event(false);
-		break;
-	case NRF_GPIOTE_POLARITY_TOGGLE:
-		obj->process_event(obj->get_state());
-		break;
-	default:
-		break;
+	case NRF_GPIOTE_POLARITY_LOTOHI: obj->process_event(true); break;
+	case NRF_GPIOTE_POLARITY_HITOLO: obj->process_event(false); break;
+	case NRF_GPIOTE_POLARITY_TOGGLE: obj->process_event(obj->get_state()); break;
+	default: break;
 	}
 }
 
@@ -66,8 +59,7 @@ void nrfx_gpiote_switch_handler(nrfx_gpiote_pin_t pin, nrf_gpiote_polarity_t act
 
 /// @brief Init GPIOTE library if needed.  Does not register the pin yet (call start/resume).
 NrfSwitch::NrfSwitch(int pin, unsigned int hysteresis_time_ms, bool active_state)
-	: Switch(pin, hysteresis_time_ms, active_state)
-{
+    : Switch(pin, hysteresis_time_ms, active_state) {
 	if (!nrfx_gpiote_is_init()) {
 		nrfx_err_t err = nrfx_gpiote_init();
 		if (err != NRFX_SUCCESS) {
@@ -104,8 +96,7 @@ void NrfSwitch::update_state(bool state) {
 	if (state != static_cast<bool>(m_current_state)) {
 		DEBUG_TRACE("NrfSwitch: %u -> %u", m_current_state, state);
 		m_current_state = state;
-		if (m_state_change_handler)
-			m_state_change_handler(state);
+		if (m_state_change_handler) m_state_change_handler(state);
 	}
 }
 
@@ -113,21 +104,22 @@ void NrfSwitch::update_state(bool state) {
 void NrfSwitch::process_event(bool /* state */) {
 	// On first edge: disable GPIOTE to suppress all bounce interrupts,
 	// then schedule a single readback after the hysteresis period.
-	if (m_debouncing)
-		return;
+	if (m_debouncing) return;
 
 	m_debouncing = true;
 	nrfx_gpiote_in_event_disable(BSP::GPIO_Inits[m_pin].pin_number);
 
 	uint64_t now = system_timer->get_counter();
-	m_timer_handle = system_timer->add_schedule([this]() {
-		// Read the actual settled pin state after debounce
-		bool settled = (GPIOPins::value(m_pin) == m_active_state);
-		update_state(settled);
-		// Re-enable GPIOTE for next edge
-		m_debouncing = false;
-		nrfx_gpiote_in_event_enable(BSP::GPIO_Inits[m_pin].pin_number, true);
-	}, now + m_hysteresis_time_ms);
+	m_timer_handle = system_timer->add_schedule(
+	    [this]() {
+		    // Read the actual settled pin state after debounce
+		    bool settled = (GPIOPins::value(m_pin) == m_active_state);
+		    update_state(settled);
+		    // Re-enable GPIOTE for next edge
+		    m_debouncing = false;
+		    nrfx_gpiote_in_event_enable(BSP::GPIO_Inits[m_pin].pin_number, true);
+	    },
+	    now + m_hysteresis_time_ms);
 
 	// If schedule list was full, the debounce callback won't fire.
 	// Recover immediately to avoid permanent reed switch lockout.
@@ -153,8 +145,8 @@ void NrfSwitch::pause() {
 void NrfSwitch::resume() {
 	if (!m_is_paused) return;
 	pin_map_add(BSP::GPIO_Inits[m_pin].pin_number, this);
-	nrfx_err_t err = nrfx_gpiote_in_init(BSP::GPIO_Inits[m_pin].pin_number,
-		&BSP::GPIO_Inits[m_pin].gpiote_in_config, nrfx_gpiote_switch_handler);
+	nrfx_err_t err = nrfx_gpiote_in_init(BSP::GPIO_Inits[m_pin].pin_number, &BSP::GPIO_Inits[m_pin].gpiote_in_config,
+	                                     nrfx_gpiote_switch_handler);
 	if (err != NRFX_SUCCESS) {
 		pin_map_remove(BSP::GPIO_Inits[m_pin].pin_number);
 		DEBUG_ERROR("NrfSwitch: GPIOTE resume failed pin %u (0x%08X) — switch inactive", m_pin, err);

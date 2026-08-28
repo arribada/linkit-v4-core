@@ -36,7 +36,7 @@ public:
 	/// @param[out] temperature  Temperature in degrees Celsius.
 	/// @param[out] pressure     Pressure in bar (converted from hPa).
 	/// @throws ErrorCode::I2C_COMMS_ERROR if trigger or data read fails.
-	void read(double& temperature, double& pressure) override;
+	void read(double &temperature, double &pressure) override;
 
 	/// @brief Select full-scale range.
 	/// @param mode  0 = 1260 hPa (surface, better precision), 1 = 4060 hPa (underwater).
@@ -47,8 +47,8 @@ private:
 	unsigned char m_addr;
 	bool m_initialized = false;
 
-	stmdev_ctx_t m_ctx;       ///< ST driver context (I2C read/write function pointers)
-	lps28dfw_md_t m_mode;     ///< Cached mode config (re-applied on every read after power cycle)
+	stmdev_ctx_t m_ctx;    ///< ST driver context (I2C read/write function pointers)
+	lps28dfw_md_t m_mode;  ///< Cached mode config (re-applied on every read after power cycle)
 
 	/// @name I2C platform callbacks for ST driver
 	/// @{

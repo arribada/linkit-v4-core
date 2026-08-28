@@ -37,9 +37,9 @@ extern "C" {
 
 /// @name BMA400 driver constants
 /// @{
-static constexpr uint8_t  BMA400_RW_LENGTH      = 64;   ///< Max I2C transfer length
+static constexpr uint8_t BMA400_RW_LENGTH = 64;             ///< Max I2C transfer length
 static constexpr unsigned int BMA400_DRDY_MAX_POLLS = 100;  ///< Max DRDY polling attempts (1 ms each)
-static constexpr unsigned int BMA400_MAX_DEVICES    = 4;    ///< Max simultaneous BMA400 instances
+static constexpr unsigned int BMA400_MAX_DEVICES = 4;       ///< Max simultaneous BMA400 instances
 /// @}
 
 /// @brief FIFO sample: raw 12-bit XYZ accelerometer data.
@@ -70,7 +70,7 @@ public:
 	 * @param[out] temperature   Raw temperature (degrees C × 10).
 	 * @note Wakes sensor from SLEEP, reads, then returns to SLEEP.
 	 */
-	void read_xyz(double& x, double& y, double& z, int16_t& temperature);
+	void read_xyz(double &x, double &y, double &z, int16_t &temperature);
 
 	/// @brief Read temperature only.  Briefly enters NORMAL mode then sleeps.
 	int16_t read_temperature();
@@ -78,7 +78,7 @@ public:
 
 	/// @name Configuration setters
 	/// @{
-	void set_wakeup_threshold(double threshold);  ///< Wakeup threshold in g-force
+	void set_wakeup_threshold(double threshold);   ///< Wakeup threshold in g-force
 	void set_wakeup_duration(double duration);     ///< Wakeup duration in samples
 	void set_range(unsigned int g_force);          ///< Range register (BMA400_RANGE_2G/4G/8G/16G)
 	void set_power_mode(unsigned int power_mode);  ///< 0=LOW_POWER wakeup, 1=NORMAL wakeup
@@ -100,13 +100,13 @@ public:
 	 * @param[out] offset_y  Measured average Y in g (target: 0).
 	 * @param[out] offset_z  Measured average Z in g (target: 1.0).
 	 */
-	void calibrate_offset(uint8_t g_range, double& offset_x, double& offset_y, double& offset_z);
+	void calibrate_offset(uint8_t g_range, double &offset_x, double &offset_y, double &offset_z);
 	/// @}
 
 	/// @name Configuration getters
 	/// @{
-	uint8_t get_power_mode() const { return m_power_mode; }       ///< Current wakeup mode
-	uint8_t get_range() const { return m_g_range; }               ///< Current range register
+	uint8_t get_power_mode() const { return m_power_mode; }  ///< Current wakeup mode
+	uint8_t get_range() const { return m_g_range; }          ///< Current range register
 	double get_wakeup_threshold() const { return m_wakeup_threshold; }
 	double get_wakeup_duration() const { return m_wakeup_duration; }
 	uint8_t range_to_g(uint8_t range_reg) const;  ///< Register value → g-force (2/4/8/16)
@@ -156,26 +156,26 @@ public:
 private:
 	/// @name Hardware state
 	/// @{
-	unsigned int m_bus;           ///< I2C bus index
-	unsigned char m_addr;         ///< 7-bit I2C address
-	NrfIRQ m_irq;                ///< GPIOTE interrupt for wakeup pin
-	uint8_t m_unique_id;          ///< Device manager lookup ID (for Bosch C callbacks)
+	unsigned int m_bus;    ///< I2C bus index
+	unsigned char m_addr;  ///< 7-bit I2C address
+	NrfIRQ m_irq;          ///< GPIOTE interrupt for wakeup pin
+	uint8_t m_unique_id;   ///< Device manager lookup ID (for Bosch C callbacks)
 	/// @}
 
 	/// @name Bosch driver state
 	/// @{
-	struct bma400_dev m_bma400_dev;         ///< Bosch driver device handle
+	struct bma400_dev m_bma400_dev;              ///< Bosch driver device handle
 	struct bma400_sensor_conf m_sensor_conf[2];  ///< [0]=accel config, [1]=GEN1 interrupt config
-	struct bma400_int_enable m_int_enable;  ///< Current interrupt enable state
-	bool m_irq_pending;                     ///< Set by ISR, cleared by check_and_clear_wakeup()
+	struct bma400_int_enable m_int_enable;       ///< Current interrupt enable state
+	bool m_irq_pending;                          ///< Set by ISR, cleared by check_and_clear_wakeup()
 	/// @}
 
 	/// @name Configuration (set via calibration_write from service layer)
 	/// @{
-	uint8_t m_g_range;            ///< Range register (BMA400_RANGE_2G/4G/8G/16G)
-	uint8_t m_power_mode;         ///< Wakeup mode: 0=LOW_POWER, 1=NORMAL
-	double m_wakeup_threshold;    ///< Motion threshold in g-force
-	double m_wakeup_duration;     ///< Motion duration in samples
+	uint8_t m_g_range;          ///< Range register (BMA400_RANGE_2G/4G/8G/16G)
+	uint8_t m_power_mode;       ///< Wakeup mode: 0=LOW_POWER, 1=NORMAL
+	double m_wakeup_threshold;  ///< Motion threshold in g-force
+	double m_wakeup_duration;   ///< Motion duration in samples
 	/// @}
 
 	/// @name Calibration offsets (g-force, measured at rest)
@@ -189,10 +189,10 @@ private:
 
 	/// @name Power mode helpers
 	/// @{
-	void init();                   ///< I2C probe + soft reset + SLEEP
-	void setup_sleep_mode();       ///< Enter SLEEP (~0.2 µA)
-	void setup_active_mode();      ///< Enter NORMAL 100 Hz for readings + calibration
-	void setup_normal_mode();      ///< Enter NORMAL with GEN1 interrupt config
+	void init();               ///< I2C probe + soft reset + SLEEP
+	void setup_sleep_mode();   ///< Enter SLEEP (~0.2 µA)
+	void setup_active_mode();  ///< Enter NORMAL 100 Hz for readings + calibration
+	void setup_normal_mode();  ///< Enter NORMAL with GEN1 interrupt config
 	/// @}
 
 	/// @name Wakeup mode internals
@@ -211,9 +211,9 @@ private:
 	/// @name Conversion / utility
 	/// @{
 	double lsb_to_ms2(int16_t accel_data, uint8_t g_range, uint8_t bit_width);  ///< Raw LSB → m/s²
-	void check_result(const char *api_name, int8_t rslt);  ///< Log + throw on Bosch API error
-	uint8_t calculate_threshold_reg(double threshold_g, uint8_t acc_range);  ///< g → register value
-	/// @}
+	void check_result(const char *api_name, int8_t rslt);                       ///< Log + throw on Bosch API error
+	uint8_t calculate_threshold_reg(double threshold_g, uint8_t acc_range);     ///< g → register value
+	                                                                            /// @}
 };
 
 
@@ -255,7 +255,7 @@ public:
 	/// @brief Read calibrated value or configuration.
 	/// @param[out] value  Read-back value.
 	/// @param offset      SCALR offset (see table above: 1-3=cal XYZ, 4-6=coefficients, 7-10=config).
-	void calibration_read(double& value, const unsigned int offset) override;
+	void calibration_read(double &value, const unsigned int offset) override;
 
 	/// @brief Persist calibration offsets to flash (AXL.CAL file).
 	/// @param force  If true, write even if no changes detected.
@@ -268,19 +268,19 @@ public:
 	void remove_event_handler(unsigned int) override;
 
 	/// @brief Access the low-level driver (e.g. for direct FIFO control).
-	BMA400LL& get_ll() { return m_bma400; }
+	BMA400LL &get_ll() { return m_bma400; }
 
 private:
-	BMA400LL m_bma400;       ///< Low-level I2C driver
-	Calibration m_cal;       ///< Persistent calibration file (AXL.CAL)
+	BMA400LL m_bma400;  ///< Low-level I2C driver
+	Calibration m_cal;  ///< Persistent calibration file (AXL.CAL)
 
 	/// @name Cached readings (updated by read(1) or read_fifo_batch())
 	/// @{
-	double m_last_x = 0;           ///< Last calibrated X in g
-	double m_last_y = 0;           ///< Last calibrated Y in g
-	double m_last_z = 0;           ///< Last calibrated Z in g
-	int16_t m_last_temperature = 0; ///< Last temperature (°C × 10)
-	uint8_t m_last_activity = 0;    ///< Last activity metric (0-255)
+	double m_last_x = 0;             ///< Last calibrated X in g
+	double m_last_y = 0;             ///< Last calibrated Y in g
+	double m_last_z = 0;             ///< Last calibrated Z in g
+	int16_t m_last_temperature = 0;  ///< Last temperature (°C × 10)
+	uint8_t m_last_activity = 0;     ///< Last activity metric (0-255)
 	/// @}
 
 	/// @name FIFO batch mode state

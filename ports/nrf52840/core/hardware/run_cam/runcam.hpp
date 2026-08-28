@@ -15,7 +15,7 @@
  */
 
 static constexpr unsigned int PWR_BUTT_DELAY = 2000;  ///< Power button hold time (ms)
-static constexpr unsigned int PWR_DELAY      = 100;   ///< Power rail stabilization delay (ms)
+static constexpr unsigned int PWR_DELAY = 100;        ///< Power rail stabilization delay (ms)
 
 class RunCam : public CAMDevice {
 public:

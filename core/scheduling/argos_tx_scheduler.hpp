@@ -27,13 +27,13 @@ private:
 	std::mt19937 m_rand;
 	std::optional<Location> m_location;
 
-	static constexpr unsigned int SECONDS_PER_MINUTE   = 60;
-	static constexpr unsigned int MINUTES_PER_HOUR     = 60;
-	static constexpr unsigned int HOURS_PER_DAY        = 24;
-	static constexpr unsigned int MSECS_PER_SECOND     = 1000;
-	static constexpr unsigned int SECONDS_PER_HOUR     = MINUTES_PER_HOUR * SECONDS_PER_MINUTE;
-	static constexpr unsigned int SECONDS_PER_DAY      = HOURS_PER_DAY * SECONDS_PER_HOUR;
-	static constexpr unsigned int DUTYCYCLE_24HRS      = 0xFFFFFFU;
+	static constexpr unsigned int SECONDS_PER_MINUTE = 60;
+	static constexpr unsigned int MINUTES_PER_HOUR = 60;
+	static constexpr unsigned int HOURS_PER_DAY = 24;
+	static constexpr unsigned int MSECS_PER_SECOND = 1000;
+	static constexpr unsigned int SECONDS_PER_HOUR = MINUTES_PER_HOUR * SECONDS_PER_MINUTE;
+	static constexpr unsigned int SECONDS_PER_DAY = HOURS_PER_DAY * SECONDS_PER_HOUR;
+	static constexpr unsigned int DUTYCYCLE_24HRS = 0xFFFFFFU;
 	static constexpr unsigned int ARGOS_TX_MARGIN_MSECS = 0;
 
 	int compute_random_jitter(bool jitter_en, int min = -5000, int max = 5000);
@@ -49,10 +49,10 @@ public:
 
 	/// @brief Schedule next TX in duty cycle mode.
 	/// @return Delay in ms until next TX, or INVALID_SCHEDULE.
-	unsigned int schedule_duty_cycle(ArgosConfig& config, std::time_t now);
+	unsigned int schedule_duty_cycle(ArgosConfig &config, std::time_t now);
 
 	/// @brief Schedule next TX in legacy mode (24h duty cycle).
-	unsigned int schedule_legacy(ArgosConfig& config, std::time_t now);
+	unsigned int schedule_legacy(ArgosConfig &config, std::time_t now);
 
 	/// @brief Schedule next TX using satellite pass prediction (PREVIPASS).
 	/// @param config         Argos configuration (prepass params, tx_interval, jitter).
@@ -66,8 +66,7 @@ public:
 	/// user configuration. Choosing the modulation is a policy decision: it
 	/// belongs to the service, just as it does for LEGACY, DUTY_CYCLE and
 	/// SURFACING_BURST.
-	unsigned int schedule_prepass(ArgosConfig& config, BasePassPredict& pass_predict,
-	                              std::time_t now);
+	unsigned int schedule_prepass(ArgosConfig &config, BasePassPredict &pass_predict, std::time_t now);
 
 	/// @brief Set earliest allowed TX time (e.g., after SWS dry_time_before_tx).
 	void set_earliest_schedule(std::time_t t);
@@ -77,8 +76,7 @@ public:
 	/// schedule_prepass() writes m_curr_schedule_abs and therefore cannot be
 	/// called speculatively for a non-prepass mode: it would corrupt the
 	/// periodic scheduling. This variant touches NO member.
-	std::time_t next_pass_epoch(ArgosConfig& config, BasePassPredict& pass_predict,
-	                            std::time_t now);
+	std::time_t next_pass_epoch(ArgosConfig &config, BasePassPredict &pass_predict, std::time_t now);
 
 	/// @brief Update last known GPS position for prepass computation.
 	void set_last_location(double lon, double lat);

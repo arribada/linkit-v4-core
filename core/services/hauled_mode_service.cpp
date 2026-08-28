@@ -11,7 +11,7 @@
 #include "interrupt_lock.hpp"
 #include "rtc.hpp"
 #include "debug.hpp"
-#include "pmu.hpp"   // HM-4 audit fix: PMU::get_timestamp_ms() for evaluate() cache
+#include "pmu.hpp"  // HM-4 audit fix: PMU::get_timestamp_ms() for evaluate() cache
 
 // Pre-deploy validation channel — emit grep-friendly [VAL-HAULED] tagged
 // transitions when -DVALIDATION_LOG_ENABLE=1 is set at build. Default off
@@ -47,10 +47,10 @@ namespace {
 
 struct HauledNoinit {
 	std::time_t last_uw_event_rtc;
-	uint8_t     in_hauled;          // 0 = AT_SEA, 1 = HAULED
-	uint8_t     uw_events_since_hauled;
-	uint16_t    pad;                // keep `crc` deterministically aligned
-	uint16_t    crc;
+	uint8_t in_hauled;  // 0 = AT_SEA, 1 = HAULED
+	uint8_t uw_events_since_hauled;
+	uint16_t pad;  // keep `crc` deterministically aligned
+	uint16_t crc;
 };
 
 #ifndef CPPUTEST
@@ -60,10 +60,7 @@ HauledNoinit s_noinit;
 #endif
 
 uint16_t noinit_crc() {
-	return crc16_compute(
-		reinterpret_cast<const uint8_t *>(&s_noinit),
-		offsetof(decltype(s_noinit), crc),
-		nullptr);
+	return crc16_compute(reinterpret_cast<const uint8_t *>(&s_noinit), offsetof(decltype(s_noinit), crc), nullptr);
 }
 
 void clear_state() {
@@ -71,7 +68,7 @@ void clear_state() {
 	s_noinit.crc = noinit_crc();
 }
 
-} // namespace
+}  // namespace
 
 void HauledModeService::restore_state() {
 	if (s_noinit.crc == noinit_crc() && s_noinit.in_hauled <= 1) {
@@ -81,18 +78,16 @@ void HauledModeService::restore_state() {
 		// re-baselines correctly. We still defensively reject impossible
 		// values here so the in-hauled flag isn't trusted blindly when the
 		// timestamp shape is suspicious.
-		if (s_noinit.last_uw_event_rtc != 0 &&
-		    rtc && rtc->is_set() && s_noinit.last_uw_event_rtc > rtc->gettime() + RTC_MAX_VALID) {
+		if (s_noinit.last_uw_event_rtc != 0 && rtc && rtc->is_set()
+		    && s_noinit.last_uw_event_rtc > rtc->gettime() + RTC_MAX_VALID) {
 			// Absurd future value — likely a bit-flip past the CRC. Clear.
 			DEBUG_WARN("HauledModeService: noinit last_uw_event_rtc=%u absurdly future, discarding",
 			           (unsigned int)s_noinit.last_uw_event_rtc);
 			clear_state();
 			return;
 		}
-		DEBUG_INFO("HauledModeService: restored from noinit (in_hauled=%u, last_uw=%u, returns=%u)",
-		           s_noinit.in_hauled,
-		           (unsigned int)s_noinit.last_uw_event_rtc,
-		           s_noinit.uw_events_since_hauled);
+		DEBUG_INFO("HauledModeService: restored from noinit (in_hauled=%u, last_uw=%u, returns=%u)", s_noinit.in_hauled,
+		           (unsigned int)s_noinit.last_uw_event_rtc, s_noinit.uw_events_since_hauled);
 		return;
 	}
 	DEBUG_TRACE("HauledModeService: noinit invalid, starting fresh (AT_SEA)");
@@ -119,14 +114,12 @@ void HauledModeService::on_underwater_event(bool submerged, std::time_t now) {
 		// DTE allows down to 1 (HMP02 min=1) for testing/QA, but production
 		// defaults should be ≥ 2 — this clamp enforces it at runtime.
 		if (needed < 2) needed = 2;
-		if (s_noinit.uw_events_since_hauled < 0xFF)
-			s_noinit.uw_events_since_hauled++;
+		if (s_noinit.uw_events_since_hauled < 0xFF) s_noinit.uw_events_since_hauled++;
 		if (s_noinit.uw_events_since_hauled >= needed) {
 			DEBUG_INFO("HauledModeService: HAULED → AT_SEA after %u dive events", s_noinit.uw_events_since_hauled);
 #if VALIDATION_LOG_ENABLE
-			DEBUG_INFO("[VAL-HAULED] exit AT_SEA t=%u events=%u last_uw=%u",
-			           (unsigned int)now, s_noinit.uw_events_since_hauled,
-			           (unsigned int)s_noinit.last_uw_event_rtc);
+			DEBUG_INFO("[VAL-HAULED] exit AT_SEA t=%u events=%u last_uw=%u", (unsigned int)now,
+			           s_noinit.uw_events_since_hauled, (unsigned int)s_noinit.last_uw_event_rtc);
 #endif
 			s_noinit.in_hauled = 0;
 			s_noinit.uw_events_since_hauled = 0;
@@ -144,20 +137,20 @@ void HauledModeService::evaluate() {
 void HauledModeService::evaluate(std::time_t now) {
 	if (!configuration_store) return;
 
-	// HM-4 audit fix: short-window cache to avoid re-reading config params and
-	// running the threshold subtraction on every call (evaluate is invoked
-	// from every get_argos_configuration / get_gnss_configuration, which fires
-	// many times per second). Cache TTL kept very short (500 ms) so a DTE
-	// HMP00 toggle takes effect within half a second. The HMP00=disabled
-	// fast-path below the cache check ALWAYS runs (immediate exit-from-HAULED
-	// semantics preserved). Only the AT_SEA→HAULED threshold check is cached.
-	#ifndef CPPUTEST
+// HM-4 audit fix: short-window cache to avoid re-reading config params and
+// running the threshold subtraction on every call (evaluate is invoked
+// from every get_argos_configuration / get_gnss_configuration, which fires
+// many times per second). Cache TTL kept very short (500 ms) so a DTE
+// HMP00 toggle takes effect within half a second. The HMP00=disabled
+// fast-path below the cache check ALWAYS runs (immediate exit-from-HAULED
+// semantics preserved). Only the AT_SEA→HAULED threshold check is cached.
+#ifndef CPPUTEST
 	static uint64_t s_last_evaluate_ms = 0;
 	uint64_t now_ms = PMU::get_timestamp_ms();
 	bool cache_hot = (s_last_evaluate_ms != 0) && (now_ms - s_last_evaluate_ms < 500);
-	#else
+#else
 	bool cache_hot = false;  // tests need deterministic evaluation
-	#endif
+#endif
 
 	if (!configuration_store->read_param<bool>(ParamID::HAULED_DETECT_EN)) {
 		// Detection disabled: ensure we never stay stuck in HAULED.
@@ -170,7 +163,7 @@ void HauledModeService::evaluate(std::time_t now) {
 		}
 		return;
 	}
-	if (s_noinit.in_hauled) return;  // hysteresis: only on_underwater_event can clear
+	if (s_noinit.in_hauled) return;               // hysteresis: only on_underwater_event can clear
 	if (s_noinit.last_uw_event_rtc == 0) return;  // never seen UW yet — stay AT_SEA
 
 	// Cache hot AND nothing changed above (still AT_SEA + last_uw stamped):
@@ -178,9 +171,9 @@ void HauledModeService::evaluate(std::time_t now) {
 	// one std::time_t subtraction per call. Threshold is in hours so a
 	// 500 ms cache window cannot meaningfully delay an AT_SEA→HAULED engage.
 	if (cache_hot) return;
-	#ifndef CPPUTEST
+#ifndef CPPUTEST
 	s_last_evaluate_ms = now_ms;
-	#endif
+#endif
 	// Mitigation M1b (2026-05): RTC rollback detected (typically a WDT reset
 	// brought RTC back to 1 while noinit still has timestamps from previous
 	// session). The previous behavior `return` left HAULED stuck for the rest
@@ -189,8 +182,8 @@ void HauledModeService::evaluate(std::time_t now) {
 	// threshold_h hours from this point. The hauled flag itself is preserved
 	// where applicable (we only reach here when !in_hauled, so no state loss).
 	if (now < s_noinit.last_uw_event_rtc) {
-		DEBUG_WARN("HauledModeService::evaluate: RTC rollback (now=%u < stored=%u), re-baselining",
-		           (unsigned int)now, (unsigned int)s_noinit.last_uw_event_rtc);
+		DEBUG_WARN("HauledModeService::evaluate: RTC rollback (now=%u < stored=%u), re-baselining", (unsigned int)now,
+		           (unsigned int)s_noinit.last_uw_event_rtc);
 		InterruptLock lock;
 		s_noinit.last_uw_event_rtc = now;
 		s_noinit.crc = noinit_crc();
@@ -208,10 +201,8 @@ void HauledModeService::evaluate(std::time_t now) {
 		DEBUG_INFO("HauledModeService: AT_SEA → HAULED (dry for %u s, threshold %u h)",
 		           (unsigned int)(now - s_noinit.last_uw_event_rtc), threshold_h);
 #if VALIDATION_LOG_ENABLE
-		DEBUG_INFO("[VAL-HAULED] enter HAULED t=%u dry_s=%u threshold_h=%u",
-		           (unsigned int)now,
-		           (unsigned int)(now - s_noinit.last_uw_event_rtc),
-		           threshold_h);
+		DEBUG_INFO("[VAL-HAULED] enter HAULED t=%u dry_s=%u threshold_h=%u", (unsigned int)now,
+		           (unsigned int)(now - s_noinit.last_uw_event_rtc), threshold_h);
 #endif
 	}
 }

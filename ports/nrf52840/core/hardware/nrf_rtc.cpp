@@ -19,49 +19,42 @@
 #include "bsp.hpp"
 #include "debug.hpp"
 
-static constexpr uint32_t RTC_FREQ_HZ          = 8;        ///< Lowest available RTC frequency
-static constexpr int64_t  TICKS_PER_OVERFLOW    = 16777216; ///< 2^24 (24-bit counter)
-static constexpr int64_t  SECONDS_PER_OVERFLOW  = TICKS_PER_OVERFLOW / RTC_FREQ_HZ;
+static constexpr uint32_t RTC_FREQ_HZ = 8;               ///< Lowest available RTC frequency
+static constexpr int64_t TICKS_PER_OVERFLOW = 16777216;  ///< 2^24 (24-bit counter)
+static constexpr int64_t SECONDS_PER_OVERFLOW = TICKS_PER_OVERFLOW / RTC_FREQ_HZ;
 
-static int64_t            g_timestamp_offset;
-static volatile uint32_t  g_overflow_count;
-static volatile uint64_t  g_stamp64;
+static int64_t g_timestamp_offset;
+static volatile uint32_t g_overflow_count;
+static volatile uint64_t g_stamp64;
 
 /// @brief 64-bit tick count from 24-bit counter + overflow tracking.
 /// @note Called under InterruptLock from getuptime(), or from ISR (sole writer of g_stamp64).
-static uint64_t current_ticks()
-{
-	uint64_t now = drv_rtc_counter_get(&BSP::RTC_Inits[RTC_DATE_TIME].rtc)
-	             + (g_overflow_count * TICKS_PER_OVERFLOW);
+static uint64_t current_ticks() {
+	uint64_t now = drv_rtc_counter_get(&BSP::RTC_Inits[RTC_DATE_TIME].rtc) + (g_overflow_count * TICKS_PER_OVERFLOW);
 
 	// Detect missed overflow: if 'now' is behind the last recorded stamp,
 	// the 24-bit counter has wrapped but the overflow ISR hasn't fired yet.
-	if (now < g_stamp64)
-		now += TICKS_PER_OVERFLOW;
+	if (now < g_stamp64) now += TICKS_PER_OVERFLOW;
 
 	return now;
 }
 
 /// @brief RTC ISR — tracks overflows and midpoint stamps for wrap detection.
-static void rtc_event_handler(drv_rtc_t const * const p_instance)
-{
+static void rtc_event_handler(drv_rtc_t const *const p_instance) {
 	if (drv_rtc_overflow_pending(p_instance))
 		g_overflow_count = g_overflow_count + 1;
 	else if (drv_rtc_compare_pending(p_instance, 0))
 		g_stamp64 = current_ticks();
 }
 
-void NrfRTC::init()
-{
+void NrfRTC::init() {
 	m_is_set = false;
 	g_overflow_count = 0;
 	g_timestamp_offset = 0;
 	g_stamp64 = 0;
 
-	const drv_rtc_config_t rtc_config = {
-		.prescaler          = RTC_FREQ_TO_PRESCALER(RTC_FREQ_HZ),
-		.interrupt_priority = BSP::RTC_Inits[RTC_DATE_TIME].irq_priority
-	};
+	const drv_rtc_config_t rtc_config = { .prescaler = RTC_FREQ_TO_PRESCALER(RTC_FREQ_HZ),
+	                                      .interrupt_priority = BSP::RTC_Inits[RTC_DATE_TIME].irq_priority };
 
 	ret_code_t err = drv_rtc_init(&BSP::RTC_Inits[RTC_DATE_TIME].rtc, &rtc_config, rtc_event_handler);
 	if (err != NRF_SUCCESS) {
@@ -74,31 +67,26 @@ void NrfRTC::init()
 	drv_rtc_start(&BSP::RTC_Inits[RTC_DATE_TIME].rtc);
 }
 
-void NrfRTC::uninit()
-{
+void NrfRTC::uninit() {
 	drv_rtc_stop(&BSP::RTC_Inits[RTC_DATE_TIME].rtc);
 }
 
-int64_t NrfRTC::getuptime()
-{
+int64_t NrfRTC::getuptime() {
 	InterruptLock lock;
 	return current_ticks() / RTC_FREQ_HZ;
 }
 
-std::time_t NrfRTC::gettime()
-{
+std::time_t NrfRTC::gettime() {
 	InterruptLock lock;
 	return getuptime() + g_timestamp_offset;
 }
 
-void NrfRTC::settime(std::time_t time)
-{
+void NrfRTC::settime(std::time_t time) {
 	InterruptLock lock;
 	g_timestamp_offset = static_cast<int64_t>(time) - getuptime();
 	m_is_set = true;
 }
 
-bool NrfRTC::is_set()
-{
+bool NrfRTC::is_set() {
 	return m_is_set;
 }

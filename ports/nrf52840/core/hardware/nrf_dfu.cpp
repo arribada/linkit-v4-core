@@ -9,8 +9,7 @@
 #include "debug.hpp"
 
 /// @brief Load and validate the DFU settings page from internal flash.
-void DFU::initialise()
-{
+void DFU::initialise() {
 	ret_code_t ret = nrf_dfu_settings_init(true);
 	if (ret != NRF_SUCCESS) {
 		DEBUG_ERROR("DFU settings init failed: 0x%08X", ret);
@@ -18,8 +17,7 @@ void DFU::initialise()
 }
 
 /// @brief Write bank_1 settings for external flash OTA and persist to flash.
-void DFU::write_ext_flash_dfu_settings(uint32_t src_addr, uint32_t image_size, uint32_t crc)
-{
+void DFU::write_ext_flash_dfu_settings(uint32_t src_addr, uint32_t image_size, uint32_t crc) {
 	DEBUG_TRACE("DFU::write_ext_flash_dfu_settings: updating");
 	s_dfu_settings.bank_1.image_size = image_size;
 	s_dfu_settings.bank_1.image_crc = crc;
@@ -34,7 +32,6 @@ void DFU::write_ext_flash_dfu_settings(uint32_t src_addr, uint32_t image_size, u
 }
 
 /// @brief Check if a validated firmware update is staged in bank_1.
-bool DFU::update_pending()
-{
+bool DFU::update_pending() {
 	return s_dfu_settings.bank_1.bank_code == NRF_DFU_BANK_VALID_EXT_APP;
 }

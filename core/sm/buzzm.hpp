@@ -11,13 +11,13 @@
 
 /// @name Buzzer state events (dispatched by GenTracker FSM)
 /// @{
-struct SetBuzzOff : tinyfsm::Event { };
-struct SetBuzzMagnetEngaged : tinyfsm::Event { };
-struct SetBuzzMagnetDisengaged : tinyfsm::Event { };
-struct SetBuzzPowerDown : tinyfsm::Event { };
-struct SetBuzzPreOperationalPending : tinyfsm::Event { };
-struct SetBuzzConfigPending : tinyfsm::Event { };
-struct SetBuzzConfiguration : tinyfsm::Event { };
+struct SetBuzzOff : tinyfsm::Event {};
+struct SetBuzzMagnetEngaged : tinyfsm::Event {};
+struct SetBuzzMagnetDisengaged : tinyfsm::Event {};
+struct SetBuzzPowerDown : tinyfsm::Event {};
+struct SetBuzzPreOperationalPending : tinyfsm::Event {};
+struct SetBuzzConfigPending : tinyfsm::Event {};
+struct SetBuzzConfiguration : tinyfsm::Event {};
 
 class BuzzOff;
 class BuzzPowerDown;
@@ -32,10 +32,21 @@ class BuzzConfiguration;
 class BuzzState : public tinyfsm::Fsm<BuzzState> {
 protected:
 	static inline bool m_is_magnet_engaged = false;
+
 public:
 	void react(SetBuzzOff const &) { transit<BuzzOff>(); }
-	void react(SetBuzzMagnetEngaged const &) { if (!m_is_magnet_engaged) { m_is_magnet_engaged = true; enter(); } }
-	void react(SetBuzzMagnetDisengaged const &) { if (m_is_magnet_engaged) { m_is_magnet_engaged = false; enter(); } }
+	void react(SetBuzzMagnetEngaged const &) {
+		if (!m_is_magnet_engaged) {
+			m_is_magnet_engaged = true;
+			enter();
+		}
+	}
+	void react(SetBuzzMagnetDisengaged const &) {
+		if (m_is_magnet_engaged) {
+			m_is_magnet_engaged = false;
+			enter();
+		}
+	}
 	void react(SetBuzzPowerDown const &) { transit<BuzzPowerDown>(); }
 	void react(SetBuzzPreOperationalPending const &) { transit<BuzzPreOperationalPending>(); }
 	void react(SetBuzzConfigPending const &) { transit<BuzzConfigPending>(); }
@@ -46,37 +57,32 @@ public:
 };
 
 
-class BuzzOff : public BuzzState
-{
+class BuzzOff : public BuzzState {
 public:
 	void entry() override;
 	void exit() override {};
 };
 
 
-class BuzzPowerDown : public BuzzState
-{
+class BuzzPowerDown : public BuzzState {
 public:
 	void entry() override;
 	void exit() override {};
 };
 
-class BuzzPreOperationalPending : public BuzzState
-{
+class BuzzPreOperationalPending : public BuzzState {
 public:
 	void entry() override;
 	void exit() override;
 };
 
-class BuzzConfigPending : public BuzzState
-{
+class BuzzConfigPending : public BuzzState {
 public:
 	void entry() override;
 	void exit() override;
 };
 
-class BuzzConfiguration : public BuzzState
-{
+class BuzzConfiguration : public BuzzState {
 public:
 	void entry() override;
 	void exit() override {};

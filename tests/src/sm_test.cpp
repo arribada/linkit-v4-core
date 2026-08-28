@@ -27,20 +27,13 @@
 #include "bsp.hpp"
 #include "reed.hpp"
 
-#define BLOCK_COUNT   (256)
-#define BLOCK_SIZE    (64*1024)
-#define PAGE_SIZE     (256)
+#define BLOCK_COUNT (256)
+#define BLOCK_SIZE  (64 * 1024)
+#define PAGE_SIZE   (256)
 
 // BSP settings
-namespace BSP
-{
-	const WDT_InitTypeDefAndInst_t WDT_Inits[WDT_TOTAL_NUMBER] = {
-		{
-			.config = {
-				.reload_value = 10 * 60 * 1000
-			}
-		}
-	};
+namespace BSP {
+const WDT_InitTypeDefAndInst_t WDT_Inits[WDT_TOTAL_NUMBER] = { { .config = { .reload_value = 10 * 60 * 1000 } } };
 }
 
 // These are defined by main.cpp
@@ -61,8 +54,7 @@ FSM_INITIAL_STATE(GenTracker, BootState)
 
 using fsm_handle = GenTracker;
 
-TEST_GROUP(Sm)
-{
+TEST_GROUP(Sm) {
 	FakeReedSwitch *fake_reed_switch;
 	FakeSWS *fake_saltwater_switch;
 	FakeSwitch *dummy_switch;
@@ -70,7 +62,7 @@ TEST_GROUP(Sm)
 	FakeTimer *fake_timer;
 	FakeBatteryMonitor *fake_battery_monitor;
 	MockOTAFileUpdater *mock_ota_file_updater;
-	MockBLEService * mock_ble_service;
+	MockBLEService *mock_ble_service;
 	MockLog *sensor_log;
 	MockLog *system_log;
 	MockLocationScheduler *location_scheduler;
@@ -104,7 +96,8 @@ TEST_GROUP(Sm)
 	}
 
 	void teardown() {
-		delete main_filesystem; main_filesystem = nullptr;
+		delete main_filesystem;
+		main_filesystem = nullptr;
 		delete location_scheduler;
 		// ~ReedSwitch::stop() calls system_scheduler->cancel_task() and m_switch.stop(),
 		// so the reed switch must be torn down while BOTH the scheduler and dummy_switch
@@ -126,8 +119,7 @@ TEST_GROUP(Sm)
 	}
 };
 
-TEST(Sm, CheckBootFileSystemMountOk)
-{
+TEST(Sm, CheckBootFileSystemMountOk) {
 	mock().expectOneCall("create").onObject(sensor_log);
 	mock().expectOneCall("create").onObject(system_log);
 	mock().expectOneCall("num_entries").onObject(sensor_log).andReturnValue(0);
@@ -141,8 +133,7 @@ TEST(Sm, CheckBootFileSystemMountOk)
 	CHECK_TRUE(status_led->is_flashing());
 }
 
-TEST(Sm, CheckBootFileSystemFirstMountFail)
-{
+TEST(Sm, CheckBootFileSystemFirstMountFail) {
 	mock().expectOneCall("create").onObject(sensor_log);
 	mock().expectOneCall("create").onObject(system_log);
 	mock().expectOneCall("num_entries").onObject(sensor_log).andReturnValue(0);
@@ -156,8 +147,7 @@ TEST(Sm, CheckBootFileSystemFirstMountFail)
 	CHECK_TRUE(fsm_handle::is_in_state<BootState>());
 }
 
-TEST(Sm, CheckBootFileSystemSecondMountFailAndEnterErrorState)
-{
+TEST(Sm, CheckBootFileSystemSecondMountFailAndEnterErrorState) {
 	mock().expectOneCall("is_mounted").onObject(main_filesystem).andReturnValue(false);
 	mock().expectOneCall("mount").onObject(main_filesystem).andReturnValue(-1);
 	mock().expectOneCall("format").onObject(main_filesystem).andReturnValue(0);
@@ -168,8 +158,7 @@ TEST(Sm, CheckBootFileSystemSecondMountFailAndEnterErrorState)
 	CHECK_TRUE(fsm_handle::is_in_state<ErrorState>());
 }
 
-TEST(Sm, CheckBootFileSystemFormatFailAndEnterErrorState)
-{
+TEST(Sm, CheckBootFileSystemFormatFailAndEnterErrorState) {
 	mock().expectOneCall("is_mounted").onObject(main_filesystem).andReturnValue(false);
 	mock().expectOneCall("mount").onObject(main_filesystem).andReturnValue(-1);
 	mock().expectOneCall("format").onObject(main_filesystem).andReturnValue(-1);
@@ -179,8 +168,7 @@ TEST(Sm, CheckBootFileSystemFormatFailAndEnterErrorState)
 	CHECK_TRUE(fsm_handle::is_in_state<ErrorState>());
 }
 
-TEST(Sm, CheckTransitionToPreOperationalState)
-{
+TEST(Sm, CheckTransitionToPreOperationalState) {
 	mock().expectOneCall("create").onObject(sensor_log);
 	mock().expectOneCall("create").onObject(system_log);
 	mock().expectOneCall("num_entries").onObject(sensor_log).andReturnValue(0);
@@ -196,8 +184,7 @@ TEST(Sm, CheckTransitionToPreOperationalState)
 	CHECK_FALSE(fake_saltwater_switch->is_started());
 }
 
-TEST(Sm, CheckTransitionToOperationalConfigValid)
-{
+TEST(Sm, CheckTransitionToOperationalConfigValid) {
 	mock().disable();
 	fsm_handle::start();
 
@@ -221,8 +208,7 @@ TEST(Sm, CheckTransitionToOperationalConfigValid)
 }
 
 
-TEST(Sm, CheckTransitionToOperationalConfigValidBatteryLow)
-{
+TEST(Sm, CheckTransitionToOperationalConfigValidBatteryLow) {
 	mock().disable();
 	fsm_handle::start();
 
@@ -247,8 +233,7 @@ TEST(Sm, CheckTransitionToOperationalConfigValidBatteryLow)
 }
 
 
-TEST(Sm, CheckTransitionToErrorConfigInvalid)
-{
+TEST(Sm, CheckTransitionToErrorConfigInvalid) {
 	mock().disable();
 
 	fsm_handle::start();
@@ -278,8 +263,7 @@ TEST(Sm, CheckTransitionToErrorConfigInvalid)
 	CHECK_EQUAL((int)RGBLedColor::WHITE, (int)status_led->get_state());
 }
 
-TEST(Sm, CheckTransitionToConfigurationState)
-{
+TEST(Sm, CheckTransitionToConfigurationState) {
 	mock().disable();
 
 	fsm_handle::start();
@@ -300,8 +284,7 @@ TEST(Sm, CheckTransitionToConfigurationState)
 	CHECK_EQUAL((int)RGBLedColor::BLUE, (int)status_led->get_state());
 }
 
-TEST(Sm, MagnetPresentAtBootArmsHoldGesture)
-{
+TEST(Sm, MagnetPresentAtBootArmsHoldGesture) {
 	// Regression: a magnet held continuously across boot must arm the
 	// SHORT_HOLD/LONG_HOLD gesture timers, otherwise config / power-off cannot
 	// be requested without first removing and re-applying the magnet.
@@ -313,10 +296,10 @@ TEST(Sm, MagnetPresentAtBootArmsHoldGesture)
 	dummy_switch->set_state(true);  // magnet present at boot
 	fake_reed_switch->start([&](ReedSwitchGesture g) {
 		switch (g) {
-		case ReedSwitchGesture::ENGAGE:     engage++; break;
+		case ReedSwitchGesture::ENGAGE: engage++; break;
 		case ReedSwitchGesture::SHORT_HOLD: short_hold++; break;
-		case ReedSwitchGesture::LONG_HOLD:  long_hold++; break;
-		case ReedSwitchGesture::RELEASE:    release++; break;
+		case ReedSwitchGesture::LONG_HOLD: long_hold++; break;
+		case ReedSwitchGesture::RELEASE: release++; break;
 		default: break;
 		}
 	});
@@ -342,8 +325,7 @@ TEST(Sm, MagnetPresentAtBootArmsHoldGesture)
 	(void)release;
 }
 
-TEST(Sm, MagnetPresentAtBootCanEnterConfigViaArmedGesture)
-{
+TEST(Sm, MagnetPresentAtBootCanEnterConfigViaArmedGesture) {
 	// End-to-end: magnet present at boot → BootState primes the gesture → holding
 	// to SHORT_HOLD then release + re-engage enters config, WITHOUT the operator
 	// first removing and re-applying the magnet. Fails with the old direct
@@ -354,7 +336,7 @@ TEST(Sm, MagnetPresentAtBootCanEnterConfigViaArmedGesture)
 	dummy_switch->set_state(true);  // magnet present at boot
 	fsm_handle::start();
 	fake_timer->set_counter(1000);
-	system_scheduler->run();        // BootState → PreOperationalState (Operational transit at 6 s)
+	system_scheduler->run();  // BootState → PreOperationalState (Operational transit at 6 s)
 	CHECK_TRUE(fsm_handle::is_in_state<PreOperationalState>());
 
 	mock().enable();
@@ -370,8 +352,7 @@ TEST(Sm, MagnetPresentAtBootCanEnterConfigViaArmedGesture)
 	CHECK_TRUE(fsm_handle::is_in_state<ConfigurationState>());
 }
 
-TEST(Sm, ConfirmBlinkNotInterruptedByTransientLed)
-{
+TEST(Sm, ConfirmBlinkNotInterruptedByTransientLed) {
 	// 2026-07 regression: while a reed confirmation gesture is pending the LED
 	// fast-blinks (BLUE=enter-config, period 50 ms) awaiting the operator's 2nd
 	// gesture. That prompt must survive transient/background LED events firing in
@@ -436,8 +417,7 @@ TEST(Sm, ConfirmBlinkNotInterruptedByTransientLed)
 	CHECK_EQUAL(500, (int)fake_status_led->m_period);
 }
 
-TEST(Sm, CheckTransitionToOffState)
-{
+TEST(Sm, CheckTransitionToOffState) {
 	mock().disable();
 	fsm_handle::start();
 	fake_timer->set_counter(1000);
@@ -463,12 +443,9 @@ TEST(Sm, CheckTransitionToOffState)
 	CHECK_EQUAL((int)RGBLedColor::BLACK, (int)status_led->get_state());
 }
 
-TEST(Sm, CheckOffStateCanBeCancelled)
-{
-}
+TEST(Sm, CheckOffStateCanBeCancelled) {}
 
-TEST(Sm, CheckBLEInactivityTimeout)
-{
+TEST(Sm, CheckBLEInactivityTimeout) {
 	mock().disable();
 	fsm_handle::start();
 	fake_timer->set_counter(1000);
@@ -497,8 +474,7 @@ TEST(Sm, CheckBLEInactivityTimeout)
 }
 
 
-TEST(Sm, CheckTransitionToConfigurationStateAndVerifyOTAUpdateEvents)
-{
+TEST(Sm, CheckTransitionToConfigurationStateAndVerifyOTAUpdateEvents) {
 	mock().disable();
 
 	fsm_handle::start();
@@ -531,14 +507,23 @@ TEST(Sm, CheckTransitionToConfigurationStateAndVerifyOTAUpdateEvents)
 	event.file_size = 0x12345678;
 	event.crc32 = 0x87654321;
 	event.file_id = (unsigned int)OTAFileIdentifier::MCU_FIRMWARE;
-	mock().expectOneCall("start_file_transfer").onObject(mock_ota_file_updater).withUnsignedIntParameter("file_id", event.file_id).withUnsignedIntParameter("length", event.file_size).withUnsignedIntParameter("crc32", event.crc32);
+	mock()
+	    .expectOneCall("start_file_transfer")
+	    .onObject(mock_ota_file_updater)
+	    .withUnsignedIntParameter("file_id", event.file_id)
+	    .withUnsignedIntParameter("length", event.file_size)
+	    .withUnsignedIntParameter("crc32", event.crc32);
 	mock_ble_service->invoke_event(event);
 
 	// Trigger OTA_FILE_DATA
 	event.event_type = BLEServiceEventType::OTA_FILE_DATA;
 	event.data = (void *)0x12345678;
 	event.length = 0x87654321;
-	mock().expectOneCall("write_file_data").onObject(mock_ota_file_updater).withParameter("data", event.data).withParameter("length", event.length);
+	mock()
+	    .expectOneCall("write_file_data")
+	    .onObject(mock_ota_file_updater)
+	    .withParameter("data", event.data)
+	    .withParameter("length", event.length);
 	mock_ble_service->invoke_event(event);
 
 	// Trigger OTA_ABORT
@@ -555,8 +540,7 @@ TEST(Sm, CheckTransitionToConfigurationStateAndVerifyOTAUpdateEvents)
 }
 
 
-TEST(Sm, CheckSWSEventsDispatchedInOperationalState)
-{
+TEST(Sm, CheckSWSEventsDispatchedInOperationalState) {
 	mock().disable();
 	fsm_handle::start();
 
@@ -585,8 +569,7 @@ TEST(Sm, CheckSWSEventsDispatchedInOperationalState)
 }
 
 
-TEST(Sm, CheckGNSSWithFixLedTransitions)
-{
+TEST(Sm, CheckGNSSWithFixLedTransitions) {
 	mock().disable();
 	fsm_handle::start();
 
@@ -640,8 +623,7 @@ TEST(Sm, CheckGNSSWithFixLedTransitions)
 	CHECK_FALSE(status_led->is_flashing());
 }
 
-TEST(Sm, CheckGNSSWithoutFixLedTransitions)
-{
+TEST(Sm, CheckGNSSWithoutFixLedTransitions) {
 	mock().disable();
 	fsm_handle::start();
 
@@ -696,8 +678,7 @@ TEST(Sm, CheckGNSSWithoutFixLedTransitions)
 }
 
 
-TEST(Sm, CheckArgosTXLedTransitions)
-{
+TEST(Sm, CheckArgosTXLedTransitions) {
 	mock().disable();
 	fsm_handle::start();
 
@@ -735,8 +716,7 @@ TEST(Sm, CheckArgosTXLedTransitions)
 	CHECK_FALSE(status_led->is_flashing());
 }
 
-TEST(Sm, TriggerBatteryCriticalStateInOperationalState)
-{
+TEST(Sm, TriggerBatteryCriticalStateInOperationalState) {
 	mock().disable();
 	fsm_handle::start();
 
@@ -773,8 +753,7 @@ TEST(Sm, TriggerBatteryCriticalStateInOperationalState)
 	CHECK_TRUE(fsm_handle::is_in_state<OffState>());
 }
 
-TEST(Sm, TriggerBatteryCriticalStateInPreOperationalState)
-{
+TEST(Sm, TriggerBatteryCriticalStateInPreOperationalState) {
 	mock().disable();
 	fsm_handle::start();
 

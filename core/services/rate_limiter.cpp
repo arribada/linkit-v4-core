@@ -48,11 +48,11 @@ namespace {
 // TXes overwrite stale slots.
 struct RateLimiterNoinit {
 	std::time_t ring[RateLimiter::MAX_CAP];
-	uint8_t     head;     // next write index
-	uint8_t     count;    // valid entries (saturates at MAX_CAP)
-	uint16_t    pad;      // explicit pad keeps `crc` aligned + makes the CRC
-	                      // input deterministic across compilers (no padding).
-	uint16_t    crc;
+	uint8_t head;   // next write index
+	uint8_t count;  // valid entries (saturates at MAX_CAP)
+	uint16_t pad;   // explicit pad keeps `crc` aligned + makes the CRC
+	                // input deterministic across compilers (no padding).
+	uint16_t crc;
 };
 
 #ifndef CPPUTEST
@@ -62,10 +62,7 @@ RateLimiterNoinit s_noinit;
 #endif
 
 uint16_t noinit_crc() {
-	return crc16_compute(
-		reinterpret_cast<const uint8_t *>(&s_noinit),
-		offsetof(decltype(s_noinit), crc),
-		nullptr);
+	return crc16_compute(reinterpret_cast<const uint8_t *>(&s_noinit), offsetof(decltype(s_noinit), crc), nullptr);
 }
 
 void clear_ring() {
@@ -76,12 +73,10 @@ void clear_ring() {
 	s_noinit.crc = noinit_crc();
 }
 
-} // namespace
+}  // namespace
 
 void RateLimiter::restore_state() {
-	if (s_noinit.crc == noinit_crc() &&
-	    s_noinit.head < MAX_CAP &&
-	    s_noinit.count <= MAX_CAP) {
+	if (s_noinit.crc == noinit_crc() && s_noinit.head < MAX_CAP && s_noinit.count <= MAX_CAP) {
 		// Mitigation M1c (2026-05): if every stored timestamp is now in the
 		// "future" relative to current RTC (typical after WDT reset that brought
 		// RTC back to virtual 1 while noinit kept the old session's epoch
@@ -100,8 +95,8 @@ void RateLimiter::restore_state() {
 				if (s_noinit.ring[i] > max_ts) max_ts = s_noinit.ring[i];
 			}
 			if (all_future) {
-				DEBUG_WARN("RateLimiter: all %u stored timestamps in future (now=%u) — clearing ring",
-				           s_noinit.count, (unsigned int)now);
+				DEBUG_WARN("RateLimiter: all %u stored timestamps in future (now=%u) — clearing ring", s_noinit.count,
+				           (unsigned int)now);
 				clear_ring();
 				return;
 			}
@@ -119,8 +114,7 @@ void RateLimiter::restore_state() {
 				return;
 			}
 		}
-		DEBUG_INFO("RateLimiter: restored from noinit (count=%u, head=%u)",
-		           s_noinit.count, s_noinit.head);
+		DEBUG_INFO("RateLimiter: restored from noinit (count=%u, head=%u)", s_noinit.count, s_noinit.head);
 		return;
 	}
 	DEBUG_TRACE("RateLimiter: noinit invalid, starting fresh");
@@ -179,8 +173,8 @@ bool RateLimiter::is_blocked(std::time_t now, unsigned int &reschedule_in_s) {
 	std::time_t expiry = oldest + static_cast<std::time_t>(window_s);
 	reschedule_in_s = (expiry > now) ? static_cast<unsigned int>(expiry - now) : 1;
 #if VALIDATION_LOG_ENABLE
-	DEBUG_INFO("[VAL-RATELIMIT] block t=%u hits=%u/%u window_s=%u reschedule_in_s=%u",
-	           (unsigned int)now, hits, cap, window_s, reschedule_in_s);
+	DEBUG_INFO("[VAL-RATELIMIT] block t=%u hits=%u/%u window_s=%u reschedule_in_s=%u", (unsigned int)now, hits, cap,
+	           window_s, reschedule_in_s);
 #endif
 	return true;
 }

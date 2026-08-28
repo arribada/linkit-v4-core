@@ -28,10 +28,10 @@ class EZO_RTD_Sensor : public Sensor {
 public:
 	/// @brief I2C response codes from the EZO circuit.
 	enum class ResponseCode {
-		SUCCESS,   ///< 0x01 — command executed successfully
-		ERROR,     ///< 0x02 — command failed
-		BUSY,      ///< 0xFE — processing, try again
-		NODATA,    ///< 0xFF — no data available
+		SUCCESS,  ///< 0x01 — command executed successfully
+		ERROR,    ///< 0x02 — command failed
+		BUSY,     ///< 0xFE — processing, try again
+		NODATA,   ///< 0xFF — no data available
 		UNKNOWN
 	};
 

@@ -7,7 +7,7 @@
 
 class FakeMemoryAccess : public MemoryAccess {
 private:
-	static inline unsigned char ram[1024*1024];
+	static inline unsigned char ram[1024 * 1024];
 
 public:
 	FakeMemoryAccess() {
@@ -15,10 +15,9 @@ public:
 			ram[i] = (unsigned char)i;
 	}
 	void *get_physical_address(unsigned int addr, unsigned int length) override {
-		if (addr + length >= sizeof(ram))
-			throw ILLEGAL_MEMORY_ADDRESS;
+		if (addr + length >= sizeof(ram)) throw ILLEGAL_MEMORY_ADDRESS;
 		return (void *)&ram[addr];
 	}
 };
 
-#endif // __FAKE_MEMORY_HPP_
+#endif  // __FAKE_MEMORY_HPP_

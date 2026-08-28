@@ -35,7 +35,9 @@ DTEHandler::DTEHandler() {
 
 DTEHandler::~DTEHandler() {}
 
-void DTEHandler::set_async_write(std::function<void(const std::string&)> fn) { m_async_write = fn; }
+void DTEHandler::set_async_write(std::function<void(const std::string &)> fn) {
+	m_async_write = fn;
+}
 
 void DTEHandler::reset_state() {
 	m_dumpd_NNN = 0;
@@ -44,8 +46,9 @@ void DTEHandler::reset_state() {
 }
 
 // Fix #37: Shared helper for PARMR_REQ and STATR_REQ
-std::string DTEHandler::read_params_by_filter(int error_code, std::vector<ParamID>& params, const std::vector<std::string>& rejected_keys, char filter_char, DTECommand resp_cmd) {
-
+std::string DTEHandler::read_params_by_filter(int error_code, std::vector<ParamID> &params,
+                                              const std::vector<std::string> &rejected_keys, char filter_char,
+                                              DTECommand resp_cmd) {
 	if (error_code) {
 		return DTEEncoder::encode(resp_cmd, error_code);
 	}
@@ -68,9 +71,7 @@ std::string DTEHandler::read_params_by_filter(int error_code, std::vector<ParamI
 	// Check special case where params is zero length => retrieve all matching key types
 	if (params.size() == 0) {
 		for (unsigned int i = 0; i < param_map_size; i++) {
-			if (param_map[i].is_implemented &&
-				param_map[i].key[2] == filter_char)
-				params.push_back((ParamID)i);
+			if (param_map[i].is_implemented && param_map[i].key[2] == filter_char) params.push_back((ParamID)i);
 		}
 	}
 
@@ -78,7 +79,7 @@ std::string DTEHandler::read_params_by_filter(int error_code, std::vector<ParamI
 	for (unsigned int i = 0; i < params.size(); i++) {
 		try {
 			BaseType x = configuration_store->read_param<BaseType>(params[i]);
-			param_values.push_back({params[i], x});
+			param_values.push_back({ params[i], x });
 		} catch (...) {
 			DEBUG_WARN("DTEHandler::read_params_by_filter: failed to read param %u (key=%s)",
 			           static_cast<unsigned>(params[i]), param_map[static_cast<unsigned>(params[i])].key.c_str());
@@ -90,14 +91,13 @@ std::string DTEHandler::read_params_by_filter(int error_code, std::vector<ParamI
 
 #if defined(ARGOS_SMD) && (ARGOS_SMD == 1)
 // Fix #38: Shared helper for SMD null-check pattern
-std::string DTEHandler::smd_not_available_error(const char* func_name, DTECommand resp_cmd) {
+std::string DTEHandler::smd_not_available_error(const char *func_name, DTECommand resp_cmd) {
 	DEBUG_ERROR("DTEHandler::%s: SMD satellite instance not available", func_name);
 	return DTEEncoder::encode(resp_cmd, (int)DTEError::INCORRECT_DATA);
 }
 #endif
 
 std::string DTEHandler::PARML_REQ(int error_code) {
-
 	if (error_code) {
 		return DTEEncoder::encode(DTECommand::PARML_RESP, error_code);
 	}
@@ -113,8 +113,8 @@ std::string DTEHandler::PARML_REQ(int error_code) {
 	return DTEEncoder::encode(DTECommand::PARML_RESP, params);
 }
 
-std::string DTEHandler::PARMW_REQ(int error_code, std::vector<ParamValue>& param_values, std::vector<std::string>& rejected_keys, DTEAction& action) {
-
+std::string DTEHandler::PARMW_REQ(int error_code, std::vector<ParamValue> &param_values,
+                                  std::vector<std::string> &rejected_keys, DTEAction &action) {
 	if (error_code) {
 		return DTEEncoder::encode(DTECommand::PARMW_RESP, error_code);
 	}
@@ -141,21 +141,22 @@ std::string DTEHandler::PARMW_REQ(int error_code, std::vector<ParamValue>& param
 						rejected_keys.push_back(param_map[(int)param_values[i].param].key);
 						continue;
 					}
-				} catch (const std::bad_variant_access&) {
+				} catch (const std::bad_variant_access &) {
 					// Type mismatch — let configuration_store handle / reject
 				}
 			}
 			configuration_store->write_param(param_values[i].param, param_values[i].value);
 #if !defined(ARGOS_SMD) || (ARGOS_SMD != 1)
-			if (param_values[i].param == ParamID::ARGOS_RADIOCONF ||
-			    param_values[i].param == ParamID::ARGOS_RADIOCONF_LDK ||
-			    param_values[i].param == ParamID::ARGOS_RADIOCONF_LDA2 ||
-			    param_values[i].param == ParamID::ARGOS_RADIOCONF_VLDA4) {
+			if (param_values[i].param == ParamID::ARGOS_RADIOCONF
+			    || param_values[i].param == ParamID::ARGOS_RADIOCONF_LDK
+			    || param_values[i].param == ParamID::ARGOS_RADIOCONF_LDA2
+			    || param_values[i].param == ParamID::ARGOS_RADIOCONF_VLDA4) {
 				rconf_edited = true;
 			}
 #endif
 		} else {
-			DEBUG_WARN("DTEHandler::PARMW_REQ: not writing read-only attribute %s", param_map[(int)param_values[i].param].name.c_str());
+			DEBUG_WARN("DTEHandler::PARMW_REQ: not writing read-only attribute %s",
+			           param_map[(int)param_values[i].param].name.c_str());
 			rejected_keys.push_back(param_map[(int)param_values[i].param].key);
 		}
 	}
@@ -202,11 +203,13 @@ std::string DTEHandler::PARMW_REQ(int error_code, std::vector<ParamValue>& param
 	return DTEEncoder::encode(DTECommand::PARMW_RESP, DTEError::OK);
 }
 
-std::string DTEHandler::PARMR_REQ(int error_code, std::vector<ParamID>& params, const std::vector<std::string>& rejected_keys) {
+std::string DTEHandler::PARMR_REQ(int error_code, std::vector<ParamID> &params,
+                                  const std::vector<std::string> &rejected_keys) {
 	return read_params_by_filter(error_code, params, rejected_keys, 'P', DTECommand::PARMR_RESP);
 }
 
-std::string DTEHandler::STATR_REQ(int error_code, std::vector<ParamID>& params, const std::vector<std::string>& rejected_keys) {
+std::string DTEHandler::STATR_REQ(int error_code, std::vector<ParamID> &params,
+                                  const std::vector<std::string> &rejected_keys) {
 	// Refresh live RTC value before reading status params
 	if (rtc) {
 		configuration_store->write_param(ParamID::RTC_CURRENT_TIME, static_cast<unsigned int>(rtc->gettime()));
@@ -214,11 +217,9 @@ std::string DTEHandler::STATR_REQ(int error_code, std::vector<ParamID>& params, 
 	return read_params_by_filter(error_code, params, rejected_keys, 'T', DTECommand::STATR_RESP);
 }
 
-std::string DTEHandler::PROFW_REQ(int error_code, std::vector<BaseType>& arg_list) {
-
+std::string DTEHandler::PROFW_REQ(int error_code, std::vector<BaseType> &arg_list) {
 	if (!error_code) {
-		if (arg_list.size() < 1)
-			return DTEEncoder::encode(DTECommand::PROFW_RESP, (int)DTEError::MISSING_ARGUMENT);
+		if (arg_list.size() < 1) return DTEEncoder::encode(DTECommand::PROFW_RESP, (int)DTEError::MISSING_ARGUMENT);
 		configuration_store->write_param(ParamID::PROFILE_NAME, arg_list[0]);
 	}
 
@@ -226,15 +227,15 @@ std::string DTEHandler::PROFW_REQ(int error_code, std::vector<BaseType>& arg_lis
 }
 
 std::string DTEHandler::PROFR_REQ(int error_code) {
-
 	if (error_code) {
 		return DTEEncoder::encode(DTECommand::PROFR_RESP, error_code);
 	}
 
-	return DTEEncoder::encode(DTECommand::PROFR_RESP, error_code, configuration_store->read_param<std::string>(ParamID::PROFILE_NAME));
+	return DTEEncoder::encode(DTECommand::PROFR_RESP, error_code,
+	                          configuration_store->read_param<std::string>(ParamID::PROFILE_NAME));
 }
 
-std::string DTEHandler::SECUR_REQ(int error_code, std::vector<BaseType>& arg_list) {
+std::string DTEHandler::SECUR_REQ(int error_code, std::vector<BaseType> &arg_list) {
 	// Default access code - can be changed or made configurable
 	// Using ARGOS ID as access code for device-specific security
 	static constexpr unsigned int SECUR_ACCESS_CODE = 0x12345678;
@@ -263,14 +264,12 @@ std::string DTEHandler::SECUR_REQ(int error_code, std::vector<BaseType>& arg_lis
 	return DTEEncoder::encode(DTECommand::SECUR_RESP, (int)DTEError::OK);
 }
 
-std::string DTEHandler::RSTVW_REQ(int error_code, std::vector<BaseType>& arg_list) {
-
+std::string DTEHandler::RSTVW_REQ(int error_code, std::vector<BaseType> &arg_list) {
 	if (error_code) {
 		return DTEEncoder::encode(DTECommand::RSTVW_RESP, error_code);
 	}
 
-	if (arg_list.size() < 1)
-		return DTEEncoder::encode(DTECommand::RSTVW_RESP, (int)DTEError::MISSING_ARGUMENT);
+	if (arg_list.size() < 1) return DTEEncoder::encode(DTECommand::RSTVW_RESP, (int)DTEError::MISSING_ARGUMENT);
 
 	unsigned int variable_id = std::get<unsigned int>(arg_list[0]);
 	unsigned int zero = 0;
@@ -304,19 +303,14 @@ std::string DTEHandler::RSTVW_REQ(int error_code, std::vector<BaseType>& arg_lis
 }
 
 std::string DTEHandler::RSTBW_REQ(int error_code) {
-
 	return DTEEncoder::encode(DTECommand::RSTBW_RESP, error_code);
-
 }
 
 std::string DTEHandler::FACTW_REQ(int error_code) {
-
 	return DTEEncoder::encode(DTECommand::FACTW_RESP, error_code);
-
 }
 
-std::string DTEHandler::DUMPM_REQ(int error_code, std::vector<BaseType>& arg_list) {
-
+std::string DTEHandler::DUMPM_REQ(int error_code, std::vector<BaseType> &arg_list) {
 	if (error_code) {
 		return DTEEncoder::encode(DTECommand::DUMPM_RESP, error_code);
 	}
@@ -325,22 +319,16 @@ std::string DTEHandler::DUMPM_REQ(int error_code, std::vector<BaseType>& arg_lis
 		return DTEEncoder::encode(DTECommand::DUMPM_RESP, (int)DTEError::INCORRECT_DATA);
 	}
 
-	if (arg_list.size() < 2)
-		return DTEEncoder::encode(DTECommand::DUMPM_RESP, (int)DTEError::MISSING_ARGUMENT);
+	if (arg_list.size() < 2) return DTEEncoder::encode(DTECommand::DUMPM_RESP, (int)DTEError::MISSING_ARGUMENT);
 
 	unsigned int address = std::get<unsigned int>(arg_list[0]);
 	unsigned int length = std::get<unsigned int>(arg_list[1]);
-	BaseRawData raw = {
-		.ptr = memory_access->get_physical_address(address, length),
-		.length = length,
-		.str = ""
-	};
+	BaseRawData raw = { .ptr = memory_access->get_physical_address(address, length), .length = length, .str = "" };
 
 	return DTEEncoder::encode(DTECommand::DUMPM_RESP, error_code, raw);
 }
 
-std::string DTEHandler::PASPW_REQ(int error_code, std::vector<BaseType>& arg_list) {
-
+std::string DTEHandler::PASPW_REQ(int error_code, std::vector<BaseType> &arg_list) {
 	while (!error_code) {
 		BasePassPredict pass_predict;
 		std::string paspw_bits = std::get<std::string>(arg_list[0]);
@@ -362,17 +350,17 @@ std::string DTEHandler::PASPW_REQ(int error_code, std::vector<BaseType>& arg_lis
 		// Scan through all the records and find the entry whose bulletin date
 		// is the most recent, skipping any non-operational satellites
 		std::time_t argos_aop_date = 0;
-		for (unsigned int i = 0; i < pass_predict.num_records; i++)
-		{
+		for (unsigned int i = 0; i < pass_predict.num_records; i++) {
 			if (pass_predict.records[i].bulletin.year) {
-				std::time_t t = convert_epochtime(pass_predict.records[i].bulletin.year, pass_predict.records[i].bulletin.month, pass_predict.records[i].bulletin.day, pass_predict.records[i].bulletin.hour, pass_predict.records[i].bulletin.minute, pass_predict.records[i].bulletin.second);
-				if (t > argos_aop_date)
-					argos_aop_date = t;
+				std::time_t t =
+				    convert_epochtime(pass_predict.records[i].bulletin.year, pass_predict.records[i].bulletin.month,
+					                  pass_predict.records[i].bulletin.day, pass_predict.records[i].bulletin.hour,
+					                  pass_predict.records[i].bulletin.minute, pass_predict.records[i].bulletin.second);
+				if (t > argos_aop_date) argos_aop_date = t;
 			}
 		}
 
-		if (argos_aop_date)
-		{
+		if (argos_aop_date) {
 			// NOTE (2026-08): a "freshest wins" merge per satHexId was implemented
 			// and then REMOVED after trying it. The store holds a FACTORY DEFAULT
 			// AOP set dated October 2021: the merge let it beat a bulletin really
@@ -400,7 +388,8 @@ std::string DTEHandler::PASPW_REQ(int error_code, std::vector<BaseType>& arg_lis
 				std::strftime(buff, sizeof(buff), "%d/%m/%Y %H:%M:%S", time);
 			else
 				std::snprintf(buff, sizeof(buff), "(gmtime failed)");
-			DEBUG_INFO("DTEHandler:PASPW_REQ: saving PASPW with #AOPs=%u ARGOS_AOP_DATE=%s", (unsigned int)pass_predict.num_records, buff);
+			DEBUG_INFO("DTEHandler:PASPW_REQ: saving PASPW with #AOPs=%u ARGOS_AOP_DATE=%s",
+			           (unsigned int)pass_predict.num_records, buff);
 			break;
 		} else {
 			DEBUG_ERROR("DTEHandler::PASPW_REQ: no valid AOP records | not updating the config store");
@@ -412,8 +401,7 @@ std::string DTEHandler::PASPW_REQ(int error_code, std::vector<BaseType>& arg_lis
 	return DTEEncoder::encode(DTECommand::PASPW_RESP, error_code);
 }
 
-std::string DTEHandler::DUMPD_REQ(int error_code, std::vector<BaseType>& arg_list, DTEAction& action) {
-
+std::string DTEHandler::DUMPD_REQ(int error_code, std::vector<BaseType> &arg_list, DTEAction &action) {
 	action = DTEAction::NONE;
 
 	// A bit of explanation here.  The protocol for DUMPD sends back a payload format of
@@ -459,7 +447,7 @@ std::string DTEHandler::DUMPD_REQ(int error_code, std::vector<BaseType>& arg_lis
 	// Check to see if this is the first item
 	unsigned int total_entries = logger->num_entries();
 	if (0 == m_dumpd_NNN) {
-		m_dumpd_NNN = (total_entries + (DTE_HANDLER_MAX_LOG_DUMP_ENTRIES-1)) / DTE_HANDLER_MAX_LOG_DUMP_ENTRIES;
+		m_dumpd_NNN = (total_entries + (DTE_HANDLER_MAX_LOG_DUMP_ENTRIES - 1)) / DTE_HANDLER_MAX_LOG_DUMP_ENTRIES;
 		// Special case where log file is empty we set NNN to 1 and will send an empty payload
 		m_dumpd_NNN = m_dumpd_NNN == 0 ? 1 : m_dumpd_NNN;
 		m_dumpd_mmm = 0;
@@ -468,13 +456,13 @@ std::string DTEHandler::DUMPD_REQ(int error_code, std::vector<BaseType>& arg_lis
 	LogEntry log_entry;
 	BaseRawData raw_data;
 	unsigned int start_index = m_dumpd_mmm * DTE_HANDLER_MAX_LOG_DUMP_ENTRIES;
-	unsigned int num_entries = (start_index < total_entries) ? std::min(total_entries - start_index, DTE_HANDLER_MAX_LOG_DUMP_ENTRIES) : 0;
+	unsigned int num_entries =
+	    (start_index < total_entries) ? std::min(total_entries - start_index, DTE_HANDLER_MAX_LOG_DUMP_ENTRIES) : 0;
 	raw_data.ptr = nullptr;
 	raw_data.length = 0;
 
 	// Set CSV header line if this is the first packet output
-	if (0 == m_dumpd_mmm)
-		raw_data.str.append(formatter->header());
+	if (0 == m_dumpd_mmm) raw_data.str.append(formatter->header());
 
 	for (unsigned int i = 0; i < num_entries; i++) {
 		logger->read(&log_entry, i + start_index);
@@ -485,7 +473,7 @@ std::string DTEHandler::DUMPD_REQ(int error_code, std::vector<BaseType>& arg_lis
 	// Note that MMM=NNN-1
 	std::string msg = DTEEncoder::encode(DTECommand::DUMPD_RESP, error_code, m_dumpd_mmm, m_dumpd_NNN - 1, raw_data);
 
-	m_dumpd_mmm++; // Increment in readiness for next iteration
+	m_dumpd_mmm++;  // Increment in readiness for next iteration
 	if (m_dumpd_mmm == m_dumpd_NNN) {
 		// Sequence complete - reset all state
 		m_dumpd_NNN = 0;
@@ -498,8 +486,7 @@ std::string DTEHandler::DUMPD_REQ(int error_code, std::vector<BaseType>& arg_lis
 	return msg;
 }
 
-std::string DTEHandler::ERASE_REQ(int error_code, std::vector<BaseType>& arg_list) {
-
+std::string DTEHandler::ERASE_REQ(int error_code, std::vector<BaseType> &arg_list) {
 	if (error_code) {
 		return DTEEncoder::encode(DTECommand::ERASE_RESP, error_code);
 	}
@@ -521,27 +508,22 @@ std::string DTEHandler::ERASE_REQ(int error_code, std::vector<BaseType>& arg_lis
 			// Ignore any exceptions -- the logger will be nullptr
 		}
 
-		if (logger)
-		{
+		if (logger) {
 			DEBUG_TRACE("Truncating log %s", logger->get_name());
 			logger->truncate();
-		}
-		else
-		{
+		} else {
 			error_code = (int)DTEError::INCORRECT_DATA;
 		}
 	}
 	return DTEEncoder::encode(DTECommand::ERASE_RESP, error_code);
 }
 
-std::string DTEHandler::SCALW_REQ(int error_code, std::vector<BaseType>& arg_list) {
-
+std::string DTEHandler::SCALW_REQ(int error_code, std::vector<BaseType> &arg_list) {
 	if (error_code) {
 		return DTEEncoder::encode(DTECommand::SCALW_RESP, error_code);
 	}
 
-	if (arg_list.size() < 3)
-		return DTEEncoder::encode(DTECommand::SCALW_RESP, (int)DTEError::MISSING_ARGUMENT);
+	if (arg_list.size() < 3) return DTEEncoder::encode(DTECommand::SCALW_RESP, (int)DTEError::MISSING_ARGUMENT);
 
 	// Extract the device_id parameter from arg_list to determine which device to calibrate
 	unsigned int device_id = std::get<unsigned int>(arg_list[0]);
@@ -555,7 +537,7 @@ std::string DTEHandler::SCALW_REQ(int error_code, std::vector<BaseType>& arg_lis
 	try {
 		const char *name = m_scalx.at(device_id).c_str();
 		DEBUG_TRACE("Calibrating device %s...", name);
-		Calibratable& s = CalibratableManager::find_by_name(name);
+		Calibratable &s = CalibratableManager::find_by_name(name);
 		s.calibration_write(value, offset);
 	} catch (...) {
 		DEBUG_TRACE("Device calibration failed");
@@ -565,13 +547,12 @@ std::string DTEHandler::SCALW_REQ(int error_code, std::vector<BaseType>& arg_lis
 	return DTEEncoder::encode(DTECommand::SCALW_RESP, error_code);
 }
 
-std::string DTEHandler::SCALR_REQ(int error_code, std::vector<BaseType>& arg_list) {
+std::string DTEHandler::SCALR_REQ(int error_code, std::vector<BaseType> &arg_list) {
 	if (error_code) {
 		return DTEEncoder::encode(DTECommand::SCALR_RESP, error_code);
 	}
 
-	if (arg_list.size() < 2)
-		return DTEEncoder::encode(DTECommand::SCALR_RESP, (int)DTEError::MISSING_ARGUMENT);
+	if (arg_list.size() < 2) return DTEEncoder::encode(DTECommand::SCALR_RESP, (int)DTEError::MISSING_ARGUMENT);
 
 	// Extract the device_id parameter from arg_list to determine which device to calibrate
 	unsigned int device_id = std::get<unsigned int>(arg_list[0]);
@@ -584,7 +565,7 @@ std::string DTEHandler::SCALR_REQ(int error_code, std::vector<BaseType>& arg_lis
 	try {
 		const char *name = m_scalx.at(device_id).c_str();
 		DEBUG_TRACE("Read device %s calibration setting %u...", name, offset);
-		Calibratable& s = CalibratableManager::find_by_name(name);
+		Calibratable &s = CalibratableManager::find_by_name(name);
 		s.calibration_read(value, offset);
 	} catch (...) {
 		DEBUG_TRACE("Device calibration read failed");
@@ -598,7 +579,7 @@ std::string DTEHandler::SCALR_REQ(int error_code, std::vector<BaseType>& arg_lis
 	return DTEEncoder::encode(DTECommand::SCALR_RESP, error_code, value);
 }
 
-std::string DTEHandler::SMDDFU_REQ(int error_code, std::vector<BaseType>& arg_list) {
+std::string DTEHandler::SMDDFU_REQ(int error_code, std::vector<BaseType> &arg_list) {
 	if (error_code) {
 		return DTEEncoder::encode(DTECommand::SMDDFU_RESP, error_code);
 	}
@@ -619,30 +600,26 @@ std::string DTEHandler::SMDDFU_REQ(int error_code, std::vector<BaseType>& arg_li
 			return smd_not_available_error("SMDDFU_REQ", DTECommand::SMDDFU_RESP);
 		}
 		if (smd_sat_instance->is_dfu_mode()) {
-			return DTEEncoder::encode(DTECommand::SMDDFU_RESP, (unsigned int)0,
-			                          (unsigned int)1, true, (unsigned int)0,
+			return DTEEncoder::encode(DTECommand::SMDDFU_RESP, (unsigned int)0, (unsigned int)1, true, (unsigned int)0,
 			                          std::string("SMD in DFU mode - exit first"));
 		}
 		version = smd_sat_instance->get_firmware_version();
 #elif defined(LORA_RAK3172) && (LORA_RAK3172 == 1)
 		if (!lora_device_instance) {
-			return DTEEncoder::encode(DTECommand::SMDDFU_RESP, (unsigned int)0,
-			                          (unsigned int)1, false, (unsigned int)0,
+			return DTEEncoder::encode(DTECommand::SMDDFU_RESP, (unsigned int)0, (unsigned int)1, false, (unsigned int)0,
 			                          std::string("LoRa module not available"));
 		}
 		version = lora_device_instance->get_firmware_version();
 #else
 		if (!kim2_device_instance) {
-			return DTEEncoder::encode(DTECommand::SMDDFU_RESP, (unsigned int)0,
-			                          (unsigned int)1, false, (unsigned int)0,
+			return DTEEncoder::encode(DTECommand::SMDDFU_RESP, (unsigned int)0, (unsigned int)1, false, (unsigned int)0,
 			                          std::string("KIM2 module not available"));
 		}
 		version = kim2_device_instance->get_firmware_version();
 #endif
 		status = version.empty() ? 1u : 0u;
-		info   = version.empty() ? std::string("Failed to read version") : version;
-		return DTEEncoder::encode(DTECommand::SMDDFU_RESP, (unsigned int)0,
-		                          status, dfu_mode, progress, info);
+		info = version.empty() ? std::string("Failed to read version") : version;
+		return DTEEncoder::encode(DTECommand::SMDDFU_RESP, (unsigned int)0, status, dfu_mode, progress, info);
 	}
 
 #if defined(ARGOS_SMD) && (ARGOS_SMD == 1)
@@ -684,8 +661,7 @@ std::string DTEHandler::SMDDFU_REQ(int error_code, std::vector<BaseType>& arg_li
 			SmdDfuInfo dfu_info;
 			if (smd_sat_instance->dfu_get_bootloader_info(&dfu_info)) {
 				status = 0;
-				info = "BL v" + std::to_string(dfu_info.version_major) + "." +
-				       std::to_string(dfu_info.version_minor);
+				info = "BL v" + std::to_string(dfu_info.version_major) + "." + std::to_string(dfu_info.version_minor);
 			} else {
 				status = 1;
 			}
@@ -702,14 +678,16 @@ std::string DTEHandler::SMDDFU_REQ(int error_code, std::vector<BaseType>& arg_li
 		info = "Use OTA to upload firmware first";
 		break;
 
-	default:
-		return DTEEncoder::encode(DTECommand::SMDDFU_RESP, (int)DTEError::INCORRECT_DATA);
+	default: return DTEEncoder::encode(DTECommand::SMDDFU_RESP, (int)DTEError::INCORRECT_DATA);
 	}
 
 	return DTEEncoder::encode(DTECommand::SMDDFU_RESP, (unsigned int)0, status, dfu_mode, progress, info);
 #else
 	// Non-SMD builds: only VERSION action (handled above) is supported.
-	(void)status; (void)dfu_mode; (void)progress; (void)info;
+	(void)status;
+	(void)dfu_mode;
+	(void)progress;
+	(void)info;
 	return DTEEncoder::encode(DTECommand::SMDDFU_RESP, (int)DTEError::INCORRECT_DATA);
 #endif
 }
@@ -717,7 +695,7 @@ std::string DTEHandler::SMDDFU_REQ(int error_code, std::vector<BaseType>& arg_li
 /// @brief COMCW_REQ — Continuous Wave RF test for SMD / LoRa modules.
 /// Args: mode (0=stop, 1=start), freq_hz, power_dbm, duration_s.
 /// Returns status code + info string via COMCW_RESP.
-std::string DTEHandler::COMCW_REQ(int error_code, std::vector<BaseType>& arg_list) {
+std::string DTEHandler::COMCW_REQ(int error_code, std::vector<BaseType> &arg_list) {
 	if (error_code) {
 		return DTEEncoder::encode(DTECommand::COMCW_RESP, error_code);
 	}
@@ -725,9 +703,9 @@ std::string DTEHandler::COMCW_REQ(int error_code, std::vector<BaseType>& arg_lis
 		return DTEEncoder::encode(DTECommand::COMCW_RESP, (int)DTEError::MISSING_ARGUMENT);
 	}
 
-	unsigned int mode       = std::get<unsigned int>(arg_list[0]);
-	unsigned int freq_hz    = (arg_list.size() > 1) ? std::get<unsigned int>(arg_list[1]) : 0U;
-	unsigned int power_dbm  = (arg_list.size() > 2) ? std::get<unsigned int>(arg_list[2]) : 0U;
+	unsigned int mode = std::get<unsigned int>(arg_list[0]);
+	unsigned int freq_hz = (arg_list.size() > 1) ? std::get<unsigned int>(arg_list[1]) : 0U;
+	unsigned int power_dbm = (arg_list.size() > 2) ? std::get<unsigned int>(arg_list[2]) : 0U;
 	unsigned int duration_s = (arg_list.size() > 3) ? std::get<unsigned int>(arg_list[3]) : 0U;
 
 	unsigned int status = 0;
@@ -736,8 +714,8 @@ std::string DTEHandler::COMCW_REQ(int error_code, std::vector<BaseType>& arg_lis
 
 #if defined(ARGOS_SMD) && (ARGOS_SMD == 1)
 	if (!smd_sat_instance) {
-		return DTEEncoder::encode(DTECommand::COMCW_RESP, (unsigned int)0,
-		                          (unsigned int)1, std::string("SMD not available"));
+		return DTEEncoder::encode(DTECommand::COMCW_RESP, (unsigned int)0, (unsigned int)1,
+		                          std::string("SMD not available"));
 	}
 	if (mode == 0) {
 		ok = smd_sat_instance->cw_stop();
@@ -746,15 +724,13 @@ std::string DTEHandler::COMCW_REQ(int error_code, std::vector<BaseType>& arg_lis
 		if (arg_list.size() < 3) {
 			return DTEEncoder::encode(DTECommand::COMCW_RESP, (int)DTEError::MISSING_ARGUMENT);
 		}
-		ok = smd_sat_instance->cw_start(freq_hz,
-		                                 static_cast<uint16_t>(power_dbm),
-		                                 static_cast<uint16_t>(duration_s));
+		ok = smd_sat_instance->cw_start(freq_hz, static_cast<uint16_t>(power_dbm), static_cast<uint16_t>(duration_s));
 		info = ok ? "CW start OK" : "CW start failed";
 	}
 #elif defined(LORA_RAK3172) && (LORA_RAK3172 == 1)
 	if (!lora_device_instance) {
-		return DTEEncoder::encode(DTECommand::COMCW_RESP, (unsigned int)0,
-		                          (unsigned int)1, std::string("LoRa not available"));
+		return DTEEncoder::encode(DTECommand::COMCW_RESP, (unsigned int)0, (unsigned int)1,
+		                          std::string("LoRa not available"));
 	}
 	if (mode == 0) {
 		ok = lora_device_instance->cw_stop();
@@ -763,15 +739,16 @@ std::string DTEHandler::COMCW_REQ(int error_code, std::vector<BaseType>& arg_lis
 		if (arg_list.size() < 3) {
 			return DTEEncoder::encode(DTECommand::COMCW_RESP, (int)DTEError::MISSING_ARGUMENT);
 		}
-		ok = lora_device_instance->cw_start(freq_hz,
-		                                     static_cast<uint16_t>(power_dbm),
-		                                     static_cast<uint16_t>(duration_s));
+		ok = lora_device_instance->cw_start(freq_hz, static_cast<uint16_t>(power_dbm),
+		                                    static_cast<uint16_t>(duration_s));
 		info = ok ? "CW start OK" : "CW start failed";
 	}
 #else
-	(void)mode; (void)freq_hz; (void)power_dbm; (void)duration_s;
-	return DTEEncoder::encode(DTECommand::COMCW_RESP, (unsigned int)0,
-	                          (unsigned int)1,
+	(void)mode;
+	(void)freq_hz;
+	(void)power_dbm;
+	(void)duration_s;
+	return DTEEncoder::encode(DTECommand::COMCW_RESP, (unsigned int)0, (unsigned int)1,
 	                          std::string("CW not supported on this module"));
 #endif
 
@@ -780,7 +757,7 @@ std::string DTEHandler::COMCW_REQ(int error_code, std::vector<BaseType>& arg_lis
 }
 
 #if defined(ARGOS_SMD) && (ARGOS_SMD == 1)
-std::string DTEHandler::SMDTST_REQ(int error_code, std::vector<BaseType>& arg_list) {
+std::string DTEHandler::SMDTST_REQ(int error_code, std::vector<BaseType> &arg_list) {
 	(void)arg_list;
 	if (error_code) {
 		return DTEEncoder::encode(DTECommand::SMDTST_RESP, error_code);
@@ -799,8 +776,7 @@ std::string DTEHandler::SMDTST_REQ(int error_code, std::vector<BaseType>& arg_li
 }
 #endif
 
-std::string DTEHandler::SATVF_REQ(int error_code, std::vector<BaseType>& arg_list) {
-
+std::string DTEHandler::SATVF_REQ(int error_code, std::vector<BaseType> &arg_list) {
 	if (error_code) {
 		return DTEEncoder::encode(DTECommand::SATVF_RESP, error_code);
 	}
@@ -826,13 +802,17 @@ std::string DTEHandler::SATVF_REQ(int error_code, std::vector<BaseType>& arg_lis
 		}
 
 		// Lambda: compare hardware snapshot with config store (case-insensitive hex)
-		auto to_upper = [](std::string s) { for (auto& c : s) c = toupper(c); return s; };
-		auto compare = [&](const LoRaDevice::LoRaCredentials& h) {
-			std::string cfg_deveui  = configuration_store->read_param<std::string>(ParamID::LORA_DEVEUI);
-			std::string cfg_appeui  = configuration_store->read_param<std::string>(ParamID::LORA_APPEUI);
-			std::string cfg_appkey  = configuration_store->read_param<std::string>(ParamID::LORA_APPKEY);
+		auto to_upper = [](std::string s) {
+			for (auto &c : s)
+				c = toupper(c);
+			return s;
+		};
+		auto compare = [&](const LoRaDevice::LoRaCredentials &h) {
+			std::string cfg_deveui = configuration_store->read_param<std::string>(ParamID::LORA_DEVEUI);
+			std::string cfg_appeui = configuration_store->read_param<std::string>(ParamID::LORA_APPEUI);
+			std::string cfg_appkey = configuration_store->read_param<std::string>(ParamID::LORA_APPKEY);
 			std::string cfg_devaddr = configuration_store->read_param<std::string>(ParamID::LORA_DEVADDR);
-			unsigned int cfg_njm    = configuration_store->read_param<unsigned int>(ParamID::LORA_NJM);
+			unsigned int cfg_njm = configuration_store->read_param<unsigned int>(ParamID::LORA_NJM);
 			bool m = (h.njm == cfg_njm);
 			if (h.njm == 1) {
 				// OTAA: DEVEUI is part of the join procedure, must match.
@@ -847,8 +827,7 @@ std::string DTEHandler::SATVF_REQ(int error_code, std::vector<BaseType>& arg_lis
 				// mismatches when the RAK3172 reports 0000...0000 and the user
 				// never wrote a DEVEUI (common ABP provisioning).
 				m = m && (to_upper(h.devaddr) == to_upper(cfg_devaddr));
-				if (!cfg_deveui.empty() &&
-				    cfg_deveui != "0000000000000000") {
+				if (!cfg_deveui.empty() && cfg_deveui != "0000000000000000") {
 					m = m && (to_upper(h.deveui) == to_upper(cfg_deveui));
 				}
 			}
@@ -877,8 +856,7 @@ std::string DTEHandler::SATVF_REQ(int error_code, std::vector<BaseType>& arg_lis
 
 		// Build response fields: hw_id=0 (N/A for LoRa), hw_addr=NJM,
 		// hw_seckey=credential summary, hw_rconf=mode info, match, forced
-		std::string cred_summary = "NJM=" + std::to_string(hw.njm) +
-			" DEVEUI=" + hw.deveui;
+		std::string cred_summary = "NJM=" + std::to_string(hw.njm) + " DEVEUI=" + hw.deveui;
 		std::string mode_info;
 		if (hw.njm == 1) {
 			cred_summary += " APPEUI=" + hw.appeui + " APPKEY=" + hw.appkey;
@@ -890,14 +868,12 @@ std::string DTEHandler::SATVF_REQ(int error_code, std::vector<BaseType>& arg_lis
 
 		DEBUG_INFO("SATVF(LoRa): %s match=%d forced=%u", cred_summary.c_str(), match, forced);
 
-		return DTEEncoder::encode(DTECommand::SATVF_RESP,
-			(unsigned int)0,
-			(unsigned int)0,             // hw_id (N/A for LoRa)
-			(unsigned int)hw.njm,        // hw_addr repurposed as NJM mode
-			cred_summary,                // hw_seckey repurposed as credential summary
-			mode_info,                   // hw_rconf repurposed as mode info
-			(unsigned int)(match ? 1U : 0U),
-			forced);
+		return DTEEncoder::encode(DTECommand::SATVF_RESP, (unsigned int)0,
+		                          (unsigned int)0,       // hw_id (N/A for LoRa)
+		                          (unsigned int)hw.njm,  // hw_addr repurposed as NJM mode
+		                          cred_summary,          // hw_seckey repurposed as credential summary
+		                          mode_info,             // hw_rconf repurposed as mode info
+		                          (unsigned int)(match ? 1U : 0U), forced);
 #else
 		// Satellite module (SMD or KIM2): read credentials from hardware
 		if (!kineis_device_instance) {
@@ -920,7 +896,10 @@ std::string DTEHandler::SATVF_REQ(int error_code, std::vector<BaseType>& arg_lis
 			DEBUG_INFO("SATVF(SMD): force=1, hardware differs — marking credentials dirty");
 			configuration_store->mark_credentials_dirty();
 			// read_credentials() handles dirty flag: writes config creds to SMD + reloads KMAC, then re-reads
-			hw_id = 0; hw_addr = 0; hw_seckey.clear(); hw_rconf.clear();
+			hw_id = 0;
+			hw_addr = 0;
+			hw_seckey.clear();
+			hw_rconf.clear();
 			kineis_device_instance->read_credentials(&hw_id, &hw_addr, &hw_seckey, &hw_rconf);
 			match = (hw_id == cfg_id && hw_addr == cfg_addr);
 			forced = 1;
@@ -935,24 +914,21 @@ std::string DTEHandler::SATVF_REQ(int error_code, std::vector<BaseType>& arg_lis
 			DEBUG_INFO("SATVF(KIM2): force=1 — re-programming RCONF + re-seeding modulation cache");
 			kineis_device_instance->resync_rconf_cache();
 			configuration_store->save_params();  // persist the re-seeded modulation cache across reboot
-			hw_id = 0; hw_addr = 0; hw_seckey.clear(); hw_rconf.clear();
+			hw_id = 0;
+			hw_addr = 0;
+			hw_seckey.clear();
+			hw_rconf.clear();
 			kineis_device_instance->read_credentials(&hw_id, &hw_addr, &hw_seckey, &hw_rconf);
 			match = (hw_id == cfg_id && hw_addr == cfg_addr);
 			forced = 1;
 		}
 #endif
 
-		DEBUG_INFO("SATVF: hw_id=%u cfg_id=%u hw_addr=0x%08X cfg_addr=0x%08X match=%d forced=%u",
-		           hw_id, cfg_id, hw_addr, cfg_addr, match, forced);
+		DEBUG_INFO("SATVF: hw_id=%u cfg_id=%u hw_addr=0x%08X cfg_addr=0x%08X match=%d forced=%u", hw_id, cfg_id,
+		           hw_addr, cfg_addr, match, forced);
 
-		return DTEEncoder::encode(DTECommand::SATVF_RESP,
-			(unsigned int)0,
-			(unsigned int)hw_id,
-			(unsigned int)hw_addr,
-			hw_seckey,
-			hw_rconf,
-			(unsigned int)(match ? 1U : 0U),
-			forced);
+		return DTEEncoder::encode(DTECommand::SATVF_RESP, (unsigned int)0, (unsigned int)hw_id, (unsigned int)hw_addr,
+		                          hw_seckey, hw_rconf, (unsigned int)(match ? 1U : 0U), forced);
 #endif
 	} catch (...) {
 		error_code = (int)DTEError::INCORRECT_DATA;
@@ -961,7 +937,7 @@ std::string DTEHandler::SATVF_REQ(int error_code, std::vector<BaseType>& arg_lis
 	return DTEEncoder::encode(DTECommand::SATVF_RESP, error_code);
 }
 
-std::string DTEHandler::ARGOSTX_REQ(int error_code, std::vector<BaseType>& arg_list) {
+std::string DTEHandler::ARGOSTX_REQ(int error_code, std::vector<BaseType> &arg_list) {
 	if (error_code) {
 		return DTEEncoder::encode(DTECommand::ARGOSTX_RESP, error_code);
 	}
@@ -1009,13 +985,13 @@ std::string DTEHandler::ARGOSTX_REQ(int error_code, std::vector<BaseType>& arg_l
 
 	// Validate packet size
 	if (num_bytes == 0 || num_bytes > max_bytes) {
-		DEBUG_WARN("DTEHandler::ARGOSTX_REQ: invalid size %u for modulation %u (max=%u)",
-			num_bytes, mod_val, max_bytes);
+		DEBUG_WARN("DTEHandler::ARGOSTX_REQ: invalid size %u for modulation %u (max=%u)", num_bytes, mod_val,
+		           max_bytes);
 		return DTEEncoder::encode(DTECommand::ARGOSTX_RESP, (int)DTEError::INCORRECT_DATA);
 	}
 
-	DEBUG_INFO("DTEHandler::ARGOSTX_REQ: mod=%u size=%u tcxo=%u custom_rconf=%u",
-		mod_val, num_bytes, tcxo_time, custom_rconf);
+	DEBUG_INFO("DTEHandler::ARGOSTX_REQ: mod=%u size=%u tcxo=%u custom_rconf=%u", mod_val, num_bytes, tcxo_time,
+	           custom_rconf);
 
 	try {
 #if defined(ARGOS_SMD) && (ARGOS_SMD == 1)
@@ -1036,10 +1012,10 @@ std::string DTEHandler::ARGOSTX_REQ(int error_code, std::vector<BaseType>& arg_l
 			ArgosConfig argos_config;
 			configuration_store->get_argos_configuration(argos_config);
 			switch (modulation) {
-				case KineisModulation::LDK:  rconf = argos_config.radioconf_ldk; break;
-				case KineisModulation::VLDA4: rconf = argos_config.radioconf_vlda4; break;
-				case KineisModulation::LDA2:
-				default:                      rconf = argos_config.radioconf_lda2; break;
+			case KineisModulation::LDK: rconf = argos_config.radioconf_ldk; break;
+			case KineisModulation::VLDA4: rconf = argos_config.radioconf_vlda4; break;
+			case KineisModulation::LDA2:
+			default: rconf = argos_config.radioconf_lda2; break;
 			}
 		}
 
@@ -1085,7 +1061,7 @@ std::string DTEHandler::ARGOSTX_REQ(int error_code, std::vector<BaseType>& arg_l
 			// power-on, so this does not persist past the session (no restore needed).
 			if (rconf.length() != 32) {
 				DEBUG_WARN("DTEHandler::ARGOSTX_REQ: invalid radioconf length %u",
-					static_cast<unsigned>(rconf.length()));
+				           static_cast<unsigned>(rconf.length()));
 				return DTEEncoder::encode(DTECommand::ARGOSTX_RESP, (int)DTEError::INCORRECT_DATA);
 			}
 			kineis_device_instance->switch_modulation(modulation, rconf);
@@ -1111,7 +1087,7 @@ std::string DTEHandler::ARGOSTX_REQ(int error_code, std::vector<BaseType>& arg_l
 }
 
 #if defined(LORA_RAK3172) && (LORA_RAK3172 == 1)
-std::string DTEHandler::LORATX_REQ(int error_code, std::vector<BaseType>& arg_list) {
+std::string DTEHandler::LORATX_REQ(int error_code, std::vector<BaseType> &arg_list) {
 	if (error_code) {
 		return DTEEncoder::encode(DTECommand::LORATX_RESP, error_code);
 	}
@@ -1158,7 +1134,7 @@ std::string DTEHandler::LORATX_REQ(int error_code, std::vector<BaseType>& arg_li
 	return DTEEncoder::encode(DTECommand::LORATX_RESP, error_code);
 }
 
-std::string DTEHandler::LORABR_REQ(int error_code, std::vector<BaseType>& arg_list) {
+std::string DTEHandler::LORABR_REQ(int error_code, std::vector<BaseType> &arg_list) {
 	if (error_code) {
 		return DTEEncoder::encode(DTECommand::LORABR_RESP, error_code);
 	}
@@ -1177,9 +1153,9 @@ std::string DTEHandler::LORABR_REQ(int error_code, std::vector<BaseType>& arg_li
 	if (action == 1) {
 		// Start bridge: raw UART RX → USB CDC via async_write
 		auto write_fn = m_async_write;
-		lora_device_instance->start_bridge([write_fn](const uint8_t* data, size_t len) {
+		lora_device_instance->start_bridge([write_fn](const uint8_t *data, size_t len) {
 			if (write_fn) {
-				write_fn(std::string(reinterpret_cast<const char*>(data), len));
+				write_fn(std::string(reinterpret_cast<const char *>(data), len));
 			}
 		});
 		DEBUG_INFO("DTEHandler::LORABR_REQ: bridge STARTED — type +++ to exit");
@@ -1195,7 +1171,7 @@ std::string DTEHandler::LORABR_REQ(int error_code, std::vector<BaseType>& arg_li
 
 #if !(defined(LORA_RAK3172) && (LORA_RAK3172 == 1)) && !(defined(ARGOS_SMD) && (ARGOS_SMD == 1))
 
-std::string DTEHandler::KIMBR_REQ(int error_code, std::vector<BaseType>& arg_list) {
+std::string DTEHandler::KIMBR_REQ(int error_code, std::vector<BaseType> &arg_list) {
 	if (error_code) {
 		return DTEEncoder::encode(DTECommand::KIMBR_RESP, error_code);
 	}
@@ -1214,9 +1190,9 @@ std::string DTEHandler::KIMBR_REQ(int error_code, std::vector<BaseType>& arg_lis
 	if (action == 1) {
 		// Start bridge: raw UART RX → USB CDC via async_write
 		auto write_fn = m_async_write;
-		kim2_device_instance->start_bridge([write_fn](const uint8_t* data, size_t len) {
+		kim2_device_instance->start_bridge([write_fn](const uint8_t *data, size_t len) {
 			if (write_fn) {
-				write_fn(std::string(reinterpret_cast<const char*>(data), len));
+				write_fn(std::string(reinterpret_cast<const char *>(data), len));
 			}
 		});
 		DEBUG_INFO("DTEHandler::KIMBR_REQ: bridge STARTED — type +++ to exit");
@@ -1231,7 +1207,7 @@ std::string DTEHandler::KIMBR_REQ(int error_code, std::vector<BaseType>& arg_lis
 #endif
 
 
-std::string DTEHandler::SENSR_REQ(int error_code, std::vector<BaseType>& arg_list) {
+std::string DTEHandler::SENSR_REQ(int error_code, std::vector<BaseType> &arg_list) {
 	// Response values (initialized to defaults/invalid)
 	unsigned int batt_mv = 0;
 	unsigned int batt_soc = 0;
@@ -1259,18 +1235,16 @@ std::string DTEHandler::SENSR_REQ(int error_code, std::vector<BaseType>& arg_lis
 	unsigned int sensor_status = 0;  // Each bit = sensor OK
 
 	if (error_code) {
-		return DTEEncoder::encode(DTECommand::SENSR_RESP, error_code,
-			batt_mv, batt_soc, pressure, temperature, altitude, lat, lon, hdop, num_sv,
-			accel_x, accel_y, accel_z, accel_temp, activity, thermistor_temp,
-			sea_temp_c, als_lux, ph_value, sensor_status);
+		return DTEEncoder::encode(DTECommand::SENSR_RESP, error_code, batt_mv, batt_soc, pressure, temperature,
+		                          altitude, lat, lon, hdop, num_sv, accel_x, accel_y, accel_z, accel_temp, activity,
+		                          thermistor_temp, sea_temp_c, als_lux, ph_value, sensor_status);
 	}
 
 	// Parse parameters
 	if (arg_list.size() < 2) {
-		return DTEEncoder::encode(DTECommand::SENSR_RESP, (int)DTEError::MISSING_ARGUMENT,
-			batt_mv, batt_soc, pressure, temperature, altitude, lat, lon, hdop, num_sv,
-			accel_x, accel_y, accel_z, accel_temp, activity, thermistor_temp,
-			sea_temp_c, als_lux, ph_value, sensor_status);
+		return DTEEncoder::encode(DTECommand::SENSR_RESP, (int)DTEError::MISSING_ARGUMENT, batt_mv, batt_soc, pressure,
+		                          temperature, altitude, lat, lon, hdop, num_sv, accel_x, accel_y, accel_z, accel_temp,
+		                          activity, thermistor_temp, sea_temp_c, als_lux, ph_value, sensor_status);
 	}
 
 	unsigned int sensors_mask = std::get<unsigned int>(arg_list[0]);
@@ -1313,7 +1287,7 @@ std::string DTEHandler::SENSR_REQ(int error_code, std::vector<BaseType>& arg_lis
 	if (sensors_mask & 0x02) {
 #if ENABLE_PRESSURE_SENSOR
 		try {
-			Sensor& prs = SensorManager::find_by_name("PRS");
+			Sensor &prs = SensorManager::find_by_name("PRS");
 			pressure = prs.read(0);
 			temperature = prs.read(1);
 			double sea_level_hpa = 1013.25;
@@ -1334,7 +1308,7 @@ std::string DTEHandler::SENSR_REQ(int error_code, std::vector<BaseType>& arg_lis
 
 	// Read GNSS (bit 2 = 0x04)
 	if (sensors_mask & 0x04) {
-		const GPSLogEntry& gps_entry = configuration_store->get_last_gps_entry();
+		const GPSLogEntry &gps_entry = configuration_store->get_last_gps_entry();
 		if (gps_entry.info.valid) {
 			lat = gps_entry.info.lat;
 			lon = gps_entry.info.lon;
@@ -1351,15 +1325,15 @@ std::string DTEHandler::SENSR_REQ(int error_code, std::vector<BaseType>& arg_lis
 	if (sensors_mask & 0x08) {
 #if ENABLE_AXL_SENSOR
 		try {
-			Sensor& axl = SensorManager::find_by_name("AXL");
+			Sensor &axl = SensorManager::find_by_name("AXL");
 			accel_x = axl.read(1);
 			accel_y = axl.read(2);
 			accel_z = axl.read(3);
 			accel_temp = axl.read(0);
 			activity = (unsigned int)axl.read(4);
 			sensor_status |= (1 << 3);  // AXL OK
-			DEBUG_TRACE("SENSR: Accel X=%.3f Y=%.3f Z=%.3f T=%.1f activity=%u",
-				accel_x, accel_y, accel_z, accel_temp, activity);
+			DEBUG_TRACE("SENSR: Accel X=%.3f Y=%.3f Z=%.3f T=%.1f activity=%u", accel_x, accel_y, accel_z, accel_temp,
+			            activity);
 		} catch (...) {
 			DEBUG_WARN("SENSR: Accelerometer read error");
 		}
@@ -1372,7 +1346,7 @@ std::string DTEHandler::SENSR_REQ(int error_code, std::vector<BaseType>& arg_lis
 	if (sensors_mask & 0x10) {
 #if ENABLE_THERMISTOR_SENSOR
 		try {
-			Sensor& therm = SensorManager::find_by_name("THERMISTOR");
+			Sensor &therm = SensorManager::find_by_name("THERMISTOR");
 			thermistor_temp = therm.read(0);
 			sensor_status |= (1 << 4);  // Thermistor OK
 			DEBUG_TRACE("SENSR: Thermistor %.2f C", thermistor_temp);
@@ -1388,7 +1362,7 @@ std::string DTEHandler::SENSR_REQ(int error_code, std::vector<BaseType>& arg_lis
 	if (sensors_mask & 0x20) {
 #if ENABLE_SEA_TEMP_SENSOR
 		try {
-			Sensor& sea = SensorManager::find_by_name("SEA_TEMP");
+			Sensor &sea = SensorManager::find_by_name("SEA_TEMP");
 			sea_temp_c = sea.read(0);
 			sensor_status |= (1 << 5);  // Sea temp OK
 			DEBUG_TRACE("SENSR: Sea temp %.3f C", sea_temp_c);
@@ -1404,7 +1378,7 @@ std::string DTEHandler::SENSR_REQ(int error_code, std::vector<BaseType>& arg_lis
 	if (sensors_mask & 0x40) {
 #if ENABLE_ALS_SENSOR
 		try {
-			Sensor& als = SensorManager::find_by_name("ALS");
+			Sensor &als = SensorManager::find_by_name("ALS");
 			als_lux = als.read(0);
 			sensor_status |= (1 << 6);  // ALS OK
 			DEBUG_TRACE("SENSR: ALS %.1f lux", als_lux);
@@ -1420,7 +1394,7 @@ std::string DTEHandler::SENSR_REQ(int error_code, std::vector<BaseType>& arg_lis
 	if (sensors_mask & 0x80) {
 #if ENABLE_PH_SENSOR
 		try {
-			Sensor& ph = SensorManager::find_by_name("PH");
+			Sensor &ph = SensorManager::find_by_name("PH");
 			ph_value = ph.read(0);
 			sensor_status |= (1 << 7);  // pH OK
 			DEBUG_TRACE("SENSR: pH %.3f", ph_value);
@@ -1434,14 +1408,13 @@ std::string DTEHandler::SENSR_REQ(int error_code, std::vector<BaseType>& arg_lis
 
 	DEBUG_INFO("DTEHandler::SENSR_REQ: sensor_status=0x%02X (requested=0x%02X)", sensor_status, sensors_mask);
 
-	return DTEEncoder::encode(DTECommand::SENSR_RESP, (int)DTEError::OK,
-		batt_mv, batt_soc, pressure, temperature, altitude, lat, lon, hdop, num_sv,
-		accel_x, accel_y, accel_z, accel_temp, activity, thermistor_temp,
-		sea_temp_c, als_lux, ph_value, sensor_status);
+	return DTEEncoder::encode(DTECommand::SENSR_RESP, (int)DTEError::OK, batt_mv, batt_soc, pressure, temperature,
+	                          altitude, lat, lon, hdop, num_sv, accel_x, accel_y, accel_z, accel_temp, activity,
+	                          thermistor_temp, sea_temp_c, als_lux, ph_value, sensor_status);
 }
 
 // PWRON handler - Power on/off components
-std::string DTEHandler::PWRON_REQ(int error_code, std::vector<BaseType>& arg_list) {
+std::string DTEHandler::PWRON_REQ(int error_code, std::vector<BaseType> &arg_list) {
 	if (error_code) {
 		return DTEEncoder::encode(DTECommand::PWRON_RESP, error_code);
 	}
@@ -1546,14 +1519,13 @@ std::string DTEHandler::PWRON_REQ(int error_code, std::vector<BaseType>& arg_lis
 		GPIOPins::release_sensors_pwr();
 		break;
 
-	default:
-		return DTEEncoder::encode(DTECommand::PWRON_RESP, (int)DTEError::VALUE_OUT_OF_RANGE);
+	default: return DTEEncoder::encode(DTECommand::PWRON_RESP, (int)DTEError::VALUE_OUT_OF_RANGE);
 	}
 
 	return DTEEncoder::encode(DTECommand::PWRON_RESP, (int)DTEError::OK);
 }
 
-std::string DTEHandler::GNSSBCKP_REQ(int error_code, std::vector<BaseType>& arg_list) {
+std::string DTEHandler::GNSSBCKP_REQ(int error_code, std::vector<BaseType> &arg_list) {
 	if (error_code) {
 		return DTEEncoder::encode(DTECommand::GNSSBCKP_RESP, error_code);
 	}
@@ -1578,26 +1550,18 @@ std::string DTEHandler::SWSST_REQ(int error_code) {
 #if ENABLE_SWS_ANALOG
 	auto st = SWSAnalogService::get_status();
 
-	return DTEEncoder::encode(DTECommand::SWSST_RESP, (int)DTEError::OK,
-		(unsigned int)st.threshold_air,
-		(unsigned int)st.threshold_water,
-		(unsigned int)st.threshold_current,
-		(unsigned int)st.hysteresis,
-		(unsigned int)st.last_raw_adc,
-		(unsigned int)st.last_filtered_adc,
-		(unsigned int)st.is_calibrated,
-		(unsigned int)st.is_underwater,
-		(unsigned int)st.time_in_state_sec,
-		(unsigned int)st.surface_level,
-		(unsigned int)st.contrast_x10,
-		(unsigned int)st.observed_peak,
-		(unsigned int)st.sample_delay_us);
+	return DTEEncoder::encode(
+	    DTECommand::SWSST_RESP, (int)DTEError::OK, (unsigned int)st.threshold_air, (unsigned int)st.threshold_water,
+	    (unsigned int)st.threshold_current, (unsigned int)st.hysteresis, (unsigned int)st.last_raw_adc,
+	    (unsigned int)st.last_filtered_adc, (unsigned int)st.is_calibrated, (unsigned int)st.is_underwater,
+	    (unsigned int)st.time_in_state_sec, (unsigned int)st.surface_level, (unsigned int)st.contrast_x10,
+	    (unsigned int)st.observed_peak, (unsigned int)st.sample_delay_us);
 #else
 	return DTEEncoder::encode(DTECommand::SWSST_RESP, (int)DTEError::PARAM_KEY_UNRECOGNISED);
 #endif
 }
 
-std::string DTEHandler::SWSTST_REQ(int error_code, std::vector<BaseType>& arg_list) {
+std::string DTEHandler::SWSTST_REQ(int error_code, std::vector<BaseType> &arg_list) {
 	if (error_code) {
 		return DTEEncoder::encode(DTECommand::SWSTST_RESP, error_code);
 	}
@@ -1612,28 +1576,19 @@ std::string DTEHandler::SWSTST_REQ(int error_code, std::vector<BaseType>& arg_li
 	if (action == 1) {
 		// Start test mode and register async push callback
 		auto write_fn = m_async_write;
-		SWSAnalogService::set_status_notify([write_fn](const SWSAnalogService::Status& st) {
+		SWSAnalogService::set_status_notify([write_fn](const SWSAnalogService::Status &st) {
 			if (write_fn) {
-				write_fn(DTEEncoder::encode(DTECommand::SWSST_RESP, (int)DTEError::OK,
-					(unsigned int)st.threshold_air,
-					(unsigned int)st.threshold_water,
-					(unsigned int)st.threshold_current,
-					(unsigned int)st.hysteresis,
-					(unsigned int)st.last_raw_adc,
-					(unsigned int)st.last_filtered_adc,
-					(unsigned int)st.is_calibrated,
-					(unsigned int)st.is_underwater,
-					(unsigned int)st.time_in_state_sec,
-					(unsigned int)st.surface_level,
-					(unsigned int)st.contrast_x10,
-					(unsigned int)st.observed_peak,
-					(unsigned int)st.sample_delay_us));
+				write_fn(DTEEncoder::encode(
+				    DTECommand::SWSST_RESP, (int)DTEError::OK, (unsigned int)st.threshold_air,
+				    (unsigned int)st.threshold_water, (unsigned int)st.threshold_current, (unsigned int)st.hysteresis,
+				    (unsigned int)st.last_raw_adc, (unsigned int)st.last_filtered_adc, (unsigned int)st.is_calibrated,
+				    (unsigned int)st.is_underwater, (unsigned int)st.time_in_state_sec, (unsigned int)st.surface_level,
+				    (unsigned int)st.contrast_x10, (unsigned int)st.observed_peak, (unsigned int)st.sample_delay_us));
 			}
 		});
 		SWSAnalogService::set_on_test_stop([]() {
 			// Restore normal LED: flash blue (ConfigNotConnected default)
-			if (status_led)
-				status_led->flash(RGBLedColor::BLUE);
+			if (status_led) status_led->flash(RGBLedColor::BLUE);
 		});
 		SWSAnalogService::start_test_mode();
 	} else {
@@ -1650,7 +1605,7 @@ std::string DTEHandler::SWSTST_REQ(int error_code, std::vector<BaseType>& arg_li
 #endif
 }
 
-std::string DTEHandler::SWSSTATS_REQ(int error_code, std::vector<BaseType>& arg_list) {
+std::string DTEHandler::SWSSTATS_REQ(int error_code, std::vector<BaseType> &arg_list) {
 	if (error_code) {
 		return DTEEncoder::encode(DTECommand::SWSSTATS_RESP, error_code);
 	}
@@ -1667,21 +1622,17 @@ std::string DTEHandler::SWSSTATS_REQ(int error_code, std::vector<BaseType>& arg_
 	}
 
 	auto d = SWSAnalogService::get_diagnostics();
-	return DTEEncoder::encode(DTECommand::SWSSTATS_RESP, (int)DTEError::OK,
-		(unsigned int)d.stuck_recovery_count,
-		(unsigned int)d.coherence_recalib_count,
-		(unsigned int)d.dive_timeout_count,
-		(unsigned int)d.force_surface_count,
-		(unsigned int)d.spike_reject_count,
-		(unsigned int)d.peak_incoherent_count,
-		(unsigned int)d.saadc_init_retry_count);
+	return DTEEncoder::encode(DTECommand::SWSSTATS_RESP, (int)DTEError::OK, (unsigned int)d.stuck_recovery_count,
+	                          (unsigned int)d.coherence_recalib_count, (unsigned int)d.dive_timeout_count,
+	                          (unsigned int)d.force_surface_count, (unsigned int)d.spike_reject_count,
+	                          (unsigned int)d.peak_incoherent_count, (unsigned int)d.saadc_init_retry_count);
 #else
 	(void)action;
 	return DTEEncoder::encode(DTECommand::SWSSTATS_RESP, (int)DTEError::PARAM_KEY_UNRECOGNISED);
 #endif
 }
 
-std::string DTEHandler::SWSCAL_REQ(int error_code, std::vector<BaseType>& arg_list) {
+std::string DTEHandler::SWSCAL_REQ(int error_code, std::vector<BaseType> &arg_list) {
 	if (error_code) {
 		return DTEEncoder::encode(DTECommand::SWSCAL_RESP, error_code);
 	}
@@ -1705,12 +1656,10 @@ std::string DTEHandler::SWSCAL_REQ(int error_code, std::vector<BaseType>& arg_li
 		// has already been switched to USB by the gentracker handler — using
 		// the snapshot would silently route the completion frame to the dead
 		// channel and the GUI never sees status=1.
-		SWSAnalogService::set_guided_calib_notify([this](const SWSAnalogService::CalibResult& r) {
+		SWSAnalogService::set_guided_calib_notify([this](const SWSAnalogService::CalibResult &r) {
 			if (m_async_write) {
-				m_async_write(DTEEncoder::encode(DTECommand::SWSCAL_RESP, (int)DTEError::OK,
-					(unsigned int)r.status,
-					(unsigned int)r.air,
-					(unsigned int)r.water));
+				m_async_write(DTEEncoder::encode(DTECommand::SWSCAL_RESP, (int)DTEError::OK, (unsigned int)r.status,
+				                                 (unsigned int)r.air, (unsigned int)r.water));
 			}
 		});
 		SWSAnalogService::set_on_test_stop([]() {
@@ -1729,17 +1678,15 @@ std::string DTEHandler::SWSCAL_REQ(int error_code, std::vector<BaseType>& arg_li
 	}
 
 	auto r = SWSAnalogService::get_guided_calibration_result();
-	return DTEEncoder::encode(DTECommand::SWSCAL_RESP, (int)DTEError::OK,
-		(unsigned int)r.status,
-		(unsigned int)r.air,
-		(unsigned int)r.water);
+	return DTEEncoder::encode(DTECommand::SWSCAL_RESP, (int)DTEError::OK, (unsigned int)r.status, (unsigned int)r.air,
+	                          (unsigned int)r.water);
 #else
 	(void)action;
 	return DTEEncoder::encode(DTECommand::SWSCAL_RESP, (int)DTEError::PARAM_KEY_UNRECOGNISED);
 #endif
 }
 
-std::string DTEHandler::GNSSBR_REQ(int error_code, std::vector<BaseType>& arg_list) {
+std::string DTEHandler::GNSSBR_REQ(int error_code, std::vector<BaseType> &arg_list) {
 	if (error_code) {
 		return DTEEncoder::encode(DTECommand::GNSSBR_RESP, error_code);
 	}
@@ -1758,9 +1705,9 @@ std::string DTEHandler::GNSSBR_REQ(int error_code, std::vector<BaseType>& arg_li
 	if (action == 1) {
 		// Start bridge: raw UART RX → USB CDC via async_write
 		auto write_fn = m_async_write;
-		gps_device->start_bridge([write_fn](const uint8_t* data, size_t len) {
+		gps_device->start_bridge([write_fn](const uint8_t *data, size_t len) {
 			if (write_fn) {
-				write_fn(std::string(reinterpret_cast<const char*>(data), len));
+				write_fn(std::string(reinterpret_cast<const char *>(data), len));
 			}
 		});
 		DEBUG_INFO("DTEHandler::GNSSBR_REQ: bridge STARTED — type +++ to exit");
@@ -1773,16 +1720,13 @@ std::string DTEHandler::GNSSBR_REQ(int error_code, std::vector<BaseType>& arg_li
 }
 
 // Helper to format and return GNSSI response from cached info
-static std::string format_gnssi_response(const GNSSDeviceInfo& info) {
+static std::string format_gnssi_response(const GNSSDeviceInfo &info) {
 	char uid_hex[11];
-	snprintf(uid_hex, sizeof(uid_hex), "%02X%02X%02X%02X%02X",
-		info.uniqueId[0], info.uniqueId[1], info.uniqueId[2],
-		info.uniqueId[3], info.uniqueId[4]);
+	snprintf(uid_hex, sizeof(uid_hex), "%02X%02X%02X%02X%02X", info.uniqueId[0], info.uniqueId[1], info.uniqueId[2],
+	         info.uniqueId[3], info.uniqueId[4]);
 
-	return DTEEncoder::encode(DTECommand::GNSSI_RESP, (int)DTEError::OK,
-		std::string(uid_hex),
-		std::string(info.swVersion),
-		std::string(info.hwVersion));
+	return DTEEncoder::encode(DTECommand::GNSSI_RESP, (int)DTEError::OK, std::string(uid_hex),
+	                          std::string(info.swVersion), std::string(info.hwVersion));
 }
 
 std::string DTEHandler::GNSSI_REQ(int error_code) {
@@ -1812,14 +1756,10 @@ std::string DTEHandler::GNSSI_REQ(int error_code) {
 	GNSSConfig gnss_config;
 	configuration_store->get_gnss_configuration(gnss_config);
 	GPSNavSettings nav = {
-		gnss_config.fix_mode,
-		gnss_config.dyn_model,
-		gnss_config.assistnow_enable,
-		gnss_config.assistnow_offline_enable,
-		gnss_config.hdop_filter_enable,
-		gnss_config.hdop_filter_threshold,
-		gnss_config.hacc_filter_enable,
-		gnss_config.hacc_filter_threshold,
+		gnss_config.fix_mode,           gnss_config.dyn_model,
+		gnss_config.assistnow_enable,   gnss_config.assistnow_offline_enable,
+		gnss_config.hdop_filter_enable, gnss_config.hdop_filter_threshold,
+		gnss_config.hacc_filter_enable, gnss_config.hacc_filter_threshold,
 	};
 	gps_device->power_on(nav);
 
@@ -1827,7 +1767,7 @@ std::string DTEHandler::GNSSI_REQ(int error_code) {
 	return {};
 }
 
-void DTEHandler::react(const GPSEventDeviceInfoReady&) {
+void DTEHandler::react(const GPSEventDeviceInfoReady &) {
 	if (!m_gnssi_pending) return;
 	m_gnssi_pending = false;
 
@@ -1849,7 +1789,7 @@ void DTEHandler::react(const GPSEventDeviceInfoReady&) {
 	gps_device->power_off();
 }
 
-void DTEHandler::react(const GPSEventError&) {
+void DTEHandler::react(const GPSEventError &) {
 	if (!m_gnssi_pending) return;
 	m_gnssi_pending = false;
 
@@ -1874,15 +1814,12 @@ std::string DTEHandler::GNSSA_REQ(int error_code) {
 
 	auto status = gps_device->get_almanac_status();
 
-	return DTEEncoder::encode(DTECommand::GNSSA_RESP, (int)DTEError::OK,
-		(unsigned int)(status.file_present ? 1 : 0),
-		(unsigned int)status.file_size,
-		(unsigned int)status.total_records,
-		(unsigned int)status.valid_records,
-		(unsigned int)(status.stale ? 1 : 0));
+	return DTEEncoder::encode(DTECommand::GNSSA_RESP, (int)DTEError::OK, (unsigned int)(status.file_present ? 1 : 0),
+	                          (unsigned int)status.file_size, (unsigned int)status.total_records,
+	                          (unsigned int)status.valid_records, (unsigned int)(status.stale ? 1 : 0));
 }
 
-std::string DTEHandler::RTCW_REQ(int error_code, std::vector<BaseType>& arg_list) {
+std::string DTEHandler::RTCW_REQ(int error_code, std::vector<BaseType> &arg_list) {
 	if (error_code) {
 		return DTEEncoder::encode(DTECommand::RTCW_RESP, error_code);
 	}
@@ -1918,7 +1855,7 @@ std::string DTEHandler::RTCW_REQ(int error_code, std::vector<BaseType>& arg_list
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wswitch-enum"
 
-DTEAction DTEHandler::handle_dte_message(const std::string& req, std::string& resp) {
+DTEAction DTEHandler::handle_dte_message(const std::string &req, std::string &resp) {
 	// MANDATORY sentinel. This variable was uninitialised, and the decoder
 	// raises DTE_PROTOCOL_UNKNOWN_COMMAND *before* assigning it: the switch
 	// below then ran on an indeterminate value. Bench measurement on
@@ -1941,35 +1878,21 @@ DTEAction DTEHandler::handle_dte_message(const std::string& req, std::string& re
 	}
 
 	try {
-		if (!DTEDecoder::decode(req, command, error_code, arg_list, params, param_values, rejected_keys))
-			return action;
+		if (!DTEDecoder::decode(req, command, error_code, arg_list, params, param_values, rejected_keys)) return action;
 	} catch (ErrorCode e) {
-
 		switch (e) {
-		case ErrorCode::DTE_PROTOCOL_MESSAGE_TOO_LARGE:
-			error_code = (unsigned int)DTEError::MESSAGE_TOO_LARGE;
-			break;
+		case ErrorCode::DTE_PROTOCOL_MESSAGE_TOO_LARGE: error_code = (unsigned int)DTEError::MESSAGE_TOO_LARGE; break;
 		case ErrorCode::DTE_PROTOCOL_PARAM_KEY_UNRECOGNISED:
 			error_code = (unsigned int)DTEError::PARAM_KEY_UNRECOGNISED;
 			break;
-		case ErrorCode::DTE_PROTOCOL_UNEXPECTED_ARG:
-			error_code = (unsigned int)DTEError::UNEXPECTED_ARGUMENT;
-			break;
-		case ErrorCode::DTE_PROTOCOL_VALUE_OUT_OF_RANGE:
-			error_code = (unsigned int)DTEError::VALUE_OUT_OF_RANGE;
-			break;
-		case ErrorCode::DTE_PROTOCOL_MISSING_ARG:
-			error_code = (unsigned int)DTEError::MISSING_ARGUMENT;
-			break;
-		case ErrorCode::DTE_PROTOCOL_BAD_FORMAT:
-			error_code = (unsigned int)DTEError::BAD_FORMAT;
-			break;
+		case ErrorCode::DTE_PROTOCOL_UNEXPECTED_ARG: error_code = (unsigned int)DTEError::UNEXPECTED_ARGUMENT; break;
+		case ErrorCode::DTE_PROTOCOL_VALUE_OUT_OF_RANGE: error_code = (unsigned int)DTEError::VALUE_OUT_OF_RANGE; break;
+		case ErrorCode::DTE_PROTOCOL_MISSING_ARG: error_code = (unsigned int)DTEError::MISSING_ARGUMENT; break;
+		case ErrorCode::DTE_PROTOCOL_BAD_FORMAT: error_code = (unsigned int)DTEError::BAD_FORMAT; break;
 		case ErrorCode::DTE_PROTOCOL_PAYLOAD_LENGTH_MISMATCH:
 			error_code = (unsigned int)DTEError::DATA_LENGTH_MISMATCH;
 			break;
-		case ErrorCode::DTE_PROTOCOL_UNKNOWN_COMMAND:
-			error_code = (unsigned int)DTEError::INCORRECT_COMMAND;
-			break;
+		case ErrorCode::DTE_PROTOCOL_UNKNOWN_COMMAND: error_code = (unsigned int)DTEError::INCORRECT_COMMAND; break;
 		default:
 			DEBUG_ERROR("DTEHandler: unhandled ErrorCode %u from decoder", (unsigned int)e);
 			error_code = (unsigned int)DTEError::BAD_FORMAT;
@@ -1985,128 +1908,63 @@ DTEAction DTEHandler::handle_dte_message(const std::string& req, std::string& re
 	}
 
 	try {
-	switch(command) {
-	case DTECommand::PARML_REQ:
-		resp = PARML_REQ(error_code);
-		break;
-	case DTECommand::PARMW_REQ:
-		resp = PARMW_REQ(error_code, param_values, rejected_keys, action);
-		break;
-	case DTECommand::PARMR_REQ:
-		resp = PARMR_REQ(error_code, params, rejected_keys);
-		break;
-	case DTECommand::STATR_REQ:
-		resp = STATR_REQ(error_code, params, rejected_keys);
-		break;
-	case DTECommand::PROFW_REQ:
-		resp = PROFW_REQ(error_code, arg_list);
-		break;
-	case DTECommand::PROFR_REQ:
-		resp = PROFR_REQ(error_code);
-		break;
-	case DTECommand::SECUR_REQ:
-		resp = SECUR_REQ(error_code, arg_list);
-		if (!error_code) action = DTEAction::SECUR;
-		break;
-	case DTECommand::RSTVW_REQ:
-		resp = RSTVW_REQ(error_code, arg_list);
-		break;
-	case DTECommand::RSTBW_REQ:
-		resp = RSTBW_REQ(error_code);
-		if (!error_code) action = DTEAction::RESET;
-		break;
-	case DTECommand::FACTW_REQ:
-		resp = FACTW_REQ(error_code);
-		if (!error_code) action = DTEAction::FACTR;
-		break;
-	case DTECommand::DUMPM_REQ:
-		resp = DUMPM_REQ(error_code, arg_list);
-		break;
-	case DTECommand::PASPW_REQ:
-		resp = PASPW_REQ(error_code, arg_list);
-		break;
-	case DTECommand::DUMPD_REQ:
-		resp = DUMPD_REQ(error_code, arg_list, action);
-		break;
-	case DTECommand::ERASE_REQ:
-		resp = ERASE_REQ(error_code, arg_list);
-		break;
-	case DTECommand::SCALW_REQ:
-		resp = SCALW_REQ(error_code, arg_list);
-		break;
-	case DTECommand::SCALR_REQ:
-		resp = SCALR_REQ(error_code, arg_list);
-		break;
-	case DTECommand::ARGOSTX_REQ:
-		resp = ARGOSTX_REQ(error_code, arg_list);
-		break;
-	case DTECommand::SENSR_REQ:
-		resp = SENSR_REQ(error_code, arg_list);
-		break;
-	case DTECommand::PWRON_REQ:
-		resp = PWRON_REQ(error_code, arg_list);
-		break;
-	case DTECommand::GNSSBCKP_REQ:
-		resp = GNSSBCKP_REQ(error_code, arg_list);
-		break;
-	case DTECommand::SWSST_REQ:
-		resp = SWSST_REQ(error_code);
-		break;
-	case DTECommand::SWSTST_REQ:
-		resp = SWSTST_REQ(error_code, arg_list);
-		break;
-	case DTECommand::SWSCAL_REQ:
-		resp = SWSCAL_REQ(error_code, arg_list);
-		break;
-	case DTECommand::SWSSTATS_REQ:
-		resp = SWSSTATS_REQ(error_code, arg_list);
-		break;
-	case DTECommand::GNSSBR_REQ:
-		resp = GNSSBR_REQ(error_code, arg_list);
-		break;
-	case DTECommand::GNSSI_REQ:
-		resp = GNSSI_REQ(error_code);
-		break;
-	case DTECommand::GNSSA_REQ:
-		resp = GNSSA_REQ(error_code);
-		break;
-	case DTECommand::RTCW_REQ:
-		resp = RTCW_REQ(error_code, arg_list);
-		break;
-	case DTECommand::SMDDFU_REQ:
-		// VERSION action works for SMD/KIM2/LoRa builds; other actions SMD-only
-		resp = SMDDFU_REQ(error_code, arg_list);
-		break;
-	case DTECommand::COMCW_REQ:
-		resp = COMCW_REQ(error_code, arg_list);
-		break;
+		switch (command) {
+		case DTECommand::PARML_REQ: resp = PARML_REQ(error_code); break;
+		case DTECommand::PARMW_REQ: resp = PARMW_REQ(error_code, param_values, rejected_keys, action); break;
+		case DTECommand::PARMR_REQ: resp = PARMR_REQ(error_code, params, rejected_keys); break;
+		case DTECommand::STATR_REQ: resp = STATR_REQ(error_code, params, rejected_keys); break;
+		case DTECommand::PROFW_REQ: resp = PROFW_REQ(error_code, arg_list); break;
+		case DTECommand::PROFR_REQ: resp = PROFR_REQ(error_code); break;
+		case DTECommand::SECUR_REQ:
+			resp = SECUR_REQ(error_code, arg_list);
+			if (!error_code) action = DTEAction::SECUR;
+			break;
+		case DTECommand::RSTVW_REQ: resp = RSTVW_REQ(error_code, arg_list); break;
+		case DTECommand::RSTBW_REQ:
+			resp = RSTBW_REQ(error_code);
+			if (!error_code) action = DTEAction::RESET;
+			break;
+		case DTECommand::FACTW_REQ:
+			resp = FACTW_REQ(error_code);
+			if (!error_code) action = DTEAction::FACTR;
+			break;
+		case DTECommand::DUMPM_REQ: resp = DUMPM_REQ(error_code, arg_list); break;
+		case DTECommand::PASPW_REQ: resp = PASPW_REQ(error_code, arg_list); break;
+		case DTECommand::DUMPD_REQ: resp = DUMPD_REQ(error_code, arg_list, action); break;
+		case DTECommand::ERASE_REQ: resp = ERASE_REQ(error_code, arg_list); break;
+		case DTECommand::SCALW_REQ: resp = SCALW_REQ(error_code, arg_list); break;
+		case DTECommand::SCALR_REQ: resp = SCALR_REQ(error_code, arg_list); break;
+		case DTECommand::ARGOSTX_REQ: resp = ARGOSTX_REQ(error_code, arg_list); break;
+		case DTECommand::SENSR_REQ: resp = SENSR_REQ(error_code, arg_list); break;
+		case DTECommand::PWRON_REQ: resp = PWRON_REQ(error_code, arg_list); break;
+		case DTECommand::GNSSBCKP_REQ: resp = GNSSBCKP_REQ(error_code, arg_list); break;
+		case DTECommand::SWSST_REQ: resp = SWSST_REQ(error_code); break;
+		case DTECommand::SWSTST_REQ: resp = SWSTST_REQ(error_code, arg_list); break;
+		case DTECommand::SWSCAL_REQ: resp = SWSCAL_REQ(error_code, arg_list); break;
+		case DTECommand::SWSSTATS_REQ: resp = SWSSTATS_REQ(error_code, arg_list); break;
+		case DTECommand::GNSSBR_REQ: resp = GNSSBR_REQ(error_code, arg_list); break;
+		case DTECommand::GNSSI_REQ: resp = GNSSI_REQ(error_code); break;
+		case DTECommand::GNSSA_REQ: resp = GNSSA_REQ(error_code); break;
+		case DTECommand::RTCW_REQ: resp = RTCW_REQ(error_code, arg_list); break;
+		case DTECommand::SMDDFU_REQ:
+			// VERSION action works for SMD/KIM2/LoRa builds; other actions SMD-only
+			resp = SMDDFU_REQ(error_code, arg_list);
+			break;
+		case DTECommand::COMCW_REQ: resp = COMCW_REQ(error_code, arg_list); break;
 #if defined(ARGOS_SMD) && (ARGOS_SMD == 1)
-	case DTECommand::SMDTST_REQ:
-		resp = SMDTST_REQ(error_code, arg_list);
-		break;
+		case DTECommand::SMDTST_REQ: resp = SMDTST_REQ(error_code, arg_list); break;
 #endif
-	case DTECommand::SATVF_REQ:
-		resp = SATVF_REQ(error_code, arg_list);
-		break;
-	case DTECommand::SATDP_REQ:
-		resp = SATDP_REQ(error_code, arg_list);
-		break;
+		case DTECommand::SATVF_REQ: resp = SATVF_REQ(error_code, arg_list); break;
+		case DTECommand::SATDP_REQ: resp = SATDP_REQ(error_code, arg_list); break;
 #if defined(LORA_RAK3172) && (LORA_RAK3172 == 1)
-	case DTECommand::LORATX_REQ:
-		resp = LORATX_REQ(error_code, arg_list);
-		break;
-	case DTECommand::LORABR_REQ:
-		resp = LORABR_REQ(error_code, arg_list);
-		break;
+		case DTECommand::LORATX_REQ: resp = LORATX_REQ(error_code, arg_list); break;
+		case DTECommand::LORABR_REQ: resp = LORABR_REQ(error_code, arg_list); break;
 #endif
 #if !(defined(LORA_RAK3172) && (LORA_RAK3172 == 1)) && !(defined(ARGOS_SMD) && (ARGOS_SMD == 1))
-	case DTECommand::KIMBR_REQ:
-		resp = KIMBR_REQ(error_code, arg_list);
-		break;
+		case DTECommand::KIMBR_REQ: resp = KIMBR_REQ(error_code, arg_list); break;
 #endif
-	default:
-		break;
-	}
+		default: break;
+		}
 	} catch (...) {
 		DEBUG_ERROR("DTEHandler: unexpected exception in command handler");
 		resp.clear();
@@ -2118,14 +1976,13 @@ DTEAction DTEHandler::handle_dte_message(const std::string& req, std::string& re
 #pragma GCC diagnostic pop
 
 // KineisEventListener: async TX result notification
-void DTEHandler::react(KineisEventTxComplete const& ) {
+void DTEHandler::react(KineisEventTxComplete const &) {
 	DEBUG_INFO("DTEHandler::react: KineisEventTxComplete");
 	if (m_doppler_cal_first_tx) {
 		// First SATDP TX succeeded — respond OK, then schedule periodic TX
 		LEDState::dispatch(SetLEDArgosTXComplete{});
 		m_doppler_cal_first_tx = false;
-		if (m_async_write)
-			m_async_write(DTEEncoder::encode(DTECommand::SATDP_RESP, (int)DTEError::OK));
+		if (m_async_write) m_async_write(DTEEncoder::encode(DTECommand::SATDP_RESP, (int)DTEError::OK));
 		schedule_doppler_cal_tx();
 	} else if (m_doppler_cal_active) {
 		// Periodic Doppler TX completed — schedule next one
@@ -2146,13 +2003,12 @@ void DTEHandler::react(KineisEventTxComplete const& ) {
 			configuration_store->get_argos_configuration(argos_config);
 			std::string rconf;
 			switch (m_sattx_restore_modulation) {
-				case KineisModulation::LDK:   rconf = argos_config.radioconf_ldk; break;
-				case KineisModulation::LDA2:  rconf = argos_config.radioconf_lda2; break;
-				case KineisModulation::VLDA4: rconf = argos_config.radioconf_vlda4; break;
-				default:                      rconf = argos_config.radioconf_lda2; break;
+			case KineisModulation::LDK: rconf = argos_config.radioconf_ldk; break;
+			case KineisModulation::LDA2: rconf = argos_config.radioconf_lda2; break;
+			case KineisModulation::VLDA4: rconf = argos_config.radioconf_vlda4; break;
+			default: rconf = argos_config.radioconf_lda2; break;
 			}
-			if (!rconf.empty())
-				smd_sat_instance->switch_modulation(m_sattx_restore_modulation, rconf);
+			if (!rconf.empty()) smd_sat_instance->switch_modulation(m_sattx_restore_modulation, rconf);
 			m_sattx_needs_restore = false;
 		}
 #endif
@@ -2164,15 +2020,14 @@ void DTEHandler::react(KineisEventTxComplete const& ) {
 	}
 }
 
-void DTEHandler::react(KineisEventDeviceError const& ) {
+void DTEHandler::react(KineisEventDeviceError const &) {
 	DEBUG_WARN("DTEHandler::react: KineisEventDeviceError");
 	if (m_doppler_cal_first_tx) {
 		// First SATDP TX failed — respond error, abort calibration
 		LEDState::dispatch(SetLEDArgosTXComplete{});
 		m_doppler_cal_active = false;
 		m_doppler_cal_first_tx = false;
-		if (m_async_write)
-			m_async_write(DTEEncoder::encode(DTECommand::SATDP_RESP, (int)DTEError::INCORRECT_DATA));
+		if (m_async_write) m_async_write(DTEEncoder::encode(DTECommand::SATDP_RESP, (int)DTEError::INCORRECT_DATA));
 	} else if (m_doppler_cal_active) {
 		// Periodic Doppler TX failed — retry on next cycle
 		LEDState::dispatch(SetLEDArgosTXComplete{});
@@ -2195,7 +2050,7 @@ void DTEHandler::react(KineisEventDeviceError const& ) {
 }
 
 // KineisEventListener: handle power off to release subscription
-void DTEHandler::react(KineisEventPowerOff const& ) {
+void DTEHandler::react(KineisEventPowerOff const &) {
 #if defined(ARGOS_SMD) && (ARGOS_SMD == 1)
 	if (m_sat_device_active && !m_doppler_cal_active) {
 		m_sat_device_active = false;
@@ -2214,7 +2069,7 @@ void DTEHandler::react(KineisEventPowerOff const& ) {
 #endif
 }
 
-std::string DTEHandler::SATDP_REQ(int error_code, std::vector<BaseType>& arg_list) {
+std::string DTEHandler::SATDP_REQ(int error_code, std::vector<BaseType> &arg_list) {
 	(void)arg_list;
 
 	if (error_code) {
@@ -2271,19 +2126,16 @@ void DTEHandler::schedule_doppler_cal_tx() {
 	DEBUG_TRACE("DTEHandler::schedule_doppler_cal_tx: next TX in %u ms", delay_ms);
 
 	system_scheduler->post_task_prio(
-		[this]() {
-			if (!m_doppler_cal_active || !smd_sat_instance) return;
-			unsigned int size_bits;
-			unsigned int batt_mv = battery_monitor ? battery_monitor->get_voltage() : 3700;
-			bool is_lb = battery_monitor ? battery_monitor->is_battery_low() : false;
-			KineisPacket packet = ArgosPacketBuilder::build_doppler_packet(batt_mv, is_lb, size_bits);
-			DEBUG_TRACE("DTEHandler: SATDP periodic TX (%u bits)", size_bits);
-			LEDState::dispatch(SetLEDArgosTX{});
-			smd_sat_instance->send(KineisModulation::LDA2, packet, size_bits);
-		},
-		"SATDPPeriodicTx",
-		Scheduler::DEFAULT_PRIORITY,
-		delay_ms
-	);
+	    [this]() {
+		    if (!m_doppler_cal_active || !smd_sat_instance) return;
+		    unsigned int size_bits;
+		    unsigned int batt_mv = battery_monitor ? battery_monitor->get_voltage() : 3700;
+		    bool is_lb = battery_monitor ? battery_monitor->is_battery_low() : false;
+		    KineisPacket packet = ArgosPacketBuilder::build_doppler_packet(batt_mv, is_lb, size_bits);
+		    DEBUG_TRACE("DTEHandler: SATDP periodic TX (%u bits)", size_bits);
+		    LEDState::dispatch(SetLEDArgosTX{});
+		    smd_sat_instance->send(KineisModulation::LDA2, packet, size_bits);
+	    },
+	    "SATDPPeriodicTx", Scheduler::DEFAULT_PRIORITY, delay_ms);
 #endif
 }

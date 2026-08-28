@@ -17,8 +17,7 @@ extern Scheduler *system_scheduler;
 extern RTC *rtc;
 
 
-TEST_GROUP(CDTSensor)
-{
+TEST_GROUP(CDTSensor) {
 	FakeConfigurationStore *fake_config_store;
 	FakeTimer *fake_timer;
 	FakeLog *fake_logger;
@@ -56,8 +55,7 @@ TEST_GROUP(CDTSensor)
 };
 
 
-TEST(CDTSensor, SensorDisabled)
-{
+TEST(CDTSensor, SensorDisabled) {
 	MockSensor drv;
 	CDTSensorService s(drv, logger);
 	unsigned int num_callbacks = 0;
@@ -78,7 +76,7 @@ TEST(CDTSensor, SensorDisabled)
 
 	// Sampling should happen every 10
 	for (unsigned int i = 0; i < 5; i++) {
-		fake_timer->increment_counter(period*1000);
+		fake_timer->increment_counter(period * 1000);
 		system_scheduler->run();
 	}
 
@@ -89,8 +87,7 @@ TEST(CDTSensor, SensorDisabled)
 }
 
 
-TEST(CDTSensor, SchedulingPeriodic)
-{
+TEST(CDTSensor, SchedulingPeriodic) {
 	MockSensor drv;
 	CDTSensorService s(drv, logger);
 	unsigned int num_callbacks = 0;
@@ -112,9 +109,9 @@ TEST(CDTSensor, SchedulingPeriodic)
 	// Sampling should happen every 10
 	for (unsigned int i = 0; i < 5; i++) {
 		mock().expectOneCall("read").onObject(&drv).withUnsignedIntParameter("port", 0).andReturnValue((double)i);
-		mock().expectOneCall("read").onObject(&drv).withUnsignedIntParameter("port", 1).andReturnValue((double)i+1);
-		mock().expectOneCall("read").onObject(&drv).withUnsignedIntParameter("port", 2).andReturnValue((double)i+2);
-		fake_timer->increment_counter(period*1000);
+		mock().expectOneCall("read").onObject(&drv).withUnsignedIntParameter("port", 1).andReturnValue((double)i + 1);
+		mock().expectOneCall("read").onObject(&drv).withUnsignedIntParameter("port", 2).andReturnValue((double)i + 2);
+		fake_timer->increment_counter(period * 1000);
 		system_scheduler->run();
 	}
 
@@ -126,16 +123,15 @@ TEST(CDTSensor, SchedulingPeriodic)
 		CDTLogEntry e;
 		logger->read(&e, i);
 		CHECK_EQUAL((double)i, e.conductivity);
-		CHECK_EQUAL((double)i+1, e.depth);
-		CHECK_EQUAL((double)i+2, e.temperature);
+		CHECK_EQUAL((double)i + 1, e.depth);
+		CHECK_EQUAL((double)i + 2, e.temperature);
 	}
 
 	s.stop();
 }
 
 
-TEST(CDTSensor, SchedulingNoPeriodic)
-{
+TEST(CDTSensor, SchedulingNoPeriodic) {
 	MockSensor drv;
 	CDTSensorService s(drv, logger);
 	unsigned int num_callbacks = 0;
@@ -156,7 +152,7 @@ TEST(CDTSensor, SchedulingNoPeriodic)
 
 	// Sampling should happen every 10
 	for (unsigned int i = 0; i < 5; i++) {
-		fake_timer->increment_counter(period*1000);
+		fake_timer->increment_counter(period * 1000);
 		system_scheduler->run();
 	}
 

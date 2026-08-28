@@ -7,8 +7,7 @@
 #include "debug.hpp"
 #include "error.hpp"
 
-LoRaTxScheduler::LoRaTxScheduler() :
-		m_rand(std::mt19937()) {
+LoRaTxScheduler::LoRaTxScheduler() : m_rand(std::mt19937()) {
 	m_last_schedule_abs.reset();
 	m_curr_schedule_abs.reset();
 	m_earliest_schedule.reset();
@@ -38,7 +37,8 @@ int LoRaTxScheduler::compute_random_jitter(bool jitter_en, int min, int max) {
 	}
 }
 
-void LoRaTxScheduler::schedule_periodic(unsigned int period_ms, bool jitter_en, unsigned int duty_cycle, uint64_t now_ms) {
+void LoRaTxScheduler::schedule_periodic(unsigned int period_ms, bool jitter_en, unsigned int duty_cycle,
+                                        uint64_t now_ms) {
 	uint64_t start_time;
 
 	// Sealed-device guard (audit 2026-07): the 24 h search loop below advances
@@ -54,8 +54,7 @@ void LoRaTxScheduler::schedule_periodic(unsigned int period_ms, bool jitter_en, 
 	}
 
 	DEBUG_TRACE("LoRaTxScheduler::schedule_periodic: now=%llu last=%llu tr=%u jitter=%u", now_ms,
-			m_last_schedule_abs.has_value() ? m_last_schedule_abs.value() : 0,
-			period_ms, jitter_en);
+	            m_last_schedule_abs.has_value() ? m_last_schedule_abs.value() : 0, period_ms, jitter_en);
 
 	// Handle earliest TX time
 	while (m_earliest_schedule.has_value()) {
@@ -63,8 +62,7 @@ void LoRaTxScheduler::schedule_periodic(unsigned int period_ms, bool jitter_en, 
 
 		if (m_earliest_schedule.value() >= now_ms) {
 			start_time = m_earliest_schedule.value();
-			if (m_last_schedule_abs.has_value() &&
-				start_time < m_last_schedule_abs.value())
+			if (m_last_schedule_abs.has_value() && start_time < m_last_schedule_abs.value())
 				start_time = m_last_schedule_abs.value();
 
 			if (is_in_duty_cycle(start_time, duty_cycle)) {
@@ -84,8 +82,7 @@ void LoRaTxScheduler::schedule_periodic(unsigned int period_ms, bool jitter_en, 
 		start_time = now_ms + compute_random_jitter(jitter_en, 0);
 	} else {
 		start_time = m_last_schedule_abs.value() + period_ms + compute_random_jitter(jitter_en);
-		if ((start_time + (MSECS_PER_SECOND * SECONDS_PER_DAY)) < now_ms)
-			start_time = now_ms;
+		if ((start_time + (MSECS_PER_SECOND * SECONDS_PER_DAY)) < now_ms) start_time = now_ms;
 	}
 
 	DEBUG_TRACE("LoRaTxScheduler::schedule_periodic: starting @ %llu", start_time);
@@ -108,18 +105,20 @@ void LoRaTxScheduler::schedule_periodic(unsigned int period_ms, bool jitter_en, 
 	throw ErrorCode::RESOURCE_NOT_AVAILABLE;
 }
 
-unsigned int LoRaTxScheduler::schedule_duty_cycle(ArgosConfig& config, std::time_t now) {
+unsigned int LoRaTxScheduler::schedule_duty_cycle(ArgosConfig &config, std::time_t now) {
 	try {
-		schedule_periodic((config.tx_interval_s * MSECS_PER_SECOND), config.argos_tx_jitter_en, config.duty_cycle, ((uint64_t)now * MSECS_PER_SECOND));
+		schedule_periodic((config.tx_interval_s * MSECS_PER_SECOND), config.argos_tx_jitter_en, config.duty_cycle,
+		                  ((uint64_t)now * MSECS_PER_SECOND));
 		return m_curr_schedule_abs.value() - (now * MSECS_PER_SECOND);
 	} catch (...) {
 		return INVALID_SCHEDULE;
 	}
 }
 
-unsigned int LoRaTxScheduler::schedule_legacy(ArgosConfig& config, std::time_t now) {
+unsigned int LoRaTxScheduler::schedule_legacy(ArgosConfig &config, std::time_t now) {
 	try {
-		schedule_periodic((config.tx_interval_s * MSECS_PER_SECOND), config.argos_tx_jitter_en, DUTYCYCLE_24HRS, (now * MSECS_PER_SECOND));
+		schedule_periodic((config.tx_interval_s * MSECS_PER_SECOND), config.argos_tx_jitter_en, DUTYCYCLE_24HRS,
+		                  (now * MSECS_PER_SECOND));
 		return m_curr_schedule_abs.value() - (now * MSECS_PER_SECOND);
 	} catch (...) {
 		return INVALID_SCHEDULE;

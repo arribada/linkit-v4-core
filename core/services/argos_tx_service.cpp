@@ -44,10 +44,8 @@ extern MortalityService *mortality_service;
 /// setting a mask mutes the tag, and nothing said so. The behaviour is
 /// deliberately unchanged -- an explicit mask is the operator's decision -- but
 /// the log now names the reason.
-static unsigned int report_duty_cycle_schedule(unsigned int schedule, const ArgosConfig& cfg)
-{
-	if (schedule != ArgosTxScheduler::INVALID_SCHEDULE)
-		return schedule;
+static unsigned int report_duty_cycle_schedule(unsigned int schedule, const ArgosConfig &cfg) {
+	if (schedule != ArgosTxScheduler::INVALID_SCHEDULE) return schedule;
 
 	if ((cfg.duty_cycle & 0xFFFFFF) == 0)
 		DEBUG_WARN("ArgosTxService: DUTY_CYCLE mask is 0x000000 — no hour is enabled, "
@@ -60,10 +58,9 @@ static unsigned int report_duty_cycle_schedule(unsigned int schedule, const Argo
 	return schedule;
 }
 
-ArgosTxService::ArgosTxService(KineisDevice& device) : Service(ServiceIdentifier::ARGOS_TX, "ARGOSTX"),
-	m_kineis(device)
-{
-}
+ArgosTxService::ArgosTxService(KineisDevice &device)
+    : Service(ServiceIdentifier::ARGOS_TX, "ARGOSTX"),
+      m_kineis(device) {}
 
 /// @brief Init: subscribe to KineisDevice events, load config, set TCXO/LPM.
 void ArgosTxService::service_init() {
@@ -85,7 +82,7 @@ void ArgosTxService::service_init() {
 	// flash the whole time. A position from the day before is still largely
 	// usable to predict satellite visibility.
 	{
-		const GPSLogEntry& last_gps = configuration_store->get_last_gps_entry();
+		const GPSLogEntry &last_gps = configuration_store->get_last_gps_entry();
 		if (last_gps.info.valid) {
 			m_sched.set_last_location(last_gps.info.lon, last_gps.info.lat);
 			DEBUG_INFO("ArgosTxService: position de prepass amorcee depuis le dernier fix persiste (lon=%f lat=%f)",
@@ -113,14 +110,14 @@ void ArgosTxService::service_init() {
 
 	// Warn if SURFACING_BURST mode is configured without underwater detection
 	if (argos_config.mode == BaseArgosMode::SURFACING_BURST && !argos_config.underwater_en) {
-		DEBUG_WARN("ArgosTxService: SURFACING_BURST mode requires UNDERWATER_EN=1 — burst will not trigger without SWS");
+		DEBUG_WARN(
+		    "ArgosTxService: SURFACING_BURST mode requires UNDERWATER_EN=1 — burst will not trigger without SWS");
 	}
 
 	// Position-less: LEGACY and DUTY_CYCLE with GNSS_EN=0 fall back to a
 	// Doppler-only TX (no position on air, except a cached fix via REUSE_LAST).
-	if ((argos_config.mode == BaseArgosMode::LEGACY ||
-	     argos_config.mode == BaseArgosMode::DUTY_CYCLE) &&
-	    !argos_config.gnss_en) {
+	if ((argos_config.mode == BaseArgosMode::LEGACY || argos_config.mode == BaseArgosMode::DUTY_CYCLE)
+	    && !argos_config.gnss_en) {
 		DEBUG_WARN("ArgosTxService: %s with GNSS_EN=0 — TX will be Doppler-only without position",
 		           argos_config.mode == BaseArgosMode::LEGACY ? "LEGACY" : "DUTY_CYCLE");
 	}
@@ -135,8 +132,7 @@ void ArgosTxService::service_init() {
 		DEBUG_ERROR("ArgosTxService: CONFIGURATION INCOMPATIBLE — PASS_PREDICTION exige GNSS_EN=1 "
 		            "(la prevision de passage se calcule a partir d'une position). AUCUNE emission "
 		            "ne sera planifiee tant que cette combinaison est en place.");
-		if (status_led)
-			status_led->flash(RGBLedColor::RED, 200);
+		if (status_led) status_led->flash(RGBLedColor::RED, 200);
 	}
 
 	DEBUG_INFO("ArgosTxService::service_init: Argos ID=%u", (unsigned int)argos_config.argos_id);
@@ -251,9 +247,8 @@ unsigned int ArgosTxService::service_next_schedule_in_ms() {
 			// limiter is for. Clamp instead: SCHEDULE_DISABLED is 0xFFFFFFFF and
 			// must stay reachable only as the "nothing planned" sentinel.
 			constexpr unsigned int MAX_RESCHEDULE_MS = 0xFFFFFFFEu;
-			unsigned int reschedule_ms = (reschedule_s > MAX_RESCHEDULE_MS / 1000u)
-			                           ? MAX_RESCHEDULE_MS
-			                           : reschedule_s * 1000u;
+			unsigned int reschedule_ms =
+			    (reschedule_s > MAX_RESCHEDULE_MS / 1000u) ? MAX_RESCHEDULE_MS : reschedule_s * 1000u;
 			return reschedule_ms;
 		}
 	}
@@ -266,21 +261,21 @@ unsigned int ArgosTxService::service_next_schedule_in_ms() {
 	// Any failure (AOP missing/expired, no computable pass, window beyond
 	// SAT_PREPASS_MAX_WAIT_S) still lets the mode transmit PERIODICALLY: we
 	// never leave the beacon mute.
-	if (argos_config.prepass_en && argos_config.mode != BaseArgosMode::PASS_PREDICTION &&
-	    argos_config.mode != BaseArgosMode::OFF) {
+	if (argos_config.prepass_en && argos_config.mode != BaseArgosMode::PASS_PREDICTION
+	    && argos_config.mode != BaseArgosMode::OFF) {
 		unsigned int age_s = 0;
 		std::time_t aos = 0;
 		AopEtat etat = aop_etat(argos_config, now, age_s);
 		if (etat != AopEtat::UTILISABLE) {
-			DEBUG_WARN("ArgosTxService: prepass demande mais %s (age=%u s) — emission periodique",
-			           aop_etat_texte(etat), age_s);
+			DEBUG_WARN("ArgosTxService: prepass demande mais %s (age=%u s) — emission periodique", aop_etat_texte(etat),
+			           age_s);
 		} else {
-			BasePassPredict& pp = configuration_store->read_pass_predict();
+			BasePassPredict &pp = configuration_store->read_pass_predict();
 			aos = m_sched.next_pass_epoch(argos_config, pp, now);
 			if (aos <= 0) {
 				DEBUG_WARN("ArgosTxService: prepass demande mais aucun passage calculable — emission periodique");
-			} else if (argos_config.prepass_max_wait_s &&
-			           aos > now + static_cast<std::time_t>(argos_config.prepass_max_wait_s)) {
+			} else if (argos_config.prepass_max_wait_s
+			           && aos > now + static_cast<std::time_t>(argos_config.prepass_max_wait_s)) {
 				DEBUG_INFO("ArgosTxService: prochaine fenetre dans %lld s > attente max %u s — emission periodique",
 				           static_cast<long long>(aos - now), argos_config.prepass_max_wait_s);
 			} else {
@@ -302,8 +297,7 @@ unsigned int ArgosTxService::service_next_schedule_in_ms() {
 		unsigned int critical_level = configuration_store->read_param<unsigned int>(ParamID::LB_CRITICAL_THRESH);
 		unsigned int current_soc = service_get_level();
 		if (current_soc < critical_level) {
-			DEBUG_INFO("ArgosTxService: CRITICAL battery SOC %u%% < %u%% - shutdown",
-			           current_soc, critical_level);
+			DEBUG_INFO("ArgosTxService: CRITICAL battery SOC %u%% < %u%% - shutdown", current_soc, critical_level);
 			configuration_store->save_params();
 			PMU::powerdown();
 			return Service::SCHEDULE_DISABLED;
@@ -332,7 +326,8 @@ unsigned int ArgosTxService::service_next_schedule_in_ms() {
 		} else {
 			m_scheduled_task = [this]() { process_doppler_burst(); };
 		}
-		m_scheduled_mode = argos_config.adaptive_modulation ? KineisModulation::VLDA4 : resolve_non_adaptive_modulation();
+		m_scheduled_mode =
+		    argos_config.adaptive_modulation ? KineisModulation::VLDA4 : resolve_non_adaptive_modulation();
 
 		// Inter-sequence pause guard. If a reschedule fires while we are
 		// supposed to be paused (e.g., UW surfaced event, GPS log update),
@@ -352,8 +347,7 @@ unsigned int ArgosTxService::service_next_schedule_in_ms() {
 		// already TX'd. Reset count and arm the inter-sequence pause.
 		if (max_msg > 0 && m_doppler_seq_count >= max_msg) {
 			unsigned int inter_s = argos_config.tx_interval_s;
-			DEBUG_INFO("ArgosTxService::DOPPLER: sequence end (%u/%u), %s",
-			           m_doppler_seq_count, max_msg,
+			DEBUG_INFO("ArgosTxService::DOPPLER: sequence end (%u/%u), %s", m_doppler_seq_count, max_msg,
 			           inter_s == 0 ? "chaining next sequence" : "pausing then next sequence");
 			m_doppler_seq_count = 0;
 			if (inter_s > 0) {
@@ -375,10 +369,9 @@ unsigned int ArgosTxService::service_next_schedule_in_ms() {
 		}
 
 		// Subsequent msg: progressive interval capped at max_s.
-		unsigned int interval_s = argos_config.surfacing_burst_init_s +
-		    (m_doppler_seq_count - 1) * argos_config.surfacing_burst_step_s;
-		if (interval_s > argos_config.surfacing_burst_max_s)
-			interval_s = argos_config.surfacing_burst_max_s;
+		unsigned int interval_s =
+		    argos_config.surfacing_burst_init_s + (m_doppler_seq_count - 1) * argos_config.surfacing_burst_step_s;
+		if (interval_s > argos_config.surfacing_burst_max_s) interval_s = argos_config.surfacing_burst_max_s;
 		DEBUG_TRACE("ArgosTxService::DOPPLER: msg #%u in %u s", m_doppler_seq_count + 1, interval_s);
 		m_sched.schedule_at(now + (std::time_t)interval_s);
 		return interval_s * 1000;
@@ -401,16 +394,16 @@ unsigned int ArgosTxService::service_next_schedule_in_ms() {
 		// further down. With adaptive=OFF, m_scheduled_mode now equals the
 		// saved RCONF modulation → ensure_modulation() is a no-op → no
 		// per-TX flash write → user's LDK config is honored AND persisted.
-		m_scheduled_mode = argos_config.adaptive_modulation
-			? KineisModulation::LDA2
-			: resolve_non_adaptive_modulation();
+		m_scheduled_mode =
+		    argos_config.adaptive_modulation ? KineisModulation::LDA2 : resolve_non_adaptive_modulation();
 
 		// Phase 1: Doppler burst with progressive intervals until GNSS fix
 		if (m_is_surfacing_burst && !m_has_gnss_fix_since_surfacing) {
 			// Check max Doppler message limit (0 = unlimited)
 			unsigned int max_msg = configuration_store->read_param<unsigned int>(ParamID::SURFACING_BURST_MAX_MSG);
 			if (max_msg > 0 && m_doppler_burst_count >= max_msg) {
-				DEBUG_INFO("ArgosTxService::SURFACING_BURST: Doppler limit reached (%u/%u), stopping burst", m_doppler_burst_count, max_msg);
+				DEBUG_INFO("ArgosTxService::SURFACING_BURST: Doppler limit reached (%u/%u), stopping burst",
+				           m_doppler_burst_count, max_msg);
 				// Arm cooldown if trigger mode is END_OF_DOPPLER (max messages reached without fix)
 				unsigned int trigger = configuration_store->read_param<unsigned int>(ParamID::COOLDOWN_TRIGGER_MODE);
 				if (trigger == (unsigned int)BaseCooldownTrigger::END_OF_DOPPLER && !m_cooldown_armed) {
@@ -445,14 +438,14 @@ unsigned int ArgosTxService::service_next_schedule_in_ms() {
 				}
 
 				// Progressive interval: init + (count-1) * step, capped at max
-				unsigned int interval_s = argos_config.surfacing_burst_init_s +
-					(m_doppler_burst_count - 1) * argos_config.surfacing_burst_step_s;
-				if (interval_s > argos_config.surfacing_burst_max_s)
-					interval_s = argos_config.surfacing_burst_max_s;
+				unsigned int interval_s = argos_config.surfacing_burst_init_s
+				                          + (m_doppler_burst_count - 1) * argos_config.surfacing_burst_step_s;
+				if (interval_s > argos_config.surfacing_burst_max_s) interval_s = argos_config.surfacing_burst_max_s;
 
 				// Demoted to TRACE: per progressive ping. Burst start/end markers
-			// stay at INFO; intermediate scheduling is verbose forensics.
-			DEBUG_TRACE("ArgosTxService::SURFACING_BURST: Doppler #%u in %u s", m_doppler_burst_count + 1, interval_s);
+				// stay at INFO; intermediate scheduling is verbose forensics.
+				DEBUG_TRACE("ArgosTxService::SURFACING_BURST: Doppler #%u in %u s", m_doppler_burst_count + 1,
+				            interval_s);
 				m_sched.schedule_at(now + interval_s);
 				return interval_s * 1000;
 			}
@@ -496,8 +489,8 @@ unsigned int ArgosTxService::service_next_schedule_in_ms() {
 			}
 
 			// Demoted to TRACE: per Phase-2 ping. The "GNSS TX #1" INFO at burst
-		// promotion already marks the entry; per-ping interval is verbose.
-		DEBUG_TRACE("ArgosTxService::SURFACING_BURST: GNSS TX in %u s", argos_config.tx_interval_s);
+			// promotion already marks the entry; per-ping interval is verbose.
+			DEBUG_TRACE("ArgosTxService::SURFACING_BURST: GNSS TX in %u s", argos_config.tx_interval_s);
 			return m_sched.schedule_legacy(argos_config, now);
 		}
 
@@ -531,11 +524,13 @@ unsigned int ArgosTxService::service_next_schedule_in_ms() {
 				m_scheduled_task = [this]() { process_doppler_burst(); };
 			}
 			if (argos_config.mode == BaseArgosMode::DUTY_CYCLE) {
-				m_scheduled_mode = argos_config.adaptive_modulation ? KineisModulation::VLDA4 : resolve_non_adaptive_modulation();
+				m_scheduled_mode =
+				    argos_config.adaptive_modulation ? KineisModulation::VLDA4 : resolve_non_adaptive_modulation();
 				return report_duty_cycle_schedule(m_sched.schedule_duty_cycle(argos_config, now), argos_config);
 			}
 			if (argos_config.mode == BaseArgosMode::LEGACY) {
-				m_scheduled_mode = argos_config.adaptive_modulation ? KineisModulation::VLDA4 : resolve_non_adaptive_modulation();
+				m_scheduled_mode =
+				    argos_config.adaptive_modulation ? KineisModulation::VLDA4 : resolve_non_adaptive_modulation();
 				return m_sched.schedule_legacy(argos_config, now);
 			}
 			// Only DUTY_CYCLE and LEGACY know how to do without the GNSS. Any
@@ -548,8 +543,7 @@ unsigned int ArgosTxService::service_next_schedule_in_ms() {
 			DEBUG_ERROR("ArgosTxService: mode %d avec GNSS_EN=0 — aucun ordonnancement possible, "
 			            "TX desactive (configuration incompatible)",
 			            static_cast<int>(argos_config.mode));
-			if (status_led)
-				status_led->flash(RGBLedColor::RED, 200);
+			if (status_led) status_led->flash(RGBLedColor::RED, 200);
 			return Service::SCHEDULE_DISABLED;
 		} else if (!service_is_time_known()) {
 			DEBUG_INFO("ArgosTxService: RTC time not known yet — TX disabled until first time fix");
@@ -578,21 +572,20 @@ unsigned int ArgosTxService::service_next_schedule_in_ms() {
 		// What does stay conditional, on the other hand, is the time-sync
 		// burst: it CARRIES the time, so transmitting it on a clock the GNSS
 		// has not corrected would amount to broadcasting a wrong date.
-		if (m_is_first_tx && argos_config.time_sync_burst_en &&
-		    m_gps_fix_corrected_clock) {
+		if (m_is_first_tx && argos_config.time_sync_burst_en && m_gps_fix_corrected_clock) {
 			// Provisional modulation, like LEGACY/DUTY_CYCLE further down:
 			// adaptive -> LDA2 (process_time_sync_burst switches back to LDK
 			// depending on size), non-adaptive -> master RCONF. Before 2026-06-25
 			// it was LDA2 forced unconditionally (cf. user point).
-			m_scheduled_mode = argos_config.adaptive_modulation
-				? KineisModulation::LDA2
-				: resolve_non_adaptive_modulation();
+			m_scheduled_mode =
+			    argos_config.adaptive_modulation ? KineisModulation::LDA2 : resolve_non_adaptive_modulation();
 			m_scheduled_task = [this]() { process_time_sync_burst(); };
 			m_sched.schedule_at(now);
 			return 0;
 		}
 		if (m_depth_pile_manager.eligible() == 0) {
-			DEBUG_INFO("ArgosTxService: depth pile has no eligible entries (NTRY exhausted or empty) — TX disabled until next GPS entry");
+			DEBUG_INFO("ArgosTxService: depth pile has no eligible entries (NTRY exhausted or empty) — TX disabled "
+			           "until next GPS entry");
 			return Service::SCHEDULE_DISABLED;
 		}
 		if (argos_config.mode == BaseArgosMode::DUTY_CYCLE) {
@@ -600,9 +593,8 @@ unsigned int ArgosTxService::service_next_schedule_in_ms() {
 			// (decoded from AT+RCONF=? at init on KIM2; LDA2 on SMD).
 			// Adaptive: default to LDA2; process_*_burst will switch to
 			// LDK if the payload fits (96/128-bit packets).
-			m_scheduled_mode = argos_config.adaptive_modulation
-				? KineisModulation::LDA2
-				: resolve_non_adaptive_modulation();
+			m_scheduled_mode =
+			    argos_config.adaptive_modulation ? KineisModulation::LDA2 : resolve_non_adaptive_modulation();
 #ifdef BOARD_RSPB
 			if (argos_config.adaptive_modulation && argos_config.sensor_tx_enable) {
 				unsigned int pkt_fmt = configuration_store->read_param<unsigned int>(ParamID::RSPB_PACKET_FORMAT);
@@ -617,9 +609,8 @@ unsigned int ArgosTxService::service_next_schedule_in_ms() {
 			return report_duty_cycle_schedule(m_sched.schedule_duty_cycle(argos_config, now), argos_config);
 		}
 		if (argos_config.mode == BaseArgosMode::LEGACY) {
-			m_scheduled_mode = argos_config.adaptive_modulation
-				? KineisModulation::LDA2
-				: resolve_non_adaptive_modulation();
+			m_scheduled_mode =
+			    argos_config.adaptive_modulation ? KineisModulation::LDA2 : resolve_non_adaptive_modulation();
 #ifdef BOARD_RSPB
 			if (argos_config.adaptive_modulation && argos_config.sensor_tx_enable) {
 				unsigned int pkt_fmt = configuration_store->read_param<unsigned int>(ParamID::RSPB_PACKET_FORMAT);
@@ -634,9 +625,8 @@ unsigned int ArgosTxService::service_next_schedule_in_ms() {
 			return m_sched.schedule_legacy(argos_config, now);
 		}
 		if (argos_config.mode == BaseArgosMode::PASS_PREDICTION) {
-			m_scheduled_mode = argos_config.adaptive_modulation
-				? KineisModulation::LDA2
-				: resolve_non_adaptive_modulation();
+			m_scheduled_mode =
+			    argos_config.adaptive_modulation ? KineisModulation::LDA2 : resolve_non_adaptive_modulation();
 			if (argos_config.sensor_tx_enable) {
 				m_scheduled_task = [this]() { process_sensor_burst(); };
 			} else {
@@ -655,7 +645,7 @@ unsigned int ArgosTxService::service_next_schedule_in_ms() {
 				refresh_prepass_status(argos_config, now, 0);
 				return m_sched.schedule_legacy(argos_config, now);
 			}
-			BasePassPredict& pass_predict = configuration_store->read_pass_predict();
+			BasePassPredict &pass_predict = configuration_store->read_pass_predict();
 			// m_scheduled_mode is resolved just above and is no longer
 			// touched by the scheduler.
 			unsigned int schedule = m_sched.schedule_prepass(argos_config, pass_predict, now);
@@ -668,8 +658,7 @@ unsigned int ArgosTxService::service_next_schedule_in_ms() {
 			// for hours. Beyond SAT_PREPASS_MAX_WAIT_S we transmit in
 			// periodic mode (0 = no safeguard).
 			static constexpr unsigned int MS_PER_S = 1000;
-			if (argos_config.prepass_max_wait_s &&
-			    schedule > argos_config.prepass_max_wait_s * MS_PER_S) {
+			if (argos_config.prepass_max_wait_s && schedule > argos_config.prepass_max_wait_s * MS_PER_S) {
 				DEBUG_INFO("ArgosTxService: prochaine fenetre dans %u s > attente max %u s — repli periodique",
 				           schedule / MS_PER_S, argos_config.prepass_max_wait_s);
 				refresh_prepass_status(argos_config, now, now + schedule / MS_PER_S);
@@ -691,7 +680,8 @@ void ArgosTxService::service_initiate() {
 	// Skip TX if device has failed too many consecutive times this session.
 	// This prevents battery drain from persistent hardware failures (e.g. SPI breakdown).
 	if (m_consecutive_device_errors >= DEVICE_ERROR_MAX_CONSECUTIVE) {
-		DEBUG_WARN("ArgosTxService::service_initiate: skipping TX — %u consecutive device errors, suspending until next session",
+		DEBUG_WARN("ArgosTxService::service_initiate: skipping TX — %u consecutive device errors, suspending until "
+		           "next session",
 		           m_consecutive_device_errors);
 		service_complete(nullptr, nullptr, false);  // complete without rescheduling
 		return;
@@ -709,7 +699,8 @@ void ArgosTxService::service_initiate() {
 	if (m_kineis.is_receiving()) {
 		std::time_t now = service_current_time();
 		DEBUG_INFO("ArgosTxService::service_initiate: device is receiving, deferring TX by %u s "
-		           "(no depth pile entry consumed)", ARGOS_TX_RX_BUSY_DEFER_S);
+		           "(no depth pile entry consumed)",
+		           ARGOS_TX_RX_BUSY_DEFER_S);
 		m_sched.set_earliest_schedule(now + (std::time_t)ARGOS_TX_RX_BUSY_DEFER_S);
 		service_complete(nullptr, nullptr, true);
 		return;
@@ -772,7 +763,8 @@ void ArgosTxService::service_initiate() {
 
 	// Apply deferred modulation switch (cached while SMD was powered off)
 	if (m_modulation_preconfig.has_value()) {
-		DEBUG_INFO("ArgosTxService::service_initiate: applying deferred modulation switch to %d", (int)m_modulation_preconfig.value());
+		DEBUG_INFO("ArgosTxService::service_initiate: applying deferred modulation switch to %d",
+		           (int)m_modulation_preconfig.value());
 		ensure_modulation(m_modulation_preconfig.value());
 		m_modulation_preconfig.reset();
 	}
@@ -793,17 +785,15 @@ void ArgosTxService::service_initiate() {
 	if (!m_modulation_preconfig.has_value()) {
 		ArgosConfig argos_config;
 		configuration_store->get_argos_configuration(argos_config);
-		if (argos_config.adaptive_modulation &&
-			argos_config.mode != BaseArgosMode::SURFACING_BURST) {
+		if (argos_config.adaptive_modulation && argos_config.mode != BaseArgosMode::SURFACING_BURST) {
 			bool burst_may_override_mode = false;
 #ifndef BOARD_RSPB
-			burst_may_override_mode = argos_config.gnss_en &&
-				(argos_config.mode == BaseArgosMode::LEGACY ||
-				 argos_config.mode == BaseArgosMode::DUTY_CYCLE ||
-				 argos_config.mode == BaseArgosMode::PASS_PREDICTION);
+			burst_may_override_mode =
+			    argos_config.gnss_en
+			    && (argos_config.mode == BaseArgosMode::LEGACY || argos_config.mode == BaseArgosMode::DUTY_CYCLE
+			        || argos_config.mode == BaseArgosMode::PASS_PREDICTION);
 #endif
-			if (!burst_may_override_mode &&
-				m_kineis.get_current_modulation() != m_scheduled_mode) {
+			if (!burst_may_override_mode && m_kineis.get_current_modulation() != m_scheduled_mode) {
 				DEBUG_INFO("ArgosTxService::service_initiate: adaptive pre-switch to %s",
 				           argos_modulation_to_string((BaseArgosModulation)m_scheduled_mode));
 				ensure_modulation(m_scheduled_mode);
@@ -898,7 +888,7 @@ bool ArgosTxService::service_is_triggered_on_surfaced(bool &immediate) {
 
 /// @brief Handle peer service events (GPS fix, sensor data, underwater state, surfacing).
 /// @param e  Event from another service (GPS, SWS, sensors, etc.).
-void ArgosTxService::notify_peer_event(ServiceEvent& e) {
+void ArgosTxService::notify_peer_event(ServiceEvent &e) {
 	//DEBUG_TRACE("ArgosTxService::notify_peer_event: (%u|%u)", e.event_source, e.event_type);
 
 	// Background refresh of the pre-warmed Doppler packet: any peer event
@@ -917,13 +907,11 @@ void ArgosTxService::notify_peer_event(ServiceEvent& e) {
 	// sent directly in process_doppler_burst() — skip depth pile to avoid double transmission.
 	// Only real GPS fixes should enter the depth pile for the GNSS phase.
 	bool skip_depth_pile = false;
-	if (m_is_surfacing_burst && !m_has_gnss_fix_since_surfacing &&
-	    e.event_source == ServiceIdentifier::GNSS_SENSOR &&
-	    e.event_type == ServiceEventType::SERVICE_LOG_UPDATED) {
-		GPSLogEntry& gps = std::get<GPSLogEntry>(e.event_data);
-		if (gps.info.event_type == GPSEventType::CLOUDLOCATE ||
-		    gps.info.event_type == GPSEventType::FASTLOC ||
-		    gps.info.event_type == GPSEventType::NO_FIX) {
+	if (m_is_surfacing_burst && !m_has_gnss_fix_since_surfacing && e.event_source == ServiceIdentifier::GNSS_SENSOR
+	    && e.event_type == ServiceEventType::SERVICE_LOG_UPDATED) {
+		GPSLogEntry &gps = std::get<GPSLogEntry>(e.event_data);
+		if (gps.info.event_type == GPSEventType::CLOUDLOCATE || gps.info.event_type == GPSEventType::FASTLOC
+		    || gps.info.event_type == GPSEventType::NO_FIX) {
 			skip_depth_pile = true;
 		}
 	}
@@ -932,10 +920,8 @@ void ArgosTxService::notify_peer_event(ServiceEvent& e) {
 		m_depth_pile_manager.notify_peer_event(e);
 	}
 
-	if (e.event_source == ServiceIdentifier::GNSS_SENSOR &&
-		e.event_type == ServiceEventType::SERVICE_LOG_UPDATED)
-	{
-		GPSLogEntry& entry = std::get<GPSLogEntry>(e.event_data);
+	if (e.event_source == ServiceIdentifier::GNSS_SENSOR && e.event_type == ServiceEventType::SERVICE_LOG_UPDATED) {
+		GPSLogEntry &entry = std::get<GPSLogEntry>(e.event_data);
 
 		// Terrestrial equivalent of the surface-event reset (see UW_SENSOR
 		// branch below). A new GPS session is a fresh TX opportunity, so clear
@@ -962,10 +948,8 @@ void ArgosTxService::notify_peer_event(ServiceEvent& e) {
 		// so it unlocks Argos TX for this session on non-RSPB builds (see
 		// m_gps_fix_corrected_clock). NO_FIX (valid=false), FASTLOC and
 		// CLOUDLOCATE do NOT correct the clock and must not unlock.
-		if (entry.info.valid &&
-		    entry.info.event_type != GPSEventType::FASTLOC &&
-		    entry.info.event_type != GPSEventType::CLOUDLOCATE &&
-		    !m_gps_fix_corrected_clock) {
+		if (entry.info.valid && entry.info.event_type != GPSEventType::FASTLOC
+		    && entry.info.event_type != GPSEventType::CLOUDLOCATE && !m_gps_fix_corrected_clock) {
 			m_gps_fix_corrected_clock = true;
 			DEBUG_INFO("ArgosTxService: first valid GPS fix this session — TX unlocked");
 		}
@@ -987,7 +971,8 @@ void ArgosTxService::notify_peer_event(ServiceEvent& e) {
 				bool include_no_fix = (purge_cfg.mode == BaseArgosMode::SURFACING_BURST);
 				unsigned int purged = m_depth_pile_manager.purge_non_fix_entries(include_no_fix);
 				if (purged) {
-					DEBUG_INFO("ArgosTxService::notify_peer_event: purged %u degraded entr%s from depth pile (no_fix_included=%u)",
+					DEBUG_INFO("ArgosTxService::notify_peer_event: purged %u degraded entr%s from depth pile "
+					           "(no_fix_included=%u)",
 					           purged, purged == 1 ? "y" : "ies", (unsigned int)include_no_fix);
 				}
 			}
@@ -996,7 +981,8 @@ void ArgosTxService::notify_peer_event(ServiceEvent& e) {
 			// Works during active burst OR after burst ended (awaiting surfacing):
 			// a real GPS fix always deserves to be transmitted.
 			if ((m_is_surfacing_burst || m_awaiting_surfacing) && !m_has_gnss_fix_since_surfacing) {
-				DEBUG_INFO("ArgosTxService::SURFACING_BURST: GNSS fix acquired after %u Doppler messages - switching to GNSS phase",
+				DEBUG_INFO("ArgosTxService::SURFACING_BURST: GNSS fix acquired after %u Doppler messages - switching "
+				           "to GNSS phase",
 				           m_doppler_burst_count);
 				m_has_gnss_fix_since_surfacing = true;
 				m_awaiting_surfacing = false;
@@ -1006,8 +992,8 @@ void ArgosTxService::notify_peer_event(ServiceEvent& e) {
 				// an already-active cooldown (rare race: GPS in flight when
 				// cooldown started + surface bounce sets m_is_surfacing_burst).
 				unsigned int trigger = configuration_store->read_param<unsigned int>(ParamID::COOLDOWN_TRIGGER_MODE);
-				if (trigger == (unsigned int)BaseCooldownTrigger::END_OF_DOPPLER && !m_cooldown_armed &&
-				    !ServiceManager::is_in_cooldown(service_current_time())) {
+				if (trigger == (unsigned int)BaseCooldownTrigger::END_OF_DOPPLER && !m_cooldown_armed
+				    && !ServiceManager::is_in_cooldown(service_current_time())) {
 					m_cooldown_armed = true;
 					DEBUG_INFO("ArgosTxService: cooldown armed (END_OF_DOPPLER, GNSS fix)");
 				}
@@ -1023,7 +1009,8 @@ void ArgosTxService::notify_peer_event(ServiceEvent& e) {
 			service_reschedule();
 		}
 
-	} else if (e.event_source == ServiceIdentifier::UW_SENSOR && e.event_type == ServiceEventType::SERVICE_LOG_UPDATED) {
+	} else if (e.event_source == ServiceIdentifier::UW_SENSOR
+	           && e.event_type == ServiceEventType::SERVICE_LOG_UPDATED) {
 		if (std::get<bool>(e.event_data) == true) {
 			// Device went underwater:
 			// 1. Cache TCXO=0 for next surfacing (RAM only, sent via SPI at next boot)
@@ -1095,8 +1082,8 @@ void ArgosTxService::notify_peer_event(ServiceEvent& e) {
 			// the next dive would call set_cycle_complete(now) which resets the
 			// cooldown timer, extending it indefinitely under repeated bounces.
 			unsigned int trigger = configuration_store->read_param<unsigned int>(ParamID::COOLDOWN_TRIGGER_MODE);
-			if (trigger == (unsigned int)BaseCooldownTrigger::AT_SURFACE &&
-			    !ServiceManager::is_in_cooldown(service_current_time())) {
+			if (trigger == (unsigned int)BaseCooldownTrigger::AT_SURFACE
+			    && !ServiceManager::is_in_cooldown(service_current_time())) {
 				m_cooldown_armed = true;
 				DEBUG_INFO("ArgosTxService: cooldown armed (AT_SURFACE)");
 			}
@@ -1106,8 +1093,8 @@ void ArgosTxService::notify_peer_event(ServiceEvent& e) {
 			// anyway (no TX will fire), so setting burst state + logging
 			// "starting Doppler burst sequence" would be misleading and waste
 			// no-op state churn on every passive bounce.
-			if (argos_config.mode == BaseArgosMode::SURFACING_BURST &&
-			    !ServiceManager::is_in_cooldown(service_current_time())) {
+			if (argos_config.mode == BaseArgosMode::SURFACING_BURST
+			    && !ServiceManager::is_in_cooldown(service_current_time())) {
 				m_is_surfacing_burst = true;
 				m_awaiting_surfacing = false;
 				m_doppler_burst_count = 0;
@@ -1121,9 +1108,8 @@ void ArgosTxService::notify_peer_event(ServiceEvent& e) {
 				// Outside adaptive mode the modulation comes from the master RCONF, as
 				// on the scheduling path of the same mode further up. An LDA2 hardcoded
 				// here cancelled the operator's setting.
-				m_scheduled_mode = argos_config.adaptive_modulation
-					? KineisModulation::VLDA4
-					: resolve_non_adaptive_modulation();
+				m_scheduled_mode =
+				    argos_config.adaptive_modulation ? KineisModulation::VLDA4 : resolve_non_adaptive_modulation();
 				// Demoted to TRACE: the canonical state-change marker is
 				// "UWDetectorService: state changed: state=0" emitted in the same
 				// broadcast cascade. This log added ~50-300 ms LFS commit on the
@@ -1142,15 +1128,15 @@ void ArgosTxService::notify_peer_event(ServiceEvent& e) {
 	// flag — Argos keeps it simple per user request); on that path the
 	// CloudLocate just fires at the next normal timer tick, with a small
 	// timing penalty vs the LoRa "immediately after" guarantee.
-	if (e.event_source == ServiceIdentifier::GNSS_SENSOR &&
-	    e.event_type == ServiceEventType::GNSS_CLOUDLOCATE_READY) {
+	if (e.event_source == ServiceIdentifier::GNSS_SENSOR && e.event_type == ServiceEventType::GNSS_CLOUDLOCATE_READY) {
 		if (m_is_surfacing_burst && !m_has_gnss_fix_since_surfacing && !m_is_tx_pending) {
 			DEBUG_INFO("ArgosTxService::notify_peer_event: GNSS_CLOUDLOCATE_READY — rescheduling early CloudLocate TX");
 			m_scheduled_task = [this]() { process_doppler_burst(); };
 			service_reschedule(true);
 			return;
 		}
-		DEBUG_TRACE("ArgosTxService::notify_peer_event: GNSS_CLOUDLOCATE_READY but not in burst phase 1 or TX in flight");
+		DEBUG_TRACE(
+		    "ArgosTxService::notify_peer_event: GNSS_CLOUDLOCATE_READY but not in burst phase 1 or TX in flight");
 	}
 
 	Service::notify_peer_event(e);
@@ -1171,27 +1157,25 @@ void ArgosTxService::notify_peer_event(ServiceEvent& e) {
 void ArgosTxService::refresh_modulation_availability() {
 	ArgosConfig cfg;
 	configuration_store->get_argos_configuration(cfg);
-	auto valid = [](const std::string& s) { return !s.empty() && s.size() == 32; };
+	auto valid = [](const std::string &s) { return !s.empty() && s.size() == 32; };
 	uint8_t prev = m_modulation_avail_mask;
 	m_modulation_avail_mask = 0;
-	if (valid(cfg.radioconf_ldk))   m_modulation_avail_mask |= (1u << 0);
-	if (valid(cfg.radioconf_lda2))  m_modulation_avail_mask |= (1u << 1);
+	if (valid(cfg.radioconf_ldk)) m_modulation_avail_mask |= (1u << 0);
+	if (valid(cfg.radioconf_lda2)) m_modulation_avail_mask |= (1u << 1);
 	if (valid(cfg.radioconf_vlda4)) m_modulation_avail_mask |= (1u << 2);
 	if (prev != m_modulation_avail_mask) {
 		DEBUG_INFO("ArgosTxService: modulation availability mask=0x%02X (LDK=%u LDA2=%u VLDA4=%u)",
-		           m_modulation_avail_mask,
-		           (m_modulation_avail_mask >> 0) & 1,
-		           (m_modulation_avail_mask >> 1) & 1,
+		           m_modulation_avail_mask, (m_modulation_avail_mask >> 0) & 1, (m_modulation_avail_mask >> 1) & 1,
 		           (m_modulation_avail_mask >> 2) & 1);
 	}
 }
 
 bool ArgosTxService::is_modulation_provisioned(KineisModulation mode) const {
 	switch (mode) {
-		case KineisModulation::LDK:   return (m_modulation_avail_mask >> 0) & 1;
-		case KineisModulation::LDA2:  return (m_modulation_avail_mask >> 1) & 1;
-		case KineisModulation::VLDA4: return (m_modulation_avail_mask >> 2) & 1;
-		default: return false;
+	case KineisModulation::LDK: return (m_modulation_avail_mask >> 0) & 1;
+	case KineisModulation::LDA2: return (m_modulation_avail_mask >> 1) & 1;
+	case KineisModulation::VLDA4: return (m_modulation_avail_mask >> 2) & 1;
+	default: return false;
 	}
 }
 
@@ -1202,10 +1186,10 @@ bool ArgosTxService::is_modulation_provisioned(KineisModulation mode) const {
 /// the TX must be skipped to avoid KIM2's silent payload-too-long drop.
 bool ArgosTxService::size_fits_modulation(unsigned int payload_bits, KineisModulation mode) {
 	switch (mode) {
-		case KineisModulation::LDK:   return payload_bits <= 128;
-		case KineisModulation::LDA2:  return payload_bits <= 192;
-		case KineisModulation::VLDA4: return payload_bits <= 24;
-		default: return false;
+	case KineisModulation::LDK: return payload_bits <= 128;
+	case KineisModulation::LDA2: return payload_bits <= 192;
+	case KineisModulation::VLDA4: return payload_bits <= 24;
+	default: return false;
 	}
 }
 
@@ -1228,10 +1212,10 @@ std::string ArgosTxService::get_rconf_for_modulation(KineisModulation mode) {
 	ArgosConfig argos_config;
 	configuration_store->get_argos_configuration(argos_config);
 	switch (mode) {
-		case KineisModulation::LDK:  return argos_config.radioconf_ldk;
-		case KineisModulation::VLDA4: return argos_config.radioconf_vlda4;
-		case KineisModulation::LDA2:
-		default:                      return argos_config.radioconf_lda2;
+	case KineisModulation::LDK: return argos_config.radioconf_ldk;
+	case KineisModulation::VLDA4: return argos_config.radioconf_vlda4;
+	case KineisModulation::LDA2:
+	default: return argos_config.radioconf_lda2;
 	}
 }
 
@@ -1244,8 +1228,8 @@ bool ArgosTxService::ensure_modulation(KineisModulation target) {
 	}
 	std::string rconf = get_rconf_for_modulation(target);
 	if (rconf.empty() || rconf.size() != 32) {
-		DEBUG_ERROR("ArgosTxService::ensure_modulation: invalid RCONF for mode %d (len=%u)",
-		            (int)target, (unsigned)rconf.size());
+		DEBUG_ERROR("ArgosTxService::ensure_modulation: invalid RCONF for mode %d (len=%u)", (int)target,
+		            (unsigned)rconf.size());
 		return false;
 	}
 	DEBUG_INFO("ArgosTxService::ensure_modulation: switching to %d", (int)target);
@@ -1260,7 +1244,9 @@ void ArgosTxService::process_certification_burst() {
 	unsigned int size_bits;
 	KineisPacket packet = ArgosPacketBuilder::build_certification_packet(argos_config.cert_tx_payload, size_bits);
 	// Demoted to TRACE: per-TX payload dump (~50-300 ms LFS commit).
-	DEBUG_TRACE("ArgosTxService::process_certification_burst: mode=%s data=%s sz=%u", argos_modulation_to_string(argos_config.cert_tx_modulation), Binascii::hexlify(packet).c_str(), size_bits);
+	DEBUG_TRACE("ArgosTxService::process_certification_burst: mode=%s data=%s sz=%u",
+	            argos_modulation_to_string(argos_config.cert_tx_modulation), Binascii::hexlify(packet).c_str(),
+	            size_bits);
 	m_last_val_tx_type = "cert";
 	m_kineis.send((KineisModulation)argos_config.cert_tx_modulation, packet, size_bits);
 }
@@ -1271,11 +1257,10 @@ void ArgosTxService::process_time_sync_burst() {
 	ArgosConfig argos_config;
 	configuration_store->get_argos_configuration(argos_config);
 	unsigned int size_bits;
-	std::vector<GPSLogEntry*> v = m_depth_pile_manager.retrieve_gps_latest();
+	std::vector<GPSLogEntry *> v = m_depth_pile_manager.retrieve_gps_latest();
 	if (v.size()) {
 		KineisPacket packet = ArgosPacketBuilder::build_gnss_packet(v, argos_config.is_out_of_zone, argos_config.is_lb,
-				argos_config.delta_time_loc,
-				size_bits);
+		                                                            argos_config.delta_time_loc, size_bits);
 		// Modulation: same adaptive + payload-size policy as process_gnss_burst
 		// (2026-06-25). Before, LDA2 was forced unconditionally, which
 		// over-provisioned the time-sync packet (always a single latest fix =
@@ -1290,7 +1275,8 @@ void ArgosTxService::process_time_sync_burst() {
 				DEBUG_WARN("ArgosTxService::process_time_sync_burst: modulation switch failed, using current");
 				m_scheduled_mode = m_kineis.get_current_modulation();
 				if (!size_fits_modulation(size_bits, m_scheduled_mode)) {
-					DEBUG_ERROR("ArgosTxService::process_time_sync_burst: payload %u bits doesn't fit fallback mod %d — skipping TX",
+					DEBUG_ERROR("ArgosTxService::process_time_sync_burst: payload %u bits doesn't fit fallback mod %d "
+					            "— skipping TX",
 					            size_bits, (int)m_scheduled_mode);
 					service_complete();
 					return;
@@ -1302,21 +1288,25 @@ void ArgosTxService::process_time_sync_burst() {
 			// (e.g. VLDA4 master = 24 b), fall back to LDA2 if provisioned, else a
 			// clean skip rather than a silent KIM2 oversize drop.
 			if (!size_fits_modulation(size_bits, m_scheduled_mode)) {
-				if (size_fits_modulation(size_bits, KineisModulation::LDA2) &&
-				    ensure_modulation(KineisModulation::LDA2)) {
-					DEBUG_WARN("ArgosTxService::process_time_sync_burst: %u bits don't fit master mod %d — falling back to LDA2",
+				if (size_fits_modulation(size_bits, KineisModulation::LDA2)
+				    && ensure_modulation(KineisModulation::LDA2)) {
+					DEBUG_WARN("ArgosTxService::process_time_sync_burst: %u bits don't fit master mod %d — falling "
+					           "back to LDA2",
 					           size_bits, (int)m_scheduled_mode);
 					m_scheduled_mode = KineisModulation::LDA2;
 				} else {
-					DEBUG_ERROR("ArgosTxService::process_time_sync_burst: %u bits fit no provisioned modulation — skipping TX",
-					            size_bits);
+					DEBUG_ERROR(
+					    "ArgosTxService::process_time_sync_burst: %u bits fit no provisioned modulation — skipping TX",
+					    size_bits);
 					service_complete();
 					return;
 				}
 			}
 		}
 		// Demoted to TRACE: per-TX payload dump.
-		DEBUG_TRACE("ArgosTxService::process_time_sync_burst: mode=%s data=%s sz=%u", argos_modulation_to_string((BaseArgosModulation)m_scheduled_mode), Binascii::hexlify(packet).c_str(), size_bits);
+		DEBUG_TRACE("ArgosTxService::process_time_sync_burst: mode=%s data=%s sz=%u",
+		            argos_modulation_to_string((BaseArgosModulation)m_scheduled_mode),
+		            Binascii::hexlify(packet).c_str(), size_bits);
 		m_last_tx_had_gps = true;
 		m_last_val_tx_type = "tsync";
 		m_kineis.send(m_scheduled_mode, packet, size_bits);
@@ -1337,26 +1327,29 @@ void ArgosTxService::process_sensor_burst() {
 	if (gps != nullptr) {
 		// If GPS entry is a CloudLocate, send CloudLocate packet (extract blob from overlay)
 		if (gps->info.event_type == GPSEventType::CLOUDLOCATE) {
-			const uint8_t* overlay = reinterpret_cast<const uint8_t*>(&gps->info.lon);
+			const uint8_t *overlay = reinterpret_cast<const uint8_t *>(&gps->info.lon);
 			uint8_t format_id = overlay[0];
 			// STRICT format guard (2026-06): skip CloudLocate TX when the stored
 			// format is the 0xFF sentinel (configured format not produced this
 			// session) or otherwise invalid — never transmit a mismatched/empty
 			// CloudLocate packet.
-			if (format_id != (uint8_t)BaseCloudLocateFormat::MEASC12 &&
-			    format_id != (uint8_t)BaseCloudLocateFormat::MEAS20) {
-				DEBUG_WARN("ArgosTxService::process_sensor_burst: CloudLocate format 0x%02X unavailable/invalid — skipping TX", format_id);
+			if (format_id != (uint8_t)BaseCloudLocateFormat::MEASC12
+			    && format_id != (uint8_t)BaseCloudLocateFormat::MEAS20) {
+				DEBUG_WARN(
+				    "ArgosTxService::process_sensor_burst: CloudLocate format 0x%02X unavailable/invalid — skipping TX",
+				    format_id);
 				service_complete();
 				return;
 			}
-			const uint8_t* blob = &overlay[1];
+			const uint8_t *blob = &overlay[1];
 			unsigned int blob_size = (format_id == (uint8_t)BaseCloudLocateFormat::MEASC12) ? 12 : 20;
 
-			uint32_t cl_capture = (uint32_t)convert_epochtime(gps->header.year, gps->header.month, gps->header.day,
-			                                                  gps->header.hours, gps->header.minutes, gps->header.seconds);
+			uint32_t cl_capture =
+			    (uint32_t)convert_epochtime(gps->header.year, gps->header.month, gps->header.day, gps->header.hours,
+				                            gps->header.minutes, gps->header.seconds);
 			KineisPacket packet = ArgosPacketBuilder::build_cloudlocate_packet(
-				blob, blob_size, format_id, gps->info.batt_voltage, argos_config.is_lb,
-				cl_capture, (uint32_t)service_current_time());
+			    blob, blob_size, format_id, gps->info.batt_voltage, argos_config.is_lb, cl_capture,
+			    (uint32_t)service_current_time());
 			size_bits = ArgosPacketBuilder::cloudlocate_packet_bits(format_id);
 
 			// Modulation policy:
@@ -1369,13 +1362,14 @@ void ArgosTxService::process_sensor_burst() {
 			//                  Padding fits LDA2 (24 B); the LDK micro-optimization
 			//                  for MEASC12 is opt-in via ARGOS_AD_MOD.
 			if (argos_config.adaptive_modulation) {
-				m_scheduled_mode = (format_id == (uint8_t)BaseCloudLocateFormat::MEASC12) ?
-					KineisModulation::LDK : KineisModulation::LDA2;
+				m_scheduled_mode = (format_id == (uint8_t)BaseCloudLocateFormat::MEASC12) ? KineisModulation::LDK
+				                                                                          : KineisModulation::LDA2;
 				if (!ensure_modulation(m_scheduled_mode)) {
 					DEBUG_WARN("ArgosTxService::process_sensor_burst: CloudLocate modulation switch failed");
 					m_scheduled_mode = m_kineis.get_current_modulation();
 					if (!size_fits_modulation(size_bits, m_scheduled_mode)) {
-						DEBUG_ERROR("ArgosTxService::process_sensor_burst: CloudLocate payload %u bits doesn't fit fallback mod %d — skipping TX",
+						DEBUG_ERROR("ArgosTxService::process_sensor_burst: CloudLocate payload %u bits doesn't fit "
+						            "fallback mod %d — skipping TX",
 						            size_bits, (int)m_scheduled_mode);
 						service_complete();
 						return;
@@ -1384,16 +1378,17 @@ void ArgosTxService::process_sensor_burst() {
 			} else {
 				m_scheduled_mode = m_kineis.get_current_modulation();
 				if (!size_fits_modulation(size_bits, m_scheduled_mode)) {
-					DEBUG_ERROR("ArgosTxService::process_sensor_burst: CloudLocate payload %u bits doesn't fit master mod %d (ARGOS_AD_MOD=0) — skipping TX",
+					DEBUG_ERROR("ArgosTxService::process_sensor_burst: CloudLocate payload %u bits doesn't fit master "
+					            "mod %d (ARGOS_AD_MOD=0) — skipping TX",
 					            size_bits, (int)m_scheduled_mode);
 					service_complete();
 					return;
 				}
 			}
 			// Demoted to TRACE: per-TX payload dump.
-			DEBUG_TRACE("ArgosTxService::process_sensor_burst: CloudLocate fmt=%u mode=%s data=%s",
-			           format_id, argos_modulation_to_string((BaseArgosModulation)m_scheduled_mode),
-			           Binascii::hexlify(packet).c_str());
+			DEBUG_TRACE("ArgosTxService::process_sensor_burst: CloudLocate fmt=%u mode=%s data=%s", format_id,
+			            argos_modulation_to_string((BaseArgosModulation)m_scheduled_mode),
+			            Binascii::hexlify(packet).c_str());
 			m_last_tx_had_gps = true;
 			m_last_val_tx_type = "cloudloc";
 			m_kineis.send(m_scheduled_mode, packet, size_bits);
@@ -1410,7 +1405,8 @@ void ArgosTxService::process_sensor_burst() {
 					DEBUG_WARN("ArgosTxService::process_sensor_burst: fastloc modulation switch failed, using current");
 					m_scheduled_mode = m_kineis.get_current_modulation();
 					if (!size_fits_modulation(size_bits, m_scheduled_mode)) {
-						DEBUG_ERROR("ArgosTxService::process_sensor_burst: fastloc payload %u bits doesn't fit fallback mod %d — skipping TX",
+						DEBUG_ERROR("ArgosTxService::process_sensor_burst: fastloc payload %u bits doesn't fit "
+						            "fallback mod %d — skipping TX",
 						            size_bits, (int)m_scheduled_mode);
 						service_complete();
 						return;
@@ -1421,7 +1417,8 @@ void ArgosTxService::process_sensor_burst() {
 				// legitimate safety escalation — but it was never APPLIED here,
 				// and we left in LDA2 on a module still on the master RCONF.
 				if (!ensure_modulation(KineisModulation::LDA2)) {
-					DEBUG_ERROR("ArgosTxService::process_sensor_burst: fastloc %u bits need LDA2, not provisioned — skipping TX",
+					DEBUG_ERROR("ArgosTxService::process_sensor_burst: fastloc %u bits need LDA2, not provisioned — "
+					            "skipping TX",
 					            size_bits);
 					service_complete();
 					return;
@@ -1429,7 +1426,8 @@ void ArgosTxService::process_sensor_burst() {
 			}
 			// Demoted to TRACE: per-TX payload dump.
 			DEBUG_TRACE("ArgosTxService::process_sensor_burst: fastloc mode=%s data=%s sz=%u",
-			           argos_modulation_to_string((BaseArgosModulation)m_scheduled_mode), Binascii::hexlify(packet).c_str(), size_bits);
+			            argos_modulation_to_string((BaseArgosModulation)m_scheduled_mode),
+			            Binascii::hexlify(packet).c_str(), size_bits);
 			m_last_tx_had_gps = true;
 			m_last_val_tx_type = "fastloc";
 			m_kineis.send(m_scheduled_mode, packet, size_bits);
@@ -1443,21 +1441,24 @@ void ArgosTxService::process_sensor_burst() {
 #if ENABLE_MORTALITY_SENSOR
 		if (mortality_service) mort_conf = mortality_service->get_confidence();
 #endif
-		ServiceSensorData *pressure = m_depth_pile_manager.retrieve_sensor_single((unsigned int)argos_config.depth_pile, ServiceIdentifier::PRESSURE_SENSOR);
-		ServiceSensorData *thermistor = m_depth_pile_manager.retrieve_sensor_single((unsigned int)argos_config.depth_pile, ServiceIdentifier::THERMISTOR_SENSOR);
+		ServiceSensorData *pressure = m_depth_pile_manager.retrieve_sensor_single((unsigned int)argos_config.depth_pile,
+		                                                                          ServiceIdentifier::PRESSURE_SENSOR);
+		ServiceSensorData *thermistor = m_depth_pile_manager.retrieve_sensor_single(
+		    (unsigned int)argos_config.depth_pile, ServiceIdentifier::THERMISTOR_SENSOR);
 		ServiceSensorData *axl = nullptr;
 #if ENABLE_AXL_SENSOR
-		axl = m_depth_pile_manager.retrieve_sensor_single((unsigned int)argos_config.depth_pile, ServiceIdentifier::AXL_SENSOR);
+		axl = m_depth_pile_manager.retrieve_sensor_single((unsigned int)argos_config.depth_pile,
+		                                                  ServiceIdentifier::AXL_SENSOR);
 #endif
 		unsigned int pkt_fmt = configuration_store->read_param<unsigned int>(ParamID::RSPB_PACKET_FORMAT);
 		if (pkt_fmt == 1) {
 			m_scheduled_mode = KineisModulation::LDK;
-			packet = ArgosPacketBuilder::build_rspb_short_packet(gps, pressure, thermistor, axl,
-					argos_config.is_out_of_zone, argos_config.is_lb, mort_conf, size_bits);
+			packet = ArgosPacketBuilder::build_rspb_short_packet(
+			    gps, pressure, thermistor, axl, argos_config.is_out_of_zone, argos_config.is_lb, mort_conf, size_bits);
 		} else {
 			m_scheduled_mode = KineisModulation::LDA2;
-			packet = ArgosPacketBuilder::build_rspb_long_packet(gps, pressure, thermistor, axl,
-					argos_config.is_out_of_zone, argos_config.is_lb, mort_conf, size_bits);
+			packet = ArgosPacketBuilder::build_rspb_long_packet(
+			    gps, pressure, thermistor, axl, argos_config.is_out_of_zone, argos_config.is_lb, mort_conf, size_bits);
 		}
 
 		// Adaptive modulation: switch RCONF to match packet modulation
@@ -1466,7 +1467,8 @@ void ArgosTxService::process_sensor_burst() {
 				DEBUG_WARN("ArgosTxService::process_sensor_burst: RSPB modulation switch failed, using current");
 				m_scheduled_mode = m_kineis.get_current_modulation();
 				if (!size_fits_modulation(size_bits, m_scheduled_mode)) {
-					DEBUG_ERROR("ArgosTxService::process_sensor_burst: RSPB payload %u bits doesn't fit fallback mod %d — skipping TX",
+					DEBUG_ERROR("ArgosTxService::process_sensor_burst: RSPB payload %u bits doesn't fit fallback mod "
+					            "%d — skipping TX",
 					            size_bits, (int)m_scheduled_mode);
 					service_complete();
 					return;
@@ -1476,22 +1478,26 @@ void ArgosTxService::process_sensor_burst() {
 #else
 		// Generic sensor packet for LinkIt V4 (all sensors, no RSPB-specific packing)
 		// Demoted to TRACE: per-TX payload dump on hot path.
-		DEBUG_TRACE("TX_RAW: SENS lat=%.6f lon=%.6f hAcc=%u nSV=%u hDOP=%.1f batt=%umV",
-		           gps->info.lat, gps->info.lon, gps->info.hAcc, gps->info.numSV, (double)gps->info.hDOP, (unsigned)gps->info.batt_voltage);
+		DEBUG_TRACE("TX_RAW: SENS lat=%.6f lon=%.6f hAcc=%u nSV=%u hDOP=%.1f batt=%umV", gps->info.lat, gps->info.lon,
+		            gps->info.hAcc, gps->info.numSV, (double)gps->info.hDOP, (unsigned)gps->info.batt_voltage);
 		m_scheduled_mode = KineisModulation::LDA2;
-		packet = ArgosPacketBuilder::build_sensor_packet(gps,
-				m_depth_pile_manager.retrieve_sensor_single((unsigned int)argos_config.depth_pile, ServiceIdentifier::ALS_SENSOR),
-				m_depth_pile_manager.retrieve_sensor_single((unsigned int)argos_config.depth_pile, ServiceIdentifier::PH_SENSOR),
-				m_depth_pile_manager.retrieve_sensor_single((unsigned int)argos_config.depth_pile, ServiceIdentifier::PRESSURE_SENSOR),
-				m_depth_pile_manager.retrieve_sensor_single((unsigned int)argos_config.depth_pile, ServiceIdentifier::SEA_TEMP_SENSOR),
+		packet = ArgosPacketBuilder::build_sensor_packet(
+		    gps,
+		    m_depth_pile_manager.retrieve_sensor_single((unsigned int)argos_config.depth_pile,
+			                                            ServiceIdentifier::ALS_SENSOR),
+		    m_depth_pile_manager.retrieve_sensor_single((unsigned int)argos_config.depth_pile,
+			                                            ServiceIdentifier::PH_SENSOR),
+		    m_depth_pile_manager.retrieve_sensor_single((unsigned int)argos_config.depth_pile,
+			                                            ServiceIdentifier::PRESSURE_SENSOR),
+		    m_depth_pile_manager.retrieve_sensor_single((unsigned int)argos_config.depth_pile,
+			                                            ServiceIdentifier::SEA_TEMP_SENSOR),
 #if ENABLE_AXL_SENSOR
-				m_depth_pile_manager.retrieve_sensor_single((unsigned int)argos_config.depth_pile, ServiceIdentifier::AXL_SENSOR),
+		    m_depth_pile_manager.retrieve_sensor_single((unsigned int)argos_config.depth_pile,
+			                                            ServiceIdentifier::AXL_SENSOR),
 #else
-				nullptr,
+		    nullptr,
 #endif
-				argos_config.is_out_of_zone,
-				argos_config.is_lb,
-				size_bits);
+		    argos_config.is_out_of_zone, argos_config.is_lb, size_bits);
 
 		// Adaptive modulation for generic sensor packet
 		if (argos_config.adaptive_modulation) {
@@ -1503,7 +1509,8 @@ void ArgosTxService::process_sensor_burst() {
 				DEBUG_WARN("ArgosTxService::process_sensor_burst: modulation switch failed, using current");
 				m_scheduled_mode = m_kineis.get_current_modulation();
 				if (!size_fits_modulation(size_bits, m_scheduled_mode)) {
-					DEBUG_ERROR("ArgosTxService::process_sensor_burst: sensor payload %u bits doesn't fit fallback mod %d — skipping TX",
+					DEBUG_ERROR("ArgosTxService::process_sensor_burst: sensor payload %u bits doesn't fit fallback mod "
+					            "%d — skipping TX",
 					            size_bits, (int)m_scheduled_mode);
 					service_complete();
 					return;
@@ -1517,14 +1524,16 @@ void ArgosTxService::process_sensor_burst() {
 			// prevails, and we escalate to LDA2 only if the packet does not fit it.
 			m_scheduled_mode = resolve_non_adaptive_modulation();
 			if (!size_fits_modulation(size_bits, m_scheduled_mode)) {
-				if (size_fits_modulation(size_bits, KineisModulation::LDA2) &&
-				    ensure_modulation(KineisModulation::LDA2)) {
-					DEBUG_WARN("ArgosTxService::process_sensor_burst: %u bits don't fit master mod %d — falling back to LDA2",
-					           size_bits, (int)m_scheduled_mode);
+				if (size_fits_modulation(size_bits, KineisModulation::LDA2)
+				    && ensure_modulation(KineisModulation::LDA2)) {
+					DEBUG_WARN(
+					    "ArgosTxService::process_sensor_burst: %u bits don't fit master mod %d — falling back to LDA2",
+					    size_bits, (int)m_scheduled_mode);
 					m_scheduled_mode = KineisModulation::LDA2;
 				} else {
-					DEBUG_ERROR("ArgosTxService::process_sensor_burst: %u bits fit no provisioned modulation — skipping TX",
-					            size_bits);
+					DEBUG_ERROR(
+					    "ArgosTxService::process_sensor_burst: %u bits fit no provisioned modulation — skipping TX",
+					    size_bits);
 					service_complete();
 					return;
 				}
@@ -1532,7 +1541,9 @@ void ArgosTxService::process_sensor_burst() {
 		}
 #endif
 		// Demoted to TRACE: per-TX payload dump.
-		DEBUG_TRACE("ArgosTxService::process_sensor_burst: mode=%s data=%s sz=%u", argos_modulation_to_string((BaseArgosModulation)m_scheduled_mode), Binascii::hexlify(packet).c_str(), size_bits);
+		DEBUG_TRACE("ArgosTxService::process_sensor_burst: mode=%s data=%s sz=%u",
+		            argos_modulation_to_string((BaseArgosModulation)m_scheduled_mode),
+		            Binascii::hexlify(packet).c_str(), size_bits);
 		m_last_tx_had_gps = true;
 		m_last_val_tx_type = "sensor";
 		m_kineis.send(m_scheduled_mode, packet, size_bits);
@@ -1564,9 +1575,9 @@ void ArgosTxService::process_gnss_burst() {
 	// wasting a burst_counter redundancy slot on fixes we wouldn't transmit.
 	// User policy 2026-06-17: keep the master modulation, limit the fix count;
 	// LDA2 fallback (below) only kicks in when even a single fix doesn't fit.
-	std::vector<GPSLogEntry*> v;
-	if (!argos_config.adaptive_modulation &&
-	    !size_fits_modulation(ArgosPacketBuilder::LONG_PACKET_BITS, m_scheduled_mode)) {
+	std::vector<GPSLogEntry *> v;
+	if (!argos_config.adaptive_modulation
+	    && !size_fits_modulation(ArgosPacketBuilder::LONG_PACKET_BITS, m_scheduled_mode)) {
 		v = m_depth_pile_manager.retrieve_gps((unsigned int)argos_config.depth_pile, 1);
 	} else {
 		v = m_depth_pile_manager.retrieve_gps((unsigned int)argos_config.depth_pile);
@@ -1576,20 +1587,23 @@ void ArgosTxService::process_gnss_burst() {
 
 		// Check if the latest entry is a CloudLocate
 		if (v.back()->info.event_type == GPSEventType::CLOUDLOCATE) {
-			const uint8_t* overlay = reinterpret_cast<const uint8_t*>(&v.back()->info.lon);
+			const uint8_t *overlay = reinterpret_cast<const uint8_t *>(&v.back()->info.lon);
 			uint8_t format_id = overlay[0];
 			// STRICT format guard (2026-06): skip CloudLocate TX on 0xFF sentinel
 			// (configured format not produced) or any invalid format byte.
-			if (format_id != (uint8_t)BaseCloudLocateFormat::MEASC12 &&
-			    format_id != (uint8_t)BaseCloudLocateFormat::MEAS20) {
-				DEBUG_WARN("ArgosTxService::process_gnss_burst: CloudLocate format 0x%02X unavailable/invalid — skipping TX", format_id);
+			if (format_id != (uint8_t)BaseCloudLocateFormat::MEASC12
+			    && format_id != (uint8_t)BaseCloudLocateFormat::MEAS20) {
+				DEBUG_WARN(
+				    "ArgosTxService::process_gnss_burst: CloudLocate format 0x%02X unavailable/invalid — skipping TX",
+				    format_id);
 				service_complete();
 				return;
 			}
-			const uint8_t* blob = &overlay[1];
+			const uint8_t *blob = &overlay[1];
 			unsigned int blob_size = (format_id == (uint8_t)BaseCloudLocateFormat::MEASC12) ? 12 : 20;
-			uint32_t cl_capture = (uint32_t)convert_epochtime(v.back()->header.year, v.back()->header.month, v.back()->header.day,
-			                                                  v.back()->header.hours, v.back()->header.minutes, v.back()->header.seconds);
+			uint32_t cl_capture =
+			    (uint32_t)convert_epochtime(v.back()->header.year, v.back()->header.month, v.back()->header.day,
+				                            v.back()->header.hours, v.back()->header.minutes, v.back()->header.seconds);
 			packet = ArgosPacketBuilder::build_cloudlocate_packet(blob, blob_size, format_id,
 			                                                      v.back()->info.batt_voltage, argos_config.is_lb,
 			                                                      cl_capture, (uint32_t)service_current_time());
@@ -1599,13 +1613,14 @@ void ArgosTxService::process_gnss_burst() {
 			//   adaptive=OFF → use live SMD modulation, NOT m_scheduled_mode
 			//                  (which line 207 hardcodes to LDA2 in SURFACING_BURST).
 			if (argos_config.adaptive_modulation) {
-				m_scheduled_mode = (format_id == (uint8_t)BaseCloudLocateFormat::MEASC12) ?
-					KineisModulation::LDK : KineisModulation::LDA2;
+				m_scheduled_mode = (format_id == (uint8_t)BaseCloudLocateFormat::MEASC12) ? KineisModulation::LDK
+				                                                                          : KineisModulation::LDA2;
 				if (!ensure_modulation(m_scheduled_mode)) {
 					DEBUG_WARN("ArgosTxService::process_gnss_burst: CloudLocate modulation switch failed");
 					m_scheduled_mode = m_kineis.get_current_modulation();
 					if (!size_fits_modulation(size_bits, m_scheduled_mode)) {
-						DEBUG_ERROR("ArgosTxService::process_gnss_burst: CloudLocate payload %u bits doesn't fit fallback mod %d — skipping TX",
+						DEBUG_ERROR("ArgosTxService::process_gnss_burst: CloudLocate payload %u bits doesn't fit "
+						            "fallback mod %d — skipping TX",
 						            size_bits, (int)m_scheduled_mode);
 						service_complete();
 						return;
@@ -1614,16 +1629,17 @@ void ArgosTxService::process_gnss_burst() {
 			} else {
 				m_scheduled_mode = m_kineis.get_current_modulation();
 				if (!size_fits_modulation(size_bits, m_scheduled_mode)) {
-					DEBUG_ERROR("ArgosTxService::process_gnss_burst: CloudLocate payload %u bits doesn't fit master mod %d (ARGOS_AD_MOD=0) — skipping TX",
+					DEBUG_ERROR("ArgosTxService::process_gnss_burst: CloudLocate payload %u bits doesn't fit master "
+					            "mod %d (ARGOS_AD_MOD=0) — skipping TX",
 					            size_bits, (int)m_scheduled_mode);
 					service_complete();
 					return;
 				}
 			}
 			// Demoted to TRACE: per-TX payload dump.
-			DEBUG_TRACE("ArgosTxService::process_gnss_burst: CloudLocate fmt=%u mode=%s data=%s",
-			           format_id, argos_modulation_to_string((BaseArgosModulation)m_scheduled_mode),
-			           Binascii::hexlify(packet).c_str());
+			DEBUG_TRACE("ArgosTxService::process_gnss_burst: CloudLocate fmt=%u mode=%s data=%s", format_id,
+			            argos_modulation_to_string((BaseArgosModulation)m_scheduled_mode),
+			            Binascii::hexlify(packet).c_str());
 			m_last_tx_had_gps = true;
 			m_last_val_tx_type = "cloudloc";
 			m_kineis.send(m_scheduled_mode, packet, size_bits);
@@ -1640,14 +1656,15 @@ void ArgosTxService::process_gnss_burst() {
 		if (v.back()->info.event_type == GPSEventType::FASTLOC) {
 			packet = ArgosPacketBuilder::build_fastloc_packet(v.back(), argos_config.is_lb);
 			size_bits = ArgosPacketBuilder::FASTLOC_PACKET_BITS;
-			if (argos_config.adaptive_modulation)
-				m_scheduled_mode = KineisModulation::LDA2;
+			if (argos_config.adaptive_modulation) m_scheduled_mode = KineisModulation::LDA2;
 		} else {
 			// Filter out any CloudLocate/fastloc entries that may be mixed in
-			v.erase(std::remove_if(v.begin(), v.end(), [](const GPSLogEntry* e) {
-				return e->info.event_type == GPSEventType::CLOUDLOCATE ||
-				       e->info.event_type == GPSEventType::FASTLOC;
-			}), v.end());
+			v.erase(std::remove_if(v.begin(), v.end(),
+			                       [](const GPSLogEntry *e) {
+				                       return e->info.event_type == GPSEventType::CLOUDLOCATE
+				                              || e->info.event_type == GPSEventType::FASTLOC;
+			                       }),
+			        v.end());
 			if (v.empty()) {
 				DEBUG_WARN("ArgosTxService::process_gnss_burst: all entries filtered (mixed types)");
 				service_complete();
@@ -1655,12 +1672,12 @@ void ArgosTxService::process_gnss_burst() {
 			}
 			for (unsigned int i = 0; i < v.size(); i++) {
 				// Demoted to TRACE: per-entry payload dump in GNSS burst hot path.
-				DEBUG_TRACE("TX_RAW: GNSS[%u] lat=%.6f lon=%.6f hAcc=%u nSV=%u hDOP=%.1f batt=%umV",
-				           i, v[i]->info.lat, v[i]->info.lon, v[i]->info.hAcc, v[i]->info.numSV, (double)v[i]->info.hDOP, (unsigned)v[i]->info.batt_voltage);
+				DEBUG_TRACE("TX_RAW: GNSS[%u] lat=%.6f lon=%.6f hAcc=%u nSV=%u hDOP=%.1f batt=%umV", i, v[i]->info.lat,
+				            v[i]->info.lon, v[i]->info.hAcc, v[i]->info.numSV, (double)v[i]->info.hDOP,
+				            (unsigned)v[i]->info.batt_voltage);
 			}
 			packet = ArgosPacketBuilder::build_gnss_packet(v, argos_config.is_out_of_zone, argos_config.is_lb,
-					argos_config.delta_time_loc,
-					size_bits);
+			                                               argos_config.delta_time_loc, size_bits);
 		}
 
 		// Adaptive modulation: a SHORT packet (96 bits) fits in LDK, a LONG
@@ -1674,7 +1691,8 @@ void ArgosTxService::process_gnss_burst() {
 				DEBUG_WARN("ArgosTxService::process_gnss_burst: modulation switch failed, using current");
 				m_scheduled_mode = m_kineis.get_current_modulation();
 				if (!size_fits_modulation(size_bits, m_scheduled_mode)) {
-					DEBUG_ERROR("ArgosTxService::process_gnss_burst: GNSS payload %u bits doesn't fit fallback mod %d — skipping TX",
+					DEBUG_ERROR("ArgosTxService::process_gnss_burst: GNSS payload %u bits doesn't fit fallback mod %d "
+					            "— skipping TX",
 					            size_bits, (int)m_scheduled_mode);
 					service_complete();
 					return;
@@ -1690,14 +1708,16 @@ void ArgosTxService::process_gnss_burst() {
 			// this TX cleanly rather than letting KIM2 send() drop it silently.
 			// User policy 2026-06-17: keep master modulation; on overflow → LDA2.
 			if (!size_fits_modulation(size_bits, m_scheduled_mode)) {
-				if (size_fits_modulation(size_bits, KineisModulation::LDA2) &&
-				    ensure_modulation(KineisModulation::LDA2)) {
-					DEBUG_WARN("ArgosTxService::process_gnss_burst: %u bits don't fit master mod %d — falling back to LDA2",
-					           size_bits, (int)m_scheduled_mode);
+				if (size_fits_modulation(size_bits, KineisModulation::LDA2)
+				    && ensure_modulation(KineisModulation::LDA2)) {
+					DEBUG_WARN(
+					    "ArgosTxService::process_gnss_burst: %u bits don't fit master mod %d — falling back to LDA2",
+					    size_bits, (int)m_scheduled_mode);
 					m_scheduled_mode = KineisModulation::LDA2;
 				} else {
-					DEBUG_ERROR("ArgosTxService::process_gnss_burst: %u bits fit no provisioned modulation — skipping TX",
-					            size_bits);
+					DEBUG_ERROR(
+					    "ArgosTxService::process_gnss_burst: %u bits fit no provisioned modulation — skipping TX",
+					    size_bits);
 					service_complete();
 					return;
 				}
@@ -1705,7 +1725,9 @@ void ArgosTxService::process_gnss_burst() {
 		}
 
 		// Demoted to TRACE: per-TX payload dump.
-		DEBUG_TRACE("ArgosTxService::process_gnss_burst: mode=%s data=%s sz=%u", argos_modulation_to_string((BaseArgosModulation)m_scheduled_mode), Binascii::hexlify(packet).c_str(), size_bits);
+		DEBUG_TRACE("ArgosTxService::process_gnss_burst: mode=%s data=%s sz=%u",
+		            argos_modulation_to_string((BaseArgosModulation)m_scheduled_mode),
+		            Binascii::hexlify(packet).c_str(), size_bits);
 		m_last_tx_had_gps = true;
 		// fastloc fallback uses LDA2 + 96-bit packet → still attribute as "gnss"
 		// at this site; the inner fastloc branch above already tagged "fastloc".
@@ -1742,18 +1764,17 @@ void ArgosTxService::process_gnss_burst_from_cached() {
 	configuration_store->get_argos_configuration(argos_config);
 
 	unsigned int age_s = compute_gps_log_age_seconds(cached, service_current_time());
-	DEBUG_INFO("ArgosTxService::process_gnss_burst_from_cached: lat=%.6f lon=%.6f hAcc=%u age=%u s",
-	           cached.info.lat, cached.info.lon, cached.info.hAcc, age_s);
+	DEBUG_INFO("ArgosTxService::process_gnss_burst_from_cached: lat=%.6f lon=%.6f hAcc=%u age=%u s", cached.info.lat,
+	           cached.info.lon, cached.info.hAcc, age_s);
 
 	// build_gnss_packet expects a vector<GPSLogEntry*>. Use a stack-local
 	// vector pointing at our cached copy; the builder is read-only.
-	std::vector<GPSLogEntry*> v;
+	std::vector<GPSLogEntry *> v;
 	v.push_back(&cached);
 
 	unsigned int size_bits;
-	KineisPacket packet = ArgosPacketBuilder::build_gnss_packet(
-		v, argos_config.is_out_of_zone, argos_config.is_lb,
-		argos_config.delta_time_loc, size_bits);
+	KineisPacket packet = ArgosPacketBuilder::build_gnss_packet(v, argos_config.is_out_of_zone, argos_config.is_lb,
+	                                                            argos_config.delta_time_loc, size_bits);
 
 	// Adaptive modulation: same logic as process_gnss_burst (single-entry
 	// packet always fits LDK at 96/128 bits, so we prefer LDK for power).
@@ -1763,7 +1784,8 @@ void ArgosTxService::process_gnss_burst_from_cached() {
 			DEBUG_WARN("ArgosTxService::process_gnss_burst_from_cached: modulation switch failed, using current");
 			m_scheduled_mode = m_kineis.get_current_modulation();
 			if (!size_fits_modulation(size_bits, m_scheduled_mode)) {
-				DEBUG_ERROR("ArgosTxService::process_gnss_burst_from_cached: packet %u bits doesn't fit fallback mod %d — skipping TX",
+				DEBUG_ERROR("ArgosTxService::process_gnss_burst_from_cached: packet %u bits doesn't fit fallback mod "
+				            "%d — skipping TX",
 				            size_bits, (int)m_scheduled_mode);
 				service_complete();
 				return;
@@ -1775,13 +1797,14 @@ void ArgosTxService::process_gnss_burst_from_cached() {
 		// can't hold it — fall back to LDA2 if provisioned, else skip cleanly
 		// instead of a silent KIM2 oversize drop. User policy 2026-06-17.
 		if (!size_fits_modulation(size_bits, m_scheduled_mode)) {
-			if (size_fits_modulation(size_bits, KineisModulation::LDA2) &&
-			    ensure_modulation(KineisModulation::LDA2)) {
-				DEBUG_WARN("ArgosTxService::process_gnss_burst_from_cached: %u bits don't fit master mod %d — falling back to LDA2",
+			if (size_fits_modulation(size_bits, KineisModulation::LDA2) && ensure_modulation(KineisModulation::LDA2)) {
+				DEBUG_WARN("ArgosTxService::process_gnss_burst_from_cached: %u bits don't fit master mod %d — falling "
+				           "back to LDA2",
 				           size_bits, (int)m_scheduled_mode);
 				m_scheduled_mode = KineisModulation::LDA2;
 			} else {
-				DEBUG_ERROR("ArgosTxService::process_gnss_burst_from_cached: %u bits fit no provisioned modulation — skipping TX",
+				DEBUG_ERROR("ArgosTxService::process_gnss_burst_from_cached: %u bits fit no provisioned modulation — "
+				            "skipping TX",
 				            size_bits);
 				service_complete();
 				return;
@@ -1791,8 +1814,8 @@ void ArgosTxService::process_gnss_burst_from_cached() {
 
 	// Demoted to TRACE: per-TX payload dump.
 	DEBUG_TRACE("ArgosTxService::process_gnss_burst_from_cached: REUSE_LAST TX mode=%s data=%s sz=%u",
-	           argos_modulation_to_string((BaseArgosModulation)m_scheduled_mode),
-	           Binascii::hexlify(packet).c_str(), size_bits);
+	            argos_modulation_to_string((BaseArgosModulation)m_scheduled_mode), Binascii::hexlify(packet).c_str(),
+	            size_bits);
 	m_last_tx_had_gps = true;
 	m_last_val_tx_type = "reuse_last";
 	m_kineis.send(m_scheduled_mode, packet, size_bits);
@@ -1822,11 +1845,9 @@ void ArgosTxService::prepare_doppler_packet() {
 		mort_conf = mortality_service->get_confidence();
 		activity = mortality_service->get_last_activity();
 	}
-	packet = ArgosPacketBuilder::build_rspb_doppler_packet(
-		service_get_level(), activity, mort_conf, size_bits);
+	packet = ArgosPacketBuilder::build_rspb_doppler_packet(service_get_level(), activity, mort_conf, size_bits);
 #else
-	packet = ArgosPacketBuilder::build_doppler_packet(
-		service_get_voltage(), service_is_battery_level_low(), size_bits);
+	packet = ArgosPacketBuilder::build_doppler_packet(service_get_voltage(), service_is_battery_level_low(), size_bits);
 #endif
 
 	m_prepared_doppler_packet = packet;
@@ -1845,8 +1866,8 @@ void ArgosTxService::prepare_doppler_packet() {
 	// latency, zero ensure_modulation() call, zero STM32 flash write. The
 	// SMD already persists the master modulation across reboots via
 	// write_credentials_from_config + save_radio_conf — nothing to add.
-	m_prepared_doppler_mode = argos_config.adaptive_modulation ?
-		KineisModulation::VLDA4 : resolve_non_adaptive_modulation();
+	m_prepared_doppler_mode =
+	    argos_config.adaptive_modulation ? KineisModulation::VLDA4 : resolve_non_adaptive_modulation();
 	m_prepared_at_ms = PMU::get_timestamp_ms();
 }
 
@@ -1866,25 +1887,21 @@ void ArgosTxService::process_doppler_burst() {
 	{
 		ArgosConfig pw_cfg;
 		configuration_store->get_argos_configuration(pw_cfg);
-		uint64_t prep_age_ms = (m_prepared_at_ms != 0)
-		                       ? (PMU::get_timestamp_ms() - m_prepared_at_ms)
-		                       : UINT64_MAX;
-		if (m_is_surfacing_burst && m_doppler_burst_count == 1 &&
-		    pw_cfg.mode == BaseArgosMode::SURFACING_BURST &&
-		    !m_prepared_doppler_packet.empty() &&
-		    m_prepared_at_ms != 0 &&
-		    prep_age_ms < PREPARED_DOPPLER_REFRESH_MS) {
+		uint64_t prep_age_ms = (m_prepared_at_ms != 0) ? (PMU::get_timestamp_ms() - m_prepared_at_ms) : UINT64_MAX;
+		if (m_is_surfacing_burst && m_doppler_burst_count == 1 && pw_cfg.mode == BaseArgosMode::SURFACING_BURST
+		    && !m_prepared_doppler_packet.empty() && m_prepared_at_ms != 0
+		    && prep_age_ms < PREPARED_DOPPLER_REFRESH_MS) {
 			KineisModulation tx_mode = m_prepared_doppler_mode;
 			if (pw_cfg.adaptive_modulation) {
 				tx_mode = KineisModulation::VLDA4;
 				if (!ensure_modulation(tx_mode)) {
-					DEBUG_WARN("ArgosTxService::process_doppler_burst: pre-warmed modulation switch failed, using current");
+					DEBUG_WARN(
+					    "ArgosTxService::process_doppler_burst: pre-warmed modulation switch failed, using current");
 					tx_mode = m_kineis.get_current_modulation();
 				}
 			}
 			DEBUG_TRACE("ArgosTxService::process_doppler_burst: PREWARM mode=%s sz=%u age=%lu ms",
-			            argos_modulation_to_string((BaseArgosModulation)tx_mode),
-			            m_prepared_doppler_size_bits,
+			            argos_modulation_to_string((BaseArgosModulation)tx_mode), m_prepared_doppler_size_bits,
 			            static_cast<unsigned long>(prep_age_ms));
 			m_last_tx_had_gps = false;
 			KineisPacket prepared = m_prepared_doppler_packet;
@@ -1908,8 +1925,8 @@ void ArgosTxService::process_doppler_burst() {
 	// legacy DOPPLER mode (where the counter is never incremented — see
 	// service_initiate()) — it does NOT protect the first ping of a burst.
 	unsigned int fastloc_mode = configuration_store->read_param<unsigned int>(ParamID::GNSS_FASTLOC_MODE);
-	if (fastloc_mode == (unsigned int)BaseFastlocMode::CLOUDLOCATE &&
-	    m_doppler_burst_count > 0 && gps_device && gps_device->has_raw_measurement()) {
+	if (fastloc_mode == (unsigned int)BaseFastlocMode::CLOUDLOCATE && m_doppler_burst_count > 0 && gps_device
+	    && gps_device->has_raw_measurement()) {
 		GNSSRawMeasurement raw = gps_device->get_raw_measurement();
 		unsigned int cl_format = configuration_store->read_param<unsigned int>(ParamID::GNSS_CLOUDLOCATE_FORMAT);
 
@@ -1918,27 +1935,33 @@ void ArgosTxService::process_doppler_burst() {
 		// session, blob stays null and the CloudLocate TX is skipped (see `if (blob)`
 		// below) rather than silently emitting a different format the operator did
 		// not select. Format is independent of the Argos modulation.
-		const uint8_t* blob = nullptr;
+		const uint8_t *blob = nullptr;
 		unsigned int blob_size = 0;
 		uint8_t format_id = 0;
 		if (cl_format == (unsigned int)BaseCloudLocateFormat::MEASC12 && raw.has_measc12) {
-			blob = raw.measc12; blob_size = 12; format_id = (uint8_t)BaseCloudLocateFormat::MEASC12;
+			blob = raw.measc12;
+			blob_size = 12;
+			format_id = (uint8_t)BaseCloudLocateFormat::MEASC12;
 		} else if (cl_format == (unsigned int)BaseCloudLocateFormat::MEAS20 && raw.has_meas20) {
-			blob = raw.meas20; blob_size = 20; format_id = (uint8_t)BaseCloudLocateFormat::MEAS20;
+			blob = raw.meas20;
+			blob_size = 20;
+			format_id = (uint8_t)BaseCloudLocateFormat::MEAS20;
 		}
 		if (!blob) {
-			DEBUG_WARN("ArgosTxService::process_doppler_burst: configured CloudLocate format %u not available (measc12=%u meas20=%u) — skipping CL TX",
+			DEBUG_WARN("ArgosTxService::process_doppler_burst: configured CloudLocate format %u not available "
+			           "(measc12=%u meas20=%u) — skipping CL TX",
 			           cl_format, (unsigned)raw.has_measc12, (unsigned)raw.has_meas20);
 		}
 
 		if (blob) {
 			// Demoted to TRACE: per-ping TX_RAW dump on the surfacing-burst hot
 			// path adds ~50-300 ms of LFS commit per emit.
-			DEBUG_TRACE("TX_RAW: CL fmt=%u sz=%u batt=%umV blob=%s",
-			            format_id, blob_size, (unsigned)service_get_voltage(), Binascii::hexlify(std::string((const char*)blob, blob_size)).c_str());
-			KineisPacket packet = ArgosPacketBuilder::build_cloudlocate_packet(blob, blob_size, format_id,
-			                                                                   service_get_voltage(), argos_config.is_lb,
-			                                                                   raw.capture_time, (uint32_t)service_current_time());
+			DEBUG_TRACE("TX_RAW: CL fmt=%u sz=%u batt=%umV blob=%s", format_id, blob_size,
+			            (unsigned)service_get_voltage(),
+			            Binascii::hexlify(std::string((const char *)blob, blob_size)).c_str());
+			KineisPacket packet = ArgosPacketBuilder::build_cloudlocate_packet(
+			    blob, blob_size, format_id, service_get_voltage(), argos_config.is_lb, raw.capture_time,
+			    (uint32_t)service_current_time());
 			size_bits = ArgosPacketBuilder::cloudlocate_packet_bits(format_id);
 
 			// Modulation policy: see process_sensor_burst for full rationale.
@@ -1948,13 +1971,14 @@ void ArgosTxService::process_doppler_burst() {
 			//                  SURFACING_BURST regardless of master config.
 			KineisModulation tx_mode;
 			if (argos_config.adaptive_modulation) {
-				tx_mode = (format_id == (uint8_t)BaseCloudLocateFormat::MEASC12) ?
-					KineisModulation::LDK : KineisModulation::LDA2;
+				tx_mode = (format_id == (uint8_t)BaseCloudLocateFormat::MEASC12) ? KineisModulation::LDK
+				                                                                 : KineisModulation::LDA2;
 				if (!ensure_modulation(tx_mode)) {
 					DEBUG_WARN("ArgosTxService::process_doppler_burst: CloudLocate modulation switch failed");
 					tx_mode = m_kineis.get_current_modulation();
 					if (!size_fits_modulation(size_bits, tx_mode)) {
-						DEBUG_ERROR("ArgosTxService::process_doppler_burst: CloudLocate payload %u bits doesn't fit fallback mod %d — skipping TX",
+						DEBUG_ERROR("ArgosTxService::process_doppler_burst: CloudLocate payload %u bits doesn't fit "
+						            "fallback mod %d — skipping TX",
 						            size_bits, (int)tx_mode);
 						service_complete();
 						return;
@@ -1963,7 +1987,8 @@ void ArgosTxService::process_doppler_burst() {
 			} else {
 				tx_mode = m_kineis.get_current_modulation();
 				if (!size_fits_modulation(size_bits, tx_mode)) {
-					DEBUG_ERROR("ArgosTxService::process_doppler_burst: CloudLocate payload %u bits doesn't fit master mod %d (ARGOS_AD_MOD=0) — skipping TX",
+					DEBUG_ERROR("ArgosTxService::process_doppler_burst: CloudLocate payload %u bits doesn't fit master "
+					            "mod %d (ARGOS_AD_MOD=0) — skipping TX",
 					            size_bits, (int)tx_mode);
 					service_complete();
 					return;
@@ -1985,8 +2010,8 @@ void ArgosTxService::process_doppler_burst() {
 	// The position improves over time as the GPS refines its fix. As above, the
 	// `m_doppler_burst_count > 0` check gates legacy DOPPLER mode, not the first
 	// ping of a burst.
-	if (fastloc_mode >= (unsigned int)BaseFastlocMode::DEGRADED_PVT &&
-	    m_doppler_burst_count > 0 && gps_device && gps_device->has_degraded_pvt()) {
+	if (fastloc_mode >= (unsigned int)BaseFastlocMode::DEGRADED_PVT && m_doppler_burst_count > 0 && gps_device
+	    && gps_device->has_degraded_pvt()) {
 		GNSSData degraded = gps_device->get_degraded_pvt();
 
 		// Build a temporary GPSLogEntry from the degraded PVT
@@ -2020,8 +2045,8 @@ void ArgosTxService::process_doppler_burst() {
 
 		// Demoted to TRACE: per-ping TX_RAW dump on the surfacing-burst hot
 		// path adds ~50-300 ms of LFS commit per emit.
-		DEBUG_TRACE("TX_RAW: FLOC lat=%.6f lon=%.6f hAcc=%u nSV=%u hDOP=%.1f batt=%umV",
-		            degraded.lat, degraded.lon, degraded.hAcc, degraded.numSV, (double)degraded.hDOP, (unsigned)service_get_voltage());
+		DEBUG_TRACE("TX_RAW: FLOC lat=%.6f lon=%.6f hAcc=%u nSV=%u hDOP=%.1f batt=%umV", degraded.lat, degraded.lon,
+		            degraded.hAcc, degraded.numSV, (double)degraded.hDOP, (unsigned)service_get_voltage());
 		KineisPacket packet = ArgosPacketBuilder::build_fastloc_packet(&fastloc_entry, argos_config.is_lb);
 		size_bits = ArgosPacketBuilder::FASTLOC_PACKET_BITS;
 
@@ -2031,7 +2056,8 @@ void ArgosTxService::process_doppler_burst() {
 				DEBUG_WARN("ArgosTxService::process_doppler_burst: fastloc modulation switch failed, using current");
 				tx_mode = m_kineis.get_current_modulation();
 				if (!size_fits_modulation(size_bits, tx_mode)) {
-					DEBUG_ERROR("ArgosTxService::process_doppler_burst: fastloc payload %u bits doesn't fit fallback mod %d — skipping TX",
+					DEBUG_ERROR("ArgosTxService::process_doppler_burst: fastloc payload %u bits doesn't fit fallback "
+					            "mod %d — skipping TX",
 					            size_bits, (int)tx_mode);
 					service_complete();
 					return;
@@ -2043,8 +2069,9 @@ void ArgosTxService::process_doppler_burst() {
 			// apply it. Without it the surface ping left in LDA2 on a module still
 			// on the master.
 			if (!ensure_modulation(KineisModulation::LDA2)) {
-				DEBUG_ERROR("ArgosTxService::process_doppler_burst: fastloc %u bits need LDA2, not provisioned — skipping TX",
-				            size_bits);
+				DEBUG_ERROR(
+				    "ArgosTxService::process_doppler_burst: fastloc %u bits need LDA2, not provisioned — skipping TX",
+				    size_bits);
 				service_complete();
 				return;
 			}
@@ -2072,19 +2099,19 @@ void ArgosTxService::process_doppler_burst() {
 	// Falls through to standard Doppler if cache is empty or modulation
 	// constraints prevent TX.
 	if (m_doppler_burst_count > 1) {
-		const GPSLogEntry& cached_gps = configuration_store->get_last_gps_entry();
-		const GPSLogEntry& cached_fl  = configuration_store->get_last_fastloc_entry();
+		const GPSLogEntry &cached_gps = configuration_store->get_last_gps_entry();
+		const GPSLogEntry &cached_fl = configuration_store->get_last_fastloc_entry();
 		bool gps_ok = (cached_gps.info.valid && cached_gps.info.event_type == GPSEventType::FIX);
-		bool fl_ok  = (cached_fl.info.valid  && cached_fl.info.event_type  == GPSEventType::FASTLOC);
+		bool fl_ok = (cached_fl.info.valid && cached_fl.info.event_type == GPSEventType::FASTLOC);
 
-		const GPSLogEntry* pick = nullptr;
+		const GPSLogEntry *pick = nullptr;
 		if (gps_ok && fl_ok) {
-			std::time_t t_gps = convert_epochtime(cached_gps.header.year, cached_gps.header.month,
-			                                     cached_gps.header.day,  cached_gps.header.hours,
-			                                     cached_gps.header.minutes, cached_gps.header.seconds);
-			std::time_t t_fl  = convert_epochtime(cached_fl.header.year, cached_fl.header.month,
-			                                     cached_fl.header.day,  cached_fl.header.hours,
-			                                     cached_fl.header.minutes, cached_fl.header.seconds);
+			std::time_t t_gps =
+			    convert_epochtime(cached_gps.header.year, cached_gps.header.month, cached_gps.header.day,
+				                  cached_gps.header.hours, cached_gps.header.minutes, cached_gps.header.seconds);
+			std::time_t t_fl =
+			    convert_epochtime(cached_fl.header.year, cached_fl.header.month, cached_fl.header.day,
+				                  cached_fl.header.hours, cached_fl.header.minutes, cached_fl.header.seconds);
 			pick = (t_fl > t_gps) ? &cached_fl : &cached_gps;
 		} else if (gps_ok) {
 			pick = &cached_gps;
@@ -2097,12 +2124,12 @@ void ArgosTxService::process_doppler_burst() {
 			entry.info.batt_voltage = service_get_voltage();  // freshen battery field
 			bool is_fastloc = (entry.info.event_type == GPSEventType::FASTLOC);
 
-			KineisPacket cached_packet = is_fastloc
-				? ArgosPacketBuilder::build_fastloc_packet(&entry, argos_config.is_lb)
-				: ArgosPacketBuilder::build_short_packet(&entry, argos_config.is_out_of_zone, argos_config.is_lb);
-			unsigned int cached_size_bits = is_fastloc
-				? ArgosPacketBuilder::FASTLOC_PACKET_BITS
-				: ArgosPacketBuilder::SHORT_PACKET_BITS;
+			KineisPacket cached_packet =
+			    is_fastloc
+			        ? ArgosPacketBuilder::build_fastloc_packet(&entry, argos_config.is_lb)
+			        : ArgosPacketBuilder::build_short_packet(&entry, argos_config.is_out_of_zone, argos_config.is_lb);
+			unsigned int cached_size_bits =
+			    is_fastloc ? ArgosPacketBuilder::FASTLOC_PACKET_BITS : ArgosPacketBuilder::SHORT_PACKET_BITS;
 
 			// Modulation: adaptive forces LDA2 (universal for both 96-bit short
 			// and 192-bit fastloc). Non-adaptive trusts the master modulation;
@@ -2112,10 +2139,12 @@ void ArgosTxService::process_doppler_burst() {
 			bool can_send = true;
 			if (argos_config.adaptive_modulation) {
 				if (!ensure_modulation(cached_mode)) {
-					DEBUG_WARN("ArgosTxService::process_doppler_burst: cached-pos modulation switch failed, trying current");
+					DEBUG_WARN(
+					    "ArgosTxService::process_doppler_burst: cached-pos modulation switch failed, trying current");
 					cached_mode = m_kineis.get_current_modulation();
 					if (!size_fits_modulation(cached_size_bits, cached_mode)) {
-						DEBUG_WARN("ArgosTxService::process_doppler_burst: cached-pos %u bits doesn't fit fallback mod %d — falling through to Doppler",
+						DEBUG_WARN("ArgosTxService::process_doppler_burst: cached-pos %u bits doesn't fit fallback mod "
+						           "%d — falling through to Doppler",
 						           cached_size_bits, (int)cached_mode);
 						can_send = false;
 					}
@@ -2123,7 +2152,8 @@ void ArgosTxService::process_doppler_burst() {
 			} else {
 				cached_mode = resolve_non_adaptive_modulation();
 				if (!size_fits_modulation(cached_size_bits, cached_mode)) {
-					DEBUG_WARN("ArgosTxService::process_doppler_burst: cached-pos %u bits doesn't fit master mod %d (ARGOS_AD_MOD=0) — falling through to Doppler",
+					DEBUG_WARN("ArgosTxService::process_doppler_burst: cached-pos %u bits doesn't fit master mod %d "
+					           "(ARGOS_AD_MOD=0) — falling through to Doppler",
 					           cached_size_bits, (int)cached_mode);
 					can_send = false;
 				}
@@ -2132,10 +2162,9 @@ void ArgosTxService::process_doppler_burst() {
 			if (can_send) {
 				// Demoted to TRACE: per-ping payload dump on hot path.
 				DEBUG_TRACE("ArgosTxService::process_doppler_burst: %s #%u lat=%lf lon=%lf mode=%s data=%s",
-				           is_fastloc ? "CACHED_FASTLOC" : "CACHED_GPS",
-				           m_doppler_burst_count, entry.info.lat, entry.info.lon,
-				           argos_modulation_to_string((BaseArgosModulation)cached_mode),
-				           Binascii::hexlify(cached_packet).c_str());
+				            is_fastloc ? "CACHED_FASTLOC" : "CACHED_GPS", m_doppler_burst_count, entry.info.lat,
+				            entry.info.lon, argos_modulation_to_string((BaseArgosModulation)cached_mode),
+				            Binascii::hexlify(cached_packet).c_str());
 				m_last_tx_had_gps = true;
 				m_last_val_tx_type = is_fastloc ? "fastloc-cached" : "short-cached";
 				m_kineis.send(cached_mode, cached_packet, cached_size_bits);
@@ -2159,16 +2188,13 @@ void ArgosTxService::process_doppler_burst() {
 	// Demoted to TRACE: redundant on the surfacing-burst hot path. The
 	// "process_doppler_burst" log below already carries the data hex; battery
 	// voltage / soc visible via dedicated DTE param query.
-	DEBUG_TRACE("TX_RAW: DOPP soc=%u activity=%u mortality=%u",
-	            service_get_level(), activity, mort_conf);
-	packet = ArgosPacketBuilder::build_rspb_doppler_packet(
-		service_get_level(), activity, mort_conf, size_bits);
+	DEBUG_TRACE("TX_RAW: DOPP soc=%u activity=%u mortality=%u", service_get_level(), activity, mort_conf);
+	packet = ArgosPacketBuilder::build_rspb_doppler_packet(service_get_level(), activity, mort_conf, size_bits);
 #else
 	// Standard Doppler: battery voltage only
-	DEBUG_TRACE("TX_RAW: DOPP batt=%umV low_batt=%u",
-	            (unsigned)service_get_voltage(), service_is_battery_level_low() ? 1U : 0U);
-	packet = ArgosPacketBuilder::build_doppler_packet(
-		service_get_voltage(), service_is_battery_level_low(), size_bits);
+	DEBUG_TRACE("TX_RAW: DOPP batt=%umV low_batt=%u", (unsigned)service_get_voltage(),
+	            service_is_battery_level_low() ? 1U : 0U);
+	packet = ArgosPacketBuilder::build_doppler_packet(service_get_voltage(), service_is_battery_level_low(), size_bits);
 #endif
 
 	// Adaptive modulation: Doppler = 24 bits = VLDA4.
@@ -2198,24 +2224,24 @@ void ArgosTxService::process_doppler_burst() {
 }
 
 /// @brief TX started event — notify service manager that TX is in progress.
-void ArgosTxService::react(KineisEventTxStarted const&) {
+void ArgosTxService::react(KineisEventTxStarted const &) {
 	DEBUG_TRACE("ArgosTxService::react: KineisEventTxStarted");
 #if !defined(ARGOS_SMD) || (ARGOS_SMD != 1)
 	// KIM2 only: surface the burst type + modulation + running session TX count
 	// so the operator can see WHAT is being sent and HOW MANY this session.
-	DEBUG_INFO("ArgosTxService: TX START — type=%s mode=%d session_tx#=%u",
-	           m_last_val_tx_type, static_cast<int>(m_scheduled_mode), m_session_tx_count + 1);
+	DEBUG_INFO("ArgosTxService: TX START — type=%s mode=%d session_tx#=%u", m_last_val_tx_type,
+	           static_cast<int>(m_scheduled_mode), m_session_tx_count + 1);
 #endif
 	service_active();
 }
 
 /// @brief TX complete event — update counters, manage surfacing burst, complete service.
-void ArgosTxService::react(KineisEventTxComplete const&) {
+void ArgosTxService::react(KineisEventTxComplete const &) {
 	DEBUG_TRACE("ArgosTxService::react: KineisEventTxComplete");
 #if !defined(ARGOS_SMD) || (ARGOS_SMD != 1)
 	// KIM2 only: clear, visible confirmation that the Argos message went out.
-	DEBUG_INFO("ArgosTxService: TX SUCCESS — type=%s mode=%d session_tx#=%u",
-	           m_last_val_tx_type, static_cast<int>(m_scheduled_mode), m_session_tx_count + 1);
+	DEBUG_INFO("ArgosTxService: TX SUCCESS — type=%s mode=%d session_tx#=%u", m_last_val_tx_type,
+	           static_cast<int>(m_scheduled_mode), m_session_tx_count + 1);
 #endif
 	m_is_tx_pending = false;
 	m_consecutive_device_errors = 0;
@@ -2236,10 +2262,9 @@ void ArgosTxService::react(KineisEventTxComplete const&) {
 		// ArgosTxService — counter stays 0). The previous TX seen at boot in
 		// the field log on 2026-05-23 with burst#=0 was such a pre-surface-event
 		// "legacy" TX, not an off-by-one bug.
-		DEBUG_INFO("[VAL-TX] type=%s t=%u spacing_s=%u burst=%s dop_count=%u session#=%u",
-		           m_last_val_tx_type, (unsigned int)now_v, spacing_s,
-		           m_is_surfacing_burst ? "on" : "off",
-		           m_doppler_burst_count, m_session_tx_count + 1);
+		DEBUG_INFO("[VAL-TX] type=%s t=%u spacing_s=%u burst=%s dop_count=%u session#=%u", m_last_val_tx_type,
+		           (unsigned int)now_v, spacing_s, m_is_surfacing_burst ? "on" : "off", m_doppler_burst_count,
+		           m_session_tx_count + 1);
 		m_last_val_tx_t = now_v;
 	}
 #endif
@@ -2258,8 +2283,7 @@ void ArgosTxService::react(KineisEventTxComplete const&) {
 	// NTIME_SAT and the rate limiter keep bounding actual airtime.
 	ArgosConfig argos_config;
 	configuration_store->get_argos_configuration(argos_config);
-	unsigned int tx_copies = (argos_config.blind_en && argos_config.blind_retx_nb > 0)
-	                         ? argos_config.blind_retx_nb : 1;
+	unsigned int tx_copies = (argos_config.blind_en && argos_config.blind_retx_nb > 0) ? argos_config.blind_retx_nb : 1;
 
 	// Increment TX counter
 	configuration_store->increment_tx_counter();
@@ -2273,8 +2297,8 @@ void ArgosTxService::react(KineisEventTxComplete const&) {
 
 	// Check session TX limit (SHUTDOWN_NTIME_SAT / LB_SHUTDOWN_NTIME_SAT)
 	if (argos_config.shutdown_ntime_sat > 0 && m_session_tx_count >= argos_config.shutdown_ntime_sat) {
-		DEBUG_INFO("ArgosTxService: Session TX limit reached (%u/%u) | shutdown",
-		           m_session_tx_count, argos_config.shutdown_ntime_sat);
+		DEBUG_INFO("ArgosTxService: Session TX limit reached (%u/%u) | shutdown", m_session_tx_count,
+		           argos_config.shutdown_ntime_sat);
 		configuration_store->save_params();  // Flush before shutdown
 		PMU::powerdown();
 		return;
@@ -2307,12 +2331,11 @@ void ArgosTxService::react(KineisEventTxComplete const&) {
 	// the STM32WL flash in VLDA4, so the next surfacing's first ping skips
 	// the deferred-RCONF path entirely.
 	if (argos_config.adaptive_modulation && argos_config.mode == BaseArgosMode::SURFACING_BURST) {
-		bool next_likely_lda2 = (gps_device && gps_device->has_degraded_pvt() &&
-		                         !m_has_gnss_fix_since_surfacing && m_doppler_burst_count > 0);
+		bool next_likely_lda2 = (gps_device && gps_device->has_degraded_pvt() && !m_has_gnss_fix_since_surfacing
+		                         && m_doppler_burst_count > 0);
 		bool fix_just_arrived = (m_has_gnss_fix_since_surfacing && !m_first_gnss_tx_sent);
 
-		if (!next_likely_lda2 && !fix_just_arrived &&
-		    m_kineis.get_current_modulation() != KineisModulation::VLDA4) {
+		if (!next_likely_lda2 && !fix_just_arrived && m_kineis.get_current_modulation() != KineisModulation::VLDA4) {
 			DEBUG_INFO("ArgosTxService::react: pre-switch to VLDA4 for next Doppler");
 			ensure_modulation(KineisModulation::VLDA4);
 		}
@@ -2363,7 +2386,7 @@ void ArgosTxService::react(KineisEventTxComplete const&) {
 }
 
 /// @brief Device error event — increment backoff counter, complete service with error.
-void ArgosTxService::react(KineisEventDeviceError const&) {
+void ArgosTxService::react(KineisEventDeviceError const &) {
 	// Distinguish "device cooldown reject" from a real device error. The SmdSat
 	// 30-min autofallback cooldown is itself the recovery path — counting it as
 	// a device error would burn the 3-strike session budget within ~3 surface
@@ -2375,8 +2398,7 @@ void ArgosTxService::react(KineisEventDeviceError const&) {
 		DEBUG_WARN("ArgosTxService::react: TX rejected by device cooldown (%u min left) — not counted",
 		           cooldown_ms / 60000);
 #if VALIDATION_LOG_ENABLE
-		DEBUG_INFO("[VAL-SAT] argos_react_skip_cooldown remaining_ms=%u (no error increment)",
-		           cooldown_ms);
+		DEBUG_INFO("[VAL-SAT] argos_react_skip_cooldown remaining_ms=%u (no error increment)", cooldown_ms);
 #endif
 		if (service_cancel()) {
 			unsigned int backoff_s = (cooldown_ms / 1000) + 1;  // +1 s margin
@@ -2387,13 +2409,13 @@ void ArgosTxService::react(KineisEventDeviceError const&) {
 	}
 
 	m_consecutive_device_errors++;
-	DEBUG_WARN("ArgosTxService::react: KineisEventDeviceError (consecutive=%u/%u)",
-	           m_consecutive_device_errors, DEVICE_ERROR_MAX_CONSECUTIVE);
+	DEBUG_WARN("ArgosTxService::react: KineisEventDeviceError (consecutive=%u/%u)", m_consecutive_device_errors,
+	           DEVICE_ERROR_MAX_CONSECUTIVE);
 #if !defined(ARGOS_SMD) || (ARGOS_SMD != 1)
 	// KIM2 only: surface the burst type + modulation on a TX failure.
 	DEBUG_WARN("ArgosTxService: TX FAILED — type=%s mode=%d (consecutive=%u/%u, will backoff/retry)",
-	           m_last_val_tx_type, static_cast<int>(m_scheduled_mode),
-	           m_consecutive_device_errors, DEVICE_ERROR_MAX_CONSECUTIVE);
+	           m_last_val_tx_type, static_cast<int>(m_scheduled_mode), m_consecutive_device_errors,
+	           DEVICE_ERROR_MAX_CONSECUTIVE);
 #endif
 
 	// Restore TCXO warmup if it was skipped
@@ -2410,8 +2432,7 @@ void ArgosTxService::react(KineisEventDeviceError const&) {
 		ArgosConfig ac;
 		configuration_store->get_argos_configuration(ac);
 		if (ac.adaptive_modulation && ac.mode == BaseArgosMode::SURFACING_BURST) {
-			KineisModulation target = m_has_gnss_fix_since_surfacing ?
-				KineisModulation::LDK : KineisModulation::VLDA4;
+			KineisModulation target = m_has_gnss_fix_since_surfacing ? KineisModulation::LDK : KineisModulation::VLDA4;
 			m_modulation_preconfig = target;
 			DEBUG_INFO("ArgosTxService::react: error recovery — caching RCONF for modulation %d", (int)target);
 		}
@@ -2448,26 +2469,24 @@ void ArgosTxService::react(KineisEventDeviceError const&) {
 unsigned int ArgosTxService::compute_gps_log_age_seconds(const GPSLogEntry &entry, std::time_t now) {
 	// LogHeader year=0 is the cold-boot / unset RTC sentinel — never trust it.
 	if (entry.header.year == 0) return UINT_MAX;
-	std::time_t entry_time = convert_epochtime(entry.header.year, entry.header.month,
-	                                           entry.header.day, entry.header.hours,
-	                                           entry.header.minutes, entry.header.seconds);
+	std::time_t entry_time = convert_epochtime(entry.header.year, entry.header.month, entry.header.day,
+	                                           entry.header.hours, entry.header.minutes, entry.header.seconds);
 	// Future-dated entries indicate either RTC roll-back or corruption — reject
 	// rather than reporting age=0 which would falsely qualify as "fresh".
 	if (now < entry_time) return UINT_MAX;
 	return (unsigned int)(now - entry_time);
 }
 
-unsigned int ArgosTxService::apply_spacing_guard(unsigned int proposed_delay_ms,
-                                                  unsigned int min_spacing_s,
-                                                  std::time_t now) {
+unsigned int ArgosTxService::apply_spacing_guard(unsigned int proposed_delay_ms, unsigned int min_spacing_s,
+                                                 std::time_t now) {
 	if (m_last_tx_uptime_ms == 0) return proposed_delay_ms;  // no prior TX, no guard needed
 	uint64_t now_uptime_ms = service_current_timer();
 	uint64_t earliest_ms = m_last_tx_uptime_ms + (uint64_t)min_spacing_s * 1000;
 	uint64_t proposed_uptime_ms = now_uptime_ms + proposed_delay_ms;
 	if (proposed_uptime_ms >= earliest_ms) return proposed_delay_ms;  // OK as-is
 	unsigned int deferred_ms = (unsigned int)(earliest_ms - now_uptime_ms);
-	DEBUG_INFO("ArgosTxService: TX deferred %u ms (intra-burst spacing guard, last TX %u ms ago)",
-	           deferred_ms, (unsigned int)(now_uptime_ms - m_last_tx_uptime_ms));
+	DEBUG_INFO("ArgosTxService: TX deferred %u ms (intra-burst spacing guard, last TX %u ms ago)", deferred_ms,
+	           (unsigned int)(now_uptime_ms - m_last_tx_uptime_ms));
 	// Re-anchor scheduler at the deferred RTC time so the scheduler doesn't
 	// fire "early" relative to our spacing.
 	m_sched.schedule_at(now + (std::time_t)(deferred_ms / 1000) + 1);
@@ -2478,26 +2497,23 @@ unsigned int ArgosTxService::apply_spacing_guard(unsigned int proposed_delay_ms,
 const char *ArgosTxService::aop_etat_texte(AopEtat e) {
 	switch (e) {
 	case AopEtat::AUCUN_ENREGISTREMENT: return "aucun enregistrement AOP (jamais provisionne)";
-	case AopEtat::RTC_NON_REGLEE:       return "RTC non reglee (pas d'heure fiable)";
-	case AopEtat::DATE_ABSENTE:         return "date de bulletin absente ou posterieure a l'heure courante";
-	case AopEtat::PERIME:               return "bulletin perime";
-	case AopEtat::UTILISABLE:           return "utilisable";
-	default:                            return "etat inconnu";
+	case AopEtat::RTC_NON_REGLEE: return "RTC non reglee (pas d'heure fiable)";
+	case AopEtat::DATE_ABSENTE: return "date de bulletin absente ou posterieure a l'heure courante";
+	case AopEtat::PERIME: return "bulletin perime";
+	case AopEtat::UTILISABLE: return "utilisable";
+	default: return "etat inconnu";
 	}
 }
 
-bool ArgosTxService::aop_is_usable(const ArgosConfig& config, std::time_t now,
-                                   unsigned int& age_s) {
+bool ArgosTxService::aop_is_usable(const ArgosConfig &config, std::time_t now, unsigned int &age_s) {
 	return aop_etat(config, now, age_s) == AopEtat::UTILISABLE;
 }
 
 /// @brief Are the AOP usable (present, dated, not expired)?
-ArgosTxService::AopEtat ArgosTxService::aop_etat(const ArgosConfig& config, std::time_t now,
-                                                 unsigned int& age_s) {
+ArgosTxService::AopEtat ArgosTxService::aop_etat(const ArgosConfig &config, std::time_t now, unsigned int &age_s) {
 	age_s = 0;
-	BasePassPredict& pp = configuration_store->read_pass_predict();
-	if (pp.num_records == 0)
-		return AopEtat::AUCUN_ENREGISTREMENT;
+	BasePassPredict &pp = configuration_store->read_pass_predict();
+	if (pp.num_records == 0) return AopEtat::AUCUN_ENREGISTREMENT;
 	// last_aop_update = ARGOS_AOP_DATE, set when a PASPW is received.
 	// Its factory value is old (Oct. 2021): a beacon that was never provisioned
 	// is therefore considered expired as soon as the age limit is enabled, and
@@ -2505,30 +2521,25 @@ ArgosTxService::AopEtat ArgosTxService::aop_etat(const ArgosConfig& config, std:
 	// Without a reliable time no window can be computed — and above all the AOP
 	// age is meaningless. A distinct cause because the remedy is one too: set
 	// the RTC ($RTCW or a GNSS fix), not re-upload the AOP.
-	if (!service_is_time_known())
-		return AopEtat::RTC_NON_REGLEE;
-	if (config.last_aop_update <= 0 || now <= config.last_aop_update)
-		return AopEtat::DATE_ABSENTE;
+	if (!service_is_time_known()) return AopEtat::RTC_NON_REGLEE;
+	if (config.last_aop_update <= 0 || now <= config.last_aop_update) return AopEtat::DATE_ABSENTE;
 	std::time_t age = now - config.last_aop_update;
 	age_s = static_cast<unsigned int>(age);
-	if (config.aop_max_age_days == 0)
-		return AopEtat::UTILISABLE;   // 0 = no expiry
+	if (config.aop_max_age_days == 0) return AopEtat::UTILISABLE;  // 0 = no expiry
 	static constexpr std::time_t SECS_PER_DAY = 24 * 60 * 60;
-	return (age < static_cast<std::time_t>(config.aop_max_age_days) * SECS_PER_DAY)
-	       ? AopEtat::UTILISABLE : AopEtat::PERIME;
+	return (age < static_cast<std::time_t>(config.aop_max_age_days) * SECS_PER_DAY) ? AopEtat::UTILISABLE
+	                                                                                : AopEtat::PERIME;
 }
 
 /// @brief Update the statuses readable through STATR (PPT01..PPT04).
-void ArgosTxService::refresh_prepass_status(const ArgosConfig& config, std::time_t now,
-                                            std::time_t next_pass_epoch) {
+void ArgosTxService::refresh_prepass_status(const ArgosConfig &config, std::time_t now, std::time_t next_pass_epoch) {
 	unsigned int age_s = 0;
 	bool valid = aop_is_usable(config, now, age_s);
 	try {
 		configuration_store->write_param(ParamID::SAT_AOP_VALID, valid);
 		configuration_store->write_param(ParamID::SAT_AOP_AGE_S, age_s);
 		if (next_pass_epoch > 0)
-			configuration_store->write_param(ParamID::SAT_NEXT_PASS_TS,
-			                                 static_cast<unsigned int>(next_pass_epoch));
+			configuration_store->write_param(ParamID::SAT_NEXT_PASS_TS, static_cast<unsigned int>(next_pass_epoch));
 	} catch (...) {
 		// A status is information, never a reason to prevent a TX.
 		DEBUG_WARN("ArgosTxService::refresh_prepass_status: ecriture impossible");
@@ -2540,9 +2551,9 @@ bool ArgosTxService::should_promote_doppler_to_gnss(unsigned int max_age_s) {
 	if (!latest) return false;
 	// Only "positional" entries are useful — CLOUDLOCATE handled separately
 	// in SURFACING_BURST path via process_gnss_burst itself.
-	bool is_positional = (latest->info.event_type == GPSEventType::FIX ||
-	                      latest->info.event_type == GPSEventType::UPDATE ||
-	                      latest->info.event_type == GPSEventType::FASTLOC);
+	bool is_positional =
+	    (latest->info.event_type == GPSEventType::FIX || latest->info.event_type == GPSEventType::UPDATE
+	     || latest->info.event_type == GPSEventType::FASTLOC);
 	if (!is_positional) return false;
 	unsigned int age = compute_gps_log_age_seconds(*latest, service_current_time());
 	if (age > max_age_s) return false;
@@ -2568,8 +2579,7 @@ bool ArgosTxService::read_cached_last_fix(GPSLogEntry &out) {
 	// false. The FastLoc-priority path used in non-REUSE_LAST modes (see
 	// should_promote_doppler_to_gnss) covers the "use FastLoc opportunistically"
 	// use case separately.
-	if (cached->info.event_type != GPSEventType::FIX &&
-	    cached->info.event_type != GPSEventType::UPDATE) return false;
+	if (cached->info.event_type != GPSEventType::FIX && cached->info.event_type != GPSEventType::UPDATE) return false;
 	unsigned int age = compute_gps_log_age_seconds(*cached, service_current_time());
 	if (age > max_age_s) return false;
 	out = *cached;

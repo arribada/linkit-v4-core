@@ -48,61 +48,51 @@ extern "C" {
  */
 
 /**@brief Macro to convert microseconds into ticks. */
-#define NRFX_RTC_US_TO_TICKS(us,freq) (((us) * (freq)) / 1000000U)
+#define NRFX_RTC_US_TO_TICKS(us, freq) (((us) * (freq)) / 1000000U)
 
 /**@brief RTC driver interrupt types. */
-typedef enum
-{
-    NRFX_RTC_INT_COMPARE0 = 0, /**< Interrupt from COMPARE0 event. */
-    NRFX_RTC_INT_COMPARE1 = 1, /**< Interrupt from COMPARE1 event. */
-    NRFX_RTC_INT_COMPARE2 = 2, /**< Interrupt from COMPARE2 event. */
-    NRFX_RTC_INT_COMPARE3 = 3, /**< Interrupt from COMPARE3 event. */
-    NRFX_RTC_INT_TICK     = 4, /**< Interrupt from TICK event. */
-    NRFX_RTC_INT_OVERFLOW = 5  /**< Interrupt from OVERFLOW event. */
+typedef enum {
+	NRFX_RTC_INT_COMPARE0 = 0, /**< Interrupt from COMPARE0 event. */
+	NRFX_RTC_INT_COMPARE1 = 1, /**< Interrupt from COMPARE1 event. */
+	NRFX_RTC_INT_COMPARE2 = 2, /**< Interrupt from COMPARE2 event. */
+	NRFX_RTC_INT_COMPARE3 = 3, /**< Interrupt from COMPARE3 event. */
+	NRFX_RTC_INT_TICK = 4,     /**< Interrupt from TICK event. */
+	NRFX_RTC_INT_OVERFLOW = 5  /**< Interrupt from OVERFLOW event. */
 } nrfx_rtc_int_type_t;
 
 /**@brief RTC driver instance  structure. */
-typedef struct
-{
-    uint8_t         instance_id;      /**< Instance index. */
+typedef struct {
+	uint8_t instance_id; /**< Instance index. */
 } nrfx_rtc_t;
 
 /**@brief Macro for creating RTC driver instance.*/
-#define NRFX_RTC_INSTANCE(id)                                   \
-{                                                               \
-    .instance_id      = id,                                     \
-}
+#define NRFX_RTC_INSTANCE(id) \
+	{                         \
+		.instance_id = id,    \
+	}
 
-enum
-{
-    NRFX_RTC0_INST_IDX,
-    NRFX_RTC1_INST_IDX,
-    NRFX_RTC2_INST_IDX,
-    NRFX_RTC_ENABLED_COUNT
-};
+enum { NRFX_RTC0_INST_IDX, NRFX_RTC1_INST_IDX, NRFX_RTC2_INST_IDX, NRFX_RTC_ENABLED_COUNT };
 
 /**@brief RTC driver instance configuration structure. */
-typedef struct
-{
-    uint16_t prescaler;          /**< Prescaler. */
-    uint8_t  interrupt_priority; /**< Interrupt priority. */
-    uint8_t  tick_latency;       /**< Maximum length of interrupt handler in ticks (max 7.7 ms). */
-    bool     reliable;           /**< Reliable mode flag. */
+typedef struct {
+	uint16_t prescaler;         /**< Prescaler. */
+	uint8_t interrupt_priority; /**< Interrupt priority. */
+	uint8_t tick_latency;       /**< Maximum length of interrupt handler in ticks (max 7.7 ms). */
+	bool reliable;              /**< Reliable mode flag. */
 } nrfx_rtc_config_t;
 
-#define RTC_INPUT_FREQ 32768 /**< Input frequency of the RTC instance. */
+#define RTC_INPUT_FREQ              32768 /**< Input frequency of the RTC instance. */
 
 #define RTC_FREQ_TO_PRESCALER(FREQ) (uint16_t)(((RTC_INPUT_FREQ) / (FREQ)) - 1)
 
 /**@brief RTC instance default configuration. */
-#define NRFX_RTC_DEFAULT_CONFIG                                                     \
-{                                                                                   \
-    .prescaler          = RTC_FREQ_TO_PRESCALER(NRFX_RTC_DEFAULT_CONFIG_FREQUENCY), \
-    .interrupt_priority = NRFX_RTC_DEFAULT_CONFIG_IRQ_PRIORITY,                     \
-    .reliable           = NRFX_RTC_DEFAULT_CONFIG_RELIABLE,                         \
-    .tick_latency       = NRFX_RTC_US_TO_TICKS(NRFX_RTC_MAXIMUM_LATENCY_US,         \
-                                               NRFX_RTC_DEFAULT_CONFIG_FREQUENCY),  \
-}
+#define NRFX_RTC_DEFAULT_CONFIG                                                                               \
+	{                                                                                                         \
+		.prescaler = RTC_FREQ_TO_PRESCALER(NRFX_RTC_DEFAULT_CONFIG_FREQUENCY),                                \
+		.interrupt_priority = NRFX_RTC_DEFAULT_CONFIG_IRQ_PRIORITY,                                           \
+		.reliable = NRFX_RTC_DEFAULT_CONFIG_RELIABLE,                                                         \
+		.tick_latency = NRFX_RTC_US_TO_TICKS(NRFX_RTC_MAXIMUM_LATENCY_US, NRFX_RTC_DEFAULT_CONFIG_FREQUENCY), \
+	}
 
 /**@brief RTC driver instance handler type. */
 typedef void (*nrfx_rtc_handler_t)(nrfx_rtc_int_type_t int_type);
@@ -119,9 +109,8 @@ typedef void (*nrfx_rtc_handler_t)(nrfx_rtc_int_type_t int_type);
  * @retval     NRFX_SUCCESS             If successfully initialized.
  * @retval     NRFX_ERROR_INVALID_STATE If the instance is already initialized.
  */
-nrfx_err_t nrfx_rtc_init(nrfx_rtc_t const * const  p_instance,
-                         nrfx_rtc_config_t const * p_config,
-                         nrfx_rtc_handler_t        handler);
+nrfx_err_t nrfx_rtc_init(nrfx_rtc_t const *const p_instance, nrfx_rtc_config_t const *p_config,
+                         nrfx_rtc_handler_t handler);
 
 /**@brief Function for uninitializing the RTC driver instance.
  *
@@ -130,7 +119,7 @@ nrfx_err_t nrfx_rtc_init(nrfx_rtc_t const * const  p_instance,
  *
  * @param[in]  p_instance         Pointer to the driver instance structure.
  */
-void nrfx_rtc_uninit(nrfx_rtc_t const * const p_instance);
+void nrfx_rtc_uninit(nrfx_rtc_t const *const p_instance);
 
 /**@brief Function for enabling the RTC driver instance.
  *
@@ -138,7 +127,7 @@ void nrfx_rtc_uninit(nrfx_rtc_t const * const p_instance);
  *
  * @param[in]  p_instance         Pointer to the driver instance structure.
  */
-void nrfx_rtc_enable(nrfx_rtc_t const * const p_instance);
+void nrfx_rtc_enable(nrfx_rtc_t const *const p_instance);
 
 /**@brief Function for disabling the RTC driver instance.
  *
@@ -146,7 +135,7 @@ void nrfx_rtc_enable(nrfx_rtc_t const * const p_instance);
  *
  * @param[in]  p_instance         Pointer to the driver instance structure.
  */
-void nrfx_rtc_disable(nrfx_rtc_t const * const p_instance);
+void nrfx_rtc_disable(nrfx_rtc_t const *const p_instance);
 
 /**@brief Function for setting a compare channel.
  *
@@ -172,10 +161,7 @@ void nrfx_rtc_disable(nrfx_rtc_t const * const p_instance);
  * @retval     NRFX_ERROR_TIMEOUT   If the compare was not set because the request value is behind the current counter
  *                                  value. This error can only be reported if RTCn_CONFIG_RELIABLE = 1.
  */
-nrfx_err_t nrfx_rtc_cc_set(nrfx_rtc_t const * const p_instance,
-                           uint32_t                 channel,
-                           uint32_t                 val,
-                           bool                     enable_irq);
+nrfx_err_t nrfx_rtc_cc_set(nrfx_rtc_t const *const p_instance, uint32_t channel, uint32_t val, bool enable_irq);
 
 /**
  * @brief Function for returning the compare value for a channel.
@@ -185,7 +171,7 @@ nrfx_err_t nrfx_rtc_cc_set(nrfx_rtc_t const * const p_instance,
  *
  * @return COMPARE[channel] value.
  */
-uint32_t nrfx_rtc_cc_get(nrfx_rtc_t const * const p_instance, uint32_t channel);
+uint32_t nrfx_rtc_cc_get(nrfx_rtc_t const *const p_instance, uint32_t channel);
 
 /**@brief Function for disabling a channel.
  *
@@ -198,7 +184,7 @@ uint32_t nrfx_rtc_cc_get(nrfx_rtc_t const * const p_instance, uint32_t channel);
  * @retval     NRFX_SUCCESS         If the procedure was successful.
  * @retval     NRFX_ERROR_TIMEOUT   If an interrupt was pending on the requested channel.
  */
-nrfx_err_t nrfx_rtc_cc_disable(nrfx_rtc_t const * const p_instance, uint32_t channel);
+nrfx_err_t nrfx_rtc_cc_disable(nrfx_rtc_t const *const p_instance, uint32_t channel);
 
 /**@brief Function for enabling tick.
  *
@@ -208,7 +194,7 @@ nrfx_err_t nrfx_rtc_cc_disable(nrfx_rtc_t const * const p_instance, uint32_t cha
  * @param[in]  p_instance         Pointer to the driver instance structure.
  * @param[in]  enable_irq         True to enable the interrupt. False to disable the interrupt.
  */
-void nrfx_rtc_tick_enable(nrfx_rtc_t const * const p_instance, bool enable_irq);
+void nrfx_rtc_tick_enable(nrfx_rtc_t const *const p_instance, bool enable_irq);
 
 /**@brief Function for disabling tick.
  *
@@ -216,7 +202,7 @@ void nrfx_rtc_tick_enable(nrfx_rtc_t const * const p_instance, bool enable_irq);
  *
  * @param[in]  p_instance         Pointer to the driver instance structure.
  */
-void nrfx_rtc_tick_disable(nrfx_rtc_t const * const p_instance);
+void nrfx_rtc_tick_disable(nrfx_rtc_t const *const p_instance);
 
 /**@brief Function for enabling overflow.
  *
@@ -226,7 +212,7 @@ void nrfx_rtc_tick_disable(nrfx_rtc_t const * const p_instance);
  * @param[in]  p_instance         Pointer to the driver instance structure.
  * @param[in]  enable_irq         True to enable the interrupt. False to disable the interrupt.
  */
-void nrfx_rtc_overflow_enable(nrfx_rtc_t const * const p_instance, bool enable_irq);
+void nrfx_rtc_overflow_enable(nrfx_rtc_t const *const p_instance, bool enable_irq);
 
 /**@brief Function for disabling overflow.
  *
@@ -234,7 +220,7 @@ void nrfx_rtc_overflow_enable(nrfx_rtc_t const * const p_instance, bool enable_i
  *
  * @param[in]  p_instance         Pointer to the driver instance structure.
  */
-void nrfx_rtc_overflow_disable(nrfx_rtc_t const * const p_instance);
+void nrfx_rtc_overflow_disable(nrfx_rtc_t const *const p_instance);
 
 /**@brief Function for getting the maximum relative ticks value that can be set in the compare channel.
  *
@@ -248,21 +234,21 @@ void nrfx_rtc_overflow_disable(nrfx_rtc_t const * const p_instance);
  *
  * @retval     ticks         Maximum ticks value.
  */
-uint32_t nrfx_rtc_max_ticks_get(nrfx_rtc_t const * const p_instance);
+uint32_t nrfx_rtc_max_ticks_get(nrfx_rtc_t const *const p_instance);
 
 /**@brief Function for disabling all instance interrupts.
   *
  * @param[in]  p_instance          Pointer to the driver instance structure.
  * @param[in]  p_mask              Pointer to the location where the mask is filled.
  */
-void nrfx_rtc_int_disable(nrfx_rtc_t const * const p_instance, uint32_t * p_mask);
+void nrfx_rtc_int_disable(nrfx_rtc_t const *const p_instance, uint32_t *p_mask);
 
 /**@brief Function for enabling instance interrupts.
  *
  * @param[in]  p_instance         Pointer to the driver instance structure.
  * @param[in]  mask               Mask of interrupts to enable.
  */
-void nrfx_rtc_int_enable(nrfx_rtc_t const * const p_instance, uint32_t mask);
+void nrfx_rtc_int_enable(nrfx_rtc_t const *const p_instance, uint32_t mask);
 
 /**@brief Function for retrieving the current counter value.
  *
@@ -272,7 +258,7 @@ void nrfx_rtc_int_enable(nrfx_rtc_t const * const p_instance, uint32_t mask);
  *
  * @retval     value         Counter value.
  */
-uint32_t nrfx_rtc_counter_get(nrfx_rtc_t const * const p_instance);
+uint32_t nrfx_rtc_counter_get(nrfx_rtc_t const *const p_instance);
 
 /**@brief Function for clearing the counter value.
  *
@@ -280,7 +266,7 @@ uint32_t nrfx_rtc_counter_get(nrfx_rtc_t const * const p_instance);
  *
  * @param[in]  p_instance         Pointer to the driver instance structure.
  */
-void nrfx_rtc_counter_clear(nrfx_rtc_t const * const p_instance);
+void nrfx_rtc_counter_clear(nrfx_rtc_t const *const p_instance);
 
 /**@brief Function for returning a requested task address for the RTC driver instance.
  *
@@ -312,4 +298,4 @@ void nrfx_rtc_increment_tick(void);
 }
 #endif
 
-#endif // NRFX_RTC_H__
+#endif  // NRFX_RTC_H__

@@ -36,8 +36,8 @@ static constexpr const uint32_t SMD_FW_HEADER_SIZE = 8;
 /// @param flash_if               Raw flash interface for MCU firmware (QSPI reserved region).
 /// @param reserved_block_offset  Start block for MCU firmware in external flash.
 /// @param reserved_blocks        Number of blocks reserved for MCU firmware.
-OTAFlashFileUpdater::OTAFlashFileUpdater(LFSFileSystem *filesystem, FlashInterface *flash_if, lfs_off_t reserved_block_offset, lfs_size_t reserved_blocks)
-{
+OTAFlashFileUpdater::OTAFlashFileUpdater(LFSFileSystem *filesystem, FlashInterface *flash_if,
+                                         lfs_off_t reserved_block_offset, lfs_size_t reserved_blocks) {
 	m_filesystem = filesystem;
 	m_flash_if = flash_if;
 	m_reserved_block_offset = reserved_block_offset;
@@ -48,10 +48,8 @@ OTAFlashFileUpdater::OTAFlashFileUpdater(LFSFileSystem *filesystem, FlashInterfa
 }
 
 /// @brief Destructor — close any open file (except MCU firmware which uses raw flash).
-OTAFlashFileUpdater::~OTAFlashFileUpdater()
-{
-	if (m_file_id != OTAFileIdentifier::MCU_FIRMWARE)
-		delete m_file;
+OTAFlashFileUpdater::~OTAFlashFileUpdater() {
+	if (m_file_id != OTAFileIdentifier::MCU_FIRMWARE) delete m_file;
 	m_file = nullptr;
 }
 
@@ -61,7 +59,6 @@ OTAFlashFileUpdater::~OTAFlashFileUpdater()
 /// @param crc32    Expected CRC32 for verification after transfer.
 /// @throws OTA_TRANSFER_ALREADY_IN_PROGRESS, OTA_TRANSFER_BAD_FILE_SIZE, OTA_TRANSFER_FLASH_ERROR.
 void OTAFlashFileUpdater::start_file_transfer(OTAFileIdentifier file_id, lfs_size_t length, uint32_t crc32) {
-
 	if (m_file_size) {
 		DEBUG_ERROR("OTAFlashFileUpdater::start_file_transfer: transfer already in progress");
 		throw ErrorCode::OTA_TRANSFER_ALREADY_IN_PROGRESS;
@@ -87,18 +84,15 @@ void OTAFlashFileUpdater::start_file_transfer(OTAFileIdentifier file_id, lfs_siz
 				throw ErrorCode::OTA_TRANSFER_FLASH_ERROR;
 			for (unsigned int j = 0; j < 256; j++) {
 				if (buffer[j] != 0xFF) {
-					if (m_flash_if->erase(i + m_reserved_block_offset))
-						throw ErrorCode::OTA_TRANSFER_FLASH_ERROR;
+					if (m_flash_if->erase(i + m_reserved_block_offset)) throw ErrorCode::OTA_TRANSFER_FLASH_ERROR;
 					break;
 				}
 			}
 		}
 
 		// Write the header information into the start of flash
-		if (m_flash_if->prog(m_reserved_block_offset, 0, &length, sizeof(length)) ||
-			m_flash_if->sync() ||
-			m_flash_if->prog(m_reserved_block_offset, sizeof(length), &crc32, sizeof(crc32)) ||
-			m_flash_if->sync())
+		if (m_flash_if->prog(m_reserved_block_offset, 0, &length, sizeof(length)) || m_flash_if->sync()
+		    || m_flash_if->prog(m_reserved_block_offset, sizeof(length), &crc32, sizeof(crc32)) || m_flash_if->sync())
 			throw ErrorCode::OTA_TRANSFER_FLASH_ERROR;
 		break;
 	case OTAFileIdentifier::GPS_CONFIG:
@@ -111,8 +105,7 @@ void OTAFlashFileUpdater::start_file_transfer(OTAFileIdentifier file_id, lfs_siz
 	case OTAFileIdentifier::SMD_FIRMWARE_UART:
 		DEBUG_INFO("OTAFlashFileUpdater::start_file_transfer: SMD_FIRMWARE_UART");
 #else
-	case OTAFileIdentifier::SMD_FIRMWARE_SPI:
-		DEBUG_INFO("OTAFlashFileUpdater::start_file_transfer: SMD_FIRMWARE_SPI");
+	case OTAFileIdentifier::SMD_FIRMWARE_SPI: DEBUG_INFO("OTAFlashFileUpdater::start_file_transfer: SMD_FIRMWARE_SPI");
 #endif
 		m_filesystem->remove("smd_firmware.dat");
 		m_file = new LFSFile(m_filesystem, "smd_firmware.dat", LFS_O_WRONLY | LFS_O_CREAT);
@@ -130,7 +123,7 @@ void OTAFlashFileUpdater::start_file_transfer(OTAFileIdentifier file_id, lfs_siz
 		}
 		break;
 #endif
-	// Reject: wrong transport for this build, or no SMD at all
+		// Reject: wrong transport for this build, or no SMD at all
 #if !defined(ARGOS_SMD) || (ARGOS_SMD != 1)
 	case OTAFileIdentifier::SMD_FIRMWARE_UART:
 	case OTAFileIdentifier::SMD_FIRMWARE_SPI:
@@ -141,12 +134,10 @@ void OTAFlashFileUpdater::start_file_transfer(OTAFileIdentifier file_id, lfs_siz
 #endif
 		throw ErrorCode::OTA_TRANSFER_INVALID_FILE_ID;
 		break;
-	default:
-		throw ErrorCode::OTA_TRANSFER_INVALID_FILE_ID;
-		break;
+	default: throw ErrorCode::OTA_TRANSFER_INVALID_FILE_ID; break;
 	}
 	DEBUG_INFO("OTAFlashFileUpdater::start_file_transfer: m_file_id=%u | m_file_size=%u crc32=%08x",
-			   static_cast<unsigned>(file_id), length, crc32);
+	           static_cast<unsigned>(file_id), length, crc32);
 	m_file_id = file_id;
 	m_file_size = length;
 	m_crc32 = crc32;
@@ -156,10 +147,8 @@ void OTAFlashFileUpdater::start_file_transfer(OTAFileIdentifier file_id, lfs_siz
 
 /// @brief Write a chunk of OTA data — appends to flash/file and updates streaming CRC.
 /// @throws OTA_TRANSFER_NOT_STARTED, OTA_TRANSFER_OVERFLOW, OTA_TRANSFER_FLASH_ERROR.
-void OTAFlashFileUpdater::write_file_data(void * const data, lfs_size_t length)
-{
-	if (m_file_size == 0)
-		throw ErrorCode::OTA_TRANSFER_NOT_STARTED;
+void OTAFlashFileUpdater::write_file_data(void *const data, lfs_size_t length) {
+	if (m_file_size == 0) throw ErrorCode::OTA_TRANSFER_NOT_STARTED;
 
 	if (m_file_bytes_received + length > m_file_size) {
 		abort_file_transfer();
@@ -169,14 +158,14 @@ void OTAFlashFileUpdater::write_file_data(void * const data, lfs_size_t length)
 	if (m_file_id != OTAFileIdentifier::MCU_FIRMWARE) {
 		if (!m_file) throw ErrorCode::OTA_TRANSFER_NOT_STARTED;
 		m_file->write(data, length);
-	}
-	else
-	{
+	} else {
 		std::vector<uint8_t> aligned_buffer;
 		aligned_buffer.resize(length);
 		std::memcpy(&aligned_buffer[0], data, length);
-		if (m_flash_if->prog(0, (m_reserved_block_offset * m_flash_if->m_block_size) + m_file_bytes_received + FLASH_HEADER_SIZE, &aligned_buffer[0], length) ||
-			m_flash_if->sync())
+		if (m_flash_if->prog(
+		        0, (m_reserved_block_offset * m_flash_if->m_block_size) + m_file_bytes_received + FLASH_HEADER_SIZE,
+		        &aligned_buffer[0], length)
+		    || m_flash_if->sync())
 			throw ErrorCode::OTA_TRANSFER_FLASH_ERROR;
 	}
 
@@ -189,18 +178,14 @@ void OTAFlashFileUpdater::write_file_data(void * const data, lfs_size_t length)
 }
 
 /// @brief Abort transfer — delete partial file or erase flash header.
-void OTAFlashFileUpdater::abort_file_transfer()
-{
+void OTAFlashFileUpdater::abort_file_transfer() {
 	if (m_file_size != 0) {
 		if (m_file_id != OTAFileIdentifier::MCU_FIRMWARE) {
 			delete m_file;
 			m_file = nullptr;
-		}
-		else
-		{
+		} else {
 			// Erase the first block to ensure firmware update header is erased
-			if (m_flash_if->erase(m_reserved_block_offset))
-				throw ErrorCode::OTA_TRANSFER_FLASH_ERROR;
+			if (m_flash_if->erase(m_reserved_block_offset)) throw ErrorCode::OTA_TRANSFER_FLASH_ERROR;
 		}
 	}
 	m_file_size = 0;
@@ -209,10 +194,8 @@ void OTAFlashFileUpdater::abort_file_transfer()
 /// @brief Complete transfer — verify all bytes received, finalize and check CRC32.
 /// @note SMD firmware skips OTA CRC (STM32 bootloader verifies with its own CRC).
 /// @throws OTA_TRANSFER_NOT_STARTED, OTA_TRANSFER_INCOMPLETE, OTA_TRANSFER_CRC_ERROR.
-void OTAFlashFileUpdater::complete_file_transfer()
-{
-	if (m_file_size == 0)
-		throw ErrorCode::OTA_TRANSFER_NOT_STARTED;
+void OTAFlashFileUpdater::complete_file_transfer() {
+	if (m_file_size == 0) throw ErrorCode::OTA_TRANSFER_NOT_STARTED;
 
 	if (m_file_bytes_received < m_file_size) {
 		DEBUG_ERROR("OTAFlashFileUpdater:: not all bytes received");
@@ -223,8 +206,7 @@ void OTAFlashFileUpdater::complete_file_transfer()
 #if defined(ARGOS_SMD) && (ARGOS_SMD == 1)
 	// For SMD firmware files, skip OTA CRC verification
 	// The SMD bootloader will verify using the STM32 CRC in the file header
-	if (m_file_id == OTAFileIdentifier::SMD_FIRMWARE_UART ||
-	    m_file_id == OTAFileIdentifier::SMD_FIRMWARE_SPI) {
+	if (m_file_id == OTAFileIdentifier::SMD_FIRMWARE_UART || m_file_id == OTAFileIdentifier::SMD_FIRMWARE_SPI) {
 		DEBUG_INFO("OTAFlashFileUpdater:: SMD firmware - skipping OTA CRC (bootloader will verify)");
 		return;
 	}
@@ -233,12 +215,10 @@ void OTAFlashFileUpdater::complete_file_transfer()
 	// Finalize CRC calculation
 	CRC32::checksum_finalize(m_crc32_calc);
 
-	DEBUG_TRACE("OTAFlashFileUpdater::complete_file_transfer: CRC calc=0x%08X expected=0x%08X",
-	            m_crc32_calc, m_crc32);
+	DEBUG_TRACE("OTAFlashFileUpdater::complete_file_transfer: CRC calc=0x%08X expected=0x%08X", m_crc32_calc, m_crc32);
 
 	if (m_crc32_calc != m_crc32) {
-		DEBUG_ERROR("OTAFlashFileUpdater:: CRC failure (calc=0x%08X expected=0x%08X)",
-		            m_crc32_calc, m_crc32);
+		DEBUG_ERROR("OTAFlashFileUpdater:: CRC failure (calc=0x%08X expected=0x%08X)", m_crc32_calc, m_crc32);
 		led_handle::dispatch<SetLEDOTAFailed>({});
 		abort_file_transfer();
 		throw ErrorCode::OTA_TRANSFER_CRC_ERROR;
@@ -263,8 +243,7 @@ void OTAFlashFileUpdater::apply_file_update() {
 		// Not reached — device reboots, bootloader applies firmware from QSPI flash
 	}
 #if defined(ARGOS_SMD) && (ARGOS_SMD == 1)
-	else if (m_file_id == OTAFileIdentifier::SMD_FIRMWARE_UART ||
-	         m_file_id == OTAFileIdentifier::SMD_FIRMWARE_SPI) {
+	else if (m_file_id == OTAFileIdentifier::SMD_FIRMWARE_UART || m_file_id == OTAFileIdentifier::SMD_FIRMWARE_SPI) {
 		// SMD firmware update
 		// File format: [size:4B LE][stm32_crc32:4B LE][firmware_data]
 		DEBUG_INFO("OTAFlashFileUpdater::apply_file_update: SMD DFU via %s",
@@ -288,21 +267,17 @@ void OTAFlashFileUpdater::apply_file_update() {
 		fw_file.read(header, SMD_FW_HEADER_SIZE);
 
 		// Parse big-endian values (matches BLE OTA protocol)
-		uint32_t fw_size = (static_cast<uint32_t>(header[0]) << 24) |
-		                   (static_cast<uint32_t>(header[1]) << 16) |
-		                   (static_cast<uint32_t>(header[2]) << 8) |
-		                   (static_cast<uint32_t>(header[3]));
-		uint32_t stm32_crc32 = (static_cast<uint32_t>(header[4]) << 24) |
-		                       (static_cast<uint32_t>(header[5]) << 16) |
-		                       (static_cast<uint32_t>(header[6]) << 8) |
-		                       (static_cast<uint32_t>(header[7]));
+		uint32_t fw_size = (static_cast<uint32_t>(header[0]) << 24) | (static_cast<uint32_t>(header[1]) << 16)
+		                   | (static_cast<uint32_t>(header[2]) << 8) | (static_cast<uint32_t>(header[3]));
+		uint32_t stm32_crc32 = (static_cast<uint32_t>(header[4]) << 24) | (static_cast<uint32_t>(header[5]) << 16)
+		                       | (static_cast<uint32_t>(header[6]) << 8) | (static_cast<uint32_t>(header[7]));
 
 		DEBUG_INFO("OTAFlashFileUpdater: SMD firmware size=%u | STM32 CRC32=0x%08X", fw_size, stm32_crc32);
 
 		// Verify size matches
 		if (fw_size != static_cast<uint32_t>(fw_file_size - SMD_FW_HEADER_SIZE)) {
-			DEBUG_ERROR("OTAFlashFileUpdater: SMD firmware size mismatch: header=%u | actual=%u",
-			            fw_size, static_cast<uint32_t>(fw_file_size - SMD_FW_HEADER_SIZE));
+			DEBUG_ERROR("OTAFlashFileUpdater: SMD firmware size mismatch: header=%u | actual=%u", fw_size,
+			            static_cast<uint32_t>(fw_file_size - SMD_FW_HEADER_SIZE));
 			m_file_size = 0;
 			return;
 		}
@@ -322,11 +297,10 @@ void OTAFlashFileUpdater::apply_file_update() {
 		// LED feedback: alternate BLUE/WHITE during DFU
 		if (status_led) status_led->flash_alternate(RGBLedColor::BLUE, RGBLedColor::WHITE, 250);
 
-		SmdDfuResponse result = smd_sat_instance->firmware_update(&fw_file, fw_size, stm32_crc32,
-			[](uint8_t percent) {
-				DEBUG_INFO("SMD DFU progress: %u%%", percent);
-				PMU::kick_watchdog();
-			});
+		SmdDfuResponse result = smd_sat_instance->firmware_update(&fw_file, fw_size, stm32_crc32, [](uint8_t percent) {
+			DEBUG_INFO("SMD DFU progress: %u%%", percent);
+			PMU::kick_watchdog();
+		});
 
 		if (result == DFU_RSP_OK) {
 			DEBUG_INFO("OTAFlashFileUpdater: SMD DFU completed successfully");
@@ -338,11 +312,11 @@ void OTAFlashFileUpdater::apply_file_update() {
 				DEBUG_INFO("OTAFlashFileUpdater: New SMD firmware version: %s", new_version.c_str());
 			}
 			std::string resp = DTEEncoder::encode(DTECommand::SMDDFU_RESP,
-				(unsigned int)0,       // error_code: OK
-				(unsigned int)0,       // status: success
-				(bool)false,           // dfu_mode: exited DFU
-				(unsigned int)100,     // progress: 100%
-				new_version);          // info: firmware version
+			                                      (unsigned int)0,    // error_code: OK
+			                                      (unsigned int)0,    // status: success
+			                                      (bool)false,        // dfu_mode: exited DFU
+			                                      (unsigned int)100,  // progress: 100%
+			                                      new_version);       // info: firmware version
 			if (ble_service) ble_service->write(resp);
 
 			// Remove firmware file after successful update
@@ -352,12 +326,13 @@ void OTAFlashFileUpdater::apply_file_update() {
 			led_handle::dispatch<SetLEDOTAFailed>({});
 
 			// Notify pylinkit of DFU failure
-			std::string resp = DTEEncoder::encode(DTECommand::SMDDFU_RESP,
-				(unsigned int)0,       // error_code: OK (command was valid)
-				(unsigned int)1,       // status: failure
-				(bool)false,           // dfu_mode
-				(unsigned int)0,       // progress
-				std::string("DFU failed: error " + std::to_string(static_cast<int>(result))));
+			std::string resp =
+			    DTEEncoder::encode(DTECommand::SMDDFU_RESP,
+				                   (unsigned int)0,  // error_code: OK (command was valid)
+				                   (unsigned int)1,  // status: failure
+				                   (bool)false,      // dfu_mode
+				                   (unsigned int)0,  // progress
+				                   std::string("DFU failed: error " + std::to_string(static_cast<int>(result))));
 			if (ble_service) ble_service->write(resp);
 		}
 

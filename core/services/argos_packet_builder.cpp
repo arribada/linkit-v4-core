@@ -19,7 +19,7 @@ static constexpr unsigned int MS_PER_SEC = 1000;
 // Embed CRC8 at byte 23 of an LDA2 frame, computed over the first 184 bits (bytes 0-22).
 // LDA2 frames are 24 bytes total; LDK and VLDA4 do not need this — the SMD/KIM2 module
 // adds CRC8 on those modulations but leaves LDA2 user payload untouched on air.
-static void apply_lda2_crc8(KineisPacket& packet) {
+static void apply_lda2_crc8(KineisPacket &packet) {
 	packet.resize(ArgosPacketBuilder::LDA2_FRAME_BYTES, 0);
 	unsigned char crc = CRC8::checksum(packet, ArgosPacketBuilder::LDA2_DATA_BITS);
 	packet[ArgosPacketBuilder::LDA2_FRAME_BYTES - 1] = static_cast<char>(crc);
@@ -40,7 +40,9 @@ unsigned int ArgosPacketBuilder::convert_speed(double x) {
 /// @param battery_voltage  Voltage in mV.
 /// @return Encoded battery (0-127).
 unsigned int ArgosPacketBuilder::convert_battery_voltage(unsigned int battery_voltage) {
-	return std::min(127u, static_cast<unsigned int>(std::max(static_cast<int>(battery_voltage) - static_cast<int>(REF_BATT_MV), 0)) / MV_PER_UNIT);
+	return std::min(
+	    127u, static_cast<unsigned int>(std::max(static_cast<int>(battery_voltage) - static_cast<int>(REF_BATT_MV), 0))
+	              / MV_PER_UNIT);
 }
 
 /// @brief Encode latitude as 21-bit unsigned (bit 20 = sign for negative).
@@ -78,14 +80,12 @@ unsigned int ArgosPacketBuilder::convert_heading(double x) {
 /// @param x  Altitude in mm above MSL.
 /// @return Encoded altitude (0-254, 255=invalid).
 unsigned int ArgosPacketBuilder::convert_altitude(double x) {
-	return static_cast<unsigned int>(std::min(static_cast<double>(MAX_ALTITUDE), std::max(static_cast<double>(MIN_ALTITUDE), x / (MM_PER_METER * METRES_PER_UNIT))));
+	return static_cast<unsigned int>(
+	    std::min(static_cast<double>(MAX_ALTITUDE),
+		         std::max(static_cast<double>(MIN_ALTITUDE), x / (MM_PER_METER * METRES_PER_UNIT))));
 }
 
-KineisPacket ArgosPacketBuilder::build_short_packet(GPSLogEntry* gps_entry,
-		bool is_out_of_zone,
-		bool is_low_battery
-		) {
-
+KineisPacket ArgosPacketBuilder::build_short_packet(GPSLogEntry *gps_entry, bool is_out_of_zone, bool is_low_battery) {
 	DEBUG_TRACE("ArgosPacketBuilder::build_short_packet");
 	unsigned int base_pos = 0;
 	KineisPacket packet;
@@ -117,7 +117,8 @@ KineisPacket ArgosPacketBuilder::build_short_packet(GPSLogEntry* gps_entry,
 		DEBUG_TRACE("ArgosPacketBuilder::build_short_packet: lon=%u (%lf)", lon, gps_entry->info.lon);
 		unsigned int gspeed = convert_speed((double)gps_entry->info.gSpeed);
 		PACK_BITS((unsigned int)gspeed, packet, base_pos, 7);
-		DEBUG_TRACE("ArgosPacketBuilder::build_short_packet: speed=%u (%lf)", (unsigned int)gspeed, (double)gps_entry->info.gSpeed);
+		DEBUG_TRACE("ArgosPacketBuilder::build_short_packet: speed=%u (%lf)", (unsigned int)gspeed,
+		            (double)gps_entry->info.gSpeed);
 
 		// OUTOFZONE_FLAG
 		PACK_BITS(is_out_of_zone, packet, base_pos, 1);
@@ -147,7 +148,8 @@ KineisPacket ArgosPacketBuilder::build_short_packet(GPSLogEntry* gps_entry,
 
 	unsigned int batt = convert_battery_voltage((unsigned int)gps_entry->info.batt_voltage);
 	PACK_BITS(batt, packet, base_pos, 7);
-	DEBUG_TRACE("ArgosPacketBuilder::build_short_packet: voltage=%u (%u)", (unsigned int)batt, (unsigned int)gps_entry->info.batt_voltage);
+	DEBUG_TRACE("ArgosPacketBuilder::build_short_packet: voltage=%u (%u)", (unsigned int)batt,
+	            (unsigned int)gps_entry->info.batt_voltage);
 
 	// LOWBATERY_FLAG
 	PACK_BITS(is_low_battery, packet, base_pos, 1);
@@ -156,9 +158,7 @@ KineisPacket ArgosPacketBuilder::build_short_packet(GPSLogEntry* gps_entry,
 	return packet;
 }
 
-KineisPacket ArgosPacketBuilder::build_fastloc_packet(GPSLogEntry* gps_entry,
-		bool is_low_battery) {
-
+KineisPacket ArgosPacketBuilder::build_fastloc_packet(GPSLogEntry *gps_entry, bool is_low_battery) {
 	DEBUG_TRACE("ArgosPacketBuilder::build_fastloc_packet");
 	unsigned int base_pos = 0;
 	KineisPacket packet;
@@ -236,22 +236,20 @@ KineisPacket ArgosPacketBuilder::build_fastloc_packet(GPSLogEntry* gps_entry,
 	// LDA2 firmware-embedded CRC8 at byte 23 (modem does not add CRC for LDA2).
 	apply_lda2_crc8(packet);
 
-	DEBUG_INFO("ArgosPacketBuilder::build_fastloc_packet: fixType=%u numSV=%u hAcc=%um pDOP=%.1f batt=%u",
-	           fixType, numSV, hAcc_m, (double)gps_entry->info.pDOP, (unsigned int)gps_entry->info.batt_voltage);
+	DEBUG_INFO("ArgosPacketBuilder::build_fastloc_packet: fixType=%u numSV=%u hAcc=%um pDOP=%.1f batt=%u", fixType,
+	           numSV, hAcc_m, (double)gps_entry->info.pDOP, (unsigned int)gps_entry->info.batt_voltage);
 
 	return packet;
 }
 
 unsigned int ArgosPacketBuilder::cloudlocate_packet_bits(uint8_t format_id) {
-	if (format_id == (uint8_t)BaseCloudLocateFormat::MEASC12)
-		return CLOUDLOCATE_MEASC12_BITS;
+	if (format_id == (uint8_t)BaseCloudLocateFormat::MEASC12) return CLOUDLOCATE_MEASC12_BITS;
 	return CLOUDLOCATE_MEAS20_BITS;
 }
 
-KineisPacket ArgosPacketBuilder::build_cloudlocate_packet(const uint8_t* blob, unsigned int blob_size,
-		uint8_t format_id, unsigned int battery_voltage, bool is_low_battery,
-		uint32_t capture_rtc, uint32_t now_rtc) {
-
+KineisPacket ArgosPacketBuilder::build_cloudlocate_packet(const uint8_t *blob, unsigned int blob_size,
+                                                          uint8_t format_id, unsigned int battery_voltage,
+                                                          bool is_low_battery, uint32_t capture_rtc, uint32_t now_rtc) {
 	DEBUG_TRACE("ArgosPacketBuilder::build_cloudlocate_packet: format=%u blob_size=%u", format_id, blob_size);
 	unsigned int total_bits = cloudlocate_packet_bits(format_id);
 	unsigned int total_bytes = (total_bits + 7) / 8;
@@ -302,16 +300,14 @@ KineisPacket ArgosPacketBuilder::build_cloudlocate_packet(const uint8_t* blob, u
 		apply_lda2_crc8(packet);
 	}
 
-	DEBUG_INFO("CL_PKT: fmt=%u sz=%u batt=%u t_present=%u data=%s",
-	           format_id, blob_size, battery_voltage, (unsigned)(capture_rtc != 0), Binascii::hexlify(packet).c_str());
+	DEBUG_INFO("CL_PKT: fmt=%u sz=%u batt=%u t_present=%u data=%s", format_id, blob_size, battery_voltage,
+	           (unsigned)(capture_rtc != 0), Binascii::hexlify(packet).c_str());
 
 	return packet;
 }
 
-KineisPacket ArgosPacketBuilder::build_long_packet(std::vector<GPSLogEntry*> &gps_entries,
-		bool is_out_of_zone,
-		bool is_low_battery,
-		BaseDeltaTimeLoc delta_time_loc) {
+KineisPacket ArgosPacketBuilder::build_long_packet(std::vector<GPSLogEntry *> &gps_entries, bool is_out_of_zone,
+                                                   bool is_low_battery, BaseDeltaTimeLoc delta_time_loc) {
 	unsigned int base_pos = 0;
 	KineisPacket packet;
 
@@ -339,9 +335,11 @@ KineisPacket ArgosPacketBuilder::build_long_packet(std::vector<GPSLogEntry*> &gp
 	// First GPS entry
 	if (gps_entries[0]->info.valid) {
 		PACK_BITS(convert_latitude(gps_entries[0]->info.lat), packet, base_pos, 21);
-		DEBUG_TRACE("ArgosPacketBuilder::build_long_packet: lat=%u (%lf)", convert_latitude(gps_entries[0]->info.lat), gps_entries[0]->info.lat);
+		DEBUG_TRACE("ArgosPacketBuilder::build_long_packet: lat=%u (%lf)", convert_latitude(gps_entries[0]->info.lat),
+		            gps_entries[0]->info.lat);
 		PACK_BITS(convert_longitude(gps_entries[0]->info.lon), packet, base_pos, 22);
-		DEBUG_TRACE("ArgosPacketBuilder::build_long_packet: lon=%u (%lf)", convert_longitude(gps_entries[0]->info.lon), gps_entries[0]->info.lon);
+		DEBUG_TRACE("ArgosPacketBuilder::build_long_packet: lon=%u (%lf)", convert_longitude(gps_entries[0]->info.lon),
+		            gps_entries[0]->info.lon);
 		unsigned int gspeed = convert_speed(gps_entries[0]->info.gSpeed);
 		PACK_BITS((unsigned int)gspeed, packet, base_pos, 7);
 		DEBUG_TRACE("ArgosPacketBuilder::build_long_packet: speed=%u", (unsigned int)gspeed);
@@ -358,7 +356,8 @@ KineisPacket ArgosPacketBuilder::build_long_packet(std::vector<GPSLogEntry*> &gp
 
 	unsigned int batt = convert_battery_voltage(gps_entries[0]->info.batt_voltage);
 	PACK_BITS(batt, packet, base_pos, 7);
-	DEBUG_TRACE("ArgosPacketBuilder::build_long_packet: voltage=%u (%u)", (unsigned int)batt, (unsigned int)gps_entries[0]->info.batt_voltage);
+	DEBUG_TRACE("ArgosPacketBuilder::build_long_packet: voltage=%u (%u)", (unsigned int)batt,
+	            (unsigned int)gps_entries[0]->info.batt_voltage);
 
 	// LOWBATERY_FLAG
 	PACK_BITS(is_low_battery, packet, base_pos, 1);
@@ -380,9 +379,11 @@ KineisPacket ArgosPacketBuilder::build_long_packet(std::vector<GPSLogEntry*> &gp
 			PACK_BITS(0xFFFFFFFF, packet, base_pos, 22);
 		} else {
 			PACK_BITS(convert_latitude(gps_entries[i]->info.lat), packet, base_pos, 21);
-			DEBUG_TRACE("ArgosPacketBuilder::build_long_packet: lat[%u]=%u (%lf)", i, convert_latitude(gps_entries[i]->info.lat), gps_entries[i]->info.lat);
+			DEBUG_TRACE("ArgosPacketBuilder::build_long_packet: lat[%u]=%u (%lf)", i,
+			            convert_latitude(gps_entries[i]->info.lat), gps_entries[i]->info.lat);
 			PACK_BITS(convert_longitude(gps_entries[i]->info.lon), packet, base_pos, 22);
-			DEBUG_TRACE("ArgosPacketBuilder::build_long_packet: lon[%u]=%u (%lf)", i, convert_longitude(gps_entries[i]->info.lon), gps_entries[i]->info.lon);
+			DEBUG_TRACE("ArgosPacketBuilder::build_long_packet: lon[%u]=%u (%lf)", i,
+			            convert_longitude(gps_entries[i]->info.lon), gps_entries[i]->info.lon);
 		}
 	}
 
@@ -397,17 +398,15 @@ KineisPacket ArgosPacketBuilder::build_long_packet(std::vector<GPSLogEntry*> &gp
 	return packet;
 }
 
-KineisPacket ArgosPacketBuilder::build_gnss_packet(std::vector<GPSLogEntry*> &v,
-		bool is_out_of_zone,
-		bool is_low_battery,
-		BaseDeltaTimeLoc delta_time_loc,
-		unsigned int &size_bits) {
+KineisPacket ArgosPacketBuilder::build_gnss_packet(std::vector<GPSLogEntry *> &v, bool is_out_of_zone,
+                                                   bool is_low_battery, BaseDeltaTimeLoc delta_time_loc,
+                                                   unsigned int &size_bits) {
 	if (v.empty()) {
 		DEBUG_ERROR("ArgosPacketBuilder::build_gnss_packet: empty vector");
 		size_bits = 0;
 		return {};
 	} else if (v.size() > 1) {
-		std::reverse(v.begin(), v.end()); // Reverse to most-recent-first: gps_entries[0]=newest (date header anchor)
+		std::reverse(v.begin(), v.end());  // Reverse to most-recent-first: gps_entries[0]=newest (date header anchor)
 		size_bits = LONG_PACKET_BITS;
 		DEBUG_INFO("ArgosPacketBuilder::build_gnss_packet: LONG packet, %u position(s), %u bits",
 		           (unsigned int)v.size(), size_bits);
@@ -420,7 +419,6 @@ KineisPacket ArgosPacketBuilder::build_gnss_packet(std::vector<GPSLogEntry*> &v,
 }
 
 KineisPacket ArgosPacketBuilder::build_certification_packet(std::string cert_tx_payload, unsigned int &size_bits) {
-
 	// Convert from ASCII hex to a real binary buffer
 	KineisPacket packet = Binascii::unhexlify(cert_tx_payload);
 
@@ -440,7 +438,8 @@ KineisPacket ArgosPacketBuilder::build_certification_packet(std::string cert_tx_
 	return packet;
 }
 
-KineisPacket ArgosPacketBuilder::build_doppler_packet(unsigned int batt_voltage, bool is_low_battery, unsigned int &size_bits) {
+KineisPacket ArgosPacketBuilder::build_doppler_packet(unsigned int batt_voltage, bool is_low_battery,
+                                                      unsigned int &size_bits) {
 	DEBUG_TRACE("ArgosPacketBuilder::build_doppler_packet");
 	unsigned int base_pos = 0;
 	KineisPacket packet;
@@ -457,7 +456,8 @@ KineisPacket ArgosPacketBuilder::build_doppler_packet(unsigned int batt_voltage,
 
 	unsigned int batt = convert_battery_voltage(batt_voltage);
 	PACK_BITS(batt, packet, base_pos, 7);
-	DEBUG_TRACE("ArgosPacketBuilder::build_doppler_packet: voltage=%u (%u)", (unsigned int)batt, (unsigned int)batt_voltage);
+	DEBUG_TRACE("ArgosPacketBuilder::build_doppler_packet: voltage=%u (%u)", (unsigned int)batt,
+	            (unsigned int)batt_voltage);
 
 	// LOWBATERY_FLAG
 	PACK_BITS(is_low_battery, packet, base_pos, 1);
@@ -470,11 +470,8 @@ KineisPacket ArgosPacketBuilder::build_doppler_packet(unsigned int batt_voltage,
 	return packet;
 }
 
-KineisPacket ArgosPacketBuilder::build_rspb_doppler_packet(
-		unsigned int battery_soc,
-		unsigned int activity,
-		unsigned int mortality_confidence,
-		unsigned int &size_bits) {
+KineisPacket ArgosPacketBuilder::build_rspb_doppler_packet(unsigned int battery_soc, unsigned int activity,
+                                                           unsigned int mortality_confidence, unsigned int &size_bits) {
 	DEBUG_TRACE("ArgosPacketBuilder::build_rspb_doppler_packet");
 	unsigned int base_pos = 0;
 	KineisPacket packet;
@@ -504,15 +501,11 @@ KineisPacket ArgosPacketBuilder::build_rspb_doppler_packet(
 	return packet;
 }
 
-KineisPacket ArgosPacketBuilder::build_sensor_packet(GPSLogEntry* gps_entry,
-		ServiceSensorData *als_sensor,
-		ServiceSensorData *ph_sensor,
-		ServiceSensorData *pressure_sensor,
-		ServiceSensorData *sea_temp_sensor,
-		ServiceSensorData *axl_sensor,
-		bool is_out_of_zone, bool is_low_battery,
-		unsigned int& size_bits) {
-
+KineisPacket ArgosPacketBuilder::build_sensor_packet(GPSLogEntry *gps_entry, ServiceSensorData *als_sensor,
+                                                     ServiceSensorData *ph_sensor, ServiceSensorData *pressure_sensor,
+                                                     ServiceSensorData *sea_temp_sensor, ServiceSensorData *axl_sensor,
+                                                     bool is_out_of_zone, bool is_low_battery,
+                                                     unsigned int &size_bits) {
 	DEBUG_TRACE("ArgosPacketBuilder::build_sensor_packet");
 	unsigned int base_pos = 0;
 	KineisPacket packet;
@@ -545,7 +538,8 @@ KineisPacket ArgosPacketBuilder::build_sensor_packet(GPSLogEntry* gps_entry,
 		DEBUG_TRACE("ArgosPacketBuilder::build_sensor_packet: lon=%u (%lf)", lon, gps_entry->info.lon);
 		unsigned int gspeed = convert_speed((double)gps_entry->info.gSpeed);
 		PACK_BITS((unsigned int)gspeed, packet, base_pos, 7);
-		DEBUG_TRACE("ArgosPacketBuilder::build_sensor_packet: speed=%u (%lf)", (unsigned int)gspeed, (double)gps_entry->info.gSpeed);
+		DEBUG_TRACE("ArgosPacketBuilder::build_sensor_packet: speed=%u (%lf)", (unsigned int)gspeed,
+		            (double)gps_entry->info.gSpeed);
 
 		// OUTOFZONE_FLAG
 		PACK_BITS(is_out_of_zone, packet, base_pos, 1);
@@ -562,7 +556,8 @@ KineisPacket ArgosPacketBuilder::build_sensor_packet(GPSLogEntry* gps_entry,
 	// VOLTAGE
 	unsigned int batt = convert_battery_voltage((unsigned int)gps_entry->info.batt_voltage);
 	PACK_BITS(batt, packet, base_pos, 7);
-	DEBUG_TRACE("ArgosPacketBuilder::build_sensor_packet: voltage=%u (%u)", (unsigned int)batt, (unsigned int)gps_entry->info.batt_voltage);
+	DEBUG_TRACE("ArgosPacketBuilder::build_sensor_packet: voltage=%u (%u)", (unsigned int)batt,
+	            (unsigned int)gps_entry->info.batt_voltage);
 
 	// LOWBATERY_FLAG
 	PACK_BITS(is_low_battery, packet, base_pos, 1);
@@ -571,11 +566,11 @@ KineisPacket ArgosPacketBuilder::build_sensor_packet(GPSLogEntry* gps_entry,
 	// 5-bit sensor mask describing which sensors are present (decoder reads this to know
 	// which fields follow). MSB-first: ALS, PH, Pressure, SeaTemp, AXL.
 	unsigned int sensor_mask = 0;
-	if (als_sensor != nullptr)        sensor_mask |= SENSOR_PACKET_MASK_ALS;
-	if (ph_sensor != nullptr)         sensor_mask |= SENSOR_PACKET_MASK_PH;
-	if (pressure_sensor != nullptr)   sensor_mask |= SENSOR_PACKET_MASK_PRESSURE;
-	if (sea_temp_sensor != nullptr)   sensor_mask |= SENSOR_PACKET_MASK_SEATEMP;
-	if (axl_sensor != nullptr)        sensor_mask |= SENSOR_PACKET_MASK_AXL;
+	if (als_sensor != nullptr) sensor_mask |= SENSOR_PACKET_MASK_ALS;
+	if (ph_sensor != nullptr) sensor_mask |= SENSOR_PACKET_MASK_PH;
+	if (pressure_sensor != nullptr) sensor_mask |= SENSOR_PACKET_MASK_PRESSURE;
+	if (sea_temp_sensor != nullptr) sensor_mask |= SENSOR_PACKET_MASK_SEATEMP;
+	if (axl_sensor != nullptr) sensor_mask |= SENSOR_PACKET_MASK_AXL;
 	PACK_BITS(sensor_mask, packet, base_pos, SENSOR_PACKET_MASK_BITS);
 	DEBUG_TRACE("ArgosPacketBuilder::build_sensor_packet: sensor_mask=0x%02X", sensor_mask);
 
@@ -590,8 +585,7 @@ KineisPacket ArgosPacketBuilder::build_sensor_packet(GPSLogEntry* gps_entry,
 	}
 	if (pressure_sensor != nullptr) {
 		DEBUG_TRACE("ArgosPacketBuilder::build_sensor_packet: pbar=%04X ptemp=%04X",
-				(unsigned int)pressure_sensor->port[0],
-				(unsigned int)pressure_sensor->port[1]);
+		            (unsigned int)pressure_sensor->port[0], (unsigned int)pressure_sensor->port[1]);
 		PACK_BITS((unsigned int)pressure_sensor->port[0], packet, base_pos, 15);
 		PACK_BITS((unsigned int)pressure_sensor->port[1], packet, base_pos, 14);
 	}
@@ -612,11 +606,9 @@ KineisPacket ArgosPacketBuilder::build_sensor_packet(GPSLogEntry* gps_entry,
 	// truncated last (XYZ data preserved as the primary AXL signal).
 	if (axl_sensor != nullptr) {
 		DEBUG_TRACE("ArgosPacketBuilder::build_sensor_packet: axl_temp=%04X X=%04X Y=%04X Z=%04X activity=%02X",
-				(unsigned int)axl_sensor->port[0],
-				(unsigned int)axl_sensor->port[1],
-				(unsigned int)axl_sensor->port[2],
-				(unsigned int)axl_sensor->port[3],
-				(unsigned int)axl_sensor->port[4]);
+		            (unsigned int)axl_sensor->port[0], (unsigned int)axl_sensor->port[1],
+		            (unsigned int)axl_sensor->port[2], (unsigned int)axl_sensor->port[3],
+		            (unsigned int)axl_sensor->port[4]);
 		const bool has_other_temp = (pressure_sensor != nullptr) || (sea_temp_sensor != nullptr);
 		const bool axl_with_temp = !has_other_temp;
 		if (axl_with_temp) {
@@ -625,8 +617,7 @@ KineisPacket ArgosPacketBuilder::build_sensor_packet(GPSLogEntry* gps_entry,
 			DEBUG_TRACE("ArgosPacketBuilder::build_sensor_packet: AXL temp dropped (other temp source present)");
 		}
 		// Pack XYZ + activity, truncating activity LSBs if budget exhausted.
-		unsigned int budget_left = (base_pos < SENSOR_PACKET_MAX_TX_BITS) ?
-				(SENSOR_PACKET_MAX_TX_BITS - base_pos) : 0;
+		unsigned int budget_left = (base_pos < SENSOR_PACKET_MAX_TX_BITS) ? (SENSOR_PACKET_MAX_TX_BITS - base_pos) : 0;
 		auto pack_capped = [&](unsigned int value, unsigned int width) {
 			unsigned int n = std::min(width, budget_left);
 			if (n) {
@@ -646,8 +637,9 @@ KineisPacket ArgosPacketBuilder::build_sensor_packet(GPSLogEntry* gps_entry,
 	size_bits = base_pos;
 
 	if (size_bits > SENSOR_PACKET_MAX_TX_BITS) {
-		DEBUG_WARN("ArgosPacketBuilder::build_sensor_packet: packet %u bits exceeds max %u data bits | too many sensors enabled | truncating",
-				size_bits, SENSOR_PACKET_MAX_TX_BITS);
+		DEBUG_WARN("ArgosPacketBuilder::build_sensor_packet: packet %u bits exceeds max %u data bits | too many "
+		           "sensors enabled | truncating",
+		           size_bits, SENSOR_PACKET_MAX_TX_BITS);
 		size_bits = SENSOR_PACKET_MAX_TX_BITS;
 	}
 
@@ -663,8 +655,8 @@ KineisPacket ArgosPacketBuilder::build_sensor_packet(GPSLogEntry* gps_entry,
 // ============================================================================
 
 // Common RSPB packing: header + time + GPS + battery (shared by long and short)
-static unsigned int pack_rspb_common(KineisPacket &packet, unsigned int header,
-		GPSLogEntry* gps_entry, bool is_out_of_zone, bool is_low_battery) {
+static unsigned int pack_rspb_common(KineisPacket &packet, unsigned int header, GPSLogEntry *gps_entry,
+                                     bool is_out_of_zone, bool is_low_battery) {
 	unsigned int base_pos = 0;
 
 	// 3-bit packet type header
@@ -702,14 +694,11 @@ static unsigned int pack_rspb_common(KineisPacket &packet, unsigned int header,
 	return base_pos;
 }
 
-KineisPacket ArgosPacketBuilder::build_rspb_long_packet(GPSLogEntry* gps_entry,
-		ServiceSensorData *pressure_sensor,
-		ServiceSensorData *thermistor_sensor,
-		ServiceSensorData *axl_sensor,
-		bool is_out_of_zone, bool is_low_battery,
-		unsigned int mortality_confidence,
-		unsigned int &size_bits) {
-
+KineisPacket ArgosPacketBuilder::build_rspb_long_packet(GPSLogEntry *gps_entry, ServiceSensorData *pressure_sensor,
+                                                        ServiceSensorData *thermistor_sensor,
+                                                        ServiceSensorData *axl_sensor, bool is_out_of_zone,
+                                                        bool is_low_battery, unsigned int mortality_confidence,
+                                                        unsigned int &size_bits) {
 	DEBUG_TRACE("ArgosPacketBuilder::build_rspb_long_packet");
 	KineisPacket packet;
 	packet.assign(RSPB_LONG_PACKET_BYTES, 0);
@@ -753,19 +742,16 @@ KineisPacket ArgosPacketBuilder::build_rspb_long_packet(GPSLogEntry* gps_entry,
 	apply_lda2_crc8(packet);
 	size_bits = LDA2_FRAME_BITS;
 
-	DEBUG_INFO("ArgosPacketBuilder::build_rspb_long_packet: %u data bits + CRC | %s",
-			RSPB_LONG_PACKET_DATA_BITS, Binascii::hexlify(packet).c_str());
+	DEBUG_INFO("ArgosPacketBuilder::build_rspb_long_packet: %u data bits + CRC | %s", RSPB_LONG_PACKET_DATA_BITS,
+	           Binascii::hexlify(packet).c_str());
 	return packet;
 }
 
-KineisPacket ArgosPacketBuilder::build_rspb_short_packet(GPSLogEntry* gps_entry,
-		ServiceSensorData *pressure_sensor,
-		ServiceSensorData *thermistor_sensor,
-		ServiceSensorData *axl_sensor,
-		bool is_out_of_zone, bool is_low_battery,
-		unsigned int mortality_confidence,
-		unsigned int &size_bits) {
-
+KineisPacket ArgosPacketBuilder::build_rspb_short_packet(GPSLogEntry *gps_entry, ServiceSensorData *pressure_sensor,
+                                                         ServiceSensorData *thermistor_sensor,
+                                                         ServiceSensorData *axl_sensor, bool is_out_of_zone,
+                                                         bool is_low_battery, unsigned int mortality_confidence,
+                                                         unsigned int &size_bits) {
 	DEBUG_TRACE("ArgosPacketBuilder::build_rspb_short_packet");
 	KineisPacket packet;
 	packet.assign(RSPB_SHORT_PACKET_BYTES, 0);
@@ -798,10 +784,10 @@ KineisPacket ArgosPacketBuilder::build_rspb_short_packet(GPSLogEntry* gps_entry,
 	PACK_BITS(conf, packet, base_pos, 7);
 
 	size_bits = base_pos;
-	packet.resize((size_bits+7)/8);
+	packet.resize((size_bits + 7) / 8);
 
-	DEBUG_INFO("ArgosPacketBuilder::build_rspb_short_packet: %u bits | %s",
-			size_bits, Binascii::hexlify(packet).c_str());
+	DEBUG_INFO("ArgosPacketBuilder::build_rspb_short_packet: %u bits | %s", size_bits,
+	           Binascii::hexlify(packet).c_str());
 	return packet;
 }
 

@@ -22,30 +22,19 @@ public:
 		if (fp == NULL) throw;
 	}
 	virtual ~PlainFile() { fclose(fp); }
-	lfs_ssize_t read(void *buffer, lfs_size_t size) override {
-		return fread(buffer, 1, size, fp);
-	}
-	lfs_ssize_t write(void *buffer, lfs_size_t size) override {
-		return fwrite(buffer, 1, size, fp);
-	}
-	lfs_soff_t seek(lfs_soff_t off, int whence=LFS_SEEK_SET) override {
+	lfs_ssize_t read(void *buffer, lfs_size_t size) override { return fread(buffer, 1, size, fp); }
+	lfs_ssize_t write(void *buffer, lfs_size_t size) override { return fwrite(buffer, 1, size, fp); }
+	lfs_soff_t seek(lfs_soff_t off, int whence = LFS_SEEK_SET) override {
 		(void)whence;
 		return fseek(fp, off, SEEK_SET);
 	}
-	lfs_soff_t tell() override {
-		return ftell(fp);
-	}
-	int flush() override {
-		return 0;
-	}
-	lfs_soff_t size() {
-		return 0;
-	}
+	lfs_soff_t tell() override { return ftell(fp); }
+	int flush() override { return 0; }
+	lfs_soff_t size() { return 0; }
 };
 
 
-TEST_GROUP(UBXANO)
-{
+TEST_GROUP(UBXANO) {
 	FakeRTC *fake_rtc;
 
 	void setup() {
@@ -54,12 +43,12 @@ TEST_GROUP(UBXANO)
 	}
 
 	void teardown() {
-		delete fake_rtc; rtc = nullptr;
+		delete fake_rtc;
+		rtc = nullptr;
 	}
 };
 
-TEST(UBXANO, ANO4thMay2022)
-{
+TEST(UBXANO, ANO4thMay2022) {
 	fake_rtc->settime(1651665413);
 
 	PlainFile m_ano_file("./data/mgaoffline.ubx", "rb");
@@ -77,8 +66,7 @@ TEST(UBXANO, ANO4thMay2022)
 	CHECK_EQUAL(30, i);
 }
 
-TEST(UBXANO, ANO17thMay2022)
-{
+TEST(UBXANO, ANO17thMay2022) {
 	fake_rtc->settime(1661665413);
 
 	PlainFile m_ano_file("./data/mgaoffline.ubx", "rb");
@@ -97,8 +85,7 @@ TEST(UBXANO, ANO17thMay2022)
 	CHECK_EQUAL(30, i);
 }
 
-TEST(UBXANO, EmptyFile)
-{
+TEST(UBXANO, EmptyFile) {
 	fake_rtc->settime(1661665413);
 
 	PlainFile m_ano_file("./data/mgaoffline_empty.ubx", "rb");
@@ -117,8 +104,7 @@ TEST(UBXANO, EmptyFile)
 	CHECK_EQUAL(0, i);
 }
 
-TEST(UBXANO, NoSync)
-{
+TEST(UBXANO, NoSync) {
 	fake_rtc->settime(1661665413);
 
 	PlainFile m_ano_file("./data/mgaoffline_nosync.ubx", "rb");

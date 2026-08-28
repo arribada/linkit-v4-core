@@ -17,17 +17,17 @@
 /// reset, `LAST_KNOWN_RTC` a repose une heure vieille de 52 jours, et l'assistance
 /// sauvegardee trois minutes plus tot a ete jetee par la garde anti-recul.
 enum class RtcSource : uint8_t {
-	NONE = 0,   ///< jamais posee, ou horloge virtuelle de repli
-	RESTORED,   ///< relue du flash au demarrage — erreur NON bornable
-	PSEUDO,     ///< chaine pseudo-RTC TPL5111 — erreur BORNEE par la periode
-	OPERATOR,   ///< posee a la main en configuration ($RTCW)
-	GNSS,       ///< synchronisee sur un PVT valide
+	NONE = 0,  ///< jamais posee, ou horloge virtuelle de repli
+	RESTORED,  ///< relue du flash au demarrage — erreur NON bornable
+	PSEUDO,    ///< chaine pseudo-RTC TPL5111 — erreur BORNEE par la periode
+	OPERATOR,  ///< posee a la main en configuration ($RTCW)
+	GNSS,      ///< synchronisee sur un PVT valide
 };
 
 class RTC {
 public:
 	virtual ~RTC() = default;
-	virtual std::time_t gettime() = 0;          ///< Current epoch time (seconds since 1970)
+	virtual std::time_t gettime() = 0;           ///< Current epoch time (seconds since 1970)
 	virtual void settime(std::time_t time) = 0;  ///< Set wall-clock time (typically from GNSS fix)
 	virtual bool is_set() = 0;                   ///< True if settime() has been called at least once
 
@@ -65,8 +65,7 @@ public:
 
 	/// @brief Age, en secondes, de la derniere pose d'heure.
 	unsigned int age_s() {
-		if (m_source == RtcSource::NONE)
-			return 0;
+		if (m_source == RtcSource::NONE) return 0;
 		std::time_t now = gettime();
 		return (now > m_set_at) ? static_cast<unsigned int>(now - m_set_at) : 0u;
 	}
@@ -89,8 +88,8 @@ public:
 	void note_gnss_sync(std::time_t prev, std::time_t now) {
 		constexpr std::time_t RTC_MIN_REAL = 946684800;  // 2000-01-01
 
-		if (m_source == RtcSource::GNSS && m_last_gnss_sync >= RTC_MIN_REAL &&
-		    prev >= RTC_MIN_REAL && now >= RTC_MIN_REAL) {
+		if (m_source == RtcSource::GNSS && m_last_gnss_sync >= RTC_MIN_REAL && prev >= RTC_MIN_REAL
+		    && now >= RTC_MIN_REAL) {
 			std::time_t elapsed = now - m_last_gnss_sync;
 			if (elapsed >= MIN_DRIFT_WINDOW_S) {
 				long err = static_cast<long>(prev - now);
@@ -99,8 +98,8 @@ public:
 					// Lissage doux: une mesure isolee porte le quantum d'une
 					// seconde, la moyenne converge sur quelques sessions.
 					m_drift_ppm = (m_drift_ppm == 0)
-					              ? static_cast<int32_t>(ppm)
-					              : static_cast<int32_t>((3 * static_cast<long>(m_drift_ppm) + ppm) / 4);
+					                  ? static_cast<int32_t>(ppm)
+					                  : static_cast<int32_t>((3 * static_cast<long>(m_drift_ppm) + ppm) / 4);
 				}
 			}
 		}
@@ -137,17 +136,15 @@ public:
 			return 0;
 		}
 		int32_t d = (m_drift_ppm < 0) ? -m_drift_ppm : m_drift_ppm;
-		if (d == 0)
-			d = DEFAULT_DRIFT_PPM;
-		unsigned long acc = base +
-			(static_cast<unsigned long>(d) * static_cast<unsigned long>(age_s())) / 1000000UL;
+		if (d == 0) d = DEFAULT_DRIFT_PPM;
+		unsigned long acc = base + (static_cast<unsigned long>(d) * static_cast<unsigned long>(age_s())) / 1000000UL;
 		return (acc > 65535UL) ? 65535u : static_cast<unsigned int>(acc);
 	}
 
 protected:
-	RtcSource   m_source         = RtcSource::NONE;
-	std::time_t m_set_at         = 0;   ///< heure a laquelle la pose a eu lieu
-	std::time_t m_last_gnss_sync = 0;   ///< derniere synchro GNSS (pour la derive)
-	int32_t     m_drift_ppm      = 0;   ///< derive MESUREE, 0 tant qu'inconnue
-	unsigned int m_pseudo_unc_s  = 0;   ///< incertitude d'un bond pseudo-RTC
+	RtcSource m_source = RtcSource::NONE;
+	std::time_t m_set_at = 0;          ///< heure a laquelle la pose a eu lieu
+	std::time_t m_last_gnss_sync = 0;  ///< derniere synchro GNSS (pour la derive)
+	int32_t m_drift_ppm = 0;           ///< derive MESUREE, 0 tant qu'inconnue
+	unsigned int m_pseudo_unc_s = 0;   ///< incertitude d'un bond pseudo-RTC
 };

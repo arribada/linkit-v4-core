@@ -20,14 +20,14 @@ public:
 class BatteryMonitor : public EventEmitter<BatteryMonitorEventListener> {
 protected:
 	uint16_t m_last_voltage_mv;
-	uint8_t  m_last_level;
-	uint8_t  m_critical_level;
-	uint8_t  m_low_level;
-	bool     m_is_low_level;
-	bool     m_is_critical_voltage;
+	uint8_t m_last_level;
+	uint8_t m_critical_level;
+	uint8_t m_low_level;
+	bool m_is_low_level;
+	bool m_is_critical_voltage;
 
 private:
-	bool     m_is_critical_voltage_last;
+	bool m_is_critical_voltage_last;
 
 	void actuate_events() {
 		// Hysteresis: fire critical event on falling edge only,
@@ -44,12 +44,14 @@ private:
 	virtual void internal_update() {}
 
 public:
-	BatteryMonitor(uint8_t low_level, uint8_t critical_level) :
-		m_last_voltage_mv(0), m_last_level(0),
-		m_critical_level(critical_level), m_low_level(low_level),
-		m_is_low_level(false),
-		m_is_critical_voltage(false),
-		m_is_critical_voltage_last(false) {}
+	BatteryMonitor(uint8_t low_level, uint8_t critical_level)
+	    : m_last_voltage_mv(0),
+	      m_last_level(0),
+	      m_critical_level(critical_level),
+	      m_low_level(low_level),
+	      m_is_low_level(false),
+	      m_is_critical_voltage(false),
+	      m_is_critical_voltage_last(false) {}
 	virtual ~BatteryMonitor() {}
 	/// @brief Last measured voltage in mV.
 	uint16_t get_voltage() { return m_last_voltage_mv; }
@@ -83,6 +85,9 @@ public:
 	/// underlying device actually responded. Default: no separate device —
 	/// behaves like update() and always reports success. Overridden by gauges
 	/// (e.g. STC3117) so callers like the SENSR DTE command get a real pass/fail.
-	virtual bool update_forced() { update(); return true; }
+	virtual bool update_forced() {
+		update();
+		return true;
+	}
 	virtual int shutdown() { return 0; }  // Optional shutdown for fuel gauges
 };

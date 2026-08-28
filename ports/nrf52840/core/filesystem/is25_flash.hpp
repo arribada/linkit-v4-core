@@ -14,14 +14,16 @@
 
 #include "filesystem.hpp"
 
-#define IS25_BLOCK_COUNT   (4096)    ///< Total 4 KB blocks (16 MB / 4 KB)
-#define IS25_BLOCK_SIZE    (4*1024)  ///< Erase granularity: 4 KB sector
-#define IS25_PAGE_SIZE     (256)     ///< Program page size: 256 bytes
+#define IS25_BLOCK_COUNT (4096)      ///< Total 4 KB blocks (16 MB / 4 KB)
+#define IS25_BLOCK_SIZE  (4 * 1024)  ///< Erase granularity: 4 KB sector
+#define IS25_PAGE_SIZE   (256)       ///< Program page size: 256 bytes
 
 class Is25Flash : public FlashInterface {
 public:
-	Is25Flash() : FlashInterface(IS25_BLOCK_COUNT, IS25_BLOCK_SIZE, IS25_PAGE_SIZE),
-		m_is_init(false), m_power_ref_count(0) {}
+	Is25Flash()
+	    : FlashInterface(IS25_BLOCK_COUNT, IS25_BLOCK_SIZE, IS25_PAGE_SIZE),
+	      m_is_init(false),
+	      m_power_ref_count(0) {}
 
 	/**
 	 * @brief Initialise the IS25LP128F: QSPI peripheral, device ID check, QSPI mode enable.
@@ -104,7 +106,6 @@ public:
 #endif
 
 private:
-
 public:
 	/**
 	 * @brief Fast program for OTA — no sync, no read-back verification.

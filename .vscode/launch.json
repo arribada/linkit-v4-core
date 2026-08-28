@@ -1,44 +1,59 @@
 {
-    // Use IntelliSense to learn about possible attributes.
-    // Hover to view descriptions of existing attributes.
-    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
-    "version": "0.2.0",
-    "configurations": [
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug Application",
+      "cwd": "${workspaceFolder}",
+      "executable": "ports/nrf52840/build/LINKIT/LinkIt_board.elf",
+      "request": "launch",
+      "type": "cortex-debug",
+      "runToEntryPoint": "main",
+      "showDevDebugOutput": "raw",
+      "servertype": "jlink",
+      "device": "nrf52840_xxaa",
+      "interface": "swd",
+      "armToolchainPath": "${env:GNU_INSTALL_ROOT}",
+      "svdFile": "${workspaceFolder}/ports/nrf52840/drivers/nRF5_SDK_17.0.2/modules/nrfx/mdk/nrf52840.svd",
+      "preLaunchTask": "",
+      "postLaunchCommands": [
+        "monitor reset",
+        "monitor halt"
+      ],
+      "rttConfig": {
+        "enabled": false
+      }
+    },
+    {
+      "name": "Debug Application (attach)",
+      "cwd": "${workspaceFolder}",
+      "executable": "ports/nrf52840/build/LINKIT/LinkIt_board.elf",
+      "request": "attach",
+      "type": "cortex-debug",
+      "servertype": "jlink",
+      "device": "nrf52840_xxaa",
+      "interface": "swd",
+      "armToolchainPath": "${env:GNU_INSTALL_ROOT}",
+      "svdFile": "${workspaceFolder}/ports/nrf52840/drivers/nRF5_SDK_17.0.2/modules/nrfx/mdk/nrf52840.svd",
+      "showDevDebugOutput": "raw"
+    },
+    {
+      "name": "C/C++ Runner: Debug Session",
+      "type": "cppdbg",
+      "request": "launch",
+      "args": [],
+      "stopAtEntry": false,
+      "externalConsole": false,
+      "cwd": "/home/schade/linkit-v4/linkit-v4-core/core/services",
+      "program": "/home/schade/linkit-v4/linkit-v4-core/core/services/build/Debug/outDebug",
+      "MIMode": "gdb",
+      "miDebuggerPath": "/usr/bin/arm-none-eabi-gdb",
+      "setupCommands": [
         {
-            "name": "Debug Application",
-            "cwd": "${workspaceFolder}",
-            "executable": "ports/nrf52840/build/LINKIT/LinkIt_board.elf",
-            "request": "launch",
-            "type": "cortex-debug",
-            "runToEntryPoint": "main",
-            "showDevDebugOutput": "raw",
-            "servertype": "jlink",
-            "device": "nrf52840_xxaa",
-            "interface": "swd",
-            "armToolchainPath": "${env:GNU_INSTALL_ROOT}",
-            "svdFile": "${workspaceFolder}/ports/nrf52840/drivers/nRF5_SDK_17.0.2/modules/nrfx/mdk/nrf52840.svd",
-            "preLaunchTask": "",
-            "postLaunchCommands": [
-                "monitor reset",
-                "monitor halt"
-            ],
-            "rttConfig": {
-                "enabled": false
-            }
-        },
-
-        {
-            "name": "Debug Application (attach)",
-            "cwd": "${workspaceFolder}",
-            "executable": "ports/nrf52840/build/LINKIT/LinkIt_board.elf",
-            "request": "attach",
-            "type": "cortex-debug",
-            "servertype": "jlink",
-            "device": "nrf52840_xxaa",
-            "interface": "swd",
-            "armToolchainPath": "${env:GNU_INSTALL_ROOT}",
-            "svdFile": "${workspaceFolder}/ports/nrf52840/drivers/nRF5_SDK_17.0.2/modules/nrfx/mdk/nrf52840.svd",
-            "showDevDebugOutput": "raw",
-        },
-    ]
+          "description": "Enable pretty-printing for gdb",
+          "text": "-enable-pretty-printing",
+          "ignoreFailures": true
+        }
+      ]
+    }
+  ]
 }

@@ -11,8 +11,8 @@
 
 #include "battery.hpp"
 extern "C" {
-	#include "stc311x_BatteryInfo.h"
-	#include "stc311x_gasgauge.h"
+#include "stc311x_BatteryInfo.h"
+#include "stc311x_gasgauge.h"
 }
 
 class GaugeBatteryMonitor : public BatteryMonitor {
@@ -20,12 +20,12 @@ private:
 	bool m_is_init = false;
 	GasGauge_DataTypeDef STC3117_GG_struct = {};  ///< ST driver state (zero-init)
 
-	bool pwr_pin_state = false;                   ///< Tracked VSENSORS state for power management
-	bool previous_sensors_pwr_state = false;       ///< Previous VSENSORS state for edge detection
+	bool pwr_pin_state = false;               ///< Tracked VSENSORS state for power management
+	bool previous_sensors_pwr_state = false;  ///< Previous VSENSORS state for edge detection
 
-	uint64_t m_last_read_time = 0;   ///< Timestamp of last successful read (cache TTL)
-	bool m_force_read = false;       ///< Set by update_forced() to bypass the cache once
-	bool m_last_read_ok = false;     ///< True iff the last read actually got data from the gauge
+	uint64_t m_last_read_time = 0;  ///< Timestamp of last successful read (cache TTL)
+	bool m_force_read = false;      ///< Set by update_forced() to bypass the cache once
+	bool m_last_read_ok = false;    ///< True iff the last read actually got data from the gauge
 
 	/// @brief Check STC3117 responds on I2C.
 	/// @return 0 on success, -1 on error.

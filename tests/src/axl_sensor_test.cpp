@@ -18,8 +18,7 @@ extern Scheduler *system_scheduler;
 extern RTC *rtc;
 
 
-TEST_GROUP(AXLSensor)
-{
+TEST_GROUP(AXLSensor) {
 	FakeConfigurationStore *fake_config_store;
 	FakeTimer *fake_timer;
 	FakeLog *fake_logger;
@@ -64,8 +63,7 @@ TEST_GROUP(AXLSensor)
 };
 
 
-TEST(AXLSensor, SensorDisabled)
-{
+TEST(AXLSensor, SensorDisabled) {
 	MockSensor drv;
 	AXLSensorService s(drv, logger);
 	unsigned int num_callbacks = 0;
@@ -87,7 +85,7 @@ TEST(AXLSensor, SensorDisabled)
 
 	// Sampling should happen every 10
 	for (unsigned int i = 0; i < 5; i++) {
-		fake_timer->increment_counter(period*1000);
+		fake_timer->increment_counter(period * 1000);
 		system_scheduler->run();
 	}
 
@@ -97,8 +95,7 @@ TEST(AXLSensor, SensorDisabled)
 	s.stop();
 }
 
-TEST(AXLSensor, SchedulingPeriodic)
-{
+TEST(AXLSensor, SchedulingPeriodic) {
 	MockSensor drv;
 	AXLSensorService s(drv, logger);
 	unsigned int num_callbacks = 0;
@@ -121,12 +118,14 @@ TEST(AXLSensor, SchedulingPeriodic)
 	// Sampling should happen every 10
 	for (unsigned int i = 0; i < 5; i++) {
 		mock().expectOneCall("read").onObject(&drv).withUnsignedIntParameter("port", 1).andReturnValue((double)i);
-		mock().expectOneCall("read").onObject(&drv).withUnsignedIntParameter("port", 2).andReturnValue((double)i+1);
-		mock().expectOneCall("read").onObject(&drv).withUnsignedIntParameter("port", 3).andReturnValue((double)i+2);
-		mock().expectOneCall("read").onObject(&drv).withUnsignedIntParameter("port", 0).andReturnValue((double)i+3);
-		mock().expectOneCall("read").onObject(&drv).withUnsignedIntParameter("port", 4).andReturnValue((double)(i?1:0));
-		mock().expectOneCall("read").onObject(&drv).withUnsignedIntParameter("port", 5).andReturnValue((double)(i?1:0));
-		fake_timer->increment_counter(period*1000);
+		mock().expectOneCall("read").onObject(&drv).withUnsignedIntParameter("port", 2).andReturnValue((double)i + 1);
+		mock().expectOneCall("read").onObject(&drv).withUnsignedIntParameter("port", 3).andReturnValue((double)i + 2);
+		mock().expectOneCall("read").onObject(&drv).withUnsignedIntParameter("port", 0).andReturnValue((double)i + 3);
+		mock().expectOneCall("read").onObject(&drv).withUnsignedIntParameter("port", 4).andReturnValue(
+		    (double)(i ? 1 : 0));
+		mock().expectOneCall("read").onObject(&drv).withUnsignedIntParameter("port", 5).andReturnValue(
+		    (double)(i ? 1 : 0));
+		fake_timer->increment_counter(period * 1000);
 		system_scheduler->run();
 	}
 
@@ -138,18 +137,17 @@ TEST(AXLSensor, SchedulingPeriodic)
 		AXLLogEntry e;
 		logger->read(&e, i);
 		CHECK_EQUAL((double)i, e.x);
-		CHECK_EQUAL((double)i+1, e.y);
-		CHECK_EQUAL((double)i+2, e.z);
-		CHECK_EQUAL((double)i+3, e.temperature);
-		CHECK_EQUAL((bool)i&1, e.wakeup_triggered);
+		CHECK_EQUAL((double)i + 1, e.y);
+		CHECK_EQUAL((double)i + 2, e.z);
+		CHECK_EQUAL((double)i + 3, e.temperature);
+		CHECK_EQUAL((bool)i & 1, e.wakeup_triggered);
 	}
 
 	s.stop();
 }
 
 
-TEST(AXLSensor, SchedulingNoPeriodic)
-{
+TEST(AXLSensor, SchedulingNoPeriodic) {
 	MockSensor drv;
 	AXLSensorService s(drv, logger);
 	unsigned int num_callbacks = 0;
@@ -171,7 +169,7 @@ TEST(AXLSensor, SchedulingNoPeriodic)
 
 	// Sampling should happen every 10
 	for (unsigned int i = 0; i < 5; i++) {
-		fake_timer->increment_counter(period*1000);
+		fake_timer->increment_counter(period * 1000);
 		system_scheduler->run();
 	}
 

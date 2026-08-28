@@ -30,7 +30,7 @@ public:
 	/// @param mode       Modulation type (LDK, LDA2, VLDA4).
 	/// @param packet     Raw payload bytes.
 	/// @param size_bits  Payload size in bits.
-	void send(const KineisModulation mode, const KineisPacket& packet, const unsigned int size_bits) override;
+	void send(const KineisModulation mode, const KineisPacket &packet, const unsigned int size_bits) override;
 
 	/// @brief Cancel any pending TX.
 	void stop_send() override;
@@ -55,9 +55,7 @@ public:
 	///        while the module cannot accept an AT+TX. Covers the stop sequence
 	///        as well: the module is still in DL mode until it answers or is
 	///        power cycled.
-	bool is_receiving() const override {
-		return m_rx_requested || m_rx_active || m_state == receive;
-	}
+	bool is_receiving() const override { return m_rx_requested || m_rx_active || m_state == receive; }
 
 	/// @brief No-op — KIM2 frequency is set via RCONF.
 	void set_frequency(double freq_mhz) override;
@@ -69,7 +67,7 @@ public:
 	bool start_bridge(KIM2Comm::PassthroughCallback rx_callback);
 	void stop_bridge();
 	bool is_bridge_active() const { return m_bridge_active; }
-	bool bridge_send(const uint8_t* data, size_t len);
+	bool bridge_send(const uint8_t *data, size_t len);
 	void bridge_process_rx();  // Call periodically to pump UART RX
 
 	/// @brief VLDA4 regulatory gate — KIM2 only accepts VLDA4 at 27 dBm.
@@ -85,7 +83,7 @@ public:
 	std::string get_firmware_version();
 
 	/// @brief Raw AT+FW=? build string read at state_init (empty until then).
-	const std::string& get_module_firmware() const { return m_fw_version; }
+	const std::string &get_module_firmware() const { return m_fw_version; }
 
 	/// @brief True when the module firmware is recent enough for downlink
 	///        reception (build date gate, see kim2_firmware.hpp). False until
@@ -94,23 +92,15 @@ public:
 
 private:
 	/// @brief KIM2 state machine states.
-	enum KIM2ManagerState {
-		power_off,
-		power_on,
-		init,
-		idle,
-		transmit,
-		receive,
-		error
-	};
+	enum KIM2ManagerState { power_off, power_on, init, idle, transmit, receive, error };
 
 	/// @name Top-level state
 	/// @{
-	Scheduler::TaskHandle m_task;           ///< Scheduler task for state machine ticks
-	KIM2ManagerState      m_state;          ///< Current state
-	bool                  m_stopping;       ///< True when stop requested
-	std::atomic<bool>     m_cmd_is_ok;      ///< Set by ISR on +OK response
-	std::atomic<bool>     m_is_error;       ///< Set by ISR on +ERROR or timeout
+	Scheduler::TaskHandle m_task;   ///< Scheduler task for state machine ticks
+	KIM2ManagerState m_state;       ///< Current state
+	bool m_stopping;                ///< True when stop requested
+	std::atomic<bool> m_cmd_is_ok;  ///< Set by ISR on +OK response
+	std::atomic<bool> m_is_error;   ///< Set by ISR on +ERROR or timeout
 	struct Timeout {
 		Scheduler::TaskHandle handle;
 	} m_timeout;
@@ -126,24 +116,24 @@ private:
 
 	/// @name TX state
 	/// @{
-	KineisPacket m_tx_buffer;                ///< Hex string queued for AT+TX
-	KineisPacket m_packet_buffer;            ///< Incoming packet from send()
-	KineisModulation m_tx_mode;              ///< Modulation for current TX
-	KineisModulation m_current_rconf_mode;   ///< Last RCONF modulation written
-	std::atomic<bool> m_tx_done;             ///< Set by ISR on +TX= response
-	unsigned int m_tx_poll_counter;          ///< Remaining TX poll ticks before timeout
+	KineisPacket m_tx_buffer;               ///< Hex string queued for AT+TX
+	KineisPacket m_packet_buffer;           ///< Incoming packet from send()
+	KineisModulation m_tx_mode;             ///< Modulation for current TX
+	KineisModulation m_current_rconf_mode;  ///< Last RCONF modulation written
+	std::atomic<bool> m_tx_done;            ///< Set by ISR on +TX= response
+	unsigned int m_tx_poll_counter;         ///< Remaining TX poll ticks before timeout
 	/// @}
 
 	/// @name RX state
 	/// @{
-	bool m_rx_requested = false;             ///< start_receive() called, not yet stopped
-	bool m_rx_stop_requested = false;        ///< stop_receive() called, AT+DL=0 pending
-	bool m_rx_active = false;                ///< AT+DL=1 accepted by the module
-	std::atomic<bool> m_rx_window_ended;     ///< Set on the empty +DL= end-of-window line
-	uint64_t m_rx_start_ms = 0;              ///< Wall clock at RX start, for rx_time
-	std::string m_fw_version;                ///< AT+FW=? build string (empty before init)
-	bool m_fw_checked = false;               ///< AT+FW=? already queried this session
-	bool m_rx_supported = false;             ///< Firmware recent enough for AT+DL
+	bool m_rx_requested = false;          ///< start_receive() called, not yet stopped
+	bool m_rx_stop_requested = false;     ///< stop_receive() called, AT+DL=0 pending
+	bool m_rx_active = false;             ///< AT+DL=1 accepted by the module
+	std::atomic<bool> m_rx_window_ended;  ///< Set on the empty +DL= end-of-window line
+	uint64_t m_rx_start_ms = 0;           ///< Wall clock at RX start, for rx_time
+	std::string m_fw_version;             ///< AT+FW=? build string (empty before init)
+	bool m_fw_checked = false;            ///< AT+FW=? already queried this session
+	bool m_rx_supported = false;          ///< Firmware recent enough for AT+DL
 	/// @brief Allcast payloads received since the last state machine tick.
 	///        Filled from react(KIM2CommEventAllcast) — which runs in
 	///        process_rx() context, possibly from inside a blocking send_AT() —
@@ -158,8 +148,8 @@ private:
 	///        AWAIT_TX : +OK seen (command accepted, NOT yet emitted), polling for
 	///        +TX=<status> (m_tx_done), bounded by the existing 60 s initiate_timeout.
 	enum class TxPhase { AWAIT_ACK, AWAIT_TX };
-	TxPhase  m_tx_phase = TxPhase::AWAIT_ACK;  ///< Current AT+TX poll phase
-	uint64_t m_tx_ack_deadline_ms = 0;         ///< Wall-clock deadline (ms) for the +OK ACK
+	TxPhase m_tx_phase = TxPhase::AWAIT_ACK;  ///< Current AT+TX poll phase
+	uint64_t m_tx_ack_deadline_ms = 0;        ///< Wall-clock deadline (ms) for the +OK ACK
 
 	/// @brief True while SAT_EXTWAKEUP has been released for the duration of a
 	///        BLIND burst, so the resume path knows it is the one holding the
@@ -172,26 +162,40 @@ private:
 
 	/// @name State machine
 	/// @{
-	void state_machine();                              ///< Dispatch to current state handler
-	void run_state_machine(uint16_t delay_ms = 100);   ///< Schedule next state machine tick
+	void state_machine();                             ///< Dispatch to current state handler
+	void run_state_machine(uint16_t delay_ms = 100);  ///< Schedule next state machine tick
 	// State handlers: each state has enter/exit/tick functions
-	void state_power_off();       void state_power_off_enter();   void state_power_off_exit();
-	void state_power_on();        void state_power_on_enter();    void state_power_on_exit();
-	void state_init();            void state_init_enter();        void state_init_exit();
-	void state_idle();            void state_idle_enter();        void state_idle_exit();
-	void state_transmit();        void state_transmit_enter();    void state_transmit_exit();
-	void state_receive();         void state_receive_enter();     void state_receive_exit();
-	void state_error();           void state_error_enter();       void state_error_exit();
+	void state_power_off();
+	void state_power_off_enter();
+	void state_power_off_exit();
+	void state_power_on();
+	void state_power_on_enter();
+	void state_power_on_exit();
+	void state_init();
+	void state_init_enter();
+	void state_init_exit();
+	void state_idle();
+	void state_idle_enter();
+	void state_idle_exit();
+	void state_transmit();
+	void state_transmit_enter();
+	void state_transmit_exit();
+	void state_receive();
+	void state_receive_enter();
+	void state_receive_exit();
+	void state_error();
+	void state_error_enter();
+	void state_error_exit();
 	/// @}
 
 	/// @name UART event handlers (ISR context → atomic flags)
 	/// @{
-	void react(const KIM2CommEventRespOk&) override;
-	void react(const KIM2CommEventTxDone&) override;
-	void react(const KIM2CommEventRespError&) override;
-	void react(const KIM2CommEventUartError&) override;
-	void react(const KIM2CommEventAllcast&) override;
-	void react(const KIM2CommEventRxWindowEnd&) override;
+	void react(const KIM2CommEventRespOk &) override;
+	void react(const KIM2CommEventTxDone &) override;
+	void react(const KIM2CommEventRespError &) override;
+	void react(const KIM2CommEventUartError &) override;
+	void react(const KIM2CommEventAllcast &) override;
+	void react(const KIM2CommEventRxWindowEnd &) override;
 	/// @}
 
 	/// @name RX helpers
@@ -216,7 +220,7 @@ private:
 	/// @param mode       Target modulation.
 	/// @param rconf_hex  32-char hex RCONF string.
 	/// @return true on success.
-	bool switch_modulation(KineisModulation mode, const std::string& rconf_hex) override;
+	bool switch_modulation(KineisModulation mode, const std::string &rconf_hex) override;
 
 	/// @return Current RCONF modulation.
 	KineisModulation get_current_modulation() const override;
@@ -227,8 +231,8 @@ private:
 	///        @p seckey is always empty. @p radioconf carries the decoded
 	///        "freq_min,freq_max,mod_type,rf_level" string from the module
 	///        (diagnostic use — not the encrypted hex written via AT+RCONF=).
-	void read_credentials(unsigned int *dec_id, unsigned int *address,
-	                      std::string *seckey, std::string *radioconf) override;
+	void read_credentials(unsigned int *dec_id, unsigned int *address, std::string *seckey,
+	                      std::string *radioconf) override;
 	/// @brief Program the configured RCONF, read it back, and re-seed the
 	/// modulation cache (ARGOS_CACHED_MODULATION). Synchronous power-cycle if the
 	/// module is off. Called on a master-RCONF PARMW edit / force-SATVF so the
@@ -247,8 +251,7 @@ private:
 	// Load the KMAC MAC profile honoring ARGOS_BLIND_EN: BLIND (AT+KMAC=2,<ctx>)
 	// with graceful fallback to BASIC (AT+KMAC=1) if the module rejects it.
 	bool load_kmac();
-	bool send_AT(KIM2::ATCmd cmd, const std::optional<std::string>& params = std::nullopt,
-	             uint16_t timeout_ms = 1000);
+	bool send_AT(KIM2::ATCmd cmd, const std::optional<std::string> &params = std::nullopt, uint16_t timeout_ms = 1000);
 
 	/// @brief Power on module and start state machine (no-op if already running).
 	void start_device();
@@ -256,9 +259,9 @@ private:
 	/// @brief Immediate power off — cancel all tasks, uninit UART, cut power.
 	void power_off_immediate();
 
-	void cancel_timeout();                              ///< Cancel pending AT response timeout
-	void initiate_timeout(unsigned int timeout_ms = 1000); ///< Schedule AT response timeout
-	void on_timeout();                                   ///< Timeout handler — sets m_is_error
+	void cancel_timeout();                                  ///< Cancel pending AT response timeout
+	void initiate_timeout(unsigned int timeout_ms = 1000);  ///< Schedule AT response timeout
+	void on_timeout();                                      ///< Timeout handler — sets m_is_error
 
 	/// @brief Read the RCONF configured for a modulation from ConfigStore.
 	/// @note  Honors ARGOS_ADAPTIVE_MODULATION: when ON, reads per-mode RCONF
@@ -276,9 +279,8 @@ private:
 	/// @param out_decoded     Optional: receives the decoded +RCONF= fields.
 	/// @return true if RCONF applied and (when VLDA4) at 27 dBm. False on AT
 	///         failure or VLDA4-at-wrong-power (caller must fall back).
-	bool write_and_validate_rconf(const std::string& rconf_hex,
-	                              KineisModulation expected_mode,
-	                              KIM2::RConfDecoded* out_decoded = nullptr);
+	bool write_and_validate_rconf(const std::string &rconf_hex, KineisModulation expected_mode,
+	                              KIM2::RConfDecoded *out_decoded = nullptr);
 
 	/// @note The modulation-name decode + read-back validation moved to the pure,
 	///       host-testable KIM2::mod_from_name / KIM2::verify_modulation in

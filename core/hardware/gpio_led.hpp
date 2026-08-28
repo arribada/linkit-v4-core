@@ -19,9 +19,7 @@ public:
 		off();
 	}
 
-	~GPIOLed() {
-		off();
-	}
+	~GPIOLed() { off(); }
 
 	void off() override {
 		m_is_flashing = false;
@@ -33,9 +31,7 @@ public:
 		system_timer->cancel_schedule(m_timer_task);
 		GPIOPins::set(m_pin);
 	}
-	bool get_state() override {
-		return m_is_flashing || GPIOPins::value(m_pin);
-	}
+	bool get_state() override { return m_is_flashing || GPIOPins::value(m_pin); }
 	void flash(unsigned int interval_ms) override {
 		InterruptLock lock;
 		system_timer->cancel_schedule(m_timer_task);
@@ -45,9 +41,7 @@ public:
 		toggle_led();
 	}
 
-	bool is_flashing() override {
-		return m_is_flashing;
-	}
+	bool is_flashing() override { return m_is_flashing; }
 
 private:
 	int m_pin;
@@ -58,16 +52,16 @@ private:
 
 	void toggle_led(void) {
 		InterruptLock lock;
-		if (!m_is_flashing)
-			return;
+		if (!m_is_flashing) return;
 		if (m_flash_state)
 			GPIOPins::set(m_pin);
 		else
 			GPIOPins::clear(m_pin);
 		m_flash_state = !m_flash_state;
-		m_timer_task = system_timer->add_schedule([this]() {
-			if (m_is_flashing)
-				toggle_led();
-		}, system_timer->get_counter() + m_flash_interval);
+		m_timer_task = system_timer->add_schedule(
+		    [this]() {
+			    if (m_is_flashing) toggle_led();
+		    },
+		    system_timer->get_counter() + m_flash_interval);
 	}
 };

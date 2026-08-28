@@ -44,7 +44,7 @@ public:
 	void read_rconf_raw(uint8_t *rconf_raw, uint16_t *len) override;
 
 	// KMAC
-	void load_kmac_profil(uint8_t profile, const uint8_t* ctx = nullptr, uint8_t ctx_len = 0) override;
+	void load_kmac_profil(uint8_t profile, const uint8_t *ctx = nullptr, uint8_t ctx_len = 0) override;
 	void read_kmac(uint8_t *profile) override;
 	void get_kmac_status(uint8_t *status) override;
 
@@ -59,7 +59,7 @@ public:
 	void set_tcxo_control(bool state) override;
 
 	// TX
-	bool initiate_tx(const KineisPacket& payload) override;
+	bool initiate_tx(const KineisPacket &payload) override;
 	bool is_tx_finished() override;
 	bool is_tx_in_progress() override;
 	bool is_tx_successful() override { return m_tx_complete && m_tx_status == 0; }
@@ -99,7 +99,7 @@ public:
 
 protected:
 	/// @brief Parse a complete RX line and update response state (SMD AT protocol).
-	void on_rx_line(std::string& line) override;
+	void on_rx_line(std::string &line) override;
 
 	/// @brief Handle UART error.
 	void on_rx_error(unsigned int error_type) override;
@@ -109,8 +109,8 @@ private:
 	volatile bool m_resp_ok;
 	volatile bool m_resp_error;
 	volatile bool m_resp_data_ready;
-	std::string m_resp_data;     // Parsed response data (value after +KEY=)
-	std::string m_resp_key;      // Response key (e.g. "ID", "ADDR", "TX")
+	std::string m_resp_data;  // Parsed response data (value after +KEY=)
+	std::string m_resp_key;   // Response key (e.g. "ID", "ADDR", "TX")
 
 	// TX async state
 	volatile bool m_tx_complete;     // +TX= response received
@@ -122,16 +122,16 @@ private:
 	std::string m_dfu_resp_data;
 
 	// Low-level AT operations (use NrfUartAsync for UART)
-	bool send_at(const std::string& cmd, uint16_t timeout_ms = 2000);
-	bool send_at_with_data(const std::string& cmd, std::string& response_data, uint16_t timeout_ms = 2000);
-	bool send_dfu(uint8_t cmd_id, const std::string& hex_data = "", uint16_t timeout_ms = 5000);
-	bool send_dfu_with_data(uint8_t cmd_id, const std::string& hex_data,
-	                        std::string& response_data, uint16_t timeout_ms = 5000);
+	bool send_at(const std::string &cmd, uint16_t timeout_ms = 2000);
+	bool send_at_with_data(const std::string &cmd, std::string &response_data, uint16_t timeout_ms = 2000);
+	bool send_dfu(uint8_t cmd_id, const std::string &hex_data = "", uint16_t timeout_ms = 5000);
+	bool send_dfu_with_data(uint8_t cmd_id, const std::string &hex_data, std::string &response_data,
+	                        uint16_t timeout_ms = 5000);
 
 	// Response parsing
-	void parse_response(const std::string& line);
+	void parse_response(const std::string &line);
 
 	// Hex conversion helpers
 	static std::string bytes_to_hex(const uint8_t *data, uint16_t len);
-	static uint16_t hex_to_bytes(const std::string& hex, uint8_t *data, uint16_t max_len);
+	static uint16_t hex_to_bytes(const std::string &hex, uint8_t *data, uint16_t max_len);
 };

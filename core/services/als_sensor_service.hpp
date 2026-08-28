@@ -22,16 +22,15 @@ struct __attribute__((packed)) ALSLogEntry {
 /// @brief CSV log formatter for ALS entries (used by DUMPD command).
 class ALSLogFormatter : public LogFormatter {
 public:
-	const std::string header() override {
-		return "log_datetime,lumens\r\n";
-	}
-	const std::string log_entry(const LogEntry& e) override {
+	const std::string header() override { return "log_datetime,lumens\r\n"; }
+	const std::string log_entry(const LogEntry &e) override {
 		char entry[512], d1[128];
 		const auto *log = reinterpret_cast<const ALSLogEntry *>(&e);
 		std::time_t t;
 		std::tm *tm;
 
-		t = convert_epochtime(log->header.year, log->header.month, log->header.day, log->header.hours, log->header.minutes, log->header.seconds);
+		t = convert_epochtime(log->header.year, log->header.month, log->header.day, log->header.hours,
+		                      log->header.minutes, log->header.seconds);
 		tm = std::gmtime(&t);
 		std::strftime(d1, sizeof(d1), "%d/%m/%Y %H:%M:%S", tm);
 
@@ -45,7 +44,8 @@ class ALSSensorService : public SensorService {
 public:
 	/// @param sensor  ALS hardware sensor instance.
 	/// @param logger  Optional logger for persistent storage.
-	ALSSensorService(Sensor& sensor, Logger *logger = nullptr) : SensorService(sensor, ServiceIdentifier::ALS_SENSOR, "ALS", logger) {}
+	ALSSensorService(Sensor &sensor, Logger *logger = nullptr)
+	    : SensorService(sensor, ServiceIdentifier::ALS_SENSOR, "ALS", logger) {}
 
 private:
 #pragma GCC diagnostic push
@@ -53,7 +53,7 @@ private:
 	/// @brief Populate log entry from sensor data.
 	/// @param e     Log entry buffer (reinterpreted as ALSLogEntry).
 	/// @param data  Sensor reading (port[0] = lumens).
-	void sensor_populate_log_entry(LogEntry *e, ServiceSensorData& data) override {
+	void sensor_populate_log_entry(LogEntry *e, ServiceSensorData &data) override {
 		auto *log = reinterpret_cast<ALSLogEntry *>(e);
 		log->lumens = data.port[0];
 		service_set_log_header_time(log->header, service_current_time());
@@ -72,9 +72,7 @@ private:
 
 	/// @brief Check if ALS sensor is enabled in config.
 	/// @return true if ALS_SENSOR_ENABLE is set.
-	bool sensor_is_enabled() override {
-		return service_read_param<bool>(ParamID::ALS_SENSOR_ENABLE);
-	}
+	bool sensor_is_enabled() override { return service_read_param<bool>(ParamID::ALS_SENSOR_ENABLE); }
 
 	/// @brief Sampling period in ms (from ALS_SENSOR_PERIODIC param, seconds → ms).
 	/// @return Period in ms, or SCHEDULE_DISABLED if 0.

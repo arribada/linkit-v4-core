@@ -25,7 +25,9 @@ public:
 	/// @param service  Service identifier for this sensor type.
 	/// @param name     Service name (for debug logging).
 	/// @param logger   Optional persistent logger.
-	SensorService(Sensor& sensor, ServiceIdentifier service, const char *name, Logger *logger) : Service(service, name, logger), m_sensor(sensor) {}
+	SensorService(Sensor &sensor, ServiceIdentifier service, const char *name, Logger *logger)
+	    : Service(service, name, logger),
+	      m_sensor(sensor) {}
 	virtual ~SensorService() {}
 
 protected:
@@ -49,14 +51,14 @@ protected:
 
 				if (service_is_scheduled()) {
 					service_complete(nullptr, nullptr,
-							!gnss_shutdown &&
-							(sensor_enable_tx_mode() != BaseSensorEnableTxMode::ONESHOT &&
-									m_sample_number < sensor_max_samples()));
+					                 !gnss_shutdown
+					                     && (sensor_enable_tx_mode() != BaseSensorEnableTxMode::ONESHOT
+					                         && m_sample_number < sensor_max_samples()));
 				}
 
 				if (gnss_shutdown || m_sample_number >= sensor_max_samples()) {
-					DEBUG_TRACE("SensorService: %s: terminal state reached (%u/%u samples)",
-					            get_name(), m_sample_number, sensor_max_samples());
+					DEBUG_TRACE("SensorService: %s: terminal state reached (%u/%u samples)", get_name(),
+					            m_sample_number, sensor_max_samples());
 					// Use the progressive ready value (already up-to-date)
 					LogEntry e;
 					ServiceEventData data = m_ready_value;
@@ -94,11 +96,11 @@ private:
 	ServiceSensorData m_ready_value = {};
 	bool m_ready_valid = false;
 
-	double compute_mean_samples(std::vector<double>& v) {
+	double compute_mean_samples(std::vector<double> &v) {
 		if (v.empty()) return 0.0;
 		return std::reduce(v.begin(), v.end()) / v.size();
 	}
-	double compute_median_samples(std::vector<double>& v) {
+	double compute_median_samples(std::vector<double> &v) {
 		if (v.empty()) return 0.0;
 		size_t n = v.size();
 		auto mid = v.begin() + n / 2;
@@ -109,7 +111,7 @@ private:
 		}
 		return *mid;
 	}
-	double compute_oneshot_samples(std::vector<double>& v) {
+	double compute_oneshot_samples(std::vector<double> &v) {
 		if (v.empty()) return 0.0;
 		return v.at(0);
 	}
@@ -122,28 +124,25 @@ private:
 			case BaseSensorEnableTxMode::ONESHOT:
 				m_ready_value.port[chan] = compute_oneshot_samples(m_samples[chan]);
 				break;
-			case BaseSensorEnableTxMode::MEAN:
-				m_ready_value.port[chan] = compute_mean_samples(m_samples[chan]);
-				break;
+			case BaseSensorEnableTxMode::MEAN: m_ready_value.port[chan] = compute_mean_samples(m_samples[chan]); break;
 			case BaseSensorEnableTxMode::MEDIAN:
 				m_ready_value.port[chan] = compute_median_samples(m_samples[chan]);
 				break;
 			default:
-			case BaseSensorEnableTxMode::OFF:
-				break;
+			case BaseSensorEnableTxMode::OFF: break;
 			}
 		}
 		m_ready_valid = true;
 	}
 
-	void notify_peer_event(ServiceEvent& e) override {
+	void notify_peer_event(ServiceEvent &e) override {
 		if (sensor_enable_tx_mode() != BaseSensorEnableTxMode::OFF) {
 			handle_peer_event(e);
 		}
 		Service::notify_peer_event(e);
 	}
 
-	void handle_peer_event(ServiceEvent& e) {
+	void handle_peer_event(ServiceEvent &e) {
 		if (e.event_source == ServiceIdentifier::GNSS_SENSOR) {
 			if (e.event_type == ServiceEventType::SERVICE_ACTIVE) {
 				DEBUG_TRACE("SensorService: %s: GNSS active - start sampling", get_name());
@@ -151,8 +150,8 @@ private:
 				m_sample_number = 0;
 				reset_samples();
 				service_reschedule(true);
-			} else if (e.event_type == ServiceEventType::SERVICE_LOG_UPDATED ||
-					e.event_type == ServiceEventType::SERVICE_INACTIVE) {
+			} else if (e.event_type == ServiceEventType::SERVICE_LOG_UPDATED
+			           || e.event_type == ServiceEventType::SERVICE_INACTIVE) {
 				if (m_sensor_background_active) {
 					DEBUG_TRACE("SensorService: %s: GNSS complete - force stop sampling", get_name());
 					sensor_handler(false, true);
@@ -161,9 +160,7 @@ private:
 		}
 	}
 
-	void service_initiate() override {
-		sensor_handler();
-	}
+	void service_initiate() override { sensor_handler(); }
 
 	unsigned int service_next_schedule_in_ms() override {
 		if (m_sensor_background_active) {
@@ -174,14 +171,12 @@ private:
 		}
 	}
 
-	bool service_is_enabled() override {
-		return sensor_is_enabled();
-	}
+	bool service_is_enabled() override { return sensor_is_enabled(); }
 
 	void service_init() override {
 		if (sensor_num_channels() > MAX_SENSOR_CHANNELS) {
-			DEBUG_ERROR("SensorService: %s: num_channels %u exceeds MAX_SENSOR_CHANNELS %u",
-				get_name(), sensor_num_channels(), MAX_SENSOR_CHANNELS);
+			DEBUG_ERROR("SensorService: %s: num_channels %u exceeds MAX_SENSOR_CHANNELS %u", get_name(),
+			            sensor_num_channels(), MAX_SENSOR_CHANNELS);
 		}
 		m_sensor_background_active = false;
 		m_sample_number = 0;
@@ -215,13 +210,11 @@ private:
 	virtual bool sensor_is_enabled() { return false; }
 	/// @brief TX aggregation mode (OFF/ONESHOT/MEAN/MEDIAN).
 	/// @return Mode from config param.
-	virtual BaseSensorEnableTxMode sensor_enable_tx_mode() {
-		return BaseSensorEnableTxMode::OFF;
-	}
+	virtual BaseSensorEnableTxMode sensor_enable_tx_mode() { return BaseSensorEnableTxMode::OFF; }
 	/// @brief Populate a log entry from sensor data (pure virtual — subclass must implement).
 	/// @param e     Log entry buffer (reinterpret_cast to sensor-specific LogEntry).
 	/// @param data  Sensor reading (port[0..N] = channel values).
-	virtual void sensor_populate_log_entry(LogEntry *e, ServiceSensorData& data) = 0;
+	virtual void sensor_populate_log_entry(LogEntry *e, ServiceSensorData &data) = 0;
 	/// @brief Sampling period in ms (from config param, 0 = disabled).
 	/// @return Period in ms, or SCHEDULE_DISABLED.
 	virtual unsigned int sensor_periodic() { return 1000U; }

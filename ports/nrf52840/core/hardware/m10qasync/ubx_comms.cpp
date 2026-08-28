@@ -32,7 +32,7 @@ void UBXComms::wait_tx_idle() {
 
 class AsyncLowLevel {
 public:
-	static void nrf_libuarte_async_evt_handler(void * context, nrf_libuarte_async_evt_t * p_evt) {
+	static void nrf_libuarte_async_evt_handler(void *context, nrf_libuarte_async_evt_t *p_evt) {
 		UBXComms *obj = (UBXComms *)context;
 		if (p_evt->type == NRF_LIBUARTE_ASYNC_EVT_TX_DONE) {
 			obj->handle_tx_done();
@@ -41,114 +41,105 @@ public:
 		} else if (p_evt->type == NRF_LIBUARTE_ASYNC_EVT_ERROR) {
 			// Stop the receiver to prevent further errors
 			obj->handle_error((unsigned int)p_evt->data.errorsrc);
-        } else if (p_evt->type == NRF_LIBUARTE_ASYNC_EVT_ALLOC_ERROR) {
-            // Stop the receiver to prevent further errors
-            obj->handle_error(0x100);
+		} else if (p_evt->type == NRF_LIBUARTE_ASYNC_EVT_ALLOC_ERROR) {
+			// Stop the receiver to prevent further errors
+			obj->handle_error(0x100);
 		} else if (p_evt->type == NRF_LIBUARTE_ASYNC_EVT_OVERRUN_ERROR) {
-            // Stop the receiver to prevent further errors
-            obj->handle_error(0x200);
+			// Stop the receiver to prevent further errors
+			obj->handle_error(0x200);
 		}
 	}
 };
 
-UBXComms::UBXComms(unsigned int instance) : m_instance(instance), m_is_init(false) {
-}
+UBXComms::UBXComms(unsigned int instance) : m_instance(instance), m_is_init(false) {}
 
 void UBXComms::init() {
-    if (m_is_init) return;
-    if (nrf_libuarte_async_init(
-            BSP::UARTAsync_Inits[m_instance].uart,
-            &BSP::UARTAsync_Inits[m_instance].config,
-            AsyncLowLevel::nrf_libuarte_async_evt_handler,
-            (void *)this) != NRF_SUCCESS) {
-        DEBUG_ERROR("UBXComms::UBXComms: failed to initialize libuarte library");
-        throw ErrorCode::RESOURCE_NOT_AVAILABLE;
-    }
-    m_is_send_busy = false;
-    m_nav_report_iTOW = -1;
-    m_dbd_filter_en = false;
-    m_expect.enable = false;
-    m_is_init = true;
-    m_debug_enable = false;
-    m_nav_report.pvt.iTow = -1;
-    m_nav_report.dop.iTow = -1;
-    m_nav_report.status.iTow = -1;
-    m_rx_stopped = false;
-    // Interdit la bascule VSYS 3,3 V -> 2,3 V tant que cette liaison est en
-    // service (cf. GPIOPins::set_gnss_uart_active).
-    GPIOPins::set_gnss_uart_active(true);
+	if (m_is_init) return;
+	if (nrf_libuarte_async_init(BSP::UARTAsync_Inits[m_instance].uart, &BSP::UARTAsync_Inits[m_instance].config,
+	                            AsyncLowLevel::nrf_libuarte_async_evt_handler, (void *)this)
+	    != NRF_SUCCESS) {
+		DEBUG_ERROR("UBXComms::UBXComms: failed to initialize libuarte library");
+		throw ErrorCode::RESOURCE_NOT_AVAILABLE;
+	}
+	m_is_send_busy = false;
+	m_nav_report_iTOW = -1;
+	m_dbd_filter_en = false;
+	m_expect.enable = false;
+	m_is_init = true;
+	m_debug_enable = false;
+	m_nav_report.pvt.iTow = -1;
+	m_nav_report.dop.iTow = -1;
+	m_nav_report.status.iTow = -1;
+	m_rx_stopped = false;
+	// Interdit la bascule VSYS 3,3 V -> 2,3 V tant que cette liaison est en
+	// service (cf. GPIOPins::set_gnss_uart_active).
+	GPIOPins::set_gnss_uart_active(true);
 }
 
 void UBXComms::deinit() {
-    if (m_is_init) {
-        nrf_libuarte_async_uninit(BSP::UARTAsync_Inits[m_instance].uart);
-        m_is_init = false;
-        m_rx_stopped = false;
-    }
-    // Toujours relacher, meme si l'UART n'etait pas initialise: deinit() est
-    // idempotent et appele sur tous les chemins de teardown.
-    GPIOPins::set_gnss_uart_active(false);
+	if (m_is_init) {
+		nrf_libuarte_async_uninit(BSP::UARTAsync_Inits[m_instance].uart);
+		m_is_init = false;
+		m_rx_stopped = false;
+	}
+	// Toujours relacher, meme si l'UART n'etait pas initialise: deinit() est
+	// idempotent et appele sur tous les chemins de teardown.
+	GPIOPins::set_gnss_uart_active(false);
 }
 
-bool UBXComms::send_raw(const uint8_t* data, size_t len)
-{
-    if (!m_is_init || len == 0)
-        return false;
+bool UBXComms::send_raw(const uint8_t *data, size_t len) {
+	if (!m_is_init || len == 0) return false;
 
-    // DMA TX is async: the peripheral keeps reading from the buffer after this
-    // returns. The caller typically passes a stack buffer, so we must copy into
-    // m_tx_buffer and hold it until TX_DONE clears m_is_send_busy.
-    wait_tx_idle();
+	// DMA TX is async: the peripheral keeps reading from the buffer after this
+	// returns. The caller typically passes a stack buffer, so we must copy into
+	// m_tx_buffer and hold it until TX_DONE clears m_is_send_busy.
+	wait_tx_idle();
 
-    if (len > sizeof(m_tx_buffer)) {
-        DEBUG_ERROR("UBXComms::send_raw: too large len=%u max=%u",
-                    (unsigned int)len, (unsigned int)sizeof(m_tx_buffer));
-        return false;
-    }
-    std::memcpy(m_tx_buffer, data, len);
-    m_is_send_busy = true;
-    m_notify_sent = false;
+	if (len > sizeof(m_tx_buffer)) {
+		DEBUG_ERROR("UBXComms::send_raw: too large len=%u max=%u", (unsigned int)len,
+		            (unsigned int)sizeof(m_tx_buffer));
+		return false;
+	}
+	std::memcpy(m_tx_buffer, data, len);
+	m_is_send_busy = true;
+	m_notify_sent = false;
 
-    ret_code_t ret = nrf_libuarte_async_tx(BSP::UARTAsync_Inits[m_instance].uart,
-                                            m_tx_buffer, len);
-    if (ret != NRF_SUCCESS) {
-        m_is_send_busy = false;
-        DEBUG_ERROR("UBXComms::send_raw: TX failed ret=0x%08x", (unsigned int)ret);
-        return false;
-    }
-    return true;
+	ret_code_t ret = nrf_libuarte_async_tx(BSP::UARTAsync_Inits[m_instance].uart, m_tx_buffer, len);
+	if (ret != NRF_SUCCESS) {
+		m_is_send_busy = false;
+		DEBUG_ERROR("UBXComms::send_raw: TX failed ret=0x%08x", (unsigned int)ret);
+		return false;
+	}
+	return true;
 }
 
-void UBXComms::set_passthrough(bool active, PassthroughCallback callback)
-{
-    {
-        InterruptLock lock;
-        m_passthrough_active = active;
-        m_pt_isr_buf_len = 0;
-    }
-    m_passthrough_callback = callback;
-    if (active) {
-        m_rx_buffer_offset = 0;
-    }
+void UBXComms::set_passthrough(bool active, PassthroughCallback callback) {
+	{
+		InterruptLock lock;
+		m_passthrough_active = active;
+		m_pt_isr_buf_len = 0;
+	}
+	m_passthrough_callback = callback;
+	if (active) {
+		m_rx_buffer_offset = 0;
+	}
 }
 
-void UBXComms::process_passthrough_rx()
-{
-    if (!m_passthrough_active || m_pt_isr_buf_len == 0)
-        return;
+void UBXComms::process_passthrough_rx() {
+	if (!m_passthrough_active || m_pt_isr_buf_len == 0) return;
 
-    uint8_t local_buf[sizeof(m_pt_isr_buf)];
-    uint16_t local_len;
-    {
-        InterruptLock lock;
-        local_len = m_pt_isr_buf_len;
-        std::memcpy(local_buf, m_pt_isr_buf, local_len);
-        m_pt_isr_buf_len = 0;
-    }
+	uint8_t local_buf[sizeof(m_pt_isr_buf)];
+	uint16_t local_len;
+	{
+		InterruptLock lock;
+		local_len = m_pt_isr_buf_len;
+		std::memcpy(local_buf, m_pt_isr_buf, local_len);
+		m_pt_isr_buf_len = 0;
+	}
 
-    if (m_passthrough_callback) {
-        m_passthrough_callback(local_buf, local_len);
-    }
+	if (m_passthrough_callback) {
+		m_passthrough_callback(local_buf, local_len);
+	}
 }
 
 void UBXComms::cancel_expect() {
@@ -185,7 +176,7 @@ void UBXComms::send(uint8_t *buffer, unsigned int sz, bool notify_sent, bool use
 	wait_tx_idle();
 
 	if (m_debug_enable) {
-	    DEBUG_TRACE("UBXComms->GNSS: buffer=%s", Binascii::hexlify(std::string((char *)buffer, sz)).c_str());
+		DEBUG_TRACE("UBXComms->GNSS: buffer=%s", Binascii::hexlify(std::string((char *)buffer, sz)).c_str());
 	}
 
 	// Check for non-local buffer
@@ -203,8 +194,7 @@ void UBXComms::send(uint8_t *buffer, unsigned int sz, bool notify_sent, bool use
 	m_is_send_busy = true;
 	m_notify_sent = notify_sent;
 	ret_code_t ret;
-	if ((ret = nrf_libuarte_async_tx(BSP::UARTAsync_Inits[m_instance].uart,
-			buffer, sz)) != NRF_SUCCESS) {
+	if ((ret = nrf_libuarte_async_tx(BSP::UARTAsync_Inits[m_instance].uart, buffer, sz)) != NRF_SUCCESS) {
 		m_is_send_busy = false;  // Send failed so clear busy flag
 		DEBUG_ERROR("UBXComms::send: failed to send ret=%08x", (unsigned int)ret);
 	}
@@ -226,14 +216,14 @@ void UBXComms::set_baudrate(unsigned int baud) {
 		baudrate = NRF_UARTE_BAUDRATE_9600;
 		timeout_us = 1250;
 		break;
-    case 38400:
-        baudrate = NRF_UARTE_BAUDRATE_38400;
-        timeout_us = 800;
-        break;
-    case 921600:
-        baudrate = NRF_UARTE_BAUDRATE_921600;
-        timeout_us = 250;
-        break;
+	case 38400:
+		baudrate = NRF_UARTE_BAUDRATE_38400;
+		timeout_us = 800;
+		break;
+	case 921600:
+		baudrate = NRF_UARTE_BAUDRATE_921600;
+		timeout_us = 250;
+		break;
 	case 460800:
 	default:
 		baudrate = NRF_UARTE_BAUDRATE_460800;
@@ -244,8 +234,8 @@ void UBXComms::set_baudrate(unsigned int baud) {
 	// Stop receiver to prevent any possible comms errors
 	nrf_libuarte_async_stop_rx(BSP::UARTAsync_Inits[m_instance].uart);
 
-    // Reset the RX buffer
-    m_rx_buffer_offset = 0;
+	// Reset the RX buffer
+	m_rx_buffer_offset = 0;
 
 	// Adjust baud rate
 	nrf_uarte_baudrate_set(BSP::UARTAsync_Inits[m_instance].uart->p_libuarte->uarte, baudrate);
@@ -269,64 +259,62 @@ void UBXComms::stop_dbd_filter() {
 
 void UBXComms::handle_tx_done() {
 	m_is_send_busy = false;
-	if (m_notify_sent)
-		notify<UBXCommsEventSendComplete>({});
+	if (m_notify_sent) notify<UBXCommsEventSendComplete>({});
 }
 
-void UBXComms::handle_rx_buffer(uint8_t * buffer, unsigned int length) {
+void UBXComms::handle_rx_buffer(uint8_t *buffer, unsigned int length) {
+	// Passthrough mode: buffer raw data for main context forwarding (no UBX parsing)
+	if (m_passthrough_active) {
+		uint16_t cur_len = m_pt_isr_buf_len;
+		uint16_t space = sizeof(m_pt_isr_buf) - cur_len;
+		uint16_t copy_len = (length < space) ? length : space;
+		std::memcpy(m_pt_isr_buf + cur_len, buffer, copy_len);
+		m_pt_isr_buf_len = (uint16_t)(cur_len + copy_len);
+		nrf_libuarte_async_rx_free(BSP::UARTAsync_Inits[m_instance].uart, buffer, length);
+		return;
+	}
 
-    // Passthrough mode: buffer raw data for main context forwarding (no UBX parsing)
-    if (m_passthrough_active) {
-        uint16_t cur_len = m_pt_isr_buf_len;
-        uint16_t space = sizeof(m_pt_isr_buf) - cur_len;
-        uint16_t copy_len = (length < space) ? length : space;
-        std::memcpy(m_pt_isr_buf + cur_len, buffer, copy_len);
-        m_pt_isr_buf_len = (uint16_t)(cur_len + copy_len);
-        nrf_libuarte_async_rx_free(BSP::UARTAsync_Inits[m_instance].uart, buffer, length);
-        return;
-    }
-
-    if (m_debug_enable) {
-        notify(UBXCommsEventDebug(buffer, length));
-    }
+	if (m_debug_enable) {
+		notify(UBXCommsEventDebug(buffer, length));
+	}
 	// Run DBD filter on the buffer
 	if (m_dbd_filter_en) {
 		run_dbd_filter(buffer, length);
 	} else {
-	    // Make sure we can accept this DMA buffer from the UART driver
-	    if (length > 0 && length <= (sizeof(m_rx_buffer) - m_rx_buffer_offset)) {
-	        HeaderAndPayloadCRC *msg;
-	        uint8_t *curr_buffer = m_rx_buffer;
-	        unsigned int curr_length;
+		// Make sure we can accept this DMA buffer from the UART driver
+		if (length > 0 && length <= (sizeof(m_rx_buffer) - m_rx_buffer_offset)) {
+			HeaderAndPayloadCRC *msg;
+			uint8_t *curr_buffer = m_rx_buffer;
+			unsigned int curr_length;
 
-	        // Append DMA buffer into our own RX buffer since we might have
-	        // partial messages received previously
-	        std::memcpy(&m_rx_buffer[m_rx_buffer_offset], buffer, length);
-	        m_rx_buffer_offset += length;
-	        curr_length = m_rx_buffer_offset;
+			// Append DMA buffer into our own RX buffer since we might have
+			// partial messages received previously
+			std::memcpy(&m_rx_buffer[m_rx_buffer_offset], buffer, length);
+			m_rx_buffer_offset += length;
+			curr_length = m_rx_buffer_offset;
 
-            while ((msg = parse_message(&curr_buffer, &curr_length))) {
-                run_expect_filter(msg);
-                run_nav_filter(msg);
-                run_rxm_filter(msg);
-            }
+			while ((msg = parse_message(&curr_buffer, &curr_length))) {
+				run_expect_filter(msg);
+				run_nav_filter(msg);
+				run_rxm_filter(msg);
+			}
 
-            // Shift any surplus remaining data to the start of RX buffer
-            std::memcpy(m_rx_buffer, curr_buffer, curr_length);
-            m_rx_buffer_offset = curr_length;
+			// Shift any surplus remaining data to the start of RX buffer
+			std::memcpy(m_rx_buffer, curr_buffer, curr_length);
+			m_rx_buffer_offset = curr_length;
 
-	    } else {
-	        // Flush the current input buffer
-	        m_rx_buffer_offset = 0;
-	        notify(UBXCommsEventError(0x400));
-	    }
+		} else {
+			// Flush the current input buffer
+			m_rx_buffer_offset = 0;
+			notify(UBXCommsEventError(0x400));
+		}
 	}
 
 	// Free the buffer back to the driver
 	nrf_libuarte_async_rx_free(BSP::UARTAsync_Inits[m_instance].uart, buffer, length);
 }
 
-void UBXComms::filter_buffer(uint8_t * buffer, unsigned int length) {
+void UBXComms::filter_buffer(uint8_t *buffer, unsigned int length) {
 	// Parse individual messages
 	HeaderAndPayloadCRC *msg;
 	while ((msg = parse_message(&buffer, &length))) {
@@ -341,8 +329,7 @@ void UBXComms::handle_error(unsigned int error_type) {
 }
 
 void UBXComms::restart_rx() {
-	if (!m_is_init || !m_rx_stopped)
-		return;
+	if (!m_is_init || !m_rx_stopped) return;
 	DEBUG_TRACE("UBXComms::restart_rx: reprise de la reception apres erreur UART");
 	m_rx_buffer_offset = 0;
 	nrf_libuarte_async_start_rx(BSP::UARTAsync_Inits[m_instance].uart);
@@ -350,9 +337,7 @@ void UBXComms::restart_rx() {
 }
 
 HeaderAndPayloadCRC *UBXComms::parse_message(uint8_t **buffer, unsigned int *length) {
-
 	while (*length >= (sizeof(Header) + 2)) {
-
 		// Find next SYNC1
 		while (**buffer != SYNC_CHAR1 && *length) {
 			(*buffer)++;
@@ -366,20 +351,18 @@ HeaderAndPayloadCRC *UBXComms::parse_message(uint8_t **buffer, unsigned int *len
 				HeaderAndPayloadCRC *msg = (HeaderAndPayloadCRC *)*buffer;
 
 				// Check sync bytes are present at head of buffer
-				if (msg->syncChars[1] != SYNC_CHAR2)
-					break;
+				if (msg->syncChars[1] != SYNC_CHAR2) break;
 
 				// Check length field is valid
 				if ((msg->msgLength + sizeof(Header) + 2) > *length) {
 					//DEBUG_TRACE("Insufficient bytes for msg");
-					return nullptr; // Insufficient bytes in the buffer
+					return nullptr;  // Insufficient bytes in the buffer
 				}
 
 				// Compute CRC field
 				uint8_t ck_a, ck_b;
 				compute_crc((const uint8_t *)&msg->msgClass, msg->msgLength + sizeof(Header) - 2, ck_a, ck_b);
-				if (ck_a != msg->payload[msg->msgLength] || ck_b != msg->payload[msg->msgLength+1])
-					break;
+				if (ck_a != msg->payload[msg->msgLength] || ck_b != msg->payload[msg->msgLength + 1]) break;
 
 				// We have a good message
 				*buffer += (msg->msgLength + sizeof(Header) + 2);
@@ -401,29 +384,25 @@ HeaderAndPayloadCRC *UBXComms::parse_message(uint8_t **buffer, unsigned int *len
 	return nullptr;
 }
 
-void UBXComms::compute_crc(const uint8_t * const buffer, const unsigned int length, uint8_t &ck_a, uint8_t &ck_b) {
+void UBXComms::compute_crc(const uint8_t *const buffer, const unsigned int length, uint8_t &ck_a, uint8_t &ck_b) {
 	ck_a = 0;
 	ck_b = 0;
-    for (unsigned int i = 0; i < length; i++)
-    {
-        ck_a = ck_a + buffer[i];
-        ck_b = ck_b + ck_a;
-    }
+	for (unsigned int i = 0; i < length; i++) {
+		ck_a = ck_a + buffer[i];
+		ck_b = ck_b + ck_a;
+	}
 }
 
-void UBXComms::run_expect_filter(const UBX::HeaderAndPayloadCRC * const msg) {
+void UBXComms::run_expect_filter(const UBX::HeaderAndPayloadCRC *const msg) {
 	if (!m_expect.enable) return;
 	//DEBUG_TRACE("resp msg class : %u resp_msg_id %u", msg->msgClass, msg->msgId);
-	if (m_expect.resp_cls != (uint8_t)msg->msgClass ||
-		m_expect.resp_msg_id != msg->msgId) return;
+	if (m_expect.resp_cls != (uint8_t)msg->msgClass || m_expect.resp_msg_id != msg->msgId) return;
 
 	// Expect filter matches
 	if (msg->msgClass == MessageClass::MSG_CLASS_ACK) {
 		// Additionally check the request message ID matches
 		ACK::MSG_ACK *ack = (ACK::MSG_ACK *)msg->payload;
-		if ((uint8_t)ack->clsID != m_expect.req_cls ||
-			ack->msgID != m_expect.req_msg_id)
-			return;
+		if ((uint8_t)ack->clsID != m_expect.req_cls || ack->msgID != m_expect.req_msg_id) return;
 		m_expect.enable = false;
 		notify(UBXCommsEventAckNack(msg->msgId == m_expect.resp_msg_id));
 	} else if (msg->msgClass == MessageClass::MSG_CLASS_MGA && msg->msgId == MGA::ID_ACK) {
@@ -450,7 +429,7 @@ void UBXComms::run_expect_filter(const UBX::HeaderAndPayloadCRC * const msg) {
 	}
 }
 
-void UBXComms::run_nav_filter(const UBX::HeaderAndPayloadCRC * const msg) {
+void UBXComms::run_nav_filter(const UBX::HeaderAndPayloadCRC *const msg) {
 	if (msg->msgClass != MessageClass::MSG_CLASS_NAV) return;
 
 	// Update navigation report
@@ -459,42 +438,37 @@ void UBXComms::run_nav_filter(const UBX::HeaderAndPayloadCRC * const msg) {
 		std::memcpy(&m_nav_report.pvt, msg->payload, sizeof(m_nav_report.pvt));
 		//DEBUG_TRACE("PVT: itow=%u valid=%u fix=%u", m_nav_report.pvt.iTow, (unsigned int)m_nav_report.pvt.valid,
 		//		(unsigned int)m_nav_report.pvt.fixType);
-		if (m_nav_report.pvt.iTow != m_nav_report_iTOW)
-			m_nav_report_iTOW = m_nav_report.pvt.iTow;
+		if (m_nav_report.pvt.iTow != m_nav_report_iTOW) m_nav_report_iTOW = m_nav_report.pvt.iTow;
 	} else if (msg->msgId == NAV::ID_DOP) {
 		if (msg->msgLength < sizeof(m_nav_report.dop)) return;
 		std::memcpy(&m_nav_report.dop, msg->payload, sizeof(m_nav_report.dop));
 		//DEBUG_TRACE("DOP: itow=%u", m_nav_report.dop.iTow);
-		if (m_nav_report.dop.iTow != m_nav_report_iTOW)
-			m_nav_report_iTOW = m_nav_report.dop.iTow;
+		if (m_nav_report.dop.iTow != m_nav_report_iTOW) m_nav_report_iTOW = m_nav_report.dop.iTow;
 	} else if (msg->msgId == NAV::ID_STATUS) {
 		if (msg->msgLength < sizeof(m_nav_report.status)) return;
 		std::memcpy(&m_nav_report.status, msg->payload, sizeof(m_nav_report.status));
 		//DEBUG_TRACE("STATUS: itow=%u", m_nav_report.status.iTow);
-		if (m_nav_report.status.iTow != m_nav_report_iTOW)
-			m_nav_report_iTOW = m_nav_report.status.iTow;
-    } else if (msg->msgId == NAV::ID_SAT) {
-        std::memcpy(&m_sat_report.sat, msg->payload,
-                    std::min((int)msg->msgLength, (int)sizeof(UBX::NAV::SAT::MSG_SAT)));
-        // Limit maximum number of SVs that can be reported to size of msg
+		if (m_nav_report.status.iTow != m_nav_report_iTOW) m_nav_report_iTOW = m_nav_report.status.iTow;
+	} else if (msg->msgId == NAV::ID_SAT) {
+		std::memcpy(&m_sat_report.sat, msg->payload,
+		            std::min((int)msg->msgLength, (int)sizeof(UBX::NAV::SAT::MSG_SAT)));
+		// Limit maximum number of SVs that can be reported to size of msg
 		//DEBUG_TRACE("SAT: nsv=%u", m_sat_report.sat.numSvs);
-        if (m_sat_report.sat.numSvs > 12)
-        	m_sat_report.sat.numSvs = 12;
-        notify(m_sat_report);
+		if (m_sat_report.sat.numSvs > 12) m_sat_report.sat.numSvs = 12;
+		notify(m_sat_report);
 	} else {
 		return;
 	}
 
 	// Check for matching iTOW and valid fix
-	if (m_nav_report_iTOW == m_nav_report.status.iTow &&
-		m_nav_report_iTOW == m_nav_report.pvt.iTow &&
-		m_nav_report_iTOW == m_nav_report.dop.iTow) {
-		m_nav_report_iTOW = -1; // Reset this report as now notified
+	if (m_nav_report_iTOW == m_nav_report.status.iTow && m_nav_report_iTOW == m_nav_report.pvt.iTow
+	    && m_nav_report_iTOW == m_nav_report.dop.iTow) {
+		m_nav_report_iTOW = -1;  // Reset this report as now notified
 		notify(m_nav_report);
 	}
 }
 
-void UBXComms::run_rxm_filter(const UBX::HeaderAndPayloadCRC * const msg) {
+void UBXComms::run_rxm_filter(const UBX::HeaderAndPayloadCRC *const msg) {
 	if (msg->msgClass != UBX::MessageClass::MSG_CLASS_RXM) return;
 
 	if (msg->msgId == UBX::RXM::ID_MEASC12 && msg->msgLength >= sizeof(UBX::RXM::MSG_MEASC12)) {
@@ -517,9 +491,7 @@ void UBXComms::run_dbd_filter(uint8_t *buffer, unsigned int length) {
 }
 
 bool UBXComms::is_expected_msg_count(uint8_t *buffer, unsigned int length, unsigned int expected,
-		unsigned int& actual_count,
-		MessageClass msg_cls, uint8_t msg_id) {
-
+                                     unsigned int &actual_count, MessageClass msg_cls, uint8_t msg_id) {
 	HeaderAndPayloadCRC *msg;
 	unsigned int count = 0;
 	uint8_t *curr_buffer = buffer;
@@ -527,8 +499,7 @@ bool UBXComms::is_expected_msg_count(uint8_t *buffer, unsigned int length, unsig
 
 	// Count number of records in buffer
 	while ((msg = parse_message(&curr_buffer, &curr_length))) {
-		if (msg->msgClass == msg_cls && msg->msgId == msg_id)
-			count++;
+		if (msg->msgClass == msg_cls && msg->msgId == msg_id) count++;
 	}
 
 	actual_count = count;
@@ -536,17 +507,17 @@ bool UBXComms::is_expected_msg_count(uint8_t *buffer, unsigned int length, unsig
 	return (count == expected);
 }
 
-void UBXComms::copy_mga_ano_to_buffer(File& file, uint8_t *dest_buffer, const unsigned int buffer_size, std::time_t now,
-		unsigned int& num_bytes_copied, unsigned int& num_msg_copied,
-		unsigned int& ano_start_pos,
-		unsigned int ano_stale_threshold_s) {
+void UBXComms::copy_mga_ano_to_buffer(File &file, uint8_t *dest_buffer, const unsigned int buffer_size, std::time_t now,
+                                      unsigned int &num_bytes_copied, unsigned int &num_msg_copied,
+                                      unsigned int &ano_start_pos, unsigned int ano_stale_threshold_s) {
 	uint8_t buffer[UBX::MAX_PACKET_LEN];
 	lfs_soff_t offset = ano_start_pos;
 	num_bytes_copied = 0;
 	num_msg_copied = 0;
 	std::time_t deltatime = (std::time_t)0xFFFFFFFF;
 
-	DEBUG_TRACE("UBXComms::copy_mga_ano_to_buffer: parsing file size %u bytes from pos %u", (unsigned int)file.size(), ano_start_pos);
+	DEBUG_TRACE("UBXComms::copy_mga_ano_to_buffer: parsing file size %u bytes from pos %u", (unsigned int)file.size(),
+	            ano_start_pos);
 
 	// Try to seek to start position if non-zero
 	if (offset) {
@@ -555,7 +526,6 @@ void UBXComms::copy_mga_ano_to_buffer(File& file, uint8_t *dest_buffer, const un
 
 	// Iterate each message of the file
 	while (true) {
-
 		// Read UBX header into buffer
 		lfs_ssize_t sz;
 		sz = file.read(buffer, sizeof(Header));
@@ -573,7 +543,6 @@ void UBXComms::copy_mga_ano_to_buffer(File& file, uint8_t *dest_buffer, const un
 				// Read remaining payload and CRC
 				sz = file.read(&buffer[sizeof(Header)], (msg->msgLength + 2));
 				if (sz == (lfs_ssize_t)(msg->msgLength + 2)) {
-
 					// Filter on MGA-ANO messages only
 					if (msg->msgClass == MessageClass::MSG_CLASS_MGA && msg->msgId == MGA::ID_ANO) {
 						MGA::MSG_ANO *ano = (MGA::MSG_ANO *)msg->payload;
@@ -585,10 +554,10 @@ void UBXComms::copy_mga_ano_to_buffer(File& file, uint8_t *dest_buffer, const un
 							num_bytes_copied = 0;
 							num_msg_copied = 0;
 							ano_start_pos = (unsigned int)offset;
-						}
-						else if (timediff > deltatime) {
+						} else if (timediff > deltatime) {
 							//DEBUG_TRACE("UBXComms::copy_mga_ano_to_buffer: new delta=%08x > old=%08x", (unsigned int)timediff, (unsigned int)deltatime);
-							DEBUG_TRACE("UBXComms::copy_mga_ano_to_buffer: copied %u msgs from pos %u", num_msg_copied, ano_start_pos);
+							DEBUG_TRACE("UBXComms::copy_mga_ano_to_buffer: copied %u msgs from pos %u", num_msg_copied,
+							            ano_start_pos);
 							break;  // Time delta is worse, so do not proceed with these messages
 						}
 
@@ -621,10 +590,10 @@ void UBXComms::copy_mga_ano_to_buffer(File& file, uint8_t *dest_buffer, const un
 	// If deltatime exceeds the staleness threshold, discard the data.
 	// threshold=0 means never discard (use all data regardless of age).
 	if (ano_stale_threshold_s > 0 && deltatime >= ano_stale_threshold_s) {
-	    DEBUG_TRACE("UBXComms::copy_mga_ano_to_buffer: ANO file is stale (delta=%us > threshold=%us)",
-	                (unsigned int)deltatime, ano_stale_threshold_s);
-	    ano_start_pos = file.size();
-	    num_bytes_copied = 0;
-	    num_msg_copied = 0;
+		DEBUG_TRACE("UBXComms::copy_mga_ano_to_buffer: ANO file is stale (delta=%us > threshold=%us)",
+		            (unsigned int)deltatime, ano_stale_threshold_s);
+		ano_start_pos = file.size();
+		num_bytes_copied = 0;
+		num_msg_copied = 0;
 	}
 }

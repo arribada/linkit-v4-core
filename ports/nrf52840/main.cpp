@@ -147,23 +147,23 @@
 /// @brief Assigned during init phases, valid for the entire application lifetime.
 ///        All point to static objects allocated in .bss (not heap).
 /// @{
-FileSystem *main_filesystem;              ///< LittleFS filesystem on IS25 external flash
-ConfigurationStore *configuration_store;  ///< Parameter persistence (206 params via LFS)
-BLEService *ble_service;                  ///< BLE NUS interface for DTE and debug
-OTAFileUpdater *ota_updater;              ///< Firmware OTA via BLE or flash file
-MemoryAccess *memory_access;              ///< RAM read/write access for DTE DUMPD command
-Timer *system_timer;                      ///< Hardware timer (NrfTimer, 1 ms resolution)
-Scheduler *system_scheduler;              ///< Task scheduler wrapping system_timer
-RGBLed *status_led;                       ///< On-board RGB status LED
-ReedSwitch *reed_switch;                  ///< Reed switch with confirmation gesture logic
-DTEHandler *dte_handler;                  ///< DTE protocol command dispatcher (PARMR/PARMW/STAT/DUMPD)
-RTC *rtc;                                 ///< Real-time clock (NrfRTC, epoch seconds)
-BatteryMonitor *battery_monitor;          ///< Battery voltage/level monitor (variant-dependent)
-GPSDevice *gps_device;                    ///< GNSS receiver (u-blox M10Q)
-GPSService *gps_service = nullptr;        ///< GNSS service singleton (set by phase 6 if M10Q detected)
+FileSystem *main_filesystem;                     ///< LittleFS filesystem on IS25 external flash
+ConfigurationStore *configuration_store;         ///< Parameter persistence (206 params via LFS)
+BLEService *ble_service;                         ///< BLE NUS interface for DTE and debug
+OTAFileUpdater *ota_updater;                     ///< Firmware OTA via BLE or flash file
+MemoryAccess *memory_access;                     ///< RAM read/write access for DTE DUMPD command
+Timer *system_timer;                             ///< Hardware timer (NrfTimer, 1 ms resolution)
+Scheduler *system_scheduler;                     ///< Task scheduler wrapping system_timer
+RGBLed *status_led;                              ///< On-board RGB status LED
+ReedSwitch *reed_switch;                         ///< Reed switch with confirmation gesture logic
+DTEHandler *dte_handler;                         ///< DTE protocol command dispatcher (PARMR/PARMW/STAT/DUMPD)
+RTC *rtc;                                        ///< Real-time clock (NrfRTC, epoch seconds)
+BatteryMonitor *battery_monitor;                 ///< Battery voltage/level monitor (variant-dependent)
+GPSDevice *gps_device;                           ///< GNSS receiver (u-blox M10Q)
+GPSService *gps_service = nullptr;               ///< GNSS service singleton (set by phase 6 if M10Q detected)
 KineisDevice *kineis_device_instance = nullptr;  ///< Satellite TX device (SMD, KIM2, or LoRa)
 #if defined(ARGOS_SMD) && (ARGOS_SMD == 1)
-SmdSat *smd_sat_instance = nullptr;       ///< SMD satellite instance (needed for DFU OTA)
+SmdSat *smd_sat_instance = nullptr;  ///< SMD satellite instance (needed for DFU OTA)
 #endif
 #if defined(LORA_RAK3172) && (LORA_RAK3172 == 1)
 LoRaDevice *lora_device_instance = nullptr;  ///< LoRa RAK3172 instance (needed for LORATX DTE)
@@ -174,7 +174,7 @@ KIM2Device *kim2_device_instance = nullptr;  ///< KIM2 instance (needed for KIMB
 #if ENABLE_MORTALITY_SENSOR
 MortalityService *mortality_service = nullptr;  ///< Bird mortality detection service (RSPB only)
 #endif
-Buzzer *buzzer_ctl;                       ///< Optional piezo buzzer (board-dependent)
+Buzzer *buzzer_ctl;  ///< Optional piezo buzzer (board-dependent)
 /// @}
 
 /// @brief Active debug output channel (UART, USB CDC, BLE NUS, or NONE).
@@ -211,22 +211,21 @@ static bool m_is_debug_init = false;
 // Best case: tag self-recovers via soft reset → cold boot → boot-fail
 // counter logic kicks in if persistent.
 static unsigned int s_exc_storm_count = 0;
-static uint64_t     s_exc_storm_window_start_ms = 0;
+static uint64_t s_exc_storm_window_start_ms = 0;
 static constexpr unsigned int EXC_STORM_THRESHOLD = 100;
-static constexpr uint64_t     EXC_STORM_WINDOW_MS = 60ULL * 1000ULL;  // 1 min
+static constexpr uint64_t EXC_STORM_WINDOW_MS = 60ULL * 1000ULL;  // 1 min
 
 static void gps_service_exception_storm_check() {
 	uint64_t now_ms = PMU::get_timestamp_ms();
-	if (s_exc_storm_window_start_ms == 0 ||
-	    now_ms - s_exc_storm_window_start_ms > EXC_STORM_WINDOW_MS) {
+	if (s_exc_storm_window_start_ms == 0 || now_ms - s_exc_storm_window_start_ms > EXC_STORM_WINDOW_MS) {
 		// Outside window: reset counter and start a new window.
 		s_exc_storm_window_start_ms = now_ms;
 		s_exc_storm_count = 0;
 	}
 	s_exc_storm_count++;
 	if (s_exc_storm_count >= EXC_STORM_THRESHOLD) {
-		DEBUG_ERROR("Exception storm: %u exceptions in <%llu ms — forcing soft reset",
-		            s_exc_storm_count, (unsigned long long)EXC_STORM_WINDOW_MS);
+		DEBUG_ERROR("Exception storm: %u exceptions in <%llu ms — forcing soft reset", s_exc_storm_count,
+		            (unsigned long long)EXC_STORM_WINDOW_MS);
 		PMU::save_stack(PMULogType::ETL);
 		PMU::reset(false);
 	}
@@ -250,9 +249,9 @@ static void gps_service_exception_storm_check() {
 // Best case (genuine drop storm): tag reboots cleanly before V_BCKP drains.
 static unsigned int s_sched_drop_last_observed = 0;
 static unsigned int s_sched_drop_in_window = 0;
-static uint64_t     s_sched_drop_window_start_ms = 0;
+static uint64_t s_sched_drop_window_start_ms = 0;
 static constexpr unsigned int SCHED_DROP_THRESHOLD = 10;
-static constexpr uint64_t     SCHED_DROP_WINDOW_MS = 60ULL * 1000ULL;  // 1 min
+static constexpr uint64_t SCHED_DROP_WINDOW_MS = 60ULL * 1000ULL;  // 1 min
 
 static void scheduler_drop_storm_check() {
 	if (g_scheduler_drop_count == s_sched_drop_last_observed) return;  // no new drops
@@ -260,15 +259,14 @@ static void scheduler_drop_storm_check() {
 	s_sched_drop_last_observed = g_scheduler_drop_count;
 
 	uint64_t now_ms = PMU::get_timestamp_ms();
-	if (s_sched_drop_window_start_ms == 0 ||
-	    now_ms - s_sched_drop_window_start_ms > SCHED_DROP_WINDOW_MS) {
+	if (s_sched_drop_window_start_ms == 0 || now_ms - s_sched_drop_window_start_ms > SCHED_DROP_WINDOW_MS) {
 		s_sched_drop_window_start_ms = now_ms;
 		s_sched_drop_in_window = 0;
 	}
 	s_sched_drop_in_window += delta;
 	if (s_sched_drop_in_window >= SCHED_DROP_THRESHOLD) {
-		DEBUG_ERROR("Scheduler drop storm: %u drops in <%llu ms — forcing soft reset",
-		            s_sched_drop_in_window, (unsigned long long)SCHED_DROP_WINDOW_MS);
+		DEBUG_ERROR("Scheduler drop storm: %u drops in <%llu ms — forcing soft reset", s_sched_drop_in_window,
+		            (unsigned long long)SCHED_DROP_WINDOW_MS);
 		PMU::save_stack(PMULogType::ETL);
 		PMU::reset(false);
 	}
@@ -277,11 +275,11 @@ static void scheduler_drop_storm_check() {
 FSM_INITIAL_STATE(GenTracker, BootState)
 
 /// @brief Number of IS25 flash blocks reserved for OTA firmware images (last 1 MB).
-#define OTA_UPDATE_RESERVED_BLOCKS ((1024 * 1024) / IS25_BLOCK_SIZE)
+#define OTA_UPDATE_RESERVED_BLOCKS   ((1024 * 1024) / IS25_BLOCK_SIZE)
 
 /// @brief Reed switch debounce time in ms.
 /// @note Increased from 25 ms to 250 ms to filter noise from VSENSORS rail switching.
-#define REED_SWITCH_DEBOUNCE_TIME_MS    250
+#define REED_SWITCH_DEBOUNCE_TIME_MS 250
 
 
 /**
@@ -306,7 +304,8 @@ FSM_INITIAL_STATE(GenTracker, BootState)
 #endif
 		NrfRGBLed::set_color_raw(BSP::GPIO::GPIO_LED_RED, BSP::GPIO::GPIO_LED_GREEN, BSP::GPIO::GPIO_LED_BLUE, color);
 		nrf_delay_ms(delay_ms);
-		NrfRGBLed::set_color_raw(BSP::GPIO::GPIO_LED_RED, BSP::GPIO::GPIO_LED_GREEN, BSP::GPIO::GPIO_LED_BLUE, RGBLedColor::BLACK);
+		NrfRGBLed::set_color_raw(BSP::GPIO::GPIO_LED_RED, BSP::GPIO::GPIO_LED_GREEN, BSP::GPIO::GPIO_LED_BLUE,
+		                         RGBLedColor::BLACK);
 		nrf_delay_ms(delay_ms);
 		PMU::kick_watchdog();
 	}
@@ -317,20 +316,20 @@ FSM_INITIAL_STATE(GenTracker, BootState)
 /// @param total_ms       Approximate total duration.
 /// @param delay_ms       Half-period.
 /// @param feed_watchdog  Keep the WDT fed while blinking.
-static void blink_bounded(RGBLedColor color, unsigned int total_ms,
-                          unsigned int delay_ms, bool feed_watchdog) {
+static void blink_bounded(RGBLedColor color, unsigned int total_ms, unsigned int delay_ms, bool feed_watchdog) {
 	for (unsigned int t = 0; t < total_ms; t += 2 * delay_ms) {
 #ifdef GPIO_LED_REG
 		GPIOPins::set(GPIO_LED_REG);
 #endif
 		NrfRGBLed::set_color_raw(BSP::GPIO::GPIO_LED_RED, BSP::GPIO::GPIO_LED_GREEN, BSP::GPIO::GPIO_LED_BLUE, color);
 		nrf_delay_ms(delay_ms);
-		NrfRGBLed::set_color_raw(BSP::GPIO::GPIO_LED_RED, BSP::GPIO::GPIO_LED_GREEN, BSP::GPIO::GPIO_LED_BLUE, RGBLedColor::BLACK);
+		NrfRGBLed::set_color_raw(BSP::GPIO::GPIO_LED_RED, BSP::GPIO::GPIO_LED_GREEN, BSP::GPIO::GPIO_LED_BLUE,
+		                         RGBLedColor::BLACK);
 		nrf_delay_ms(delay_ms);
-		if (feed_watchdog)
-			PMU::kick_watchdog();
+		if (feed_watchdog) PMU::kick_watchdog();
 	}
-	NrfRGBLed::set_color_raw(BSP::GPIO::GPIO_LED_RED, BSP::GPIO::GPIO_LED_GREEN, BSP::GPIO::GPIO_LED_BLUE, RGBLedColor::BLACK);
+	NrfRGBLed::set_color_raw(BSP::GPIO::GPIO_LED_RED, BSP::GPIO::GPIO_LED_GREEN, BSP::GPIO::GPIO_LED_BLUE,
+	                         RGBLedColor::BLACK);
 #ifdef GPIO_LED_REG
 	GPIOPins::clear(GPIO_LED_REG);
 #endif
@@ -385,29 +384,33 @@ ArgosTxService *argos_tx_service_instance = nullptr;
 	const uint32_t fails = s_flashfail.count;
 
 	if (fails <= FLASH_INIT_MAX_RESETS) {
-		DEBUG_ERROR("IS25 flash init failed (%lu/%lu) — explicit reset to retry recovery",
-		            (unsigned long)fails, (unsigned long)FLASH_INIT_MAX_RESETS);
+		DEBUG_ERROR("IS25 flash init failed (%lu/%lu) — explicit reset to retry recovery", (unsigned long)fails,
+		            (unsigned long)FLASH_INIT_MAX_RESETS);
 		blink_bounded(RGBLedColor::RED, 2000, 100, true);
 		PMU::reset(false);
-		for (;;) { }   // PMU::reset does not return
+		for (;;) {}  // PMU::reset does not return
 	}
 
-	DEBUG_ERROR("IS25 flash init failed (%lu) — unrecoverable, deferring to the watchdog",
-	            (unsigned long)fails);
+	DEBUG_ERROR("IS25 flash init failed (%lu) — unrecoverable, deferring to the watchdog", (unsigned long)fails);
 #ifdef DEBUG_NO_WATCHDOG
 	// No watchdog to reclaim us on this build: keep rebooting on our own, slowly.
 	blink_bounded(RGBLedColor::RED, 30000, 100, false);
 	PMU::reset(false);
-	for (;;) { }
+	for (;;) {}
 #else
 	blink_bounded(RGBLedColor::RED, 60000, 100, false);
-	for (;;) { __WFI(); }   // watchdog (15 min) reboots us and we try again
+	for (;;) {
+		__WFI();
+	}  // watchdog (15 min) reboots us and we try again
 #endif
 }
 
 extern "C" void HardFault_Handler() {
 #ifdef NDEBUG
-	for (;;) { PMU::save_stack(PMULogType::HARDFAULT); PMU::reset(false); }
+	for (;;) {
+		PMU::save_stack(PMULogType::HARDFAULT);
+		PMU::reset(false);
+	}
 #else
 	fault_blink_loop(RGBLedColor::RED);
 #endif
@@ -415,29 +418,35 @@ extern "C" void HardFault_Handler() {
 
 extern "C" void MemoryManagement_Handler(void) {
 #ifdef NDEBUG
-	for (;;) { PMU::save_stack(PMULogType::MMAN); PMU::reset(false); }
+	for (;;) {
+		PMU::save_stack(PMULogType::MMAN);
+		PMU::reset(false);
+	}
 #else
 	fault_blink_loop(RGBLedColor::YELLOW);
 #endif
 }
 
 extern "C" {
-	/// @brief Stack canary value for -fstack-protector.  Fixed constant — see review note.
-	void *__stack_check_guard = (void*)0xDEADBEEF;
-	/// @brief Called by -fstack-protector when the canary is corrupted.
-	void __wrap___stack_chk_fail(void) {
+/// @brief Stack canary value for -fstack-protector.  Fixed constant — see review note.
+void *__stack_check_guard = (void *)0xDEADBEEF;
+/// @brief Called by -fstack-protector when the canary is corrupted.
+void __wrap___stack_chk_fail(void) {
 #ifdef NDEBUG
-		PMU::save_stack(PMULogType::STACK);
-		PMU::reset(false);
+	PMU::save_stack(PMULogType::STACK);
+	PMU::reset(false);
 #else
-		fault_blink_loop(RGBLedColor::MAGENTA);
+	fault_blink_loop(RGBLedColor::MAGENTA);
 #endif
-	}
+}
 }
 
 extern "C" void vApplicationMallocFailedHook() {
 #ifdef NDEBUG
-	for (;;) { PMU::save_stack(PMULogType::MALLOC); PMU::reset(false); }
+	for (;;) {
+		PMU::save_stack(PMULogType::MALLOC);
+		PMU::reset(false);
+	}
 #else
 	fault_blink_loop(RGBLedColor::CYAN);
 #endif
@@ -446,11 +455,13 @@ extern "C" void vApplicationMallocFailedHook() {
 /** @brief ETL library error callback — logs the exception then resets or blinks.
  *  @param e  ETL exception with file/line info.
  */
-void etl_error_handler(const etl::exception& e)
-{
+void etl_error_handler(const etl::exception &e) {
 	DEBUG_TRACE("ETL error: %s in %s : %u", e.what(), e.file_name(), e.line_number());
 #ifdef NDEBUG
-	for (;;) { PMU::save_stack(PMULogType::ETL); PMU::reset(false); }
+	for (;;) {
+		PMU::save_stack(PMULogType::ETL);
+		PMU::reset(false);
+	}
 #else
 	fault_blink_loop(RGBLedColor::RED, 200);
 #endif
@@ -469,14 +480,13 @@ void etl_error_handler(const etl::exception& e)
  * @note Safe to call from ISR context only for UART and USB CDC paths.
  *       BLE NUS path checks __get_IPSR() and skips if in interrupt context.
  */
-extern "C" int _write(int file, char *ptr, int len)
-{
+extern "C" int _write(int file, char *ptr, int len) {
 #ifdef DEBUG_UART_TX_PIN
 	if (g_debug_mode == BaseDebugMode::UART && NrfDebugUart::is_init())
 		NrfDebugUart::write(ptr, len);
 	else
 #endif
-	if (g_debug_mode == BaseDebugMode::USB_CDC && m_is_debug_init)
+	    if (g_debug_mode == BaseDebugMode::USB_CDC && m_is_debug_init)
 		NrfUSB::write(ptr, len);
 	else if (ble_service && !__get_IPSR() && g_debug_mode == BaseDebugMode::BLE_NUS) {
 		ble_service->write_best_effort(std::string(ptr, len));
@@ -495,8 +505,8 @@ extern "C" int _write(int file, char *ptr, int len)
 
 /** @brief References returned by init_peripherals() for use in subsequent init phases. */
 struct InitContext {
-	NrfSwitch& reed;   ///< Reed switch — needed by power-on check, gesture, and dive mode
-	Is25Flash& flash;   ///< External NOR flash — needed by LFS and OTA updater
+	NrfSwitch &reed;   ///< Reed switch — needed by power-on check, gesture, and dive mode
+	Is25Flash &flash;  ///< External NOR flash — needed by LFS and OTA updater
 };
 
 /**
@@ -507,8 +517,7 @@ struct InitContext {
  *
  * @return InitContext with references to reed switch and flash for subsequent phases.
  */
-static InitContext init_peripherals()
-{
+static InitContext init_peripherals() {
 	// Storage-mode wake filter: if we just woke from PSEUDO_POWER_OFF without
 	// a magnet held, the device enters System OFF mode immediately (deepest
 	// sleep ~0.4 µA + Hall switch ~1.7 µA = ~2 µA total). Must run BEFORE
@@ -538,14 +547,14 @@ static InitContext init_peripherals()
 	// NOT actively drive the line. drive_low overrides to OUTPUT and forces
 	// the pin LOW, holding the STM32WL in reset while VDD discharges.
 	if (PMU::reset_cause() != ResetCause::POWER_ON) {
-		GPIOPins::clear(SAT_PWR_EN);     // Cut STM32WL VDD (BSP=OUTPUT)
+		GPIOPins::clear(SAT_PWR_EN);  // Cut STM32WL VDD (BSP=OUTPUT)
 #ifdef SAT_RESET
 		GPIOPins::drive_low(SAT_RESET);  // Force STM32WL into reset (overrides BSP=INPUT)
 #endif
 #ifdef SMD_VPA_PIN
 		GPIOPins::drive_low(SMD_VPA_PIN);
 #endif
-		PMU::delay_ms(500);               // Drain VDD caps — STM32WL needs ~50-200ms typically; 500ms is safe margin
+		PMU::delay_ms(500);  // Drain VDD caps — STM32WL needs ~50-200ms typically; 500ms is safe margin
 #ifdef SAT_RESET
 		GPIOPins::release_to_highz(SAT_RESET);  // Restore high-Z so SmdSat::power_on can manage normally
 #endif
@@ -602,7 +611,8 @@ static InitContext init_peripherals()
 	}
 
 	DEBUG_TRACE("RGB LED...");
-	static NrfRGBLed nrf_status_led("STATUS", BSP::GPIO::GPIO_LED_RED, BSP::GPIO::GPIO_LED_GREEN, BSP::GPIO::GPIO_LED_BLUE, RGBLedColor::WHITE);
+	static NrfRGBLed nrf_status_led("STATUS", BSP::GPIO::GPIO_LED_RED, BSP::GPIO::GPIO_LED_GREEN,
+	                                BSP::GPIO::GPIO_LED_BLUE, RGBLedColor::WHITE);
 	status_led = &nrf_status_led;
 
 #ifdef SMD_FLASH_HOLD
@@ -618,20 +628,20 @@ static InitContext init_peripherals()
 	// Enable with -DSMD_FLASH_HOLD=1 (RSPB build). REMOVE for normal operation.
 	DEBUG_WARN("SMD_FLASH_HOLD: powering SMD + parking — flash the STM32WL now (MAGENTA LED)");
 #ifdef SMD_VPA_PIN
-	GPIOPins::drive_low(SMD_VPA_PIN);        // PA regulator OFF — no TX current spikes
+	GPIOPins::drive_low(SMD_VPA_PIN);  // PA regulator OFF — no TX current spikes
 #endif
 #ifdef SAT_RESET
-	GPIOPins::release_to_highz(SAT_RESET);   // high-Z: SWD probe controls STM32WL reset
+	GPIOPins::release_to_highz(SAT_RESET);  // high-Z: SWD probe controls STM32WL reset
 #endif
-	GPIOPins::set(SAT_PWR_EN);               // STM32WL VDD ON, held indefinitely
-	status_led->set(RGBLedColor::MAGENTA);   // visual marker: flash-hold mode active
+	GPIOPins::set(SAT_PWR_EN);              // STM32WL VDD ON, held indefinitely
+	status_led->set(RGBLedColor::MAGENTA);  // visual marker: flash-hold mode active
 	for (;;) {
 #ifndef DEBUG_NO_WATCHDOG
 		PMU::kick_watchdog();
 #endif
 		PMU::delay_ms(200);
 	}
-#endif // SMD_FLASH_HOLD
+#endif  // SMD_FLASH_HOLD
 
 	DEBUG_TRACE("Reed switch...");
 	static NrfSwitch nrf_reed_switch(BSP::GPIO::GPIO_REED_SW, REED_SWITCH_DEBOUNCE_TIME_MS, REED_SWITCH_ACTIVE_STATE);
@@ -649,8 +659,7 @@ static InitContext init_peripherals()
 
 	DEBUG_TRACE("IS25 flash...");
 	static Is25Flash is25_flash;
-	if (!is25_flash.init())
-		flash_init_failed();   // never returns
+	if (!is25_flash.init()) flash_init_failed();  // never returns
 
 	// The flash is up: forget any past bring-up failures so a transient fault
 	// months from now gets the full retry budget again rather than dropping
@@ -662,7 +671,7 @@ static InitContext init_peripherals()
 	bench_flash = &is25_flash;
 #endif
 
-	return {nrf_reed_switch, is25_flash};
+	return { nrf_reed_switch, is25_flash };
 }
 
 
@@ -680,8 +689,7 @@ static InitContext init_peripherals()
  *
  * @param nrf_reed_switch  Hardware reed switch instance for state/callback registration.
  */
-static void init_power_on_check(NrfSwitch& nrf_reed_switch)
-{
+static void init_power_on_check(NrfSwitch &nrf_reed_switch) {
 	DEBUG_TRACE("PMU Reset Cause = %s", PMU::reset_cause_str());
 
 #ifdef POWER_ON_RESET_REQUIRES_REED_SWITCH
@@ -694,11 +702,11 @@ static void init_power_on_check(NrfSwitch& nrf_reed_switch)
 	{
 		SensorsPowerGuard power_guard;
 		NrfI2C::init();
-		PMU::hardware_version(); // Side-effect: I2C probes for hardware detection
+		PMU::hardware_version();  // Side-effect: I2C probes for hardware detection
 #if ENABLE_SEA_TEMP_SENSOR
 		{
 			try {
-				EZO_RTD_Sensor rtd; // Puts the device into standby mode
+				EZO_RTD_Sensor rtd;  // Puts the device into standby mode
 			} catch (...) {}
 		}
 #endif
@@ -707,10 +715,8 @@ static void init_power_on_check(NrfSwitch& nrf_reed_switch)
 	bool is_linkit_v4 = (strncmp(PMU::hardware_version(), "linkit-v4", 9) == 0);
 
 	ResetCause cause = PMU::reset_cause();
-	if ((is_linkit_v4 && cause == ResetCause::PSEUDO_POWER_ON) ||
-		(!is_linkit_v4 && (cause == ResetCause::POWER_ON ||
-				cause == ResetCause::PSEUDO_POWER_ON))) {
-
+	if ((is_linkit_v4 && cause == ResetCause::PSEUDO_POWER_ON)
+	    || (!is_linkit_v4 && (cause == ResetCause::POWER_ON || cause == ResetCause::PSEUDO_POWER_ON))) {
 		volatile bool power_on_ready = false;
 		system_timer->start();
 		Timer::TimerHandle timer_handle;
@@ -718,10 +724,12 @@ static void init_power_on_check(NrfSwitch& nrf_reed_switch)
 		if (nrf_reed_switch.get_state()) {
 			status_led->set(RGBLedColor::WHITE);
 			BUZZER_ON(buzzer_ctl);
-			timer_handle = system_timer->add_schedule([&power_on_ready]() {
-				DEBUG_TRACE("Reed switch 3s period elapsed");
-				power_on_ready = true;
-			}, system_timer->get_counter() + 3000);
+			timer_handle = system_timer->add_schedule(
+			    [&power_on_ready]() {
+				    DEBUG_TRACE("Reed switch 3s period elapsed");
+				    power_on_ready = true;
+			    },
+			    system_timer->get_counter() + 3000);
 		} else {
 			status_led->off();
 			BUZZER_OFF(buzzer_ctl);
@@ -734,10 +742,12 @@ static void init_power_on_check(NrfSwitch& nrf_reed_switch)
 				GPIOPins::set(VSYS_SEL);
 				status_led->set(RGBLedColor::WHITE);
 				BUZZER_ON(buzzer_ctl);
-				timer_handle = system_timer->add_schedule([&power_on_ready]() {
-					DEBUG_TRACE("Reed switch 3s period elapsed");
-					power_on_ready = true;
-				}, system_timer->get_counter() + 3000);
+				timer_handle = system_timer->add_schedule(
+				    [&power_on_ready]() {
+					    DEBUG_TRACE("Reed switch 3s period elapsed");
+					    power_on_ready = true;
+				    },
+				    system_timer->get_counter() + 3000);
 			} else {
 				status_led->off();
 				GPIOPins::clear(VSYS_SEL);
@@ -765,7 +775,7 @@ static void init_power_on_check(NrfSwitch& nrf_reed_switch)
 		GPIOPins::set(VSYS_SEL);
 		PMU::kick_watchdog();
 		nrf_reed_switch.stop();
-		BUZZER_BEEP_COUNT(buzzer_ctl,200,200,2);
+		BUZZER_BEEP_COUNT(buzzer_ctl, 200, 200, 2);
 	}
 #else
 	// Without PSEUDO_POWER_OFF (RSPB/gentracker): The board has a real power path
@@ -775,8 +785,7 @@ static void init_power_on_check(NrfSwitch& nrf_reed_switch)
 		unsigned int countdown = 3000;
 		DEBUG_TRACE("Enter Power On Reed Switch Check");
 		while (countdown) {
-			if (GPIOPins::value(BSP::GPIO_REED_SW) != REED_SWITCH_ACTIVE_STATE)
-				break;
+			if (GPIOPins::value(BSP::GPIO_REED_SW) != REED_SWITCH_ACTIVE_STATE) break;
 			PMU::delay_ms(1);
 			countdown--;
 		}
@@ -787,8 +796,8 @@ static void init_power_on_check(NrfSwitch& nrf_reed_switch)
 		}
 		DEBUG_TRACE("Exiting Power On Reed Switch Check");
 	}
-#endif // PSEUDO_POWER_OFF
-#endif // POWER_ON_RESET_REQUIRES_REED_SWITCH
+#endif  // PSEUDO_POWER_OFF
+#endif  // POWER_ON_RESET_REQUIRES_REED_SWITCH
 }
 
 
@@ -803,8 +812,7 @@ static void init_power_on_check(NrfSwitch& nrf_reed_switch)
  * @param is25_flash       External flash device for LFS backing store.
  * @return Reference to the mounted LFSFileSystem (static, lives in .bss).
  */
-static LFSFileSystem& init_storage(NrfSwitch& nrf_reed_switch, Is25Flash& is25_flash)
-{
+static LFSFileSystem &init_storage(NrfSwitch &nrf_reed_switch, Is25Flash &is25_flash) {
 	DEBUG_TRACE("Scheduler...");
 	static Scheduler scheduler(system_timer);
 	system_scheduler = &scheduler;
@@ -826,17 +834,14 @@ static LFSFileSystem& init_storage(NrfSwitch& nrf_reed_switch, Is25Flash& is25_f
 	DEBUG_TRACE("Mount LFS filesystem...");
 #ifdef FORCE_FORMAT_FILESYSTEM
 	DEBUG_WARN("FORCE_FORMAT_FILESYSTEM enabled - formatting filesystem!");
-	if (main_filesystem->format() < 0 || main_filesystem->mount() < 0)
-	{
+	if (main_filesystem->format() < 0 || main_filesystem->mount() < 0) {
 		DEBUG_ERROR("Failed to format LFS filesystem");
 		PMU::powerdown();
 	}
 #else
-	if (main_filesystem->mount() < 0)
-	{
+	if (main_filesystem->mount() < 0) {
 		DEBUG_TRACE("Format LFS filesystem...");
-		if (main_filesystem->format() < 0 || main_filesystem->mount() < 0)
-		{
+		if (main_filesystem->format() < 0 || main_filesystem->mount() < 0) {
 			DEBUG_ERROR("Failed to format LFS filesystem");
 			PMU::powerdown();
 		}
@@ -868,7 +873,7 @@ static LFSFileSystem& init_storage(NrfSwitch& nrf_reed_switch, Is25Flash& is25_f
 		// Field-deployed corruption tends to flip bits in the high half of the
 		// value, producing far-future values. The upper bound catches those.
 		// Tighter defense is the LFS file-level integrity (LittleFS CRC).
-		constexpr unsigned int RTC_MAX_VALID = 4102444800U; // 2100-01-01
+		constexpr unsigned int RTC_MAX_VALID = 4102444800U;  // 2100-01-01
 		if (last_rtc > RTC_MAX_VALID) {
 			DEBUG_WARN("Suspicious LAST_KNOWN_RTC=%u (post-2100), treating as corrupt", last_rtc);
 			last_rtc = 0;  // force virtual RTC fallback
@@ -900,18 +905,19 @@ static LFSFileSystem& init_storage(NrfSwitch& nrf_reed_switch, Is25Flash& is25_f
 			// wakeup period, to within the timer tolerance.
 			rtc->note_source(RtcSource::PSEUDO);
 			rtc->set_pseudo_uncertainty_s((wakeup_period * TPL_TOLERANCE_PCT) / 100 + 1);
-			DEBUG_INFO("EXTERNAL_WAKEUP: Pseudo RTC set to %u (last=%u + period=%u, incertitude +/-%u s)",
-			           pseudo_rtc, last_rtc, wakeup_period,
-			           (wakeup_period * TPL_TOLERANCE_PCT) / 100 + 1);
+			DEBUG_INFO("EXTERNAL_WAKEUP: Pseudo RTC set to %u (last=%u + period=%u, incertitude +/-%u s)", pseudo_rtc,
+			           last_rtc, wakeup_period, (wakeup_period * TPL_TOLERANCE_PCT) / 100 + 1);
 		} else if (last_rtc > 0) {
 			// Chain broken: put back the known time WITHOUT advancing it, and
 			// declare it not boundable.
 			rtc->settime(static_cast<std::time_t>(last_rtc));
 			rtc->note_source(RtcSource::RESTORED);
-			DEBUG_WARN("EXTERNAL_WAKEUP: reveil hors TPL (cause=%d) — chaine pseudo-RTC rompue, heure restauree sans avance (%u)",
+			DEBUG_WARN("EXTERNAL_WAKEUP: reveil hors TPL (cause=%d) — chaine pseudo-RTC rompue, heure restauree sans "
+			           "avance (%u)",
 			           (int)boot_cause, last_rtc);
 		} else {
-			DEBUG_INFO("EXTERNAL_WAKEUP: No pseudo RTC available (last_rtc=%u, wakeup_period=%u)", last_rtc, wakeup_period);
+			DEBUG_INFO("EXTERNAL_WAKEUP: No pseudo RTC available (last_rtc=%u, wakeup_period=%u)", last_rtc,
+			           wakeup_period);
 		}
 
 		// TPL5111 boot counter management
@@ -980,10 +986,10 @@ static LFSFileSystem& init_storage(NrfSwitch& nrf_reed_switch, Is25Flash& is25_f
  *  - BATTERY_MONITOR_STC3117: I2C fuel gauge (RSPB)
  *  - BATTERY_MONITOR_FAKE: fixed 4.1 V stub (testing)
  */
-static void init_battery()
-{
+static void init_battery() {
 	DEBUG_TRACE("Battery monitor...");
-	uint8_t critical_batt_level = static_cast<uint8_t>(configuration_store->read_param<unsigned int>(ParamID::LB_CRITICAL_THRESH));
+	uint8_t critical_batt_level =
+	    static_cast<uint8_t>(configuration_store->read_param<unsigned int>(ParamID::LB_CRITICAL_THRESH));
 	uint8_t low_batt_level = static_cast<uint8_t>(configuration_store->read_param<unsigned int>(ParamID::LB_THRESHOLD));
 	(void)configuration_store->check_battery_thresholds();
 
@@ -994,8 +1000,7 @@ static void init_battery()
 #ifndef BATTERY_CHEMISTRY
 #define BATTERY_CHEMISTRY BATT_CHEM_NCR18650_3100_3400
 #endif
-	static NrfBatteryMonitor nrf_battery_monitor(BATTERY_ADC, BATTERY_CHEMISTRY,
-			critical_batt_level, low_batt_level);
+	static NrfBatteryMonitor nrf_battery_monitor(BATTERY_ADC, BATTERY_CHEMISTRY, critical_batt_level, low_batt_level);
 	battery_monitor = &nrf_battery_monitor;
 #else
 	static BatteryMonitor stub_battery_monitor(low_batt_level, critical_batt_level);
@@ -1010,7 +1015,7 @@ static void init_battery()
 	static GaugeBatteryMonitor stc3117_battery_monitor(critical_batt_level, low_batt_level);
 	battery_monitor = &stc3117_battery_monitor;
 #else
-	#error "No battery monitor type defined! Set BATTERY_MONITOR_TYPE in CMake"
+#error "No battery monitor type defined! Set BATTERY_MONITOR_TYPE in CMake"
 #endif
 }
 
@@ -1021,11 +1026,10 @@ static void init_battery()
  * @param lfs_file_system  Mounted filesystem for system.log and OTA staging.
  * @param is25_flash       Raw flash device for OTA block-level writes.
  */
-static void init_core_services(LFSFileSystem& lfs_file_system, Is25Flash& is25_flash)
-{
+static void init_core_services(LFSFileSystem &lfs_file_system, Is25Flash &is25_flash) {
 	DEBUG_INFO("Creating log files...");
 	static SysLogFormatter sys_log_formatter;
-	static FsLog fs_system_log(&lfs_file_system, "system.log", 1024*1024);
+	static FsLog fs_system_log(&lfs_file_system, "system.log", 1024 * 1024);
 	fs_system_log.set_log_formatter(&sys_log_formatter);
 	DebugLogger::system_log = &fs_system_log;
 
@@ -1039,7 +1043,8 @@ static void init_core_services(LFSFileSystem& lfs_file_system, Is25Flash& is25_f
 
 	DEBUG_TRACE("OTA updater...");
 	ble_service = &BleInterface::get_instance();
-	static OTAFlashFileUpdater ota_flash_file_updater(&lfs_file_system, &is25_flash, IS25_BLOCK_COUNT - OTA_UPDATE_RESERVED_BLOCKS, OTA_UPDATE_RESERVED_BLOCKS);
+	static OTAFlashFileUpdater ota_flash_file_updater(
+	    &lfs_file_system, &is25_flash, IS25_BLOCK_COUNT - OTA_UPDATE_RESERVED_BLOCKS, OTA_UPDATE_RESERVED_BLOCKS);
 	ota_updater = &ota_flash_file_updater;
 }
 
@@ -1053,8 +1058,7 @@ static void init_core_services(LFSFileSystem& lfs_file_system, Is25Flash& is25_f
  *
  * @param lfs_file_system  Mounted filesystem for sensor.log and SWS log.
  */
-static void init_communication(LFSFileSystem& lfs_file_system)
-{
+static void init_communication(LFSFileSystem &lfs_file_system) {
 #if ENABLE_SWS_ANALOG
 	DEBUG_INFO(">> Creating services...");
 	static SWSAnalogService sws_analog;
@@ -1062,7 +1066,7 @@ static void init_communication(LFSFileSystem& lfs_file_system)
 #if ENABLE_SWS_LOG
 	DEBUG_TRACE("SWS Log...");
 	static SWSLogFormatter sws_log_formatter;
-	static FsLog sws_log(&lfs_file_system, "SWS", 1024*1024);
+	static FsLog sws_log(&lfs_file_system, "SWS", 1024 * 1024);
 	sws_log.set_log_formatter(&sws_log_formatter);
 	SWSAnalogService::set_sws_logger(&sws_log);
 #endif
@@ -1115,7 +1119,7 @@ static void init_communication(LFSFileSystem& lfs_file_system)
 
 	DEBUG_TRACE("GPS M10Q ...");
 	static GPSLogFormatter fs_sensor_log_formatter;
-	static FsLog fs_sensor_log(&lfs_file_system, "sensor.log", 1024*1024);
+	static FsLog fs_sensor_log(&lfs_file_system, "sensor.log", 1024 * 1024);
 	fs_sensor_log.set_log_formatter(&fs_sensor_log_formatter);
 
 	try {
@@ -1139,28 +1143,29 @@ static void init_communication(LFSFileSystem& lfs_file_system)
  *
  * @param lfs_file_system  Mounted filesystem for per-sensor log files.
  */
-static void init_sensors(LFSFileSystem& lfs_file_system)
-{
+static void init_sensors(LFSFileSystem &lfs_file_system) {
 #if ENABLE_PRESSURE_SENSOR || ENABLE_CDT_SENSOR
 	DEBUG_TRACE("Pressure Sensor...");
-	PressureSensorDevice *pressure_sensor_devices[BSP::I2C_TOTAL_NUMBER] = {nullptr};
+	PressureSensorDevice *pressure_sensor_devices[BSP::I2C_TOTAL_NUMBER] = { nullptr };
 #ifndef DUMMY_PRESSURE_SENSOR
 	// Static storage for pressure sensors — one per I2C bus, no heap allocation
-	static constexpr size_t PressureStorageSize = std::max({sizeof(LPS28DFW), sizeof(Bar100), sizeof(MS58xxLL)});
-	static constexpr size_t PressureStorageAlign = std::max({alignof(LPS28DFW), alignof(Bar100), alignof(MS58xxLL)});
-	struct alignas(PressureStorageAlign) PressureStorage { std::byte data[PressureStorageSize]; };
+	static constexpr size_t PressureStorageSize = std::max({ sizeof(LPS28DFW), sizeof(Bar100), sizeof(MS58xxLL) });
+	static constexpr size_t PressureStorageAlign = std::max({ alignof(LPS28DFW), alignof(Bar100), alignof(MS58xxLL) });
+	struct alignas(PressureStorageAlign) PressureStorage {
+		std::byte data[PressureStorageSize];
+	};
 	static PressureStorage pressure_storage[BSP::I2C_TOTAL_NUMBER];
 
 	// Sensor detection order — LPS28DFW is default for RSPB board
 #if defined(BOARD_RSPB)
 	static constexpr unsigned int i2caddr[4] = { LPS28DFW_ADDRESS, MS5803_ADDRESS, MS5837_ADDRESS, BAR100_ADDRESS };
-	static const char* const variant[4] = { "LPS28DFW", MS5803_VARIANT, MS5837_VARIANT, "BAR100-R3-RP" };
+	static const char *const variant[4] = { "LPS28DFW", MS5803_VARIANT, MS5837_VARIANT, "BAR100-R3-RP" };
 #else
 #ifndef LPS28DFW_ADDRESS
 #define LPS28DFW_ADDRESS 0x5C
 #endif
 	static constexpr unsigned int i2caddr[4] = { MS5803_ADDRESS, MS5837_ADDRESS, BAR100_ADDRESS, LPS28DFW_ADDRESS };
-	static const char* const variant[4] = { MS5803_VARIANT, MS5837_VARIANT, "BAR100-R3-RP", "LPS28DFW" };
+	static const char *const variant[4] = { MS5803_VARIANT, MS5837_VARIANT, "BAR100-R3-RP", "LPS28DFW" };
 #endif
 
 	for (unsigned int i = 0; i < BSP::I2C_TOTAL_NUMBER; i++) {
@@ -1201,7 +1206,9 @@ static void init_sensors(LFSFileSystem& lfs_file_system)
 #if ENABLE_CDT_SENSOR
 	DEBUG_TRACE("AD5933...");
 	AD5933 *ad5933_devices[BSP::I2C_TOTAL_NUMBER];
-	struct alignas(AD5933LL) AD5933Storage { std::byte data[sizeof(AD5933LL)]; };
+	struct alignas(AD5933LL) AD5933Storage {
+		std::byte data[sizeof(AD5933LL)];
+	};
 	static AD5933Storage ad5933_storage[BSP::I2C_TOTAL_NUMBER];
 	for (unsigned int i = 0; i < BSP::I2C_TOTAL_NUMBER; i++) {
 		try {
@@ -1214,13 +1221,13 @@ static void init_sensors(LFSFileSystem& lfs_file_system)
 	}
 
 	static CDTLogFormatter cdt_sensor_log_formatter;
-	static FsLog cdt_sensor_log(&lfs_file_system, "CDT", 1024*1024);
+	static FsLog cdt_sensor_log(&lfs_file_system, "CDT", 1024 * 1024);
 	cdt_sensor_log.set_log_formatter(&cdt_sensor_log_formatter);
 #endif
 
 #if ENABLE_PRESSURE_SENSOR
 	static PressureLogFormatter pressure_sensor_log_formatter;
-	static FsLog pressure_sensor_log(&lfs_file_system, "PRESSURE", 1024*1024);
+	static FsLog pressure_sensor_log(&lfs_file_system, "PRESSURE", 1024 * 1024);
 	pressure_sensor_log.set_log_formatter(&pressure_sensor_log_formatter);
 #endif
 
@@ -1238,25 +1245,24 @@ static void init_sensors(LFSFileSystem& lfs_file_system)
 			} else
 #endif
 #if ENABLE_PRESSURE_SENSOR
-			if (!standalone_pressure && pressure_sensor_devices[i]) {
+			    if (!standalone_pressure && pressure_sensor_devices[i]) {
 				DEBUG_TRACE("Standalone Pressure Sensor on bus %u...", i);
 				standalone_pressure = true;
 				static PressureSensor pressure_sensor(*pressure_sensor_devices[i]);
 				static PressureSensorService pressure_sensor_service(pressure_sensor, &pressure_sensor_log);
 			}
 #endif
-			(void)i; // Suppress unused warning when both disabled
+			(void)i;  // Suppress unused warning when both disabled
 		}
 
-		if (standalone_pressure && cdt_present)
-			break;
+		if (standalone_pressure && cdt_present) break;
 	}
-#endif // ENABLE_PRESSURE_SENSOR || ENABLE_CDT_SENSOR
+#endif  // ENABLE_PRESSURE_SENSOR || ENABLE_CDT_SENSOR
 
 #if ENABLE_ALS_SENSOR
 	DEBUG_TRACE("LTR303...");
 	static ALSLogFormatter als_sensor_log_formatter;
-	static FsLog als_sensor_log(&lfs_file_system, "ALS", 1024*1024);
+	static FsLog als_sensor_log(&lfs_file_system, "ALS", 1024 * 1024);
 	als_sensor_log.set_log_formatter(&als_sensor_log_formatter);
 	try {
 		static LTR303 ltr303;
@@ -1269,7 +1275,7 @@ static void init_sensors(LFSFileSystem& lfs_file_system)
 #if ENABLE_PH_SENSOR
 	DEBUG_TRACE("OEM PH...");
 	static PHLogFormatter ph_sensor_log_formatter;
-	static FsLog ph_sensor_log(&lfs_file_system, "PH", 1024*1024);
+	static FsLog ph_sensor_log(&lfs_file_system, "PH", 1024 * 1024);
 	ph_sensor_log.set_log_formatter(&ph_sensor_log_formatter);
 	try {
 		static OEM_PH_Sensor ph;
@@ -1281,7 +1287,7 @@ static void init_sensors(LFSFileSystem& lfs_file_system)
 
 #if ENABLE_SEA_TEMP_SENSOR
 	static SeaTempLogFormatter rtd_sensor_log_formatter;
-	static FsLog rtd_sensor_log(&lfs_file_system, "RTD", 1024*1024);
+	static FsLog rtd_sensor_log(&lfs_file_system, "RTD", 1024 * 1024);
 	rtd_sensor_log.set_log_formatter(&rtd_sensor_log_formatter);
 
 	DEBUG_TRACE("EZO RTD...");
@@ -1293,7 +1299,7 @@ static void init_sensors(LFSFileSystem& lfs_file_system)
 	}
 
 	static SeaTempLogFormatter tsys01_sensor_log_formatter;
-	static FsLog tsys01_sensor_log(&lfs_file_system, "TSYS01", 1024*1024);
+	static FsLog tsys01_sensor_log(&lfs_file_system, "TSYS01", 1024 * 1024);
 	tsys01_sensor_log.set_log_formatter(&tsys01_sensor_log_formatter);
 
 	DEBUG_TRACE("TSYS01...");
@@ -1308,7 +1314,7 @@ static void init_sensors(LFSFileSystem& lfs_file_system)
 #if ENABLE_AXL_SENSOR
 	DEBUG_TRACE("BMA400...");
 	static AXLLogFormatter axl_sensor_log_formatter;
-	static FsLog axl_sensor_log(&lfs_file_system, "AXL", 1024*1024);
+	static FsLog axl_sensor_log(&lfs_file_system, "AXL", 1024 * 1024);
 	axl_sensor_log.set_log_formatter(&axl_sensor_log_formatter);
 	try {
 		static BMA400 bma400;
@@ -1321,7 +1327,7 @@ static void init_sensors(LFSFileSystem& lfs_file_system)
 #if ENABLE_THERMISTOR_SENSOR
 	DEBUG_TRACE("Thermistor NTC...");
 	static ThermistorLogFormatter thermistor_sensor_log_formatter;
-	static FsLog thermistor_sensor_log(&lfs_file_system, "THERMISTOR", 1024*1024);
+	static FsLog thermistor_sensor_log(&lfs_file_system, "THERMISTOR", 1024 * 1024);
 	thermistor_sensor_log.set_log_formatter(&thermistor_sensor_log_formatter);
 	try {
 		static Thermistor thermistor(THERMISTOR_ADC);
@@ -1334,7 +1340,7 @@ static void init_sensors(LFSFileSystem& lfs_file_system)
 #ifdef CAM_PWR_EN
 	DEBUG_TRACE("RunCam...");
 	static CAMLogFormatter cam_sensor_log_formatter;
-	static FsLog cam_sensor_log(&lfs_file_system, "CAM", 1024*1024);
+	static FsLog cam_sensor_log(&lfs_file_system, "CAM", 1024 * 1024);
 	cam_sensor_log.set_log_formatter(&cam_sensor_log_formatter);
 	try {
 		static RunCam run_cam;
@@ -1347,13 +1353,13 @@ static void init_sensors(LFSFileSystem& lfs_file_system)
 #if ENABLE_MORTALITY_SENSOR
 	DEBUG_TRACE("Mortality detection...");
 	static MortalityLogFormatter mortality_log_formatter;
-	static FsLog mortality_log(&lfs_file_system, "MORTALITY", 64*1024);
+	static FsLog mortality_log(&lfs_file_system, "MORTALITY", 64 * 1024);
 	mortality_log.set_log_formatter(&mortality_log_formatter);
 	static MortalityService mortality_svc(&mortality_log);
 	mortality_service = &mortality_svc;
 #endif
 
-	(void)lfs_file_system; // Suppress unused warning when no sensors enabled
+	(void)lfs_file_system;  // Suppress unused warning when no sensors enabled
 }
 
 
@@ -1367,8 +1373,7 @@ static void init_sensors(LFSFileSystem& lfs_file_system)
  *
  * @param nrf_reed_switch  Hardware reed switch for DiveModeService.
  */
-static void init_runtime(NrfSwitch& nrf_reed_switch)
-{
+static void init_runtime(NrfSwitch &nrf_reed_switch) {
 	DEBUG_TRACE("Memory monitor...");
 	static MemoryMonitorService memory_monitor_service;
 
@@ -1390,10 +1395,12 @@ static void init_runtime(NrfSwitch& nrf_reed_switch)
 		unsigned int shutdown_timer = configuration_store->read_param<unsigned int>(ParamID::SHUTDOWN_TIMER);
 		if (shutdown_timer > 0) {
 			DEBUG_INFO("EXTERNAL_WAKEUP: Shutdown timer scheduled for %u seconds", shutdown_timer);
-			system_scheduler->post_task_prio([]() {
-				DEBUG_INFO("EXTERNAL_WAKEUP: Shutdown timer expired | powering down");
-				PMU::powerdown();
-			}, "SHUTDOWN_TIMER", Scheduler::DEFAULT_PRIORITY, shutdown_timer * 1000);
+			system_scheduler->post_task_prio(
+			    []() {
+				    DEBUG_INFO("EXTERNAL_WAKEUP: Shutdown timer expired | powering down");
+				    PMU::powerdown();
+			    },
+			    "SHUTDOWN_TIMER", Scheduler::DEFAULT_PRIORITY, shutdown_timer * 1000);
 		} else {
 			DEBUG_INFO("EXTERNAL_WAKEUP: Shutdown timer disabled (SHUTDOWN_TIMER=0)");
 		}
@@ -1411,8 +1418,7 @@ static void init_runtime(NrfSwitch& nrf_reed_switch)
  * @note This function never returns.  All init-phase objects are static and
  *       live in .bss — the main() stack frame only holds the loop locals.
  */
-int main()
-{
+int main() {
 	// R1 robustness (2026-05 deep-idle refactor): force the GPS rail LOW
 	// before ANYTHING else runs. With deep-idle enabled, the rail can be left
 	// ON across hard faults / WDT resets — this 1-instruction invariant cuts
@@ -1421,9 +1427,9 @@ int main()
 	// edges into a still-coming-up M10Q). Uses raw nrf_gpio API since BSP::
 	// hasn't been initialized yet at this point.
 	{
-		auto& pwr_en   = BSP::GPIO_Inits[BSP::GPIO::GPIO_GPS_PWR_EN];
-		auto& gps_rst  = BSP::GPIO_Inits[BSP::GPIO::GPIO_GPS_RST];
-		auto& ext_int  = BSP::GPIO_Inits[BSP::GPIO::GPIO_GPS_EXT_INT];
+		auto &pwr_en = BSP::GPIO_Inits[BSP::GPIO::GPIO_GPS_PWR_EN];
+		auto &gps_rst = BSP::GPIO_Inits[BSP::GPIO::GPIO_GPS_RST];
+		auto &ext_int = BSP::GPIO_Inits[BSP::GPIO::GPIO_GPS_EXT_INT];
 		nrf_gpio_cfg_output(pwr_en.pin_number);
 		nrf_gpio_pin_clear(pwr_en.pin_number);
 		nrf_gpio_cfg_output(gps_rst.pin_number);
@@ -1434,7 +1440,7 @@ int main()
 	auto [reed, flash] = init_peripherals();
 	init_power_on_check(reed);
 
-	auto& lfs = init_storage(reed, flash);
+	auto &lfs = init_storage(reed, flash);
 	init_battery();
 	init_core_services(lfs, flash);
 	init_communication(lfs);
@@ -1492,8 +1498,7 @@ int main()
 #endif
 
 	// The scheduler should run forever.  Any run-time exceptions should be handled and passed to FSM.
-	while (true)
-	{
+	while (true) {
 		try {
 #ifdef DEBUG_UART_TX_PIN
 			if (g_debug_mode != BaseDebugMode::UART)
@@ -1510,13 +1515,12 @@ int main()
 					// DEBUG_TRACE("IDLE_POWER_SAVE: exit (%llu ms remaining)", remaining);  // log removed: too verbose (pollutes even in Verbose)
 #if VALIDATION_LOG_ENABLE
 					uint64_t now_ms = PMU::get_timestamp_ms();
-					uint64_t this_reduce_ms = (s_val_last_enter_reduce_ms > 0 &&
-					                           now_ms > s_val_last_enter_reduce_ms)
-					                          ? (now_ms - s_val_last_enter_reduce_ms) : 0;
+					uint64_t this_reduce_ms = (s_val_last_enter_reduce_ms > 0 && now_ms > s_val_last_enter_reduce_ms)
+					                              ? (now_ms - s_val_last_enter_reduce_ms)
+					                              : 0;
 					s_val_reduced_total_ms += this_reduce_ms;
 					s_val_last_exit_reduce_ms = now_ms;
-					DEBUG_INFO("[VAL-SLEEP] exit_reduce reduced_ms=%llu remaining_ms=%llu",
-					           this_reduce_ms, remaining);
+					DEBUG_INFO("[VAL-SLEEP] exit_reduce reduced_ms=%llu remaining_ms=%llu", this_reduce_ms, remaining);
 #endif
 				}
 			}
@@ -1531,26 +1535,22 @@ int main()
 				PMU::reduce_power_rails();
 #if VALIDATION_LOG_ENABLE
 				uint64_t now_ms = PMU::get_timestamp_ms();
-				uint64_t this_active_ms = (s_val_last_exit_reduce_ms > 0 &&
-				                            now_ms > s_val_last_exit_reduce_ms)
-				                          ? (now_ms - s_val_last_exit_reduce_ms) : 0;
+				uint64_t this_active_ms = (s_val_last_exit_reduce_ms > 0 && now_ms > s_val_last_exit_reduce_ms)
+				                              ? (now_ms - s_val_last_exit_reduce_ms)
+				                              : 0;
 				s_val_active_total_ms += this_active_ms;
 				s_val_last_enter_reduce_ms = now_ms;
 				s_val_summary_reduce_count++;
-				DEBUG_INFO("[VAL-SLEEP] enter_reduce idle_ms=%llu active_ms=%llu",
-				           idle_ms, this_active_ms);
+				DEBUG_INFO("[VAL-SLEEP] enter_reduce idle_ms=%llu active_ms=%llu", idle_ms, this_active_ms);
 				// Periodic cumulative summary — emits ratio + total counts.
 				// Logs every minute regardless of activity, so a flat curve in
 				// the log timeline reveals a stuck-awake regression.
 				if (s_val_last_summary_ms == 0) s_val_last_summary_ms = now_ms;
 				if (now_ms - s_val_last_summary_ms >= VAL_SLEEP_SUMMARY_PERIOD_MS) {
 					uint64_t total = s_val_reduced_total_ms + s_val_active_total_ms;
-					unsigned int duty_pct = total > 0
-					                        ? (unsigned int)((s_val_reduced_total_ms * 100) / total)
-					                        : 0;
+					unsigned int duty_pct = total > 0 ? (unsigned int)((s_val_reduced_total_ms * 100) / total) : 0;
 					DEBUG_INFO("[VAL-SLEEP] summary reduced_ms=%llu active_ms=%llu duty=%u%% cycles=%llu",
-					           s_val_reduced_total_ms, s_val_active_total_ms, duty_pct,
-					           s_val_summary_reduce_count);
+					           s_val_reduced_total_ms, s_val_active_total_ms, duty_pct, s_val_summary_reduce_count);
 					s_val_last_summary_ms = now_ms;
 				}
 #endif
@@ -1570,7 +1570,7 @@ int main()
 			ErrorEvent event;
 			event.error_code = e;
 			GenTracker::dispatch(event);
-		} catch (const std::exception& ex) {
+		} catch (const std::exception &ex) {
 			// std::bad_alloc, std::bad_function_call, std::out_of_range, etc.
 			// Without this catch, the exception would reach std::terminate ->
 			// __verbose_terminate_handler -> abort() -> hang in fputc until

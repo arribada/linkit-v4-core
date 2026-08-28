@@ -36,7 +36,7 @@ class CDT : public Sensor {
 public:
 	/// @param device  Pressure sensor for depth and temperature readings.
 	/// @param ad5933  Impedance analyser for conductivity measurement.
-	CDT(PressureSensorDevice& device, AD5933& ad5933);
+	CDT(PressureSensorDevice &device, AD5933 &ad5933);
 
 	/// @param offset  Channel: 0=conductivity (µS/cm), 1=pressure (hPa), 2=temperature (°C).
 	/// @return Sensor value for the requested channel.
@@ -48,15 +48,15 @@ public:
 
 	/// @param[out] value  Read-back value (interpretation depends on offset).
 	/// @param offset      SCALR offset (see table above).
-	void calibration_read(double& value, const unsigned int offset) override;
+	void calibration_read(double &value, const unsigned int offset) override;
 
 	/// @param force  If true, write even if no changes detected.
 	void calibration_save(bool force) override;
 
 private:
 	Calibration m_cal;               ///< Persistent calibration file (CDT.CAL)
-	PressureSensorDevice& m_device;  ///< Pressure sensor for depth + temperature
-	AD5933& m_ad5933;                ///< Impedance analyser for conductivity
+	PressureSensorDevice &m_device;  ///< Pressure sensor for depth + temperature
+	AD5933 &m_ad5933;                ///< Impedance analyser for conductivity
 	double m_last_temperature = 0;   ///< Cached temperature from last pressure read (°C)
 	double m_last_pressure = 0;      ///< Cached pressure from last read (hPa)
 	int16_t m_last_imaginary = 0;    ///< Cached imaginary IQ from last SCALR read

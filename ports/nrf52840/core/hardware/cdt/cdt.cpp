@@ -6,30 +6,24 @@
 #include "cdt.hpp"
 #include "debug.hpp"
 
-CDT::CDT(PressureSensorDevice& device, AD5933& ad5933)
-	: Sensor("CDT"), m_cal(Calibration("CDT")), m_device(device), m_ad5933(ad5933)
-{
-}
+CDT::CDT(PressureSensorDevice &device, AD5933 &ad5933)
+    : Sensor("CDT"),
+      m_cal(Calibration("CDT")),
+      m_device(device),
+      m_ad5933(ad5933) {}
 
 /// @brief Read sensor channel: 0=conductivity, 1=pressure (triggers read), 2=temperature (cached).
-double CDT::read(unsigned int offset)
-{
+double CDT::read(unsigned int offset) {
 	switch (offset) {
-	case 0:
-		return read_calibrated_conductivity();
-	case 1:
-		m_device.read(m_last_temperature, m_last_pressure);
-		return m_last_pressure;
-	case 2:
-		return m_last_temperature;
-	default:
-		return 0;
+	case 0: return read_calibrated_conductivity();
+	case 1: m_device.read(m_last_temperature, m_last_pressure); return m_last_pressure;
+	case 2: return m_last_temperature;
+	default: return 0;
 	}
 }
 
 /// @brief Write calibration value or trigger AD5933 action.
-void CDT::calibration_write(const double value, const unsigned int offset)
-{
+void CDT::calibration_write(const double value, const unsigned int offset) {
 	switch (offset) {
 	case 0:
 		DEBUG_TRACE("CDT: reset calibration");
@@ -63,28 +57,17 @@ void CDT::calibration_write(const double value, const unsigned int offset)
 		DEBUG_TRACE("CDT: power off AD5933");
 		m_ad5933.stop();
 		break;
-	default:
-		DEBUG_WARN("CDT: invalid calibration_write offset %u", offset);
-		break;
+	default: DEBUG_WARN("CDT: invalid calibration_write offset %u", offset); break;
 	}
 }
 
 /// @brief Read calibration value, IQ data, or impedance.
-void CDT::calibration_read(double& value, const unsigned int offset)
-{
+void CDT::calibration_read(double &value, const unsigned int offset) {
 	switch (offset) {
-	case 0:
-		value = m_cal.read(static_cast<unsigned int>(CalibrationPoint::CA));
-		break;
-	case 1:
-		value = m_cal.read(static_cast<unsigned int>(CalibrationPoint::CB));
-		break;
-	case 2:
-		value = m_cal.read(static_cast<unsigned int>(CalibrationPoint::CC));
-		break;
-	case 3:
-		value = m_cal.read(static_cast<unsigned int>(CalibrationPoint::GAIN_FACTOR));
-		break;
+	case 0: value = m_cal.read(static_cast<unsigned int>(CalibrationPoint::CA)); break;
+	case 1: value = m_cal.read(static_cast<unsigned int>(CalibrationPoint::CB)); break;
+	case 2: value = m_cal.read(static_cast<unsigned int>(CalibrationPoint::CC)); break;
+	case 3: value = m_cal.read(static_cast<unsigned int>(CalibrationPoint::GAIN_FACTOR)); break;
 	case 4: {
 		// Read real + imaginary IQ from AD5933 (must be called before offset 5)
 		int16_t real, imag;
@@ -94,9 +77,7 @@ void CDT::calibration_read(double& value, const unsigned int offset)
 		m_last_imaginary = imag;
 		break;
 	}
-	case 5:
-		value = static_cast<double>(m_last_imaginary);
-		break;
+	case 5: value = static_cast<double>(m_last_imaginary); break;
 	case 6:
 		value = m_ad5933.get_impedence(1, m_cal.read(static_cast<unsigned int>(CalibrationPoint::GAIN_FACTOR)));
 		break;
@@ -108,14 +89,12 @@ void CDT::calibration_read(double& value, const unsigned int offset)
 }
 
 /// @brief Persist calibration to flash.
-void CDT::calibration_save(bool force)
-{
+void CDT::calibration_save(bool force) {
 	m_cal.save(force);
 }
 
 /// @brief Measure conductivity: start AD5933 at 90 kHz, read impedance, apply polynomial.
-double CDT::read_calibrated_conductivity()
-{
+double CDT::read_calibrated_conductivity() {
 	double gain_factor;
 	try {
 		gain_factor = m_cal.read(static_cast<unsigned int>(CalibrationPoint::GAIN_FACTOR));
@@ -149,8 +128,7 @@ double CDT::read_calibrated_conductivity()
 	double conduino_value = (1.0 / impedance) * 1000.0;
 	double conductivity = 1000.0 * (CA * conduino_value * conduino_value + CB * conduino_value + CC);
 
-	DEBUG_TRACE("CDT: impedance=%.2f conduino=%.2f conductivity=%.2f µS/cm",
-	            impedance, conduino_value, conductivity);
+	DEBUG_TRACE("CDT: impedance=%.2f conduino=%.2f conductivity=%.2f µS/cm", impedance, conduino_value, conductivity);
 
 	return conductivity;
 }

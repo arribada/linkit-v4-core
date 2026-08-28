@@ -22,8 +22,7 @@ extern BatteryMonitor *battery_monitor;
  * (ARGOS_RX_MAX_WINDOW defaults to 15 minutes), so what it refuses to do matters
  * as much as what it does.
  */
-TEST_GROUP(ArgosRxService)
-{
+TEST_GROUP(ArgosRxService) {
 	FakeBatteryMonitor *fake_battery_monitor;
 	FakeConfigurationStore *fake_config_store;
 	MockKineisDevice *mock_kineis;
@@ -40,7 +39,7 @@ TEST_GROUP(ArgosRxService)
 		configuration_store->init();
 		fake_rtc = new FakeRTC;
 		rtc = fake_rtc;
-		fake_rtc->settime(1580083200); // 27/01/2020 00:00:00
+		fake_rtc->settime(1580083200);  // 27/01/2020 00:00:00
 		fake_timer = new FakeTimer;
 		system_timer = fake_timer;
 		system_scheduler = new Scheduler(system_timer);
@@ -78,13 +77,12 @@ TEST_GROUP(ArgosRxService)
 	/// test-only subclass reads it for what it is.
 	class Testable : public ArgosRxService {
 	public:
-		explicit Testable(KineisDevice& d) : ArgosRxService(d) {}
+		explicit Testable(KineisDevice &d) : ArgosRxService(d) {}
 		bool enabled() { return service_is_enabled(); }
 	};
 };
 
-TEST(ArgosRxService, DisabledWhenArgosRxEnIsFalse)
-{
+TEST(ArgosRxService, DisabledWhenArgosRxEnIsFalse) {
 	configure_rx_enabled();
 	fake_config_store->write_param(ParamID::ARGOS_RX_EN, false);
 	Testable serv(*mock_kineis);
@@ -92,8 +90,7 @@ TEST(ArgosRxService, DisabledWhenArgosRxEnIsFalse)
 	mock().checkExpectations();
 }
 
-TEST(ArgosRxService, DisabledOutsidePassPredictionMode)
-{
+TEST(ArgosRxService, DisabledOutsidePassPredictionMode) {
 	/*
 	 * The downlink window is computed from the satellite pass table, so it only
 	 * means anything in PASS_PREDICTION. In LEGACY or DUTY_CYCLE there is no
@@ -106,8 +103,7 @@ TEST(ArgosRxService, DisabledOutsidePassPredictionMode)
 	mock().checkExpectations();
 }
 
-TEST(ArgosRxService, DisabledDuringCertification)
-{
+TEST(ArgosRxService, DisabledDuringCertification) {
 	/*
 	 * Certification drives the transmitter under a controlled protocol. A
 	 * receive window opening underneath it would take the module away
@@ -120,8 +116,7 @@ TEST(ArgosRxService, DisabledDuringCertification)
 	mock().checkExpectations();
 }
 
-TEST(ArgosRxService, DisabledOnLowBatteryEvenWhenLbModeIsPassPrediction)
-{
+TEST(ArgosRxService, DisabledOnLowBatteryEvenWhenLbModeIsPassPrediction) {
 	/*
 	 * THE case this file was written for.
 	 *
@@ -149,8 +144,7 @@ TEST(ArgosRxService, DisabledOnLowBatteryEvenWhenLbModeIsPassPrediction)
 	mock().checkExpectations();
 }
 
-TEST(ArgosRxService, EnabledInNominalConfiguration)
-{
+TEST(ArgosRxService, EnabledInNominalConfiguration) {
 	/*
 	 * The counterpart of the four refusals above: with everything in its
 	 * intended state the service must actually arm. Without this, a gate that

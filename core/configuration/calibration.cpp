@@ -14,13 +14,12 @@ extern FileSystem *main_filesystem;
 // CalibratableManager
 // ============================================================================
 
-void CalibratableManager::add(Calibratable& s, const char *name) {
-	if (m_map.count(std::string(name)))
-		throw ErrorCode::KEY_ALREADY_EXISTS;
-	m_map.insert({std::string(name), s});
+void CalibratableManager::add(Calibratable &s, const char *name) {
+	if (m_map.count(std::string(name))) throw ErrorCode::KEY_ALREADY_EXISTS;
+	m_map.insert({ std::string(name), s });
 }
 
-void CalibratableManager::remove(Calibratable& s) {
+void CalibratableManager::remove(Calibratable &s) {
 	for (auto const &p : m_map) {
 		if (&p.second == &s) {
 			m_map.erase(p.first);
@@ -76,8 +75,7 @@ void Calibration::reset() {
 }
 
 void Calibration::save(bool force) {
-	if (m_has_changed || force)
-		serialize();
+	if (m_has_changed || force) serialize();
 }
 
 /// @brief Read calibration entries from .CAL file (binary: offset + double pairs).
@@ -87,10 +85,8 @@ void Calibration::deserialize() {
 	while (true) {
 		unsigned int offset;
 		double value;
-		if (f.read(&offset, sizeof(offset)) != sizeof(offset))
-			break;
-		if (f.read(&value, sizeof(value)) != sizeof(value))
-			break;
+		if (f.read(&offset, sizeof(offset)) != sizeof(offset)) break;
+		if (f.read(&value, sizeof(value)) != sizeof(value)) break;
 		m_map[offset] = value;
 	}
 }
@@ -99,7 +95,7 @@ void Calibration::deserialize() {
 void Calibration::serialize() {
 	if (!main_filesystem) return;
 	LFSFile f(main_filesystem, m_filename.c_str(), LFS_O_CREAT | LFS_O_WRONLY | LFS_O_TRUNC);
-	for (const auto& entry : m_map) {
+	for (const auto &entry : m_map) {
 		f.write(const_cast<unsigned int *>(&entry.first), sizeof(entry.first));
 		f.write(const_cast<double *>(&entry.second), sizeof(entry.second));
 	}

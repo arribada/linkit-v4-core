@@ -87,12 +87,12 @@ public:
 	static void evaluate(std::time_t now);
 
 	// Public state accessors.
-	static bool         is_moored();
-	static bool         has_reference();
+	static bool is_moored();
+	static bool has_reference();
 	static unsigned int stationary_fixes();
 	static unsigned int motion_events();
-	static double       reference_lat();
-	static double       reference_lon();
+	static double reference_lat();
+	static double reference_lon();
 
 	/// Great-circle distance in metres from the reference anchor to the given
 	/// point, or -1.0 when no reference has been established yet. Diagnostic

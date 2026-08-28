@@ -19,46 +19,46 @@ bool led_confirmation_gesture_pending();
 
 /// @name LED state events (dispatched by GenTracker FSM)
 /// @{
-struct SetLEDOff : tinyfsm::Event { };
-struct SetLEDMagnetEngaged : tinyfsm::Event { };
-struct SetLEDMagnetDisengaged : tinyfsm::Event { };
-struct SetLEDBoot : tinyfsm::Event { };
-struct SetLEDPowerDown : tinyfsm::Event { };
-struct SetLEDError : tinyfsm::Event { };
-struct SetLEDPreOperationalPending : tinyfsm::Event { };
-struct SetLEDPreOperationalError : tinyfsm::Event { };
-struct SetLEDPreOperationalBatteryNominal : tinyfsm::Event { };
-struct SetLEDPreOperationalBatteryLow : tinyfsm::Event { };
-struct SetLEDConfigPending : tinyfsm::Event { };
-struct SetLEDConfigNotConnected : tinyfsm::Event { };
-struct SetLEDConfigConnected : tinyfsm::Event { };
-struct SetLEDGNSSOn : tinyfsm::Event { };
-struct SetLEDGNSSOffWithFix : tinyfsm::Event { };
-struct SetLEDGNSSOffWithoutFix : tinyfsm::Event { };
+struct SetLEDOff : tinyfsm::Event {};
+struct SetLEDMagnetEngaged : tinyfsm::Event {};
+struct SetLEDMagnetDisengaged : tinyfsm::Event {};
+struct SetLEDBoot : tinyfsm::Event {};
+struct SetLEDPowerDown : tinyfsm::Event {};
+struct SetLEDError : tinyfsm::Event {};
+struct SetLEDPreOperationalPending : tinyfsm::Event {};
+struct SetLEDPreOperationalError : tinyfsm::Event {};
+struct SetLEDPreOperationalBatteryNominal : tinyfsm::Event {};
+struct SetLEDPreOperationalBatteryLow : tinyfsm::Event {};
+struct SetLEDConfigPending : tinyfsm::Event {};
+struct SetLEDConfigNotConnected : tinyfsm::Event {};
+struct SetLEDConfigConnected : tinyfsm::Event {};
+struct SetLEDGNSSOn : tinyfsm::Event {};
+struct SetLEDGNSSOffWithFix : tinyfsm::Event {};
+struct SetLEDGNSSOffWithoutFix : tinyfsm::Event {};
 // 2026-05 deep-idle refactor FAST3c: visual marker when the M10Q has captured
 // its first raw CloudLocate measurement mid-session. Double-blink CYAN
 // distinguishes from LEDGNSSOn (steady CYAN flash) so bench operators can see
 // when raw measurements are ready without waiting for full PVT.
-struct SetLEDGNSSCloudLocateReady : tinyfsm::Event { };
+struct SetLEDGNSSCloudLocateReady : tinyfsm::Event {};
 // 2026-05-24: end-of-session sleep-depth indicators. Replace the legacy
 // LEDGNSSOffWithoutFix (RED solid 3 s) with two distinct short patterns so
 // the operator can tell at a glance whether the M10Q went to deep-idle
 // (PMREQ-backup, rail on, fast wake) or full power-off (rail cut, cold
 // boot on next surface). Both ~500 ms total.
-struct SetLEDGNSSDeepIdle : tinyfsm::Event { };
-struct SetLEDGNSSPowerOff : tinyfsm::Event { };
-struct SetLEDArgosTX : tinyfsm::Event { };
-struct SetLEDArgosTXComplete : tinyfsm::Event { };
-struct SetLEDBatteryCritical : tinyfsm::Event { };
-struct SetLEDDFUUpdate : tinyfsm::Event { };
-struct SetLEDOTASuccess : tinyfsm::Event { };
-struct SetLEDOTAFailed : tinyfsm::Event { };
-struct SetLEDFirmwareApplied : tinyfsm::Event { };
-struct SetLEDConfirmConfig : tinyfsm::Event { };
-struct SetLEDConfirmExitConfig : tinyfsm::Event { };
-struct SetLEDConfirmPowerOff : tinyfsm::Event { };
-struct SetLEDSurfaceDetected : tinyfsm::Event { };
-struct SetLEDDiveDetected : tinyfsm::Event { };
+struct SetLEDGNSSDeepIdle : tinyfsm::Event {};
+struct SetLEDGNSSPowerOff : tinyfsm::Event {};
+struct SetLEDArgosTX : tinyfsm::Event {};
+struct SetLEDArgosTXComplete : tinyfsm::Event {};
+struct SetLEDBatteryCritical : tinyfsm::Event {};
+struct SetLEDDFUUpdate : tinyfsm::Event {};
+struct SetLEDOTASuccess : tinyfsm::Event {};
+struct SetLEDOTAFailed : tinyfsm::Event {};
+struct SetLEDFirmwareApplied : tinyfsm::Event {};
+struct SetLEDConfirmConfig : tinyfsm::Event {};
+struct SetLEDConfirmExitConfig : tinyfsm::Event {};
+struct SetLEDConfirmPowerOff : tinyfsm::Event {};
+struct SetLEDSurfaceDetected : tinyfsm::Event {};
+struct SetLEDDiveDetected : tinyfsm::Event {};
 
 class LEDOff;
 class LEDBoot;
@@ -74,9 +74,9 @@ class LEDConfigConnected;
 class LEDGNSSOn;
 class LEDGNSSOffWithFix;
 class LEDGNSSOffWithoutFix;
-class LEDGNSSCloudLocateReady;   // 2026-05 deep-idle refactor FAST3c
-class LEDGNSSDeepIdle;           // 2026-05-24: post-session deep-idle indicator
-class LEDGNSSPowerOff;           // 2026-05-24: post-session full power-off indicator
+class LEDGNSSCloudLocateReady;  // 2026-05 deep-idle refactor FAST3c
+class LEDGNSSDeepIdle;          // 2026-05-24: post-session deep-idle indicator
+class LEDGNSSPowerOff;          // 2026-05-24: post-session full power-off indicator
 class LEDArgosTX;
 class LEDArgosTXComplete;
 class LEDBatteryCritical;
@@ -105,10 +105,12 @@ public:
 	/// gentracker (outside the FSM) can latch it directly without needing
 	/// a dedicated tinyfsm event.
 	static inline bool m_last_gnss_fix_valid = false;
+
 protected:
 	static inline bool m_is_battery_critical = false;
 	static inline bool m_is_gnss_on = false;
 	static inline bool m_is_magnet_engaged = false;
+
 public:
 	// --- Confirmation-gesture LED priority (2026-07) --------------------------
 	// When the operator triggers a reed confirmation gesture, the LED fast-blinks
@@ -129,14 +131,26 @@ public:
 	// Magnet engage/disengage: ALWAYS track m_is_magnet_engaged (downstream states
 	// colour on it), but suppress the LED repaint (enter()) while confirming so the
 	// blink is untouched — the tracked state is applied when the gesture resolves.
-	void react(SetLEDMagnetEngaged const &) { if (!m_is_magnet_engaged) { m_is_magnet_engaged = true; if (!led_confirmation_gesture_pending()) enter(); } }
-	void react(SetLEDMagnetDisengaged const &) { if (m_is_magnet_engaged) { m_is_magnet_engaged = false; if (!led_confirmation_gesture_pending()) enter(); } }
+	void react(SetLEDMagnetEngaged const &) {
+		if (!m_is_magnet_engaged) {
+			m_is_magnet_engaged = true;
+			if (!led_confirmation_gesture_pending()) enter();
+		}
+	}
+	void react(SetLEDMagnetDisengaged const &) {
+		if (m_is_magnet_engaged) {
+			m_is_magnet_engaged = false;
+			if (!led_confirmation_gesture_pending()) enter();
+		}
+	}
 	void react(SetLEDBoot const &) { transit_unless_confirming<LEDBoot>(); }
 	void react(SetLEDPowerDown const &) { transit_unless_confirming<LEDPowerDown>(); }
 	void react(SetLEDError const &) { transit<LEDError>(); }
 	void react(SetLEDPreOperationalPending const &) { transit_unless_confirming<LEDPreOperationalPending>(); }
 	void react(SetLEDPreOperationalError const &) { transit_unless_confirming<LEDPreOperationalError>(); }
-	void react(SetLEDPreOperationalBatteryNominal const &) { transit_unless_confirming<LEDPreOperationalBatteryNominal>(); }
+	void react(SetLEDPreOperationalBatteryNominal const &) {
+		transit_unless_confirming<LEDPreOperationalBatteryNominal>();
+	}
 	void react(SetLEDPreOperationalBatteryLow const &) { transit_unless_confirming<LEDPreOperationalBatteryLow>(); }
 	void react(SetLEDConfigPending const &) { transit_unless_confirming<LEDConfigPending>(); }
 	void react(SetLEDConfigNotConnected const &) { transit_unless_confirming<LEDConfigNotConnected>(); }
@@ -168,108 +182,93 @@ protected:
 	/// case swallow the event so the active confirm blink is preserved. Used by
 	/// all transient/background LED events; critical and Confirm events call
 	/// transit<> directly. See the confirmation-gesture priority note above.
-	template<typename S>
-	void transit_unless_confirming() {
+	template <typename S> void transit_unless_confirming() {
 		if (led_confirmation_gesture_pending()) return;
 		transit<S>();
 	}
 };
 
 
-class LEDOff : public LEDState
-{
+class LEDOff : public LEDState {
 public:
 	void entry() override;
 	void exit() override {};
 };
 
 
-class LEDBoot : public LEDState
-{
+class LEDBoot : public LEDState {
 public:
 	void entry() override;
 	void exit() override {};
 };
 
-class LEDPowerDown : public LEDState
-{
+class LEDPowerDown : public LEDState {
 public:
 	void entry() override;
 	void exit() override {};
 };
 
-class LEDError : public LEDState
-{
+class LEDError : public LEDState {
 public:
 	void entry() override;
 	void exit() override {};
 };
 
-class LEDPreOperationalPending : public LEDState
-{
+class LEDPreOperationalPending : public LEDState {
 public:
 	void entry() override;
 	void exit() override {};
 };
 
-class LEDPreOperationalError : public LEDState
-{
+class LEDPreOperationalError : public LEDState {
 public:
 	void entry() override;
 	void exit() override {};
 };
 
-class LEDPreOperationalBatteryNominal : public LEDState
-{
+class LEDPreOperationalBatteryNominal : public LEDState {
 public:
 	void entry() override;
 	void exit() override {};
 };
 
-class LEDPreOperationalBatteryLow : public LEDState
-{
+class LEDPreOperationalBatteryLow : public LEDState {
 public:
 	void entry() override;
 	void exit() override {};
 };
 
-class LEDConfigPending : public LEDState
-{
+class LEDConfigPending : public LEDState {
 public:
 	void entry() override;
 	void exit() override {};
 };
 
-class LEDConfigNotConnected : public LEDState
-{
+class LEDConfigNotConnected : public LEDState {
 public:
 	void entry() override;
 	void exit() override {};
 };
 
-class LEDConfigConnected : public LEDState
-{
+class LEDConfigConnected : public LEDState {
 public:
 	void entry() override;
 	void exit() override {};
 };
 
-class LEDGNSSOn : public LEDState
-{
+class LEDGNSSOn : public LEDState {
 public:
 	void entry() override;
 	void exit() override {};
 };
 
-class LEDGNSSOffWithFix : public LEDState
-{
+class LEDGNSSOffWithFix : public LEDState {
 public:
 	void entry() override;
 	void exit() override {};
 };
 
-class LEDGNSSOffWithoutFix : public LEDState
-{
+class LEDGNSSOffWithoutFix : public LEDState {
 public:
 	void entry() override;
 	void exit() override {};
@@ -283,8 +282,7 @@ public:
 // After the double-blink, the state machine transitions back to LEDGNSSOn
 // (if GPS still active) or LEDOff (if GNSS_CLOUDLOCATE_ONLY terminated the
 // session). Transition handled inside the entry() via a scheduled task.
-class LEDGNSSCloudLocateReady : public LEDState
-{
+class LEDGNSSCloudLocateReady : public LEDState {
 public:
 	void entry() override;
 	void exit() override {};
@@ -294,8 +292,7 @@ public:
 // PMREQ-backup). Double-blink RED for ~500 ms then auto-transit to LEDOff.
 // Distinct from LEDGNSSPowerOff (fast blink) — operator can tell at a
 // glance which sleep depth was engaged after a no-fix session.
-class LEDGNSSDeepIdle : public LEDState
-{
+class LEDGNSSDeepIdle : public LEDState {
 public:
 	void entry() override;
 	void exit() override {};
@@ -304,92 +301,79 @@ public:
 // 2026-05-24: end-of-session full power-off indicator (rail cut, M10Q will
 // cold-boot next session). Fast blink RED for ~500 ms then auto-transit to
 // LEDOff. Heavier shutdown signal than the deep-idle double-blink.
-class LEDGNSSPowerOff : public LEDState
-{
+class LEDGNSSPowerOff : public LEDState {
 public:
 	void entry() override;
 	void exit() override {};
 };
 
-class LEDArgosTX : public LEDState
-{
+class LEDArgosTX : public LEDState {
 public:
 	void entry() override;
 	void exit() override {};
 };
 
-class LEDArgosTXComplete : public LEDState
-{
+class LEDArgosTXComplete : public LEDState {
 public:
 	void entry() override;
 	void exit() override {};
 };
 
-class LEDBatteryCritical : public LEDState
-{
+class LEDBatteryCritical : public LEDState {
 public:
 	void entry() override;
 	void exit() override {};
 };
 
-class LEDDFUUpdate : public LEDState
-{
+class LEDDFUUpdate : public LEDState {
 public:
 	void entry() override;
 	void exit() override {};
 };
 
-class LEDOTASuccess : public LEDState
-{
+class LEDOTASuccess : public LEDState {
 public:
 	void entry() override;
 	void exit() override {};
 };
 
-class LEDOTAFailed : public LEDState
-{
+class LEDOTAFailed : public LEDState {
 public:
 	void entry() override;
 	void exit() override {};
 };
 
-class LEDFirmwareApplied : public LEDState
-{
+class LEDFirmwareApplied : public LEDState {
 public:
 	void entry() override;
 	void exit() override {};
 };
 
-class LEDConfirmConfig : public LEDState
-{
+class LEDConfirmConfig : public LEDState {
 public:
 	void entry() override;
 	void exit() override {};
 };
 
-class LEDConfirmExitConfig : public LEDState
-{
+class LEDConfirmExitConfig : public LEDState {
 public:
 	void entry() override;
 	void exit() override {};
 };
 
-class LEDConfirmPowerOff : public LEDState
-{
+class LEDConfirmPowerOff : public LEDState {
 public:
 	void entry() override;
 	void exit() override {};
 };
 
-class LEDSurfaceDetected : public LEDState
-{
+class LEDSurfaceDetected : public LEDState {
 public:
 	void entry() override;
 	void exit() override {};
 };
 
-class LEDDiveDetected : public LEDState
-{
+class LEDDiveDetected : public LEDState {
 public:
 	void entry() override;
 	void exit() override {};

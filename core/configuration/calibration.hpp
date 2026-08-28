@@ -15,14 +15,14 @@ class Calibratable;
 /// @brief Global registry for all Calibratable instances.
 class CalibratableManager {
 private:
-	static inline std::map<std::string, Calibratable&> m_map;
+	static inline std::map<std::string, Calibratable &> m_map;
 
 public:
 	/// @brief Register a calibratable instance by name.
-	static void add(Calibratable& s, const char *name);
+	static void add(Calibratable &s, const char *name);
 
 	/// @brief Unregister a calibratable instance.
-	static void remove(Calibratable& s);
+	static void remove(Calibratable &s);
 
 	/// @brief Find a calibratable by name.
 	/// @throws std::out_of_range if not found.
@@ -38,12 +38,8 @@ public:
 /// @brief Base class for objects that support calibration read/write/save.
 class Calibratable {
 public:
-	Calibratable(const char *name = "Calibratable") {
-		CalibratableManager::add(*this, name);
-	}
-	virtual ~Calibratable() {
-		CalibratableManager::remove(*this);
-	}
+	Calibratable(const char *name = "Calibratable") { CalibratableManager::add(*this, name); }
+	virtual ~Calibratable() { CalibratableManager::remove(*this); }
 	virtual void calibration_write(const double, const unsigned int) {};
 	virtual void calibration_read(double &value, const unsigned int) { value = 0.0; };
 	virtual void calibration_save(bool) {};

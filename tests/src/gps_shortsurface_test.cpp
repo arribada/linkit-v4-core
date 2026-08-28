@@ -36,10 +36,9 @@ extern Scheduler *system_scheduler;
 extern RTC *rtc;
 extern BatteryMonitor *battery_monitor;
 
-#define FIRST_AQPERIOD  (30)
+#define FIRST_AQPERIOD (30)
 
-TEST_GROUP(GPSShortSurface)
-{
+TEST_GROUP(GPSShortSurface) {
 	FakeBatteryMonitor *fake_battery_mon;
 	FakeConfigurationStore *fake_config_store;
 	FakeRTC *fake_rtc;
@@ -47,7 +46,7 @@ TEST_GROUP(GPSShortSurface)
 	FakeLog *fake_log;
 	MockM10Q *mock_m10q;
 	MockStdFunctionVoidComparator m_comparator_std_func;
-	MockGPSNavSettingsComparator  m_comparator_nav;
+	MockGPSNavSettingsComparator m_comparator_nav;
 
 	void setup() {
 		mock().installComparator("std::function<void()>", m_comparator_std_func);
@@ -70,22 +69,22 @@ TEST_GROUP(GPSShortSurface)
 		// Default short-surface turtle profile applied to every test. Individual
 		// tests override what they need. Energy is NOT a concern per user spec
 		// (system OFF underwater), so we lean on conservative timeouts.
-		fake_config_store->write_param(ParamID::GNSS_EN,                   (bool)true);
-		fake_config_store->write_param(ParamID::UNDERWATER_EN,             (bool)true);
-		fake_config_store->write_param(ParamID::DLOC_ARG_NOM,              60U);  // tight for fast tests
-		fake_config_store->write_param(ParamID::GNSS_ACQ_TIMEOUT,          30U);
-		fake_config_store->write_param(ParamID::GNSS_COLD_ACQ_TIMEOUT,     180U);
+		fake_config_store->write_param(ParamID::GNSS_EN, (bool)true);
+		fake_config_store->write_param(ParamID::UNDERWATER_EN, (bool)true);
+		fake_config_store->write_param(ParamID::DLOC_ARG_NOM, 60U);  // tight for fast tests
+		fake_config_store->write_param(ParamID::GNSS_ACQ_TIMEOUT, 30U);
+		fake_config_store->write_param(ParamID::GNSS_COLD_ACQ_TIMEOUT, 180U);
 		fake_config_store->write_param(ParamID::GNSS_COLD_START_RETRY_PERIOD, 60U);
-		fake_config_store->write_param(ParamID::GNSS_NTRY,                 0U);   // unlimited
-		fake_config_store->write_param(ParamID::GNSS_TRIGGER_ON_SURFACED,  (bool)true);
+		fake_config_store->write_param(ParamID::GNSS_NTRY, 0U);  // unlimited
+		fake_config_store->write_param(ParamID::GNSS_TRIGGER_ON_SURFACED, (bool)true);
 		fake_config_store->write_param(ParamID::GNSS_TRIGGER_COLD_START_ON_SURFACED, (bool)false);
-		fake_config_store->write_param(ParamID::GNSS_HDOPFILT_EN,          (bool)false);
-		fake_config_store->write_param(ParamID::GNSS_HACCFILT_EN,          (bool)false);
-		fake_config_store->write_param(ParamID::GNSS_FIX_MODE,             BaseGNSSFixMode::AUTO);
-		fake_config_store->write_param(ParamID::GNSS_DYN_MODEL,            BaseGNSSDynModel::SEA);
-		fake_config_store->write_param(ParamID::GNSS_FASTLOC_MODE,         2U);   // CLOUDLOCATE
-		fake_config_store->write_param(ParamID::GNSS_CLOUDLOCATE_ALWAYS,   (bool)true);
-		fake_config_store->write_param(ParamID::GNSS_CLOUDLOCATE_ONLY,     (bool)false);
+		fake_config_store->write_param(ParamID::GNSS_HDOPFILT_EN, (bool)false);
+		fake_config_store->write_param(ParamID::GNSS_HACCFILT_EN, (bool)false);
+		fake_config_store->write_param(ParamID::GNSS_FIX_MODE, BaseGNSSFixMode::AUTO);
+		fake_config_store->write_param(ParamID::GNSS_DYN_MODEL, BaseGNSSDynModel::SEA);
+		fake_config_store->write_param(ParamID::GNSS_FASTLOC_MODE, 2U);  // CLOUDLOCATE
+		fake_config_store->write_param(ParamID::GNSS_CLOUDLOCATE_ALWAYS, (bool)true);
+		fake_config_store->write_param(ParamID::GNSS_CLOUDLOCATE_ONLY, (bool)false);
 		// GNP52=0 → immediate poweroff, simplest for mock-call accounting.
 		// Tests that exercise deep-idle override this explicitly.
 		fake_config_store->write_param(ParamID::GNSS_DEEP_IDLE_AFTER_OFF_S, 0U);
@@ -94,7 +93,8 @@ TEST_GROUP(GPSShortSurface)
 	void teardown() {
 		delete system_scheduler;
 		delete fake_timer;
-		delete fake_rtc; rtc = nullptr;
+		delete fake_rtc;
+		rtc = nullptr;
 		delete fake_config_store;
 		delete fake_battery_mon;
 		delete mock_m10q;
@@ -104,17 +104,22 @@ TEST_GROUP(GPSShortSurface)
 	void increment_time_ms(uint64_t ms) {
 		while (ms) {
 			m_current_ms++;
-			if (m_current_ms % 1000 == 0)
-				fake_rtc->incrementtime(1);
+			if (m_current_ms % 1000 == 0) fake_rtc->incrementtime(1);
 			fake_timer->increment_counter(1);
 			system_scheduler->run();
 			ms--;
 		}
 	}
 
-	void increment_time_s(uint64_t s)   { increment_time_ms(s * 1000); }
-	void increment_time_min(uint64_t m) { increment_time_ms(m * 60 * 1000); }
-	void increment_time_h(uint64_t h)   { increment_time_ms(h * 3600 * 1000); }
+	void increment_time_s(uint64_t s) {
+		increment_time_ms(s * 1000);
+	}
+	void increment_time_min(uint64_t m) {
+		increment_time_ms(m * 60 * 1000);
+	}
+	void increment_time_h(uint64_t h) {
+		increment_time_ms(h * 3600 * 1000);
+	}
 
 	void notify_underwater_state(bool state) {
 		ServiceEvent e;
@@ -148,8 +153,7 @@ TEST_GROUP(GPSShortSurface)
 /// use warm timeout. This is the path that broke when HACCFILT was on: every
 /// PVT got rejected as degraded → CloudLocate raw emitted → first_fix_found
 /// stayed false → cold timeout forever.
-TEST(GPSShortSurface, FirstPVTFlipsToWarmStartCadence)
-{
+TEST(GPSShortSurface, FirstPVTFlipsToWarmStartCadence) {
 	fake_rtc->settime(1580083200);
 	GPSService s(*mock_m10q, fake_log);
 	s.start();
@@ -174,9 +178,8 @@ TEST(GPSShortSurface, FirstPVTFlipsToWarmStartCadence)
 /// Degraded PVT does NOT set m_is_first_fix_found — confirms the documented
 /// behavior that lets the 2-day field bug surface when HACCFILT/HDOPFILT are
 /// on. This is the regression-pin for "don't change R6 semantics by accident".
-TEST(GPSShortSurface, DegradedPVTDoesNotSetFirstFixFound)
-{
-	fake_config_store->write_param(ParamID::GNSS_FASTLOC_MODE, 1U); // DEGRADED_PVT
+TEST(GPSShortSurface, DegradedPVTDoesNotSetFirstFixFound) {
+	fake_config_store->write_param(ParamID::GNSS_FASTLOC_MODE, 1U);  // DEGRADED_PVT
 	fake_rtc->settime(1580083200);
 	GPSService s(*mock_m10q, fake_log);
 	s.start();
@@ -198,8 +201,7 @@ TEST(GPSShortSurface, DegradedPVTDoesNotSetFirstFixFound)
 /// Trigger-on-surfaced: a surface event fires GPS immediately (the SURFACING_
 /// BURST tortue path). Verifies the new GNP52 deep-idle stamp didn't break
 /// the legacy immediate-trigger contract.
-TEST(GPSShortSurface, TriggerOnSurfacedFiresImmediately)
-{
+TEST(GPSShortSurface, TriggerOnSurfacedFiresImmediately) {
 	fake_rtc->settime(0);
 	GPSService s(*mock_m10q, fake_log);
 	s.start();
@@ -234,8 +236,7 @@ TEST(GPSShortSurface, TriggerOnSurfacedFiresImmediately)
 /// `PMU::get_timestamp_ms()` (used to compare elapsed time) is mocked to
 /// return wall-clock time, not the FakeTimer simulation time. The cap is
 /// covered by code review / integration logs, not by this fast unit test.
-TEST(GPSShortSurface, WDTInhibitPreservedAcrossSessions)
-{
+TEST(GPSShortSurface, WDTInhibitPreservedAcrossSessions) {
 	// GNP52 sentinel — without the WDT inhibit this would arm deep-idle.
 	fake_config_store->write_param(ParamID::GNSS_DEEP_IDLE_AFTER_OFF_S, 0xFFFFFFFFU);
 
@@ -260,8 +261,7 @@ TEST(GPSShortSurface, WDTInhibitPreservedAcrossSessions)
 
 /// A PVT fix clears the WDT inhibit immediately. Next session uses the
 /// normal dispatch path (deep-idle if GNP52 says so).
-TEST(GPSShortSurface, WDTInhibitClearedByPVT)
-{
+TEST(GPSShortSurface, WDTInhibitClearedByPVT) {
 	fake_rtc->settime(1580083200);
 	GPSService s(*mock_m10q, fake_log);
 	s.set_deep_idle_inhibit_first_session(true);
@@ -285,8 +285,7 @@ TEST(GPSShortSurface, WDTInhibitClearedByPVT)
 /// `m_inhibit_set_at_ms` back to 0. This is the disarm path used after a
 /// successful PVT (where the legacy clear sites also reset the stamp).
 /// Verified indirectly by re-arming after a disarm and running cleanly.
-TEST(GPSShortSurface, WDTInhibitSetterDisarmAndReArm)
-{
+TEST(GPSShortSurface, WDTInhibitSetterDisarmAndReArm) {
 	fake_rtc->settime(1580083200);
 	GPSService s(*mock_m10q, fake_log);
 
@@ -309,8 +308,7 @@ TEST(GPSShortSurface, WDTInhibitSetterDisarmAndReArm)
 
 /// 19 consecutive NO_FIX must NOT arm the stuck recovery. This pins the
 /// threshold = 20 invariant.
-TEST(GPSShortSurface, StuckRecoveryNotTriggeredBelowThreshold)
-{
+TEST(GPSShortSurface, StuckRecoveryNotTriggeredBelowThreshold) {
 	fake_rtc->settime(1580083200);
 	GPSService s(*mock_m10q, fake_log);
 	s.start();
@@ -343,8 +341,7 @@ TEST(GPSShortSurface, StuckRecoveryNotTriggeredBelowThreshold)
 /// 1 s the lambda fires power_off_immediate() (which the MockM10Q maps to
 /// power_off via the GPSDevice default), and 30 s later service_reschedule
 /// re-arms the next acquisition.
-TEST(GPSShortSurface, StuckRecoveryTriggeredAtThreshold)
-{
+TEST(GPSShortSurface, StuckRecoveryTriggeredAtThreshold) {
 	fake_rtc->settime(1580083200);
 	GPSService s(*mock_m10q, fake_log);
 	s.start();
@@ -375,8 +372,7 @@ TEST(GPSShortSurface, StuckRecoveryTriggeredAtThreshold)
 
 /// A real PVT in the middle of a failure streak must reset the dead-session
 /// counter. Otherwise even 1 success/19 failures would arm a recovery.
-TEST(GPSShortSurface, StuckRecoveryResetByPVT)
-{
+TEST(GPSShortSurface, StuckRecoveryResetByPVT) {
 	fake_rtc->settime(1580083200);
 	GPSService s(*mock_m10q, fake_log);
 	s.start();
@@ -420,8 +416,7 @@ TEST(GPSShortSurface, StuckRecoveryResetByPVT)
 /// A degraded PVT also resets the dead-session counter. This is per-spec
 /// (the degraded callback explicitly resets `m_consecutive_dead_sessions`
 /// even though it does NOT set first_fix_found — different concerns).
-TEST(GPSShortSurface, StuckRecoveryResetByDegradedPVT)
-{
+TEST(GPSShortSurface, StuckRecoveryResetByDegradedPVT) {
 	fake_config_store->write_param(ParamID::GNSS_FASTLOC_MODE, 1U);  // DEGRADED_PVT
 	fake_rtc->settime(1580083200);
 	GPSService s(*mock_m10q, fake_log);
@@ -459,8 +454,7 @@ TEST(GPSShortSurface, StuckRecoveryResetByDegradedPVT)
 /// Single-arm invariant: once recovery fires (and resets the counter to 0
 /// inside the done task), subsequent dead sessions must build up again from
 /// 0 → 20 before re-firing. Tests the m_stuck_recovery_in_flight flag.
-TEST(GPSShortSurface, StuckRecoverySingleArmThenRecountsFromZero)
-{
+TEST(GPSShortSurface, StuckRecoverySingleArmThenRecountsFromZero) {
 	fake_rtc->settime(1580083200);
 	GPSService s(*mock_m10q, fake_log);
 	s.start();
@@ -503,8 +497,7 @@ TEST(GPSShortSurface, StuckRecoverySingleArmThenRecountsFromZero)
 // ============================================================================
 
 /// GNP52=0 → immediate poweroff. Every NO_FIX = 1 power_off, no extra path.
-TEST(GPSShortSurface, DeepIdleDisabledImmediatePowerOff)
-{
+TEST(GPSShortSurface, DeepIdleDisabledImmediatePowerOff) {
 	// GNP52=0 already set in fixture.
 	fake_rtc->settime(1580083200);
 	GPSService s(*mock_m10q, fake_log);
@@ -524,8 +517,7 @@ TEST(GPSShortSurface, DeepIdleDisabledImmediatePowerOff)
 /// "is_in_deep_idle" check returns false by default on the mock, so we
 /// observe normal scheduling behavior). This test pins that no extra calls
 /// fire from the sentinel branch.
-TEST(GPSShortSurface, DeepIdleNeverOffSentinel)
-{
+TEST(GPSShortSurface, DeepIdleNeverOffSentinel) {
 	fake_config_store->write_param(ParamID::GNSS_DEEP_IDLE_AFTER_OFF_S, 0xFFFFFFFFU);
 	fake_rtc->settime(1580083200);
 	GPSService s(*mock_m10q, fake_log);

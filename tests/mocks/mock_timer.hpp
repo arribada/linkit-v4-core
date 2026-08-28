@@ -5,14 +5,14 @@
 
 class MockTimer : public Timer {
 public:
-
 	uint64_t get_counter() override { return 0; }
-	TimerHandle add_schedule(stdext::inplace_function<void(), INPLACE_FUNCTION_SIZE_TIMER> const &, uint64_t) override { Timer::TimerHandle handle; return handle; }
-	void cancel_schedule(TimerHandle &) override {
-		mock().actualCall("cancel_schedule").onObject(this);
+	TimerHandle add_schedule(stdext::inplace_function<void(), INPLACE_FUNCTION_SIZE_TIMER> const &, uint64_t) override {
+		Timer::TimerHandle handle;
+		return handle;
 	}
+	void cancel_schedule(TimerHandle &) override { mock().actualCall("cancel_schedule").onObject(this); }
 	void start() override { mock().actualCall("start").onObject(this); }
 	void stop() override { mock().actualCall("stop").onObject(this); }
 };
 
-#endif // __MOCK_TIMER_HPP_
+#endif  // __MOCK_TIMER_HPP_

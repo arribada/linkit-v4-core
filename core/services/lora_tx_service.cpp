@@ -18,10 +18,7 @@ extern ConfigurationStore *configuration_store;
 extern Scheduler *system_scheduler;
 extern GPSDevice *gps_device;
 
-LoRaTxService::LoRaTxService(KineisDevice& device) :
-	Service(ServiceIdentifier::LORA_TX, "LORATX"),
-	m_device(device) {
-}
+LoRaTxService::LoRaTxService(KineisDevice &device) : Service(ServiceIdentifier::LORA_TX, "LORATX"), m_device(device) {}
 
 void LoRaTxService::service_init() {
 	ArgosConfig argos_config;
@@ -91,8 +88,7 @@ unsigned int LoRaTxService::service_next_schedule_in_ms() {
 		unsigned int critical_level = configuration_store->read_param<unsigned int>(ParamID::LB_CRITICAL_THRESH);
 		unsigned int current_soc = service_get_level();
 		if (current_soc < critical_level) {
-			DEBUG_INFO("LoRaTxService: CRITICAL battery SOC %u%% < %u%% - shutdown",
-			           current_soc, critical_level);
+			DEBUG_INFO("LoRaTxService: CRITICAL battery SOC %u%% < %u%% - shutdown", current_soc, critical_level);
 			configuration_store->save_params();
 			PMU::powerdown();
 			return Service::SCHEDULE_DISABLED;
@@ -136,16 +132,14 @@ unsigned int LoRaTxService::service_next_schedule_in_ms() {
 		return m_sched.schedule_legacy(argos_config, now);
 	}
 	if (argos_config.mode == BaseArgosMode::SURFACING_BURST) {
-
 		// Phase 1: Status heartbeat burst (battery level) until GNSS fix
 		if (m_is_surfacing_burst && !m_has_gnss_fix_since_surfacing) {
-
 			// Check max message limit (0 = unlimited)
-			unsigned int burst_max_msg = configuration_store->read_param<unsigned int>(ParamID::SURFACING_BURST_MAX_MSG);
-			if (burst_max_msg > 0 &&
-				m_status_burst_count >= burst_max_msg) {
-				DEBUG_INFO("LoRaTxService::SURFACING_BURST: max status messages reached (%u/%u)",
-				           m_status_burst_count, burst_max_msg);
+			unsigned int burst_max_msg =
+			    configuration_store->read_param<unsigned int>(ParamID::SURFACING_BURST_MAX_MSG);
+			if (burst_max_msg > 0 && m_status_burst_count >= burst_max_msg) {
+				DEBUG_INFO("LoRaTxService::SURFACING_BURST: max status messages reached (%u/%u)", m_status_burst_count,
+				           burst_max_msg);
 				// Arm cooldown if trigger mode is END_OF_DOPPLER (status burst ends
 				// because max_msg reached without GNSS fix) — parity with Argos.
 				unsigned int trigger = configuration_store->read_param<unsigned int>(ParamID::COOLDOWN_TRIGGER_MODE);
@@ -175,11 +169,11 @@ unsigned int LoRaTxService::service_next_schedule_in_ms() {
 			// the 1st TX packet content is "prepared underwater" from the
 			// cache, and we don't need to wait for live data.
 			if (m_status_burst_count == 0) {
-				const GPSLogEntry& cached_gps = configuration_store->get_last_gps_entry();
-				const GPSLogEntry& cached_fl  = configuration_store->get_last_fastloc_entry();
+				const GPSLogEntry &cached_gps = configuration_store->get_last_gps_entry();
+				const GPSLogEntry &cached_fl = configuration_store->get_last_fastloc_entry();
 				bool have_cached_position =
-					(cached_gps.info.valid && cached_gps.info.event_type == GPSEventType::FIX) ||
-					(cached_fl.info.valid  && cached_fl.info.event_type  == GPSEventType::FASTLOC);
+				    (cached_gps.info.valid && cached_gps.info.event_type == GPSEventType::FIX)
+				    || (cached_fl.info.valid && cached_fl.info.event_type == GPSEventType::FASTLOC);
 
 				if (have_cached_position) {
 					DEBUG_INFO("LoRaTxService::SURFACING_BURST: status #1 immediate (cached position available)");
@@ -194,24 +188,25 @@ unsigned int LoRaTxService::service_next_schedule_in_ms() {
 				// Without the gnss_en check, a deployment with GNSS_EN=0 would
 				// burn the full GNSS_ACQ_TIMEOUT on every surface waiting for
 				// a raw that can never come.
-				if (fastloc_mode == (unsigned int)BaseFastlocMode::CLOUDLOCATE &&
-				    argos_config.gnss_en) {
+				if (fastloc_mode == (unsigned int)BaseFastlocMode::CLOUDLOCATE && argos_config.gnss_en) {
 					unsigned int wait_s = configuration_store->read_param<unsigned int>(ParamID::GNSS_ACQ_TIMEOUT);
 					if (wait_s == 0) wait_s = 30;  // Safety floor — should never fire (param min is 10)
-					DEBUG_INFO("LoRaTxService::SURFACING_BURST: status #1 deferred up to %u s waiting for CloudLocate raw", wait_s);
+					DEBUG_INFO(
+					    "LoRaTxService::SURFACING_BURST: status #1 deferred up to %u s waiting for CloudLocate raw",
+					    wait_s);
 					m_sched.schedule_at(now + wait_s);
 					return wait_s * 1000;
 				}
-				DEBUG_INFO("LoRaTxService::SURFACING_BURST: status #%u (immediate, no cache)", m_status_burst_count + 1);
+				DEBUG_INFO("LoRaTxService::SURFACING_BURST: status #%u (immediate, no cache)",
+				           m_status_burst_count + 1);
 				m_sched.schedule_at(now);
 				return 0;
 			}
 
 			// Progressive interval: init + (count-1) * step, capped at max
-			unsigned int interval_s = argos_config.surfacing_burst_init_s +
-				(m_status_burst_count - 1) * argos_config.surfacing_burst_step_s;
-			if (interval_s > argos_config.surfacing_burst_max_s)
-				interval_s = argos_config.surfacing_burst_max_s;
+			unsigned int interval_s =
+			    argos_config.surfacing_burst_init_s + (m_status_burst_count - 1) * argos_config.surfacing_burst_step_s;
+			if (interval_s > argos_config.surfacing_burst_max_s) interval_s = argos_config.surfacing_burst_max_s;
 
 			// Demoted to TRACE: fires on every progressive ping in the burst.
 			// Burst start ("status #1 immediate") and end ("max messages
@@ -275,8 +270,7 @@ void LoRaTxService::service_initiate() {
 		if (DEVICE_ERROR_PROBE_PERIOD_S && now < m_device_error_suspend_until) {
 			DEBUG_WARN("LoRaTxService::service_initiate: skipping TX — %u consecutive errors, "
 			           "suspended for another %llu s",
-			           m_consecutive_device_errors,
-			           (unsigned long long)(m_device_error_suspend_until - now));
+			           m_consecutive_device_errors, (unsigned long long)(m_device_error_suspend_until - now));
 			service_complete(nullptr, nullptr, false);
 			return;
 		}
@@ -376,7 +370,7 @@ unsigned int LoRaTxService::service_next_timeout() {
 	return 360000;
 }
 
-bool LoRaTxService::service_is_triggered_on_surfaced(bool& immediate) {
+bool LoRaTxService::service_is_triggered_on_surfaced(bool &immediate) {
 	ArgosConfig argos_config;
 	configuration_store->get_argos_configuration(argos_config);
 	// In SURFACING_BURST mode, reschedule immediately on surfacing
@@ -384,18 +378,15 @@ bool LoRaTxService::service_is_triggered_on_surfaced(bool& immediate) {
 	return true;
 }
 
-void LoRaTxService::notify_peer_event(ServiceEvent& e) {
-
+void LoRaTxService::notify_peer_event(ServiceEvent &e) {
 	// During SURFACING_BURST status phase, CloudLocate/Fastloc/NO_FIX entries are already
 	// sent directly in process_status_burst() — skip depth pile to avoid double transmission.
 	bool skip_depth_pile = false;
-	if (m_is_surfacing_burst && !m_has_gnss_fix_since_surfacing &&
-	    e.event_source == ServiceIdentifier::GNSS_SENSOR &&
-	    e.event_type == ServiceEventType::SERVICE_LOG_UPDATED) {
-		GPSLogEntry& gps = std::get<GPSLogEntry>(e.event_data);
-		if (gps.info.event_type == GPSEventType::CLOUDLOCATE ||
-		    gps.info.event_type == GPSEventType::FASTLOC ||
-		    gps.info.event_type == GPSEventType::NO_FIX) {
+	if (m_is_surfacing_burst && !m_has_gnss_fix_since_surfacing && e.event_source == ServiceIdentifier::GNSS_SENSOR
+	    && e.event_type == ServiceEventType::SERVICE_LOG_UPDATED) {
+		GPSLogEntry &gps = std::get<GPSLogEntry>(e.event_data);
+		if (gps.info.event_type == GPSEventType::CLOUDLOCATE || gps.info.event_type == GPSEventType::FASTLOC
+		    || gps.info.event_type == GPSEventType::NO_FIX) {
 			skip_depth_pile = true;
 		}
 	}
@@ -404,9 +395,8 @@ void LoRaTxService::notify_peer_event(ServiceEvent& e) {
 		m_depth_pile_manager.notify_peer_event(e);
 	}
 
-	if (e.event_source == ServiceIdentifier::GNSS_SENSOR &&
-		e.event_type == ServiceEventType::SERVICE_LOG_UPDATED) {
-		GPSLogEntry& entry = std::get<GPSLogEntry>(e.event_data);
+	if (e.event_source == ServiceIdentifier::GNSS_SENSOR && e.event_type == ServiceEventType::SERVICE_LOG_UPDATED) {
+		GPSLogEntry &entry = std::get<GPSLogEntry>(e.event_data);
 		ArgosConfig argos_config;
 		configuration_store->get_argos_configuration(argos_config);
 
@@ -419,8 +409,9 @@ void LoRaTxService::notify_peer_event(ServiceEvent& e) {
 
 			if (argos_config.mode == BaseArgosMode::SURFACING_BURST) {
 				if ((m_is_surfacing_burst || m_awaiting_surfacing) && !m_has_gnss_fix_since_surfacing) {
-					DEBUG_INFO("LoRaTxService::SURFACING_BURST: GNSS fix after %u status messages — switching to GPS phase",
-					           m_status_burst_count);
+					DEBUG_INFO(
+					    "LoRaTxService::SURFACING_BURST: GNSS fix after %u status messages — switching to GPS phase",
+					    m_status_burst_count);
 					m_has_gnss_fix_since_surfacing = true;
 					m_awaiting_surfacing = false;
 					m_first_gnss_tx_sent = false;
@@ -430,9 +421,10 @@ void LoRaTxService::notify_peer_event(ServiceEvent& e) {
 					// Guard against a delayed fix arriving during an already-active
 					// cooldown (rare race: GPS in flight when cooldown started +
 					// surface bounce sets m_is_surfacing_burst).
-					unsigned int trigger = configuration_store->read_param<unsigned int>(ParamID::COOLDOWN_TRIGGER_MODE);
-					if (trigger == (unsigned int)BaseCooldownTrigger::END_OF_DOPPLER && !m_cooldown_armed &&
-					    !ServiceManager::is_in_cooldown(service_current_time())) {
+					unsigned int trigger =
+					    configuration_store->read_param<unsigned int>(ParamID::COOLDOWN_TRIGGER_MODE);
+					if (trigger == (unsigned int)BaseCooldownTrigger::END_OF_DOPPLER && !m_cooldown_armed
+					    && !ServiceManager::is_in_cooldown(service_current_time())) {
 						m_cooldown_armed = true;
 						DEBUG_INFO("LoRaTxService: cooldown armed (END_OF_DOPPLER, GNSS fix)");
 					}
@@ -445,8 +437,8 @@ void LoRaTxService::notify_peer_event(ServiceEvent& e) {
 				service_reschedule();
 			}
 		}
-	} else if (e.event_source == ServiceIdentifier::UW_SENSOR &&
-			e.event_type == ServiceEventType::SERVICE_LOG_UPDATED) {
+	} else if (e.event_source == ServiceIdentifier::UW_SENSOR
+	           && e.event_type == ServiceEventType::SERVICE_LOG_UPDATED) {
 		ArgosConfig argos_config;
 		configuration_store->get_argos_configuration(argos_config);
 		if (std::get<bool>(e.event_data) == true) {
@@ -525,8 +517,8 @@ void LoRaTxService::notify_peer_event(ServiceEvent& e) {
 			// the next dive would call set_cycle_complete(now) which resets the
 			// cooldown timer, extending it indefinitely under repeated bounces.
 			unsigned int trigger = configuration_store->read_param<unsigned int>(ParamID::COOLDOWN_TRIGGER_MODE);
-			if (trigger == (unsigned int)BaseCooldownTrigger::AT_SURFACE &&
-			    !ServiceManager::is_in_cooldown(service_current_time())) {
+			if (trigger == (unsigned int)BaseCooldownTrigger::AT_SURFACE
+			    && !ServiceManager::is_in_cooldown(service_current_time())) {
 				m_cooldown_armed = true;
 				DEBUG_INFO("LoRaTxService: cooldown armed (AT_SURFACE)");
 			}
@@ -534,8 +526,8 @@ void LoRaTxService::notify_peer_event(ServiceEvent& e) {
 			// Only enter surfacing burst state if cooldown is not active —
 			// otherwise the base class will skip reschedule and no TX fires,
 			// so logging "starting status burst" would be misleading.
-			if (argos_config.mode == BaseArgosMode::SURFACING_BURST &&
-			    !ServiceManager::is_in_cooldown(service_current_time())) {
+			if (argos_config.mode == BaseArgosMode::SURFACING_BURST
+			    && !ServiceManager::is_in_cooldown(service_current_time())) {
 				m_is_surfacing_burst = true;
 				m_awaiting_surfacing = false;
 				m_status_burst_count = 0;
@@ -570,12 +562,12 @@ void LoRaTxService::notify_peer_event(ServiceEvent& e) {
 	// `m_cloudlocate_ready_pending` and let `react(KineisEventTxComplete)`
 	// trigger the immediate reschedule when the current TX finishes. This
 	// guarantees "dans la foulée" semantics even when raw arrives mid-TX.
-	if (e.event_source == ServiceIdentifier::GNSS_SENSOR &&
-	    e.event_type == ServiceEventType::GNSS_CLOUDLOCATE_READY) {
+	if (e.event_source == ServiceIdentifier::GNSS_SENSOR && e.event_type == ServiceEventType::GNSS_CLOUDLOCATE_READY) {
 		if (!m_is_surfacing_burst || m_has_gnss_fix_since_surfacing) {
 			DEBUG_TRACE("LoRaTxService::notify_peer_event: GNSS_CLOUDLOCATE_READY but not in burst phase 1");
 		} else if (m_is_tx_pending) {
-			DEBUG_INFO("LoRaTxService::notify_peer_event: GNSS_CLOUDLOCATE_READY during in-flight TX — deferring to TX complete");
+			DEBUG_INFO("LoRaTxService::notify_peer_event: GNSS_CLOUDLOCATE_READY during in-flight TX — deferring to TX "
+			           "complete");
 			m_cloudlocate_ready_pending = true;
 		} else {
 			DEBUG_INFO("LoRaTxService::notify_peer_event: GNSS_CLOUDLOCATE_READY — rescheduling early CloudLocate TX");
@@ -608,7 +600,8 @@ void LoRaTxService::process_gps_burst() {
 
 	// Retrieve GPS entries from depth pile, using the LoRa-specific per-slot cap
 	// (Argos default is 3 to fit the LDA2 24-byte frame; LoRa can hold many more).
-	std::vector<GPSLogEntry*> v = m_depth_pile_manager.retrieve_gps((unsigned int)argos_config.depth_pile, max_entries);
+	std::vector<GPSLogEntry *> v =
+	    m_depth_pile_manager.retrieve_gps((unsigned int)argos_config.depth_pile, max_entries);
 
 	if (v.size()) {
 		KineisPacket packet;
@@ -616,26 +609,27 @@ void LoRaTxService::process_gps_burst() {
 
 		// CloudLocate entries: send as dedicated CloudLocate packet
 		if (v.back()->info.event_type == GPSEventType::CLOUDLOCATE) {
-			const uint8_t* overlay = reinterpret_cast<const uint8_t*>(&v.back()->info.lon);
+			const uint8_t *overlay = reinterpret_cast<const uint8_t *>(&v.back()->info.lon);
 			uint8_t format_id = overlay[0];
-			const uint8_t* blob = &overlay[1];
+			const uint8_t *blob = &overlay[1];
 			unsigned int blob_size = (format_id == (uint8_t)BaseCloudLocateFormat::MEASC12) ? 12 : 20;
-			packet = LoRaPacketBuilder::build_cloudlocate_packet(blob, blob_size, format_id,
-					argos_config.is_lb, v.back()->info.batt_voltage, size_bits,
-					(uint32_t)convert_epochtime(v.back()->header.year, v.back()->header.month, v.back()->header.day,
-					                            v.back()->header.hours, v.back()->header.minutes, v.back()->header.seconds));
-		// Fastloc entries: send as unified sensor packet (GPS + fastloc quality metadata)
+			packet = LoRaPacketBuilder::build_cloudlocate_packet(
+			    blob, blob_size, format_id, argos_config.is_lb, v.back()->info.batt_voltage, size_bits,
+			    (uint32_t)convert_epochtime(v.back()->header.year, v.back()->header.month, v.back()->header.day,
+				                            v.back()->header.hours, v.back()->header.minutes,
+				                            v.back()->header.seconds));
+			// Fastloc entries: send as unified sensor packet (GPS + fastloc quality metadata)
 		} else if (v.back()->info.event_type == GPSEventType::FASTLOC) {
-			packet = LoRaPacketBuilder::build_sensor_packet(v.back(),
-					nullptr, nullptr, nullptr, nullptr, nullptr,
-					argos_config.is_out_of_zone, argos_config.is_lb,
-					size_bits);
+			packet = LoRaPacketBuilder::build_sensor_packet(v.back(), nullptr, nullptr, nullptr, nullptr, nullptr,
+			                                                argos_config.is_out_of_zone, argos_config.is_lb, size_bits);
 		} else {
 			// Filter out any CloudLocate/fastloc entries that may be mixed in
-			v.erase(std::remove_if(v.begin(), v.end(), [](const GPSLogEntry* e) {
-				return e->info.event_type == GPSEventType::CLOUDLOCATE ||
-				       e->info.event_type == GPSEventType::FASTLOC;
-			}), v.end());
+			v.erase(std::remove_if(v.begin(), v.end(),
+			                       [](const GPSLogEntry *e) {
+				                       return e->info.event_type == GPSEventType::CLOUDLOCATE
+				                              || e->info.event_type == GPSEventType::FASTLOC;
+			                       }),
+			        v.end());
 			if (v.empty()) {
 				DEBUG_WARN("LoRaTxService::process_gps_burst: all entries filtered (mixed types)");
 				m_is_tx_pending = false;
@@ -643,19 +637,16 @@ void LoRaTxService::process_gps_burst() {
 				return;
 			}
 			// Trim to max entries that fit in payload
-			if (v.size() > max_entries)
-				v.resize(max_entries);
+			if (v.size() > max_entries) v.resize(max_entries);
 
-			packet = LoRaPacketBuilder::build_gps_packet(v,
-					argos_config.is_out_of_zone, argos_config.is_lb,
-					max_payload,
-					size_bits);
+			packet = LoRaPacketBuilder::build_gps_packet(v, argos_config.is_out_of_zone, argos_config.is_lb,
+			                                             max_payload, size_bits);
 		}
 
 		// Demoted to TRACE: per-TX payload dump on the burst hot path (~50-300 ms
 		// LFS commit per emit). TX completion event already logs the outcome.
-		DEBUG_TRACE("LoRaTxService::process_gps_burst: data=%s sz=%u bits",
-				Binascii::hexlify(packet).c_str(), size_bits);
+		DEBUG_TRACE("LoRaTxService::process_gps_burst: data=%s sz=%u bits", Binascii::hexlify(packet).c_str(),
+		            size_bits);
 		m_last_tx_had_gps = true;
 		m_device.send(KineisModulation::LDA2, packet, size_bits);
 	} else {
@@ -678,23 +669,23 @@ void LoRaTxService::process_sensor_burst() {
 	ArgosConfig argos_config;
 	configuration_store->get_argos_configuration(argos_config);
 
-	GPSLogEntry* gps = m_depth_pile_manager.retrieve_gps_single((unsigned int)argos_config.depth_pile);
+	GPSLogEntry *gps = m_depth_pile_manager.retrieve_gps_single((unsigned int)argos_config.depth_pile);
 
 	if (gps != nullptr) {
 		// CloudLocate entries: send as dedicated CloudLocate packet
 		if (gps->info.event_type == GPSEventType::CLOUDLOCATE) {
-			const uint8_t* overlay = reinterpret_cast<const uint8_t*>(&gps->info.lon);
+			const uint8_t *overlay = reinterpret_cast<const uint8_t *>(&gps->info.lon);
 			uint8_t format_id = overlay[0];
-			const uint8_t* blob = &overlay[1];
+			const uint8_t *blob = &overlay[1];
 			unsigned int blob_size = (format_id == (uint8_t)BaseCloudLocateFormat::MEASC12) ? 12 : 20;
 			unsigned int size_bits;
-			KineisPacket packet = LoRaPacketBuilder::build_cloudlocate_packet(blob, blob_size, format_id,
-					service_is_battery_level_low(), gps->info.batt_voltage, size_bits,
-					(uint32_t)convert_epochtime(gps->header.year, gps->header.month, gps->header.day,
-					                            gps->header.hours, gps->header.minutes, gps->header.seconds));
+			KineisPacket packet = LoRaPacketBuilder::build_cloudlocate_packet(
+			    blob, blob_size, format_id, service_is_battery_level_low(), gps->info.batt_voltage, size_bits,
+			    (uint32_t)convert_epochtime(gps->header.year, gps->header.month, gps->header.day, gps->header.hours,
+				                            gps->header.minutes, gps->header.seconds));
 			// Demoted to TRACE: per-TX payload dump (~50-300 ms LFS commit).
-			DEBUG_TRACE("LoRaTxService::process_sensor_burst: CloudLocate fmt=%u data=%s",
-					format_id, Binascii::hexlify(packet).c_str());
+			DEBUG_TRACE("LoRaTxService::process_sensor_burst: CloudLocate fmt=%u data=%s", format_id,
+			            Binascii::hexlify(packet).c_str());
 			m_last_tx_had_gps = true;
 			m_device.send(KineisModulation::LDA2, packet, size_bits);
 			return;
@@ -703,27 +694,32 @@ void LoRaTxService::process_sensor_burst() {
 		// Fastloc entries are handled transparently by build_sensor_packet
 		// (the fastloc flag bit is set automatically when event_type == FASTLOC)
 		unsigned int size_bits;
-		KineisPacket packet = LoRaPacketBuilder::build_sensor_packet(gps,
-				m_depth_pile_manager.retrieve_sensor_single((unsigned int)argos_config.depth_pile, ServiceIdentifier::ALS_SENSOR),
-				m_depth_pile_manager.retrieve_sensor_single((unsigned int)argos_config.depth_pile, ServiceIdentifier::PH_SENSOR),
-				m_depth_pile_manager.retrieve_sensor_single((unsigned int)argos_config.depth_pile, ServiceIdentifier::PRESSURE_SENSOR),
+		KineisPacket packet = LoRaPacketBuilder::build_sensor_packet(
+		    gps,
+		    m_depth_pile_manager.retrieve_sensor_single((unsigned int)argos_config.depth_pile,
+			                                            ServiceIdentifier::ALS_SENSOR),
+		    m_depth_pile_manager.retrieve_sensor_single((unsigned int)argos_config.depth_pile,
+			                                            ServiceIdentifier::PH_SENSOR),
+		    m_depth_pile_manager.retrieve_sensor_single((unsigned int)argos_config.depth_pile,
+			                                            ServiceIdentifier::PRESSURE_SENSOR),
 #ifdef BOARD_RSPB
-				m_depth_pile_manager.retrieve_sensor_single((unsigned int)argos_config.depth_pile, ServiceIdentifier::THERMISTOR_SENSOR),
+		    m_depth_pile_manager.retrieve_sensor_single((unsigned int)argos_config.depth_pile,
+			                                            ServiceIdentifier::THERMISTOR_SENSOR),
 #else
-				m_depth_pile_manager.retrieve_sensor_single((unsigned int)argos_config.depth_pile, ServiceIdentifier::SEA_TEMP_SENSOR),
+		    m_depth_pile_manager.retrieve_sensor_single((unsigned int)argos_config.depth_pile,
+			                                            ServiceIdentifier::SEA_TEMP_SENSOR),
 #endif
 #if ENABLE_AXL_SENSOR
-				m_depth_pile_manager.retrieve_sensor_single((unsigned int)argos_config.depth_pile, ServiceIdentifier::AXL_SENSOR),
+		    m_depth_pile_manager.retrieve_sensor_single((unsigned int)argos_config.depth_pile,
+			                                            ServiceIdentifier::AXL_SENSOR),
 #else
-				nullptr,
+		    nullptr,
 #endif
-				argos_config.is_out_of_zone,
-				argos_config.is_lb,
-				size_bits);
+		    argos_config.is_out_of_zone, argos_config.is_lb, size_bits);
 
 		// Demoted to TRACE: per-TX payload dump (~50-300 ms LFS commit).
-		DEBUG_TRACE("LoRaTxService::process_sensor_burst: data=%s sz=%u bits",
-				Binascii::hexlify(packet).c_str(), size_bits);
+		DEBUG_TRACE("LoRaTxService::process_sensor_burst: data=%s sz=%u bits", Binascii::hexlify(packet).c_str(),
+		            size_bits);
 		m_last_tx_had_gps = true;
 		m_device.send(KineisModulation::LDA2, packet, size_bits);
 	} else {
@@ -752,12 +748,12 @@ void LoRaTxService::process_status_burst() {
 	// modes (where the counter is never incremented), not the first ping of
 	// a burst.
 	unsigned int fastloc_mode = configuration_store->read_param<unsigned int>(ParamID::GNSS_FASTLOC_MODE);
-	if (fastloc_mode == (unsigned int)BaseFastlocMode::CLOUDLOCATE &&
-	    m_status_burst_count > 0 && gps_device && gps_device->has_raw_measurement()) {
+	if (fastloc_mode == (unsigned int)BaseFastlocMode::CLOUDLOCATE && m_status_burst_count > 0 && gps_device
+	    && gps_device->has_raw_measurement()) {
 		GNSSRawMeasurement raw = gps_device->get_raw_measurement();
 		unsigned int cl_format = configuration_store->read_param<unsigned int>(ParamID::GNSS_CLOUDLOCATE_FORMAT);
 
-		const uint8_t* blob = nullptr;
+		const uint8_t *blob = nullptr;
 		unsigned int blob_size = 0;
 		uint8_t format_id = 0;
 
@@ -766,28 +762,33 @@ void LoRaTxService::process_status_burst() {
 		// configured format wasn't produced, blob stays null and the CL TX is
 		// skipped, rather than silently emitting a different format.
 		if (cl_format == (unsigned int)BaseCloudLocateFormat::MEAS50 && raw.has_meas50) {
-			blob = raw.meas50; blob_size = 50; format_id = (uint8_t)BaseCloudLocateFormat::MEAS50;
+			blob = raw.meas50;
+			blob_size = 50;
+			format_id = (uint8_t)BaseCloudLocateFormat::MEAS50;
 		} else if (cl_format == (unsigned int)BaseCloudLocateFormat::MEAS20 && raw.has_meas20) {
-			blob = raw.meas20; blob_size = 20; format_id = (uint8_t)BaseCloudLocateFormat::MEAS20;
+			blob = raw.meas20;
+			blob_size = 20;
+			format_id = (uint8_t)BaseCloudLocateFormat::MEAS20;
 		} else if (cl_format == (unsigned int)BaseCloudLocateFormat::MEASC12 && raw.has_measc12) {
-			blob = raw.measc12; blob_size = 12; format_id = (uint8_t)BaseCloudLocateFormat::MEASC12;
+			blob = raw.measc12;
+			blob_size = 12;
+			format_id = (uint8_t)BaseCloudLocateFormat::MEASC12;
 		}
 		if (!blob) {
-			DEBUG_WARN("LoRaTxService::process_status_burst: configured CloudLocate format %u not available (measc12=%u meas20=%u meas50=%u) — skipping CL TX",
+			DEBUG_WARN("LoRaTxService::process_status_burst: configured CloudLocate format %u not available "
+			           "(measc12=%u meas20=%u meas50=%u) — skipping CL TX",
 			           cl_format, (unsigned)raw.has_measc12, (unsigned)raw.has_meas20, (unsigned)raw.has_meas50);
 		}
 
 		if (blob) {
 			// Size vs DR is guaranteed at boot by LoRaDevice::load_config_from_store()
 			// which forces DR ≥ 3 when MEAS50 is selected. MEAS20/MEASC12 fit any DR.
-			KineisPacket packet = LoRaPacketBuilder::build_cloudlocate_packet(
-				blob, blob_size, format_id,
-				service_is_battery_level_low(), service_get_voltage(), size_bits,
-				raw.capture_time);
+			KineisPacket packet =
+			    LoRaPacketBuilder::build_cloudlocate_packet(blob, blob_size, format_id, service_is_battery_level_low(),
+				                                            service_get_voltage(), size_bits, raw.capture_time);
 			// Demoted to TRACE: per-ping payload dump (~50-300 ms LFS commit).
 			DEBUG_TRACE("LoRaTxService::process_status_burst: CLOUDLOCATE #%u fmt=%u sz=%u data=%s",
-			           m_status_burst_count, format_id, blob_size,
-			           Binascii::hexlify(packet).c_str());
+			            m_status_burst_count, format_id, blob_size, Binascii::hexlify(packet).c_str());
 			m_last_tx_had_gps = true;
 			m_device.send(KineisModulation::LDA2, packet, size_bits);
 			return;
@@ -798,8 +799,8 @@ void LoRaTxService::process_status_burst() {
 	// degraded PVT available, replace the status payload with a fastloc sensor
 	// packet. As above, `m_status_burst_count > 0` gates legacy modes, not the
 	// first ping of a burst. Same logic as Argos process_doppler_burst().
-	if (fastloc_mode >= (unsigned int)BaseFastlocMode::DEGRADED_PVT &&
-	    m_status_burst_count > 0 && gps_device && gps_device->has_degraded_pvt()) {
+	if (fastloc_mode >= (unsigned int)BaseFastlocMode::DEGRADED_PVT && m_status_burst_count > 0 && gps_device
+	    && gps_device->has_degraded_pvt()) {
 		GNSSData degraded = gps_device->get_degraded_pvt();
 
 		// Build a temporary GPSLogEntry from the degraded PVT
@@ -831,14 +832,13 @@ void LoRaTxService::process_status_burst() {
 		fastloc_entry.info.valid = true;
 		fastloc_entry.info.event_type = GPSEventType::FASTLOC;
 
-		KineisPacket packet = LoRaPacketBuilder::build_sensor_packet(
-			&fastloc_entry, nullptr, nullptr, nullptr, nullptr, nullptr,
-			false, service_is_battery_level_low(), size_bits);
+		KineisPacket packet =
+		    LoRaPacketBuilder::build_sensor_packet(&fastloc_entry, nullptr, nullptr, nullptr, nullptr, nullptr, false,
+			                                       service_is_battery_level_low(), size_bits);
 
 		// Demoted to TRACE: per-ping payload dump (~50-300 ms LFS commit).
-		DEBUG_TRACE("LoRaTxService::process_status_burst: FASTLOC #%u hAcc=%um numSV=%u data=%s",
-		           m_status_burst_count, degraded.hAcc, degraded.numSV,
-		           Binascii::hexlify(packet).c_str());
+		DEBUG_TRACE("LoRaTxService::process_status_burst: FASTLOC #%u hAcc=%um numSV=%u data=%s", m_status_burst_count,
+		            degraded.hAcc, degraded.numSV, Binascii::hexlify(packet).c_str());
 		m_last_tx_had_gps = true;
 		m_device.send(KineisModulation::LDA2, packet, size_bits);
 		return;
@@ -866,22 +866,22 @@ void LoRaTxService::process_status_burst() {
 	// engaged and MOORED_TX_LAST_POS is set. Both are false by default, so no
 	// existing LoRa deployment changes behaviour, and the frame is the same
 	// SENSOR packet the backend already decodes.
-	bool moored_heartbeat = MooredModeService::is_moored() &&
-	                        configuration_store->read_param<bool>(ParamID::MOORED_TX_LAST_POS);
+	bool moored_heartbeat =
+	    MooredModeService::is_moored() && configuration_store->read_param<bool>(ParamID::MOORED_TX_LAST_POS);
 	if (m_status_burst_count > 0 || moored_heartbeat) {
-		const GPSLogEntry& cached_gps = configuration_store->get_last_gps_entry();
-		const GPSLogEntry& cached_fl  = configuration_store->get_last_fastloc_entry();
+		const GPSLogEntry &cached_gps = configuration_store->get_last_gps_entry();
+		const GPSLogEntry &cached_fl = configuration_store->get_last_fastloc_entry();
 		bool gps_ok = (cached_gps.info.valid && cached_gps.info.event_type == GPSEventType::FIX);
-		bool fl_ok  = (cached_fl.info.valid  && cached_fl.info.event_type  == GPSEventType::FASTLOC);
+		bool fl_ok = (cached_fl.info.valid && cached_fl.info.event_type == GPSEventType::FASTLOC);
 
-		const GPSLogEntry* pick = nullptr;
+		const GPSLogEntry *pick = nullptr;
 		if (gps_ok && fl_ok) {
-			std::time_t t_gps = convert_epochtime(cached_gps.header.year, cached_gps.header.month,
-			                                     cached_gps.header.day,  cached_gps.header.hours,
-			                                     cached_gps.header.minutes, cached_gps.header.seconds);
-			std::time_t t_fl  = convert_epochtime(cached_fl.header.year, cached_fl.header.month,
-			                                     cached_fl.header.day,  cached_fl.header.hours,
-			                                     cached_fl.header.minutes, cached_fl.header.seconds);
+			std::time_t t_gps =
+			    convert_epochtime(cached_gps.header.year, cached_gps.header.month, cached_gps.header.day,
+				                  cached_gps.header.hours, cached_gps.header.minutes, cached_gps.header.seconds);
+			std::time_t t_fl =
+			    convert_epochtime(cached_fl.header.year, cached_fl.header.month, cached_fl.header.day,
+				                  cached_fl.header.hours, cached_fl.header.minutes, cached_fl.header.seconds);
 			pick = (t_fl > t_gps) ? &cached_fl : &cached_gps;
 		} else if (gps_ok) {
 			pick = &cached_gps;
@@ -893,13 +893,11 @@ void LoRaTxService::process_status_burst() {
 			GPSLogEntry entry = *pick;
 			entry.info.batt_voltage = service_get_voltage();  // freshen battery field
 			KineisPacket packet = LoRaPacketBuilder::build_sensor_packet(
-				&entry, nullptr, nullptr, nullptr, nullptr, nullptr,
-				false, service_is_battery_level_low(), size_bits);
+			    &entry, nullptr, nullptr, nullptr, nullptr, nullptr, false, service_is_battery_level_low(), size_bits);
 			// Demoted to TRACE: per-ping payload dump (~50-300 ms LFS commit).
 			DEBUG_TRACE("LoRaTxService::process_status_burst: %s #%u lat=%lf lon=%lf data=%s",
-			           (pick->info.event_type == GPSEventType::FIX) ? "CACHED_GPS" : "CACHED_FASTLOC",
-			           m_status_burst_count, entry.info.lat, entry.info.lon,
-			           Binascii::hexlify(packet).c_str());
+			            (pick->info.event_type == GPSEventType::FIX) ? "CACHED_GPS" : "CACHED_FASTLOC",
+			            m_status_burst_count, entry.info.lat, entry.info.lon, Binascii::hexlify(packet).c_str());
 			m_last_tx_had_gps = true;
 			m_device.send(KineisModulation::LDA2, packet, size_bits);
 			return;
@@ -911,13 +909,12 @@ void LoRaTxService::process_status_burst() {
 	// further pings this surface (continuing progressive status spam when we
 	// can never carry a position is wasteful). The next surfacing event will
 	// re-arm the burst.
-	KineisPacket packet = LoRaPacketBuilder::build_status_packet(
-			service_get_voltage(),
-			service_is_battery_level_low(),
-			size_bits);
+	KineisPacket packet =
+	    LoRaPacketBuilder::build_status_packet(service_get_voltage(), service_is_battery_level_low(), size_bits);
 
-	DEBUG_INFO("LoRaTxService::process_status_burst: STATUS-PURE #%u data=%s sz=%u bits (no cache, silencing further pings)",
-			m_status_burst_count, Binascii::hexlify(packet).c_str(), size_bits);
+	DEBUG_INFO(
+	    "LoRaTxService::process_status_burst: STATUS-PURE #%u data=%s sz=%u bits (no cache, silencing further pings)",
+	    m_status_burst_count, Binascii::hexlify(packet).c_str(), size_bits);
 	m_last_tx_had_gps = false;
 	m_device.send(KineisModulation::LDA2, packet, size_bits);
 
@@ -934,12 +931,12 @@ void LoRaTxService::process_status_burst() {
 	}
 }
 
-void LoRaTxService::react(KineisEventTxStarted const&) {
+void LoRaTxService::react(KineisEventTxStarted const &) {
 	DEBUG_TRACE("LoRaTxService::react: KineisEventTxStarted");
 	service_active();
 }
 
-void LoRaTxService::react(KineisEventTxComplete const&) {
+void LoRaTxService::react(KineisEventTxComplete const &) {
 	DEBUG_TRACE("LoRaTxService::react: KineisEventTxComplete");
 	m_is_tx_pending = false;
 	m_consecutive_device_errors = 0;
@@ -958,8 +955,8 @@ void LoRaTxService::react(KineisEventTxComplete const&) {
 	ArgosConfig argos_config;
 	configuration_store->get_argos_configuration(argos_config);
 	if (argos_config.shutdown_ntime_sat > 0 && m_session_tx_count >= argos_config.shutdown_ntime_sat) {
-		DEBUG_INFO("LoRaTxService: Session TX limit reached (%u/%u) | shutdown",
-		           m_session_tx_count, argos_config.shutdown_ntime_sat);
+		DEBUG_INFO("LoRaTxService: Session TX limit reached (%u/%u) | shutdown", m_session_tx_count,
+		           argos_config.shutdown_ntime_sat);
 		configuration_store->save_params();  // Flush before shutdown
 		PMU::powerdown();
 		return;
@@ -980,7 +977,7 @@ void LoRaTxService::react(KineisEventTxComplete const&) {
 			// Mode 3: arm on every GNSS or Doppler (status-burst) TX.
 			// Bool arming is idempotent — the effective anchor is the dive event.
 			// Log only on first transition per cycle to avoid spam on long bursts.
-			bool qualifies_gnss   = m_last_tx_had_gps;
+			bool qualifies_gnss = m_last_tx_had_gps;
 			bool qualifies_dopper = m_is_surfacing_burst && !m_last_tx_had_gps;
 			if ((qualifies_gnss || qualifies_dopper) && !m_cooldown_armed && !cooldown_active) {
 				m_cooldown_armed = true;
@@ -1021,10 +1018,12 @@ void LoRaTxService::react(KineisEventTxComplete const&) {
 	// power_off and the subsequent warm-up/dive paths see the correct state.
 	if (m_awaiting_surfacing) {
 		DEBUG_INFO("LoRaTxService: burst complete — scheduling LoRa module power-off (surface idle)");
-		system_scheduler->post_task_prio([this]() {
-			DEBUG_INFO("LoRaTxService: powering off LoRa module (post-burst, deferred)");
-			m_device.power_off_immediate();
-		}, "LoRaPostBurstOff", Scheduler::DEFAULT_PRIORITY, 500);
+		system_scheduler->post_task_prio(
+		    [this]() {
+			    DEBUG_INFO("LoRaTxService: powering off LoRa module (post-burst, deferred)");
+			    m_device.power_off_immediate();
+		    },
+		    "LoRaPostBurstOff", Scheduler::DEFAULT_PRIORITY, 500);
 		// Burst is ending — make sure no pre-warm fires after the rail is cut,
 		// and drop any pending CloudLocate-ready trigger (no next TX coming).
 		system_scheduler->cancel_task(m_burst_prewarm_task);
@@ -1063,10 +1062,12 @@ void LoRaTxService::reschedule_cooldown_warm_up() {
 	}
 
 	DEBUG_INFO("LoRaTxService: scheduling module warm-up in %u s (cooldown end)", remaining_s);
-	m_cooldown_warm_up_task = system_scheduler->post_task_prio([this]() {
-		DEBUG_INFO("LoRaTxService: cooldown expired — warming up LoRa module for next surface");
-		m_device.warm_up_for_tx();
-	}, "LoRaCooldownWarmUp", Scheduler::DEFAULT_PRIORITY, remaining_s * 1000);
+	m_cooldown_warm_up_task = system_scheduler->post_task_prio(
+	    [this]() {
+		    DEBUG_INFO("LoRaTxService: cooldown expired — warming up LoRa module for next surface");
+		    m_device.warm_up_for_tx();
+	    },
+	    "LoRaCooldownWarmUp", Scheduler::DEFAULT_PRIORITY, remaining_s * 1000);
 }
 
 /// @brief Arm intra-burst pre-warm task for next TX (lp_mode=0 only).
@@ -1103,30 +1104,31 @@ void LoRaTxService::schedule_burst_prewarm() {
 	// `m_status_burst_count` at this point has already been incremented for the
 	// TX that just completed; service_next_schedule_in_ms will use the same
 	// counter to compute (count) * step, which is the interval to TX N+1.
-	unsigned int interval_s = argos_config.surfacing_burst_init_s +
-	                          m_status_burst_count * argos_config.surfacing_burst_step_s;
-	if (interval_s > argos_config.surfacing_burst_max_s)
-		interval_s = argos_config.surfacing_burst_max_s;
+	unsigned int interval_s =
+	    argos_config.surfacing_burst_init_s + m_status_burst_count * argos_config.surfacing_burst_step_s;
+	if (interval_s > argos_config.surfacing_burst_max_s) interval_s = argos_config.surfacing_burst_max_s;
 
 	unsigned int interval_ms = interval_s * 1000U;
 	if (interval_ms <= BURST_PRE_WARM_DURATION_MS) {
 		// Interval shorter than boot budget — can't compensate, next TX will
 		// just be late by ~2.5 s. Better than failing to schedule pre-warm.
-		DEBUG_TRACE("LoRaTxService: skipping pre-warm — interval %u ms < %u ms budget",
-		            interval_ms, BURST_PRE_WARM_DURATION_MS);
+		DEBUG_TRACE("LoRaTxService: skipping pre-warm — interval %u ms < %u ms budget", interval_ms,
+		            BURST_PRE_WARM_DURATION_MS);
 		return;
 	}
 
 	unsigned int prewarm_delay_ms = interval_ms - BURST_PRE_WARM_DURATION_MS;
-	DEBUG_INFO("LoRaTxService: scheduling pre-warm in %u ms (next TX in %u s, budget %u ms)",
-	           prewarm_delay_ms, interval_s, BURST_PRE_WARM_DURATION_MS);
-	m_burst_prewarm_task = system_scheduler->post_task_prio([this]() {
-		DEBUG_INFO("LoRaTxService: pre-warm — booting LoRa module for next burst TX");
-		m_device.warm_up_for_tx();
-	}, "LoRaBurstPreWarm", Scheduler::DEFAULT_PRIORITY, prewarm_delay_ms);
+	DEBUG_INFO("LoRaTxService: scheduling pre-warm in %u ms (next TX in %u s, budget %u ms)", prewarm_delay_ms,
+	           interval_s, BURST_PRE_WARM_DURATION_MS);
+	m_burst_prewarm_task = system_scheduler->post_task_prio(
+	    [this]() {
+		    DEBUG_INFO("LoRaTxService: pre-warm — booting LoRa module for next burst TX");
+		    m_device.warm_up_for_tx();
+	    },
+	    "LoRaBurstPreWarm", Scheduler::DEFAULT_PRIORITY, prewarm_delay_ms);
 }
 
-void LoRaTxService::react(KineisEventDeviceError const&) {
+void LoRaTxService::react(KineisEventDeviceError const &) {
 	// H3 fix: only count/act on a DeviceError from an IN-FLIGHT TX. service_cancel()
 	// returns whether a TX was pending (and clears the flag). A DeviceError raised
 	// during a warm-up/join with no TX pending must NOT ratchet
@@ -1139,11 +1141,10 @@ void LoRaTxService::react(KineisEventDeviceError const&) {
 		return;
 	}
 	m_consecutive_device_errors++;
-	DEBUG_WARN("LoRaTxService::react: KineisEventDeviceError (consecutive=%u/%u)",
-	           m_consecutive_device_errors, DEVICE_ERROR_MAX_CONSECUTIVE);
+	DEBUG_WARN("LoRaTxService::react: KineisEventDeviceError (consecutive=%u/%u)", m_consecutive_device_errors,
+	           DEVICE_ERROR_MAX_CONSECUTIVE);
 	{
-		if (DEVICE_ERROR_PROBE_PERIOD_S &&
-		    m_consecutive_device_errors >= DEVICE_ERROR_MAX_CONSECUTIVE) {
+		if (DEVICE_ERROR_PROBE_PERIOD_S && m_consecutive_device_errors >= DEVICE_ERROR_MAX_CONSECUTIVE) {
 			m_device_error_suspend_until = service_current_time() + DEVICE_ERROR_PROBE_PERIOD_S;
 			DEBUG_ERROR("LoRaTxService: %u consecutive device errors — suspending TX for %u s, "
 			            "then one probe (a surface event clears it sooner)",
@@ -1157,7 +1158,7 @@ void LoRaTxService::react(KineisEventDeviceError const&) {
 			// DEVICE_ERROR_MAX_CONSECUTIVE; with LORA_TX_ERROR_SUSPEND_S=0 it
 			// keeps climbing, so the shift has to be bounded explicitly.
 			unsigned int shift = m_consecutive_device_errors - 1;
-			if (shift > 16) shift = 16;   // 60 s << 16 is already far past the cap
+			if (shift > 16) shift = 16;  // 60 s << 16 is already far past the cap
 			unsigned int backoff_ms = DEVICE_ERROR_BACKOFF_BASE_MS << shift;
 			if (backoff_ms > DEVICE_ERROR_BACKOFF_MAX_MS) backoff_ms = DEVICE_ERROR_BACKOFF_MAX_MS;
 			DEBUG_WARN("LoRaTxService: backoff %u ms before next TX attempt", backoff_ms);

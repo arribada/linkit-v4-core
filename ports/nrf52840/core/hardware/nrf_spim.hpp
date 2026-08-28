@@ -20,4 +20,4 @@ public:
 	int finish_transfer() override;
 };
 
-#endif // _NRF_SPIM_HPP__
+#endif  // _NRF_SPIM_HPP__

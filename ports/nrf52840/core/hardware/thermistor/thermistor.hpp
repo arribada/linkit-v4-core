@@ -43,14 +43,14 @@ public:
 
 	/// @param[out] value  0=calibration offset, 1=last temperature.
 	/// @param offset      SCALR offset.
-	void calibration_read(double& value, const unsigned int offset) override;
+	void calibration_read(double &value, const unsigned int offset) override;
 
 private:
-	Calibration m_cal;                    ///< Persistent calibration file (THERMISTOR.CAL)
-	uint8_t m_adc_channel;                ///< SAADC channel index
-	bool m_is_init = false;               ///< True after ADC calibration
-	double m_last_temperature = 0.0;      ///< Cached last reading (°C)
-	double m_offset_temp = 0.0;           ///< Calibration offset (°C, added to raw reading)
+	Calibration m_cal;                ///< Persistent calibration file (THERMISTOR.CAL)
+	uint8_t m_adc_channel;            ///< SAADC channel index
+	bool m_is_init = false;           ///< True after ADC calibration
+	double m_last_temperature = 0.0;  ///< Cached last reading (°C)
+	double m_offset_temp = 0.0;       ///< Calibration offset (°C, added to raw reading)
 
 	/// @brief Run SAADC offset calibration (200 ms timeout).
 	void adc_calibration();

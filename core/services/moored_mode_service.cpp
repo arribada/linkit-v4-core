@@ -12,7 +12,7 @@
 #include "interrupt_lock.hpp"
 #include "rtc.hpp"
 #include "debug.hpp"
-#include "pmu.hpp"   // PMU::get_timestamp_ms() for the evaluate() cache
+#include "pmu.hpp"  // PMU::get_timestamp_ms() for the evaluate() cache
 
 // Pre-deploy validation channel — emit grep-friendly [VAL-MOORED] tagged
 // transitions when -DVALIDATION_LOG_ENABLE=1 is set at build. Default off
@@ -46,15 +46,15 @@ namespace {
 // counters, then an explicit pad): the CRC is computed over the raw bytes, so
 // a compiler-inserted hole would make the checksum non-deterministic.
 struct MooredNoinit {
-	double      ref_lat;              // reference anchor (degrees)
-	double      ref_lon;
-	std::time_t last_axl_exit_rtc;    // debounce anchor for accelerometer exits
-	uint8_t     in_moored;            // 0 = UNDERWAY, 1 = MOORED
-	uint8_t     has_ref;              // 0 until the first valid fix lands
-	uint8_t     stationary_fixes;     // consecutive fixes inside the radius
-	uint8_t     motion_events;        // consecutive AXL wake-ups while MOORED
-	uint16_t    pad;                  // keep `crc` deterministically aligned
-	uint16_t    crc;
+	double ref_lat;  // reference anchor (degrees)
+	double ref_lon;
+	std::time_t last_axl_exit_rtc;  // debounce anchor for accelerometer exits
+	uint8_t in_moored;              // 0 = UNDERWAY, 1 = MOORED
+	uint8_t has_ref;                // 0 until the first valid fix lands
+	uint8_t stationary_fixes;       // consecutive fixes inside the radius
+	uint8_t motion_events;          // consecutive AXL wake-ups while MOORED
+	uint16_t pad;                   // keep `crc` deterministically aligned
+	uint16_t crc;
 };
 
 #ifndef CPPUTEST
@@ -64,10 +64,7 @@ MooredNoinit s_noinit;
 #endif
 
 uint16_t noinit_crc() {
-	return crc16_compute(
-		reinterpret_cast<const uint8_t *>(&s_noinit),
-		offsetof(decltype(s_noinit), crc),
-		nullptr);
+	return crc16_compute(reinterpret_cast<const uint8_t *>(&s_noinit), offsetof(decltype(s_noinit), crc), nullptr);
 }
 
 void clear_state() {
@@ -126,15 +123,12 @@ void enter_underway_locked() {
 	s_noinit.motion_events = 0;
 }
 
-} // namespace
+}  // namespace
 
 void MooredModeService::restore_state() {
-	if (s_noinit.crc == noinit_crc() &&
-	    s_noinit.in_moored <= 1 &&
-	    s_noinit.has_ref <= 1) {
+	if (s_noinit.crc == noinit_crc() && s_noinit.in_moored <= 1 && s_noinit.has_ref <= 1) {
 		DEBUG_INFO("MooredModeService: restored from noinit (moored=%u, has_ref=%u, still=%u, motion=%u)",
-		           s_noinit.in_moored, s_noinit.has_ref,
-		           s_noinit.stationary_fixes, s_noinit.motion_events);
+		           s_noinit.in_moored, s_noinit.has_ref, s_noinit.stationary_fixes, s_noinit.motion_events);
 		publish_state(s_noinit.in_moored);
 		return;
 	}
@@ -167,8 +161,8 @@ void MooredModeService::on_gnss_fix(double lat, double lon, int32_t gspeed_mms, 
 	}
 
 	double distance_m = haversine_distance(s_noinit.ref_lon, s_noinit.ref_lat, lon, lat) * 1000.0;
-	bool   too_far    = distance_m > (double)radius_m;
-	bool   too_fast   = gspeed_mms > UNDERWAY_SPEED_MMS;
+	bool too_far = distance_m > (double)radius_m;
+	bool too_fast = gspeed_mms > UNDERWAY_SPEED_MMS;
 
 	if (too_far || too_fast) {
 		// Under way. Re-plant the anchor at the new position so the next
@@ -184,17 +178,14 @@ void MooredModeService::on_gnss_fix(double lat, double lon, int32_t gspeed_mms, 
 		}
 		if (was_moored) {
 			DEBUG_INFO("MooredModeService: MOORED -> UNDERWAY (%s: d=%.1f m radius=%u m gSpeed=%ld mm/s)",
-			           too_far ? "displacement" : "speed",
-			           distance_m, radius_m, (long)gspeed_mms);
+			           too_far ? "displacement" : "speed", distance_m, radius_m, (long)gspeed_mms);
 #if VALIDATION_LOG_ENABLE
-			DEBUG_INFO("[VAL-MOORED] exit UNDERWAY t=%u d_m=%d gspeed=%ld reason=%s",
-			           (unsigned int)now, (int)distance_m, (long)gspeed_mms,
-			           too_far ? "displacement" : "speed");
+			DEBUG_INFO("[VAL-MOORED] exit UNDERWAY t=%u d_m=%d gspeed=%ld reason=%s", (unsigned int)now,
+			           (int)distance_m, (long)gspeed_mms, too_far ? "displacement" : "speed");
 #endif
 			publish_state(0);
 		} else {
-			DEBUG_TRACE("MooredModeService: still under way (d=%.1f m gSpeed=%ld mm/s)",
-			            distance_m, (long)gspeed_mms);
+			DEBUG_TRACE("MooredModeService: still under way (d=%.1f m gSpeed=%ld mm/s)", distance_m, (long)gspeed_mms);
 		}
 		return;
 	}
@@ -219,16 +210,16 @@ void MooredModeService::on_gnss_fix(double lat, double lon, int32_t gspeed_mms, 
 			s_noinit.motion_events = 0;
 			s_noinit.crc = noinit_crc();
 		}
-		DEBUG_INFO("MooredModeService: UNDERWAY -> MOORED (%u fixes within %u m of anchor)",
-		           s_noinit.stationary_fixes, radius_m);
+		DEBUG_INFO("MooredModeService: UNDERWAY -> MOORED (%u fixes within %u m of anchor)", s_noinit.stationary_fixes,
+		           radius_m);
 #if VALIDATION_LOG_ENABLE
-		DEBUG_INFO("[VAL-MOORED] enter MOORED t=%u fixes=%u radius_m=%u d_m=%d",
-		           (unsigned int)now, s_noinit.stationary_fixes, radius_m, (int)distance_m);
+		DEBUG_INFO("[VAL-MOORED] enter MOORED t=%u fixes=%u radius_m=%u d_m=%d", (unsigned int)now,
+		           s_noinit.stationary_fixes, radius_m, (int)distance_m);
 #endif
 		publish_state(1);
 	} else {
-		DEBUG_TRACE("MooredModeService: stationary %u/%u (d=%.1f m)",
-		            s_noinit.stationary_fixes, enter_fixes, distance_m);
+		DEBUG_TRACE("MooredModeService: stationary %u/%u (d=%.1f m)", s_noinit.stationary_fixes, enter_fixes,
+		            distance_m);
 	}
 }
 
@@ -253,8 +244,8 @@ void MooredModeService::on_motion_event(std::time_t now) {
 	// acquisition per MOORED_AXL_HOLDOFF_S however hard the accelerometer
 	// chatters.
 	unsigned int holdoff_s = read_uint(ParamID::MOORED_AXL_HOLDOFF_S, 900);
-	if (holdoff_s && s_noinit.last_axl_exit_rtc != 0 && now >= s_noinit.last_axl_exit_rtc &&
-	    (now - s_noinit.last_axl_exit_rtc) < (std::time_t)holdoff_s) {
+	if (holdoff_s && s_noinit.last_axl_exit_rtc != 0 && now >= s_noinit.last_axl_exit_rtc
+	    && (now - s_noinit.last_axl_exit_rtc) < (std::time_t)holdoff_s) {
 		DEBUG_TRACE("MooredModeService: motion event ignored (hold-off, %u s remaining)",
 		            (unsigned int)(holdoff_s - (now - s_noinit.last_axl_exit_rtc)));
 		return;
@@ -274,11 +265,9 @@ void MooredModeService::on_motion_event(std::time_t now) {
 		return;
 	}
 
-	DEBUG_INFO("MooredModeService: MOORED -> UNDERWAY (%u accelerometer wake-ups)",
-	           s_noinit.motion_events);
+	DEBUG_INFO("MooredModeService: MOORED -> UNDERWAY (%u accelerometer wake-ups)", s_noinit.motion_events);
 #if VALIDATION_LOG_ENABLE
-	DEBUG_INFO("[VAL-MOORED] exit UNDERWAY t=%u events=%u reason=motion",
-	           (unsigned int)now, s_noinit.motion_events);
+	DEBUG_INFO("[VAL-MOORED] exit UNDERWAY t=%u events=%u reason=motion", (unsigned int)now, s_noinit.motion_events);
 #endif
 	{
 		InterruptLock lock;
@@ -301,18 +290,18 @@ void MooredModeService::evaluate() {
 void MooredModeService::evaluate(std::time_t now) {
 	if (!configuration_store) return;
 
-	// Short-window cache: evaluate() is invoked from every
-	// get_argos_configuration / get_gnss_configuration, which fires many times
-	// per second. Mirrors the HM-4 fix in HauledModeService. The
-	// feature-disabled fast-path below is deliberately NOT cached, so a DTE
-	// MRP00 toggle takes effect immediately.
-	#ifndef CPPUTEST
+// Short-window cache: evaluate() is invoked from every
+// get_argos_configuration / get_gnss_configuration, which fires many times
+// per second. Mirrors the HM-4 fix in HauledModeService. The
+// feature-disabled fast-path below is deliberately NOT cached, so a DTE
+// MRP00 toggle takes effect immediately.
+#ifndef CPPUTEST
 	static uint64_t s_last_evaluate_ms = 0;
 	uint64_t now_ms = PMU::get_timestamp_ms();
 	bool cache_hot = (s_last_evaluate_ms != 0) && (now_ms - s_last_evaluate_ms < 500);
-	#else
+#else
 	bool cache_hot = false;  // tests need deterministic evaluation
-	#endif
+#endif
 
 	if (!read_bool(ParamID::MOORED_DETECT_EN, false)) {
 		// Detection disabled: never stay stuck in MOORED, or the operator would
@@ -330,9 +319,9 @@ void MooredModeService::evaluate(std::time_t now) {
 	}
 
 	if (cache_hot) return;
-	#ifndef CPPUTEST
+#ifndef CPPUTEST
 	s_last_evaluate_ms = now_ms;
-	#endif
+#endif
 
 	// RTC rollback (typically a WDT reset that brought the RTC back to the
 	// virtual epoch while noinit kept last session's real timestamps). Left
@@ -346,8 +335,8 @@ void MooredModeService::evaluate(std::time_t now) {
 	// hooks document a GPSService caller that does not exist (the RTC is set in
 	// the M10Q driver and by DTE), so no such hook can be relied upon here.
 	if (s_noinit.last_axl_exit_rtc != 0 && now < s_noinit.last_axl_exit_rtc) {
-		DEBUG_WARN("MooredModeService::evaluate: RTC rollback (now=%u < stored=%u), re-baselining",
-		           (unsigned int)now, (unsigned int)s_noinit.last_axl_exit_rtc);
+		DEBUG_WARN("MooredModeService::evaluate: RTC rollback (now=%u < stored=%u), re-baselining", (unsigned int)now,
+		           (unsigned int)s_noinit.last_axl_exit_rtc);
 		InterruptLock lock;
 		s_noinit.last_axl_exit_rtc = now;
 		s_noinit.crc = noinit_crc();

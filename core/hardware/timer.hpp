@@ -41,7 +41,8 @@ public:
 	 * @param target_count  Absolute time in ms (compared against get_counter()).
 	 * @return Handle for cancellation, or nullopt if the schedule list is full.
 	 */
-	virtual TimerHandle add_schedule(stdext::inplace_function<void(), INPLACE_FUNCTION_SIZE_TIMER> const &task_func, uint64_t target_count) = 0;
+	virtual TimerHandle add_schedule(stdext::inplace_function<void(), INPLACE_FUNCTION_SIZE_TIMER> const &task_func,
+	                                 uint64_t target_count) = 0;
 
 	/// @brief Cancel a pending schedule.  Resets @p handle to nullopt.
 	virtual void cancel_schedule(TimerHandle &handle) = 0;

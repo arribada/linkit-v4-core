@@ -29,7 +29,7 @@ namespace bench {
 /// @brief Parse and execute one bench command line (leading '%').
 /// @param line  Raw line as read from USB (trailing CR/LF tolerated).
 /// @return true if the line was a bench command (started with '%') and was consumed.
-bool handle_line(const std::string& line);
+bool handle_line(const std::string &line);
 
 /// @brief Start the all-state USB poll task. Reads bench commands from USB-CDC in
 /// every FSM state EXCEPT ConfigurationState (there the config USB poller owns the

@@ -22,8 +22,8 @@ private:
 
 	static constexpr unsigned int MSECS_PER_SECOND = 1000;
 	static constexpr unsigned int SECONDS_PER_HOUR = 3600;
-	static constexpr unsigned int SECONDS_PER_DAY  = 86400;
-	static constexpr unsigned int DUTYCYCLE_24HRS  = 0xFFFFFFU;
+	static constexpr unsigned int SECONDS_PER_DAY = 86400;
+	static constexpr unsigned int DUTYCYCLE_24HRS = 0xFFFFFFU;
 
 	int compute_random_jitter(bool jitter_en, int min = -5000, int max = 5000);
 	void schedule_periodic(unsigned int period_ms, bool jitter_en, unsigned int duty_cycle, uint64_t now_ms);
@@ -40,10 +40,10 @@ public:
 	/// @param config  Argos configuration (tx_interval, jitter, duty_cycle).
 	/// @param now     Current RTC time.
 	/// @return Delay in ms until next TX, or INVALID_SCHEDULE.
-	unsigned int schedule_duty_cycle(ArgosConfig& config, std::time_t now);
+	unsigned int schedule_duty_cycle(ArgosConfig &config, std::time_t now);
 
 	/// @brief Schedule next TX in legacy mode (24h duty cycle).
-	unsigned int schedule_legacy(ArgosConfig& config, std::time_t now);
+	unsigned int schedule_legacy(ArgosConfig &config, std::time_t now);
 
 	/// @brief Set earliest allowed TX time.
 	void set_earliest_schedule(std::time_t t);

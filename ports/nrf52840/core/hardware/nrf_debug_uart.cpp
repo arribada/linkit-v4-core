@@ -12,8 +12,7 @@ static const nrfx_uarte_t m_debug_uarte = NRFX_UARTE_INSTANCE(1);
 
 bool NrfDebugUart::m_is_init = false;
 
-void NrfDebugUart::init(uint32_t tx_pin)
-{
+void NrfDebugUart::init(uint32_t tx_pin) {
 	if (m_is_init) return;
 
 	nrfx_uarte_config_t config = {};
@@ -33,15 +32,13 @@ void NrfDebugUart::init(uint32_t tx_pin)
 	}
 }
 
-void NrfDebugUart::write(const char *data, int len)
-{
+void NrfDebugUart::write(const char *data, int len) {
 	if (!m_is_init || len <= 0) return;
 
 	// nrfx_uarte_tx is blocking when no event handler is provided
 	nrfx_uarte_tx(&m_debug_uarte, reinterpret_cast<const uint8_t *>(data), len);
 }
 
-bool NrfDebugUart::is_init()
-{
+bool NrfDebugUart::is_init() {
 	return m_is_init;
 }

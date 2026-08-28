@@ -17,13 +17,14 @@
 #include "debug.hpp"
 
 
-template<typename T> class DepthPile {
+template <typename T> class DepthPile {
 private:
 	struct Entry {
 		unsigned int burst_counter;
 		T data;
+
 	public:
-		Entry(T& d, unsigned int c) {
+		Entry(T &d, unsigned int c) {
 			data = d;
 			burst_counter = c;
 		}
@@ -34,11 +35,9 @@ private:
 	unsigned int m_retrieve_index;
 
 public:
-	DepthPile(unsigned int max_size=24) : m_max_size(max_size), m_retrieve_index(0) {}
+	DepthPile(unsigned int max_size = 24) : m_max_size(max_size), m_retrieve_index(0) {}
 
-	void clear() {
-		m_entry.clear();
-	}
+	void clear() { m_entry.clear(); }
 
 	/// @brief Resize the cap and evict oldest entries if currently over the new limit.
 	/// Eviction is unconditional — entries with non-zero burst_counter (pending retries)
@@ -52,10 +51,9 @@ public:
 			m_entry.pop_front();
 	}
 
-	void store(T& e, unsigned int burst_count) {
+	void store(T &e, unsigned int burst_count) {
 		m_entry.push_back(Entry(e, burst_count));
-		if (m_entry.size() > m_max_size)
-			m_entry.pop_front();
+		if (m_entry.size() > m_max_size) m_entry.pop_front();
 		DEBUG_TRACE("DepthPile::store: depth pile has %u/%u entries", m_entry.size(), m_max_size);
 	}
 
@@ -64,21 +62,18 @@ public:
 	/// GPS entries convey the same information ("still no fix") and the
 	/// older one wastes airtime + pile capacity.
 	/// @return true if the last entry was replaced; false if a new entry was appended.
-	template<typename Pred>
-	bool store_or_replace_last(T& e, unsigned int burst_count, Pred pred) {
+	template <typename Pred> bool store_or_replace_last(T &e, unsigned int burst_count, Pred pred) {
 		if (!m_entry.empty() && pred(m_entry.back().data)) {
 			m_entry.back() = Entry(e, burst_count);
-			DEBUG_TRACE("DepthPile::store_or_replace_last: replaced last entry, size=%u/%u",
-			            m_entry.size(), m_max_size);
+			DEBUG_TRACE("DepthPile::store_or_replace_last: replaced last entry, size=%u/%u", m_entry.size(),
+			            m_max_size);
 			return true;
 		}
 		store(e, burst_count);
 		return false;
 	}
 
-	unsigned int size() {
-		return m_entry.size();
-	}
+	unsigned int size() { return m_entry.size(); }
 
 #ifdef BENCH_TEST
 	/// @brief Bench probe: (entry, burst_counter) for every slot, oldest first.
@@ -88,25 +83,24 @@ public:
 	/// CONSUMED without ever being encoded into a packet -- which is exactly what
 	/// process_gnss_burst() does when it retrieves a mixed pile and then keeps
 	/// only v.back().
-	std::vector<std::pair<T*, unsigned int>> bench_dump() {
-		std::vector<std::pair<T*, unsigned int>> v;
-		for (auto& e : m_entry)
-			v.push_back({&e.data, e.burst_counter});
+	std::vector<std::pair<T *, unsigned int>> bench_dump() {
+		std::vector<std::pair<T *, unsigned int>> v;
+		for (auto &e : m_entry)
+			v.push_back({ &e.data, e.burst_counter });
 		return v;
 	}
 #endif
 
 	unsigned int eligible() {
 		unsigned int count = 0;
-		for (auto const& it : m_entry) {
+		for (auto const &it : m_entry) {
 			if (it.burst_counter) count++;
 		}
 		return count;
 	}
 
 	/// @brief Remove entries matching a predicate.
-	template<typename Pred>
-	unsigned int remove_if(Pred pred) {
+	template <typename Pred> unsigned int remove_if(Pred pred) {
 		unsigned int removed = 0;
 		auto it = m_entry.begin();
 		while (it != m_entry.end()) {
@@ -123,18 +117,17 @@ public:
 		return removed;
 	}
 
-	std::vector<T*> retrieve_latest() {
-		std::vector<T*> v;
+	std::vector<T *> retrieve_latest() {
+		std::vector<T *> v;
 		if (m_entry.size()) {
-			unsigned int idx = m_entry.size()-1;
+			unsigned int idx = m_entry.size() - 1;
 			// Deliberately non-consuming (deviation from v3, which decremented
 			// here): consuming would (a) burn the repetition even when the
 			// time-sync TX is skipped by the modulation-fit guards, and (b)
 			// desynchronize the GPS pile rotation from the sensor piles when
 			// sensor TX is enabled. The time-sync burst is therefore a free
 			// extra transmission on top of NTRY_PER_MESSAGE.
-			if (m_entry[idx].burst_counter)
-				v.push_back(&m_entry[idx].data);
+			if (m_entry[idx].burst_counter) v.push_back(&m_entry[idx].data);
 		}
 		return v;
 	}
@@ -144,18 +137,19 @@ public:
 	// scheduled retries have been used). Intended for read-only inspection by
 	// the BaseGnssStrategy::REUSE_LAST path, which needs to read the last fix
 	// regardless of whether it still has retries left.
-	T* peek_back() {
+	T *peek_back() {
 		if (m_entry.empty()) return nullptr;
 		return &m_entry.back().data;
 	}
 
-	std::vector<T*> retrieve(unsigned int depth, unsigned int max_messages=3) {
+	std::vector<T *> retrieve(unsigned int depth, unsigned int max_messages = 3) {
 		max_messages = std::min(depth, max_messages);
-		unsigned int max_index = (depth + (max_messages-1)) / max_messages;
+		unsigned int max_index = (depth + (max_messages - 1)) / max_messages;
 		unsigned int span = std::min(max_messages, (unsigned int)m_entry.size());
-		std::vector<T*> v;
+		std::vector<T *> v;
 
-		DEBUG_TRACE("DepthPile: retrieve: slot=%u/%u span=%u occupancy=%u", m_retrieve_index % max_index, max_index-1, span, m_entry.size());
+		DEBUG_TRACE("DepthPile: retrieve: slot=%u/%u span=%u occupancy=%u", m_retrieve_index % max_index, max_index - 1,
+		            span, m_entry.size());
 
 		// Find first eligible slot for transmission
 		unsigned int max_msg_index = m_retrieve_index + max_index;
@@ -166,11 +160,10 @@ public:
 			retrieve_index = m_retrieve_index % max_index;
 			// Check to see if any GPS entry has a non-zero burst counter
 			for (unsigned int k = 0; k < span; k++) {
-				unsigned int idx = m_entry.size() - (span * (retrieve_index+1)) + k;
+				unsigned int idx = m_entry.size() - (span * (retrieve_index + 1)) + k;
 				if (idx < m_entry.size() && m_entry[idx].burst_counter) {
 					eligible++;
-					if (!first_eligible.has_value())
-						first_eligible = idx;
+					if (!first_eligible.has_value()) first_eligible = idx;
 				}
 			}
 
@@ -178,12 +171,13 @@ public:
 		}
 
 		if (eligible == 1) {
-			DEBUG_TRACE("DepthPile: retrieve: idx=%u burst_counter=%u", first_eligible.value(), m_entry[first_eligible.value()].burst_counter);
+			DEBUG_TRACE("DepthPile: retrieve: idx=%u burst_counter=%u", first_eligible.value(),
+			            m_entry[first_eligible.value()].burst_counter);
 			m_entry[first_eligible.value()].burst_counter--;
 			v.push_back(&m_entry[first_eligible.value()].data);
 		} else if (eligible > 1) {
 			for (unsigned int k = 0; k < span; k++) {
-				unsigned int idx = m_entry.size() - (span * (retrieve_index+1)) + k;
+				unsigned int idx = m_entry.size() - (span * (retrieve_index + 1)) + k;
 				// We may have zero burst counter in some entries
 				if (idx < m_entry.size() && m_entry[idx].burst_counter) {
 					DEBUG_TRACE("DepthPile: retrieve: idx=%u burst_counter=%u", idx, m_entry[idx].burst_counter);
@@ -204,7 +198,7 @@ class DepthPileManager {
 public:
 	DepthPileManager();
 
-	void notify_peer_event(ServiceEvent& e);
+	void notify_peer_event(ServiceEvent &e);
 	void clear() {
 		m_gps_depth_pile.clear();
 		m_als_depth_pile.clear();
@@ -215,9 +209,7 @@ public:
 		m_axl_depth_pile.clear();
 #endif
 	}
-	bool eligible() {
-		return m_gps_depth_pile.eligible();
-	}
+	bool eligible() { return m_gps_depth_pile.eligible(); }
 
 	/// @brief Remove CloudLocate/Fastloc (and optionally NO_FIX) entries from the
 	/// GPS depth pile. Called when a real GPS fix arrives to replace degraded
@@ -225,22 +217,17 @@ public:
 	/// by LEGACY/DUTY_CYCLE/PASS_PREDICTION where they are delta_time_loc grid
 	/// fillers that must keep their slot (v3 dating).
 	unsigned int purge_non_fix_entries(bool include_no_fix = true) {
-		return m_gps_depth_pile.remove_if([include_no_fix](const GPSLogEntry& e) {
-			return e.info.event_type == GPSEventType::CLOUDLOCATE ||
-			       e.info.event_type == GPSEventType::FASTLOC ||
-			       (include_no_fix && e.info.event_type == GPSEventType::NO_FIX);
+		return m_gps_depth_pile.remove_if([include_no_fix](const GPSLogEntry &e) {
+			return e.info.event_type == GPSEventType::CLOUDLOCATE || e.info.event_type == GPSEventType::FASTLOC
+			       || (include_no_fix && e.info.event_type == GPSEventType::NO_FIX);
 		});
 	}
 
-	std::vector<GPSLogEntry*> retrieve_gps_latest() {
-		return m_gps_depth_pile.retrieve_latest();
-	}
+	std::vector<GPSLogEntry *> retrieve_gps_latest() { return m_gps_depth_pile.retrieve_latest(); }
 
 	// Peek the most recent GPS entry without consuming a burst slot — backs
 	// the BaseGnssStrategy::REUSE_LAST path. Returns nullptr on empty pile.
-	GPSLogEntry* peek_gps_latest_any() {
-		return m_gps_depth_pile.peek_back();
-	}
+	GPSLogEntry *peek_gps_latest_any() { return m_gps_depth_pile.peek_back(); }
 
 #ifdef BENCH_TEST
 	/// @brief Bench probe: "<type>:<burst_counter>" per GPS slot, oldest first.
@@ -248,10 +235,10 @@ public:
 	std::string bench_dump_gps() {
 		std::string out;
 		char buf[16];
-		for (auto const& p : m_gps_depth_pile.bench_dump()) {
+		for (auto const &p : m_gps_depth_pile.bench_dump()) {
 			unsigned int t;
 			switch (p.first->info.event_type) {
-			case GPSEventType::FASTLOC:     t = 2; break;
+			case GPSEventType::FASTLOC: t = 2; break;
 			case GPSEventType::CLOUDLOCATE: t = 3; break;
 			case GPSEventType::ON:
 			case GPSEventType::OFF:
@@ -267,25 +254,23 @@ public:
 	}
 #endif
 
-	std::vector<GPSLogEntry*> retrieve_gps(unsigned int depth_pile) {
-		return m_gps_depth_pile.retrieve(depth_pile);
-	}
+	std::vector<GPSLogEntry *> retrieve_gps(unsigned int depth_pile) { return m_gps_depth_pile.retrieve(depth_pile); }
 
 	/// @brief Retrieve GPS entries with an explicit per-slot cap. LoRa uses a higher cap
 	/// than Argos (which is fixed at 3 by the LDA2 24-byte budget).
-	std::vector<GPSLogEntry*> retrieve_gps(unsigned int depth_pile, unsigned int max_messages) {
+	std::vector<GPSLogEntry *> retrieve_gps(unsigned int depth_pile, unsigned int max_messages) {
 		return m_gps_depth_pile.retrieve(depth_pile, max_messages);
 	}
 
-	GPSLogEntry* retrieve_gps_single(unsigned int depth_pile) {
+	GPSLogEntry *retrieve_gps_single(unsigned int depth_pile) {
 		try {
 			return m_gps_depth_pile.retrieve(depth_pile, 1).at(0);
-		} catch (const std::out_of_range& e) {
+		} catch (const std::out_of_range &e) {
 			return nullptr;
 		}
 	}
 
-	ServiceSensorData* retrieve_sensor_single(unsigned int depth_pile, ServiceIdentifier service) {
+	ServiceSensorData *retrieve_sensor_single(unsigned int depth_pile, ServiceIdentifier service) {
 		try {
 			if (service == ServiceIdentifier::ALS_SENSOR) {
 				return m_als_depth_pile.retrieve(depth_pile, 1).at(0);
@@ -307,7 +292,7 @@ public:
 			// (ErrorCode is not derived from std::exception so it would escape
 			// any narrow catch block and reach terminate()).
 			return nullptr;
-		} catch (const std::out_of_range& e) {
+		} catch (const std::out_of_range &e) {
 			// Empty deque: retrieve(...).at(0) throws — treat as "no data".
 			return nullptr;
 		}

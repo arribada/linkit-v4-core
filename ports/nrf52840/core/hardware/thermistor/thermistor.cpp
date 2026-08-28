@@ -17,17 +17,15 @@
 
 /// @name ADC constants
 /// @{
-static constexpr int   ADC_MAX_VALUE = 16384;  ///< 2^14 (14-bit resolution)
-static constexpr float ADC_REFERENCE = 0.6f;   ///< Internal reference voltage (V)
+static constexpr int ADC_MAX_VALUE = 16384;   ///< 2^14 (14-bit resolution)
+static constexpr float ADC_REFERENCE = 0.6f;  ///< Internal reference voltage (V)
 /// @}
 
-static void nrfx_saadc_event_handler(nrfx_saadc_evt_t const *p_event)
-{
+static void nrfx_saadc_event_handler(nrfx_saadc_evt_t const *p_event) {
 	(void)p_event;
 }
 
-Thermistor::Thermistor(uint8_t adc_channel) : Sensor("THERMISTOR"), m_cal(Calibration("THERMISTOR"))
-{
+Thermistor::Thermistor(uint8_t adc_channel) : Sensor("THERMISTOR"), m_cal(Calibration("THERMISTOR")) {
 	DEBUG_INFO("THERMISTOR::Init: ADC Channel %u", adc_channel);
 	adc_calibration();
 	try {
@@ -43,8 +41,7 @@ Thermistor::Thermistor(uint8_t adc_channel) : Sensor("THERMISTOR"), m_cal(Calibr
 }
 
 /// @brief Run SAADC offset calibration with 200 ms timeout.
-void Thermistor::adc_calibration()
-{
+void Thermistor::adc_calibration() {
 	DEBUG_TRACE("THERMISTOR::%s: Calibrating ADC...", __func__);
 	nrfx_saadc_init(&BSP::ADC_Inits.config, nrfx_saadc_event_handler);
 	nrfx_saadc_calibrate_offset();
@@ -67,8 +64,7 @@ void Thermistor::adc_calibration()
 
 /// @brief Sample SAADC and return voltage in millivolts.
 /// @return ADC reading in mV.
-float Thermistor::sample_adc()
-{
+float Thermistor::sample_adc() {
 	if (!m_is_init) {
 		adc_calibration();
 	}
@@ -83,8 +79,8 @@ float Thermistor::sample_adc()
 	nrfx_saadc_uninit();
 	nrf_peripheral_power_reset(NRF_SAADC_BASE_ADDR);  // Errata 241: prevent 400 µA idle leak
 
-	float adc_voltage = (static_cast<float>(raw) / static_cast<float>(ADC_MAX_VALUE)) *
-		static_cast<float>(ADC_REFERENCE) * (1.0f / static_cast<float>(ADC_GAIN));
+	float adc_voltage = (static_cast<float>(raw) / static_cast<float>(ADC_MAX_VALUE))
+	                    * static_cast<float>(ADC_REFERENCE) * (1.0f / static_cast<float>(ADC_GAIN));
 
 	return adc_voltage * 1000.0f;  // Return millivolts
 }
@@ -92,8 +88,7 @@ float Thermistor::sample_adc()
 /// @brief Convert ADC millivolts to temperature using Beta equation with range-dependent B-values.
 /// @param adc  ADC reading in millivolts.
 /// @return Temperature in °C (with calibration offset), or NAN on invalid reading.
-double Thermistor::convert_temp(float adc)
-{
+double Thermistor::convert_temp(float adc) {
 	// Convert ADC value (mV) to Voltage (V)
 	double v = static_cast<double>(adc) / 1000.0;
 
@@ -109,17 +104,17 @@ double Thermistor::convert_temp(float adc)
 	double r_therm = R_BOTTOM * ((3.3 / v) - 1.0);
 
 	// NTC thermistor properties
-	constexpr double R0 = 10000.0;   // Resistance at 25C
-	constexpr double T0 = 298.15;    // 25C in Kelvin
+	constexpr double R0 = 10000.0;  // Resistance at 25C
+	constexpr double T0 = 298.15;   // 25C in Kelvin
 
 	// Dynamically select B-value based on resistance range
 	double B = 3434.0;
 	if (r_therm > 12000.0) {
-		B = 3380.0;       // Cold (<25C)
+		B = 3380.0;  // Cold (<25C)
 	} else if (r_therm > 8000.0) {
-		B = 3434.0;       // Warm (25-50C)
+		B = 3434.0;  // Warm (25-50C)
 	} else {
-		B = 3455.0;       // Hot (>50C)
+		B = 3455.0;  // Hot (>50C)
 	}
 
 	// Beta equation: 1/T = 1/T0 + (1/B) * ln(R_therm / R0)
@@ -144,8 +139,7 @@ double Thermistor::convert_temp(float adc)
 /// @param offset  Unused (only channel 0).
 /// @return Temperature in °C.
 /// @throws ErrorCode::I2C_COMMS_ERROR if ADC reading is invalid.
-double Thermistor::read(unsigned int offset)
-{
+double Thermistor::read(unsigned int offset) {
 	(void)offset;
 	float adc = sample_adc();
 	double temperature = convert_temp(adc);
@@ -181,8 +175,8 @@ double Thermistor::find_calibration_point(double target_temp_c) {
 	// offset = target - measured (added to raw readings to correct)
 	double calibration_offset = target_c - average_raw;
 
-	DEBUG_INFO("THERMISTOR::calibrate: target=%.3f C | measured=%.3f C | offset=%.3f C",
-		target_c, average_raw, calibration_offset);
+	DEBUG_INFO("THERMISTOR::calibrate: target=%.3f C | measured=%.3f C | offset=%.3f C", target_c, average_raw,
+	           calibration_offset);
 
 	// Restore offset (will be replaced when calibration is applied)
 	m_offset_temp = saved_offset;
@@ -218,8 +212,7 @@ void Thermistor::calibration_save(bool force) {
 /// @brief Read calibration offset (offset=0) or last temperature (offset=1).
 /// @param[out] value  Read-back value.
 /// @param offset      0=calibration offset, 1=last temperature.
-void Thermistor::calibration_read(double& value, const unsigned int offset)
-{
+void Thermistor::calibration_read(double &value, const unsigned int offset) {
 	if (0 == offset) {
 		try {
 			value = m_cal.read(static_cast<unsigned int>(CalibrationPoint::TEMP_THRESHOLD));

@@ -30,18 +30,17 @@
  *
  * @param base_address  Peripheral base address (e.g. 0x40003000 for TWIM0).
  */
-static inline void nrf_peripheral_power_reset(uint32_t base_address)
-{
+static inline void nrf_peripheral_power_reset(uint32_t base_address) {
 	volatile auto *power = reinterpret_cast<volatile uint32_t *>(base_address + 0xFFC);
-	*power = 0;         // Power OFF — resets all peripheral state
-	(void)*power;       // Dummy read — bus synchronization barrier
-	*power = 1;         // Power ON — peripheral back to initial state
+	*power = 0;    // Power OFF — resets all peripheral state
+	(void)*power;  // Dummy read — bus synchronization barrier
+	*power = 1;    // Power ON — peripheral back to initial state
 }
 
 /// @name Common peripheral base addresses for power reset
 /// @{
-static constexpr uint32_t NRF_SAADC_BASE_ADDR  = 0x40007000;
-static constexpr uint32_t NRF_QSPI_BASE_ADDR   = 0x40029000;
+static constexpr uint32_t NRF_SAADC_BASE_ADDR = 0x40007000;
+static constexpr uint32_t NRF_QSPI_BASE_ADDR = 0x40029000;
 static constexpr uint32_t NRF_UARTE0_BASE_ADDR = 0x40002000;
 static constexpr uint32_t NRF_UARTE1_BASE_ADDR = 0x40028000;
 /// @}

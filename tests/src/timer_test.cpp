@@ -6,19 +6,16 @@
 
 Timer *timer = new LinuxTimer;
 
-TEST_GROUP(Timer)
-{
-	void setup() {
-		timer->start();
-	}
+TEST_GROUP(Timer){ void setup(){ timer->start();
+}
 
-	void teardown() {
-		timer->stop();
-	}
-};
+void teardown() {
+	timer->stop();
+}
+}
+;
 
-TEST(Timer, TimerCounterIsAdvancing)
-{
+TEST(Timer, TimerCounterIsAdvancing) {
 	uint64_t t = timer->get_counter();
 
 	// Make sure the timer has advanced sufficiently to schedule all events
@@ -28,8 +25,7 @@ TEST(Timer, TimerCounterIsAdvancing)
 	CHECK_COMPARE(t, <, timer->get_counter());
 }
 
-TEST(Timer, TimerEventIsFired)
-{
+TEST(Timer, TimerEventIsFired) {
 	static bool has_fired = false;
 
 	timer->add_schedule([]() { has_fired = true; }, timer->get_counter() + 5);
@@ -41,9 +37,8 @@ TEST(Timer, TimerEventIsFired)
 	CHECK_TRUE(has_fired);
 }
 
-TEST(Timer, TimerMultiEventIsFired)
-{
-	static bool has_fired[2] = {false};
+TEST(Timer, TimerMultiEventIsFired) {
+	static bool has_fired[2] = { false };
 
 	timer->add_schedule([]() { has_fired[0] = true; }, timer->get_counter() + 2);
 	timer->add_schedule([]() { has_fired[1] = true; }, timer->get_counter() + 5);
@@ -56,9 +51,8 @@ TEST(Timer, TimerMultiEventIsFired)
 	CHECK_TRUE(has_fired[1]);
 }
 
-TEST(Timer, TimerCancelSingleWithMulti)
-{
-	static bool has_fired[2] = {false};
+TEST(Timer, TimerCancelSingleWithMulti) {
+	static bool has_fired[2] = { false };
 
 	auto timer_handle = timer->add_schedule([]() { has_fired[0] = true; }, timer->get_counter() + 2);
 	timer->add_schedule([]() { has_fired[1] = true; }, timer->get_counter() + 5);
@@ -69,8 +63,7 @@ TEST(Timer, TimerCancelSingleWithMulti)
 	CHECK_TRUE(has_fired[1]);
 }
 
-TEST(Timer, TimerCancel)
-{
+TEST(Timer, TimerCancel) {
 	static bool has_fired = false;
 
 	auto timer_handle = timer->add_schedule([]() { has_fired = true; }, timer->get_counter() + 5);

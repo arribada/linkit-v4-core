@@ -20,14 +20,14 @@ public:
 	/// @throws ErrorCode::I2C_COMMS_ERROR if device not responding.
 	Bar100(unsigned int bus, unsigned char address);
 
-	void read(double& temperature, double& pressure) override;
+	void read(double &temperature, double &pressure) override;
 
 private:
 	unsigned int m_bus;
 	unsigned char m_addr;
-	double m_pmin;           ///< Factory min pressure (bar)
-	double m_pmax;           ///< Factory max pressure (bar)
-	double m_mode_offset;    ///< Offset for PA/PR/PAA mode (bar)
+	double m_pmin;         ///< Factory min pressure (bar)
+	double m_pmax;         ///< Factory max pressure (bar)
+	double m_mode_offset;  ///< Offset for PA/PR/PAA mode (bar)
 
 	/// @brief Send a register command, optionally read back data after a delay.
 	void command(uint8_t reg, uint8_t *read_buffer = nullptr, unsigned int length = 0, unsigned int delay_ms = 0);

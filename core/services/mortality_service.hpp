@@ -16,31 +16,27 @@
 class MortalityLogFormatter : public LogFormatter {
 public:
 	const std::string header() override {
-		return "log_datetime,confidence,consecutive_days,status,last_activity,last_body_temp,last_lat,last_lon,last_eval_epoch\r\n";
+		return "log_datetime,confidence,consecutive_days,status,last_activity,last_body_temp,last_lat,last_lon,last_"
+		       "eval_epoch\r\n";
 	}
-	const std::string log_entry(const LogEntry& e) override {
+	const std::string log_entry(const LogEntry &e) override {
 		char entry[256], d1[25];
 		const auto *log = reinterpret_cast<const MortalityLogEntry *>(&e);
 		std::time_t t;
 		std::tm *tm;
 
-		t = convert_epochtime(log->header.year, log->header.month, log->header.day, log->header.hours, log->header.minutes, log->header.seconds);
+		t = convert_epochtime(log->header.year, log->header.month, log->header.day, log->header.hours,
+		                      log->header.minutes, log->header.seconds);
 		tm = std::gmtime(&t);
 		std::strftime(d1, sizeof(d1), "%d/%m/%Y %H:%M:%S", tm);
 
-		const char *status_str = (log->info.status == MortalityStatus::CONFIRMED) ? "CONFIRMED" :
-		                         (log->info.status == MortalityStatus::SUSPECTED) ? "SUSPECTED" : "ALIVE";
+		const char *status_str = (log->info.status == MortalityStatus::CONFIRMED)   ? "CONFIRMED"
+		                         : (log->info.status == MortalityStatus::SUSPECTED) ? "SUSPECTED"
+		                                                                            : "ALIVE";
 
-		snprintf(entry, sizeof(entry), "%s,%u,%u,%s,%u,%u,%.6f,%.6f,%lu\r\n",
-				d1,
-				log->info.confidence,
-				log->info.consecutive_days,
-				status_str,
-				log->info.last_activity,
-				log->info.last_body_temp,
-				log->info.last_lat,
-				log->info.last_lon,
-				log->info.last_eval_epoch);
+		snprintf(entry, sizeof(entry), "%s,%u,%u,%s,%u,%u,%.6f,%.6f,%lu\r\n", d1, log->info.confidence,
+		         log->info.consecutive_days, status_str, log->info.last_activity, log->info.last_body_temp,
+		         log->info.last_lat, log->info.last_lon, log->info.last_eval_epoch);
 		return std::string(entry);
 	}
 };
@@ -50,7 +46,7 @@ class MortalityService : public Service {
 public:
 	MortalityService(Logger *logger = nullptr);
 
-	void notify_peer_event(ServiceEvent& event) override;
+	void notify_peer_event(ServiceEvent &event) override;
 
 	// Public accessor for ArgosTxService to read current confidence
 	unsigned int get_confidence() const { return m_state.confidence; }
@@ -89,14 +85,14 @@ private:
 	bool m_has_activity = false;
 	bool m_has_temperature = false;
 	bool m_has_gps = false;
-	bool m_gps_attempted = false;     ///< H4: a GNSS log event arrived this session (valid or not)
-	bool m_no_fix_counted = false;    ///< H4: no-fix streak already incremented this session
-	bool m_fallback_evaluated = false;///< H4: fallback (no-GPS) evaluation already ran this session
-	uint8_t  m_session_activity = 0;
-	double   m_session_body_temp = 0.0;
-	double   m_session_lat = 0.0;
-	double   m_session_lon = 0.0;
-	int32_t  m_session_gps_speed = 0;  ///< mm/s
+	bool m_gps_attempted = false;       ///< H4: a GNSS log event arrived this session (valid or not)
+	bool m_no_fix_counted = false;      ///< H4: no-fix streak already incremented this session
+	bool m_fallback_evaluated = false;  ///< H4: fallback (no-GPS) evaluation already ran this session
+	uint8_t m_session_activity = 0;
+	double m_session_body_temp = 0.0;
+	double m_session_lat = 0.0;
+	double m_session_lon = 0.0;
+	int32_t m_session_gps_speed = 0;  ///< mm/s
 
 	void reset_session_data();
 	void evaluate_mortality();

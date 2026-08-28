@@ -19,10 +19,10 @@
 
 /// @name I2C driver tuning constants
 /// @{
-static constexpr uint32_t I2C_OPERATION_TIMEOUT_MS  = 100;  ///< Max wait per async transfer
-static constexpr uint8_t  I2C_MAX_RETRIES           = 3;    ///< Retries before giving up
-static constexpr uint8_t  I2C_BUS_RECOVERY_CYCLES   = 9;    ///< SCL clock pulses for recovery
-static constexpr uint8_t  I2C_RECOVERY_MAX_ATTEMPTS = 3;    ///< Clock-stretch attempts before full reset
+static constexpr uint32_t I2C_OPERATION_TIMEOUT_MS = 100;  ///< Max wait per async transfer
+static constexpr uint8_t I2C_MAX_RETRIES = 3;              ///< Retries before giving up
+static constexpr uint8_t I2C_BUS_RECOVERY_CYCLES = 9;      ///< SCL clock pulses for recovery
+static constexpr uint8_t I2C_RECOVERY_MAX_ATTEMPTS = 3;    ///< Clock-stretch attempts before full reset
 /// @}
 
 /// @brief Per-bus I2C statistics for field diagnostics.
@@ -62,9 +62,8 @@ private:
 	 * @param op_name   Operation name for debug logs ("read" or "write").
 	 * @return true on success, false after all retries exhausted.
 	 */
-	static bool transfer_with_retry(uint8_t bus, uint8_t address,
-			uint8_t *buffer, unsigned int length,
-			bool is_read, bool no_stop, const char *op_name);
+	static bool transfer_with_retry(uint8_t bus, uint8_t address, uint8_t *buffer, unsigned int length, bool is_read,
+	                                bool no_stop, const char *op_name);
 
 public:
 	/// @brief ISR callback — called from TWIM event handlers (C-style).
@@ -85,13 +84,14 @@ public:
 	/// @name Non-throwing API — return true on success, false on failure
 	/// @{
 	[[nodiscard]] static bool read_safe(uint8_t bus, uint8_t address, uint8_t *buffer, unsigned int length);
-	[[nodiscard]] static bool write_safe(uint8_t bus, uint8_t address, const uint8_t *buffer, unsigned int length, bool no_stop);
+	[[nodiscard]] static bool write_safe(uint8_t bus, uint8_t address, const uint8_t *buffer, unsigned int length,
+	                                     bool no_stop);
 	/// @}
 
 	static bool recover_bus(uint8_t bus);
 
 	static uint8_t num_buses(void);
 	static bool is_enabled(uint8_t bus);
-	static const I2CStats& get_stats(uint8_t bus);
+	static const I2CStats &get_stats(uint8_t bus);
 	static void reset_stats(uint8_t bus);
 };

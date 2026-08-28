@@ -31,7 +31,7 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
--------------------------------*/ 
+-------------------------------*/
 
 #pragma once
 
@@ -40,7 +40,6 @@ THE SOFTWARE.
 
 class TSYS01 : public Sensor {
 public:
-
 	TSYS01();
 
 	bool init();
@@ -71,5 +70,4 @@ private:
 	void calculate();
 
 	void write_command(uint8_t command);
-
 };

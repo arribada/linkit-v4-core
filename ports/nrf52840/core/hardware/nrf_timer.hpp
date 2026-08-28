@@ -18,7 +18,7 @@
 
 class NrfTimer final : public Timer {
 public:
-	static NrfTimer& get_instance() {
+	static NrfTimer &get_instance() {
 		static NrfTimer instance;
 		return instance;
 	}
@@ -38,7 +38,8 @@ public:
 	 * @param target_count  Absolute time in ms (from get_counter() epoch).
 	 * @return Handle for cancel_schedule(), or nullopt if the schedule list is full.
 	 */
-	TimerHandle add_schedule(stdext::inplace_function<void(), INPLACE_FUNCTION_SIZE_TIMER> const &task_func, uint64_t target_count) override;
+	TimerHandle add_schedule(stdext::inplace_function<void(), INPLACE_FUNCTION_SIZE_TIMER> const &task_func,
+	                         uint64_t target_count) override;
 
 	/// @brief Cancel a pending schedule.  Invalidates @p handle on success.
 	void cancel_schedule(TimerHandle &handle) override;
@@ -57,6 +58,6 @@ public:
 private:
 	uint64_t m_start_ticks = 0;  ///< Tick count at start() — subtracted in get_counter()
 	NrfTimer() = default;
-	NrfTimer(NrfTimer const&) = delete;
-	void operator=(NrfTimer const&) = delete;
+	NrfTimer(NrfTimer const &) = delete;
+	void operator=(NrfTimer const &) = delete;
 };

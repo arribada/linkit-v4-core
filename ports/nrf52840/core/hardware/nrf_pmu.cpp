@@ -54,7 +54,7 @@ static uint32_t m_reset_cause = 0;  ///< Raw RESETREAS register + pseudo power-o
 ///
 /// Net effect: on POF, the device loses up to 30 min of param updates (acceptable) but never
 /// corrupts the params block (catastrophic).
-static void pof_soc_evt_handler(uint32_t evt_id, void * p_context) {
+static void pof_soc_evt_handler(uint32_t evt_id, void *p_context) {
 	(void)p_context;
 	if (evt_id == NRF_EVT_POWER_FAILURE_WARNING) {
 		ServiceManager::save_cooldown_state();
@@ -62,8 +62,7 @@ static void pof_soc_evt_handler(uint32_t evt_id, void * p_context) {
 		// next clean-shutdown save_params or periodic flush. Trade-off
 		// accepted: lose <=30 min of RTC vs. risk corrupting all 227 params.
 		if (configuration_store && rtc && rtc->is_set()) {
-			configuration_store->write_param(ParamID::LAST_KNOWN_RTC,
-				static_cast<unsigned int>(rtc->gettime()));
+			configuration_store->write_param(ParamID::LAST_KNOWN_RTC, static_cast<unsigned int>(rtc->gettime()));
 		}
 	}
 }
@@ -79,7 +78,7 @@ static __attribute__((section(".noinit"))) volatile uint16_t m_crc;           //
 /// @}
 
 /// @brief Spare bit in RESETREAS to distinguish pseudo power-off (via GPREGRET) from real SREQ.
-#define POWER_RESETREAS_PSEUDO_POWER_OFF  0x80000000
+#define POWER_RESETREAS_PSEUDO_POWER_OFF 0x80000000
 
 /// @brief Storage-mode wake filter — see header for full rationale.
 /// Must be called BEFORE initialise() (which clears RESETREAS / GPREGRET)
@@ -89,10 +88,9 @@ void PMU::storage_off_check() {
 #ifdef PSEUDO_POWER_OFF
 	// Read RESETREAS / GPREGRET directly — initialise() hasn't cleared them yet.
 	uint32_t resetreas = NRF_POWER->RESETREAS;
-	uint32_t gpregret  = NRF_POWER->GPREGRET;
+	uint32_t gpregret = NRF_POWER->GPREGRET;
 
-	bool was_pseudo_power_off =
-		(resetreas & POWER_RESETREAS_SREQ_Msk) && (gpregret == 0x80);
+	bool was_pseudo_power_off = (resetreas & POWER_RESETREAS_SREQ_Msk) && (gpregret == 0x80);
 
 	if (!was_pseudo_power_off) {
 		return;  // Not a wake from storage — proceed to normal init
@@ -118,25 +116,22 @@ void PMU::storage_off_check() {
 	//     powerdown() before the soft reset that brought us here.
 	//   - The nRF52840 operates from 1.7 V to 3.6 V on VDD (datasheet).
 	//   - LED is off in storage state, so the ~3 V Vf is not required.
-	GPIOPins::init_pin(BSP::GPIO_VSYS_SEL);     // apply BSP config (open-drain S0D1)
-	// 2026-08 : abaisser le seuil POF AVANT de descendre le rail. POFCON est
-	// arme a 2,7 V (initialise():194) ; laisser 2,7 V face a un rail a 2,3 V
-	// asserte POFWARN en permanence, et si SYSTEMOFF est refuse (debugger
-	// attache, champ NFC) on tombe dans la boucle WFI ci-dessous avec une
-	// interruption POF qui se re-declenche sans fin.
+	GPIOPins::init_pin(BSP::GPIO_VSYS_SEL);  // apply BSP config (open-drain S0D1)
+	                                         // 2026-08 : abaisser le seuil POF AVANT de descendre le rail. POFCON est
+	                                         // arme a 2,7 V (initialise():194) ; laisser 2,7 V face a un rail a 2,3 V
+	                                         // asserte POFWARN en permanence, et si SYSTEMOFF est refuse (debugger
+	                                         // attache, champ NFC) on tombe dans la boucle WFI ci-dessous avec une
+	                                         // interruption POF qui se re-declenche sans fin.
 #ifdef SOFTDEVICE_PRESENT
-	if (nrf_sdh_is_enabled())
-		sd_power_pof_threshold_set(NRF_POWER_THRESHOLD_V20);
+	if (nrf_sdh_is_enabled()) sd_power_pof_threshold_set(NRF_POWER_THRESHOLD_V20);
 #endif
-	GPIOPins::clear(BSP::GPIO_VSYS_SEL);        // SEL low → VSYS = 2.3 V
+	GPIOPins::clear(BSP::GPIO_VSYS_SEL);  // SEL low → VSYS = 2.3 V
 
 	// Configure REED_SW as a SENSE wake source (PORT event on level match).
 	// init_pin set it to GPIOTE TOGGLE in the BSP — we override with SENSE
 	// since GPIOTE peripherals stop in System OFF, only SENSE wakes.
-	nrf_gpio_cfg_sense_input(BSP::GPIO_Inits[BSP::GPIO_REED_SW].pin_number,
-		NRF_GPIO_PIN_PULLDOWN,
-		(REED_SWITCH_ACTIVE_STATE != 0) ? NRF_GPIO_PIN_SENSE_HIGH
-		                                : NRF_GPIO_PIN_SENSE_LOW);
+	nrf_gpio_cfg_sense_input(BSP::GPIO_Inits[BSP::GPIO_REED_SW].pin_number, NRF_GPIO_PIN_PULLDOWN,
+	                         (REED_SWITCH_ACTIVE_STATE != 0) ? NRF_GPIO_PIN_SENSE_HIGH : NRF_GPIO_PIN_SENSE_LOW);
 
 	// Clear retention registers so the next wake reports the true reset cause
 	// (POWER_ON for battery insert, or GPIO for the SENSE wake we just armed).
@@ -166,8 +161,10 @@ void PMU::storage_off_check() {
 	// Failsafe: if SYSTEMOFF was rejected by hardware (e.g. NFC field detect
 	// active, debug interface connected), drop into a tight WFI loop with
 	// VSYS at 2.3 V — minimises wasted current until the next reset or wake.
-	for (;;) { __WFI(); }
-#endif // PSEUDO_POWER_OFF
+	for (;;) {
+		__WFI();
+	}
+#endif  // PSEUDO_POWER_OFF
 }
 
 /// @brief Read reset cause, configure DCDC, power-on-failure threshold, clear retention registers.
@@ -177,32 +174,30 @@ void PMU::initialise() {
 #endif
 
 	m_reset_cause = NRF_POWER->RESETREAS;
-	NRF_POWER->RESETREAS = 0xFFFFFFFF; // Clear down
+	NRF_POWER->RESETREAS = 0xFFFFFFFF;  // Clear down
 
 	// Apply pseudo power off flag if GPREGRET is set
 	if (NRF_POWER->GPREGRET)
 		m_reset_cause |= POWER_RESETREAS_PSEUDO_POWER_OFF;
 	else
 		m_reset_cause &= ~POWER_RESETREAS_PSEUDO_POWER_OFF;
-	NRF_POWER->GPREGRET = 0; // Clear down
+	NRF_POWER->GPREGRET = 0;  // Clear down
 
 	// Check GPREGRET2 for firmware update flag (set before OTA reset)
 	m_firmware_was_updated = (NRF_POWER->GPREGRET2 == 0x01);
-	NRF_POWER->GPREGRET2 = 0; // Clear down
+	NRF_POWER->GPREGRET2 = 0;  // Clear down
 
 	nrf_pwr_mgmt_init();
 
-	NRF_POWER->POFCON = (POWER_POFCON_POF_Enabled << POWER_POFCON_POF_Pos) |
-	                     (POWER_POFCON_THRESHOLD_V27 << POWER_POFCON_THRESHOLD_Pos);
+	NRF_POWER->POFCON =
+	    (POWER_POFCON_POF_Enabled << POWER_POFCON_POF_Pos) | (POWER_POFCON_THRESHOLD_V27 << POWER_POFCON_THRESHOLD_Pos);
 
 #ifdef SOFTDEVICE_PRESENT
-	if (nrf_sdh_is_enabled())
-	{
+	if (nrf_sdh_is_enabled()) {
 		sd_power_dcdc0_mode_set(NRF_POWER_DCDC_ENABLE);
 		sd_power_pof_enable(true);
 		sd_power_pof_threshold_set(NRF_POWER_THRESHOLD_V27);
-	}
-	else
+	} else
 #endif
 	{
 		nrf_power_dcdcen_set(true);
@@ -237,28 +232,26 @@ void PMU::set_firmware_updated_flag() {
 
 /// @brief Shut down device — save state, cut power rails, then reset or infinite sleep.
 void PMU::powerdown() {
-// #if VALIDATION_LOG_ENABLE
-// 	DEBUG_INFO("[VAL-SLEEP] powerdown t=%u uptime_ms=%llu",
-// 	           (rtc && rtc->is_set()) ? (unsigned int)rtc->gettime() : 0,
-// 	           (unsigned long long)PMU::get_timestamp_ms());
-// #endif
+	// #if VALIDATION_LOG_ENABLE
+	// 	DEBUG_INFO("[VAL-SLEEP] powerdown t=%u uptime_ms=%llu",
+	// 	           (rtc && rtc->is_set()) ? (unsigned int)rtc->gettime() : 0,
+	// 	           (unsigned long long)PMU::get_timestamp_ms());
+	// #endif
 	// Ensure all power control pins are turned off before shutdown
-// #ifdef CAM_PWR_EN
-// 	DEBUG_TRACE("Powering off CAM");
-// 	GPIOPins::clear(CAM_PWR_EN);
-// 	GPIOPins::clear(CAM_PWR_BUTT);
-// #endif
+	// #ifdef CAM_PWR_EN
+	// 	DEBUG_TRACE("Powering off CAM");
+	// 	GPIOPins::clear(CAM_PWR_EN);
+	// 	GPIOPins::clear(CAM_PWR_BUTT);
+	// #endif
 
 	// Persist cooldown state to noinit RAM before shutdown
 	ServiceManager::save_cooldown_state();
 
 	// Persist current RTC for pseudo RTC chain on next boot
 	if (configuration_store && rtc && rtc->is_set()) {
-		configuration_store->write_param(ParamID::LAST_KNOWN_RTC,
-			static_cast<unsigned int>(rtc->gettime()));
+		configuration_store->write_param(ParamID::LAST_KNOWN_RTC, static_cast<unsigned int>(rtc->gettime()));
 		configuration_store->save_params();
-		DEBUG_TRACE("PMU::powerdown: Saved LAST_KNOWN_RTC = %u",
-			static_cast<unsigned int>(rtc->gettime()));
+		DEBUG_TRACE("PMU::powerdown: Saved LAST_KNOWN_RTC = %u", static_cast<unsigned int>(rtc->gettime()));
 	}
 
 #ifdef BENCH_TEST
@@ -278,7 +271,8 @@ void PMU::powerdown() {
 #endif
 
 	// Shut down all peripherals before power-off (all boards)
-	NrfRGBLed::set_color_raw(BSP::GPIO::GPIO_LED_RED, BSP::GPIO::GPIO_LED_GREEN, BSP::GPIO::GPIO_LED_BLUE, RGBLedColor::BLACK);
+	NrfRGBLed::set_color_raw(BSP::GPIO::GPIO_LED_RED, BSP::GPIO::GPIO_LED_GREEN, BSP::GPIO::GPIO_LED_BLUE,
+	                         RGBLedColor::BLACK);
 #if defined(BOARD_RSPB) && defined(ONBOARD_I2C_BUS)
 	// Park the I2C bus BEFORE cutting VSENSORS / pulsing MCU_DONE. The STC3117
 	// gauge stays powered on VBAT while the pull-ups (on VSENSORS) and the nRF
@@ -354,7 +348,7 @@ void PMU::powerdown() {
 	// Signal TPL5111 to cut power by pulsing MCU_DONE
 	DEBUG_TRACE("External wakeup enabled | set MCU_DONE and wait for TPL5111 power cut");
 	GPIOPins::set(MCU_DONE_PIN);
-	PMU::delay_ms(100); // Allow time for TPL5111 to respond
+	PMU::delay_ms(100);  // Allow time for TPL5111 to respond
 	GPIOPins::clear(MCU_DONE_PIN);
 #endif
 
@@ -371,19 +365,16 @@ void PMU::run() {
 	nrf_pwr_mgmt_run();
 }
 
-void PMU::delay_ms(unsigned ms)
-{
+void PMU::delay_ms(unsigned ms) {
 	nrf_delay_ms(ms);
 }
 
-void PMU::delay_us(unsigned us)
-{
+void PMU::delay_us(unsigned us) {
 	nrf_delay_us(us);
 }
 
 /// @brief Init WDT, allocate one channel, enable.  Also inits CmBacktrace for crash diagnostics.
-void PMU::start_watchdog()
-{
+void PMU::start_watchdog() {
 	nrfx_wdt_init(&BSP::WDT_Inits[BSP::WDT].config, PMU::watchdog_handler);
 	// Channel ID is discarded as we don't care which channel ID is allocated
 	nrfx_wdt_channel_id id;
@@ -393,14 +384,12 @@ void PMU::start_watchdog()
 }
 
 /// @brief Feed all WDT channels to prevent reset.
-void PMU::kick_watchdog()
-{
+void PMU::kick_watchdog() {
 	nrfx_wdt_feed();
 }
 
 /// @brief Decode RESETREAS register into a ResetCause enum.
-ResetCause PMU::reset_cause()
-{
+ResetCause PMU::reset_cause() {
 	if (m_reset_cause & NRF_POWER_RESETREAS_RESETPIN_MASK)
 		return ResetCause::HARD_RESET;
 	else if (m_reset_cause & NRF_POWER_RESETREAS_DOG_MASK)
@@ -415,27 +404,24 @@ ResetCause PMU::reset_cause()
 }
 
 /// @brief Human-readable string for the current reset cause.
-const char* PMU::reset_cause_str()
-{
+const char *PMU::reset_cause_str() {
 	switch (reset_cause()) {
-	case ResetCause::HARD_RESET:      return "Hard Reset";
-	case ResetCause::WDT_RESET:       return "WDT Reset";
-	case ResetCause::SOFT_RESET:      return "Soft Reset";
+	case ResetCause::HARD_RESET: return "Hard Reset";
+	case ResetCause::WDT_RESET: return "WDT Reset";
+	case ResetCause::SOFT_RESET: return "Soft Reset";
 	case ResetCause::PSEUDO_POWER_ON: return "Pseudo Power On Reset";
-	case ResetCause::POWER_ON:        return "Power On Reset";
-	default:                          return "Unknown";
+	case ResetCause::POWER_ON: return "Power On Reset";
+	default: return "Unknown";
 	}
 }
 
 /// @brief Return the first 32 bits of the nRF FICR device ID (unique per chip).
-uint32_t PMU::device_identifier()
-{
+uint32_t PMU::device_identifier() {
 	return NRF_FICR->DEVICEID[0];
 }
 
 /// @brief Board + variant identifier string (compile-time, e.g. "linkit-v4-smd").
-const char *PMU::hardware_version()
-{
+const char *PMU::hardware_version() {
 #if defined(BOARD_RSPB)
 	return "rspb-v1";
 #elif defined(ARGOS_SMD) && (ARGOS_SMD == 1)
@@ -458,26 +444,20 @@ void PMU::save_stack(PMULogType type) {
 	uint32_t lr = reinterpret_cast<uint32_t>(__builtin_return_address(0));
 	uint32_t sp = reinterpret_cast<uint32_t>(__builtin_frame_address(0));
 	cm_backtrace_fault(lr, sp, const_cast<uint32_t *>(m_callstack), sizeof(m_callstack) / sizeof(m_callstack[0]));
-	m_crc = crc16_compute(reinterpret_cast<const uint8_t *>(const_cast<const uint32_t *>(m_callstack)), sizeof(m_callstack), nullptr);
+	m_crc = crc16_compute(reinterpret_cast<const uint8_t *>(const_cast<const uint32_t *>(m_callstack)),
+	                      sizeof(m_callstack), nullptr);
 }
 
 /// @brief Convert PMULogType crash enum to a printable string.
 static const char *reset_type_to_string(PMULogType t) {
 	switch (t) {
-	case PMULogType::WDT:
-		return "WDT";
-	case PMULogType::HARDFAULT:
-		return "HARDFAULT";
-	case PMULogType::ETL:
-		return "ETL";
-	case PMULogType::MMAN:
-		return "MMAN";
-	case PMULogType::STACK:
-		return "STACK";
-	case PMULogType::MALLOC:
-		return "MALLOC";
-	default:
-		return "UNKNOWN";
+	case PMULogType::WDT: return "WDT";
+	case PMULogType::HARDFAULT: return "HARDFAULT";
+	case PMULogType::ETL: return "ETL";
+	case PMULogType::MMAN: return "MMAN";
+	case PMULogType::STACK: return "STACK";
+	case PMULogType::MALLOC: return "MALLOC";
+	default: return "UNKNOWN";
 	}
 }
 
@@ -494,8 +474,7 @@ uint64_t PMU::get_timestamp_ms() {
 int PMU::get_die_temperature_c() {
 	int32_t raw = 0;
 	uint32_t err = sd_temp_get(&raw);
-	if (err != NRF_SUCCESS)
-		return 25;
+	if (err != NRF_SUCCESS) return 25;
 	// raw is in 0.25 °C steps — divide rounding toward zero is fine here,
 	// since callers compare against a coarse threshold (5 °C).
 	return raw / 4;
@@ -504,8 +483,9 @@ int PMU::get_die_temperature_c() {
 /// @brief Print saved crash trace if CRC is valid, then invalidate to avoid re-printing.
 void PMU::print_stack() {
 	// Check CRC matches
-	if (m_crc == crc16_compute(reinterpret_cast<const uint8_t *>(const_cast<const uint32_t *>(m_callstack)), sizeof(m_callstack), nullptr))
-	{
+	if (m_crc
+	    == crc16_compute(reinterpret_cast<const uint8_t *>(const_cast<const uint32_t *>(m_callstack)),
+	                     sizeof(m_callstack), nullptr)) {
 		DEBUG_INFO("PMU post-reset trace available");
 		DEBUG_INFO("PMU reset type: %s", reset_type_to_string(m_type));
 		for (unsigned int i = 0; i < (sizeof(m_callstack) / sizeof(m_callstack[0])); i++)
@@ -532,8 +512,7 @@ void PMU::reduce_power_rails() {
 	// This wastes ~50µA idle on the I2C sensors but avoids the 1.3mA backfeed.
 	// Fix in next PCB revision: connect R21/R24 to VSENSORS rail.
 #if defined(BOARD_RSPB) && defined(SENSORS_PWR_PIN)
-	if (!GPIOPins::get_sensors_pwr_state())
-		GPIOPins::set(SENSORS_PWR_PIN);
+	if (!GPIOPins::get_sensors_pwr_state()) GPIOPins::set(SENSORS_PWR_PIN);
 #endif
 
 	// RSPB: POWER_CONTROL_PIN controls the main board power rail (not just SMD).
@@ -560,17 +539,15 @@ void PMU::reduce_power_rails() {
 	//     asserte. On ne descend le rail commun que quand plus personne ne
 	//     parle au recepteur ; en deep-idle l'UART est deinit et le M10Q dort
 	//     en backup, donc l'economie est conservee la ou elle compte.
-	if (!GPIOPins::get_sensors_pwr_state() &&
-	    !GPIOPins::is_gnss_uart_active() &&
-	    status_led && status_led->get_state() == RGBLedColor::BLACK && !status_led->is_flashing()) {
+	if (!GPIOPins::get_sensors_pwr_state() && !GPIOPins::is_gnss_uart_active() && status_led
+	    && status_led->get_state() == RGBLedColor::BLACK && !status_led->is_flashing()) {
 		// Lower the POF brownout threshold BELOW the idle rail BEFORE dropping VSYS:
 		// POFCON is armed at 2.7V, but the idle rail is 2.3V, so at 2.7V the comparator
 		// would assert POFWARN continuously in deep idle (CPU wakes / cooldown-save churn,
 		// and pre-fix a HardFault via the NULL nrf_drv_power handler). restore_power_rails()
 		// raises it back to 2.7V once VSYS is back at 3.3V (where brownout-under-load matters).
 #ifdef SOFTDEVICE_PRESENT
-		if (nrf_sdh_is_enabled())
-			sd_power_pof_threshold_set(NRF_POWER_THRESHOLD_V20);  // 2.0 V (< 2.3 V idle rail)
+		if (nrf_sdh_is_enabled()) sd_power_pof_threshold_set(NRF_POWER_THRESHOLD_V20);  // 2.0 V (< 2.3 V idle rail)
 #endif
 		GPIOPins::clear(VSYS_SEL);  // Switch to 2.3V
 	}
@@ -583,12 +560,11 @@ void PMU::restore_power_rails() {
 	// Must settle before SPI/I2C/UART transactions with 3.3V peripherals.
 #if defined(VSYS_SEL) && !defined(BOARD_RSPB)
 	GPIOPins::set(VSYS_SEL);  // Switch to 3.3V
-	PMU::delay_ms(2);  // Allow VSYS rail to stabilize from 2.3V → 3.3V
-	// Rail is back at 3.3V: restore the full 2.7V POF brownout threshold
-	// (lowered to 2.0V in reduce_power_rails for the 2.3V idle rail).
+	PMU::delay_ms(2);         // Allow VSYS rail to stabilize from 2.3V → 3.3V
+	                          // Rail is back at 3.3V: restore the full 2.7V POF brownout threshold
+	                          // (lowered to 2.0V in reduce_power_rails for the 2.3V idle rail).
 #ifdef SOFTDEVICE_PRESENT
-	if (nrf_sdh_is_enabled())
-		sd_power_pof_threshold_set(NRF_POWER_THRESHOLD_V27);  // back to 2.7 V
+	if (nrf_sdh_is_enabled()) sd_power_pof_threshold_set(NRF_POWER_THRESHOLD_V27);  // back to 2.7 V
 #endif
 #endif
 

@@ -8,9 +8,8 @@
 #include <string>
 
 /// @brief Abstract DTE interface — implemented by USB CDC and BLE NUS.
-class Interface
-{
+class Interface {
 public:
-    virtual std::string read_line() = 0;
-    virtual void write(std::string str) = 0;
+	virtual std::string read_line() = 0;
+	virtual void write(std::string str) = 0;
 };

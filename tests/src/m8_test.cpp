@@ -12,52 +12,28 @@
 
 namespace BSP {
 
-    const nrf_uarte_t uarte = {};
-    const nrf_libuarte_async_t uarte_async = {
-            .p_libuarte = &uarte,
-    };
-    const UARTAsync_InitTypeDefAndInst_t UARTAsync_Inits[1] =
-    {
-        {
-            .uart = &uarte_async,
-            .config = {}
-        }
-    };
+const nrf_uarte_t uarte = {};
+const nrf_libuarte_async_t uarte_async = {
+	.p_libuarte = &uarte,
+};
+const UARTAsync_InitTypeDefAndInst_t UARTAsync_Inits[1] = { { .uart = &uarte_async, .config = {} } };
 }
 
 class TestGNSSListener : public GPSEventListener {
 private:
-    GPSDevice& m_device;
+	GPSDevice &m_device;
 
-    void react(const GPSEventPowerOn&) {
-        mock().actualCall("GPSEventPowerOn");
-    }
-    void react(const GPSEventPowerOff&) {
-        mock().actualCall("GPSEventPowerOff");
-    }
-    void react(const GPSEventError&) {
-        mock().actualCall("GPSEventError");
-    }
-    void react(const GPSEventPVT&) {
-        mock().actualCall("GPSEventPVT");
-    }
-    void react(const GPSEventSatReport&) {
-        mock().actualCall("GPSEventSatReport");
-    }
-    void react(const GPSEventMaxNavSamples&) {
-        mock().actualCall("GPSEventMaxNavSamples");
-    }
-    void react(const GPSEventMaxSatSamples&) {
-        mock().actualCall("GPSEventMaxSatSamples");
-    }
+	void react(const GPSEventPowerOn &) { mock().actualCall("GPSEventPowerOn"); }
+	void react(const GPSEventPowerOff &) { mock().actualCall("GPSEventPowerOff"); }
+	void react(const GPSEventError &) { mock().actualCall("GPSEventError"); }
+	void react(const GPSEventPVT &) { mock().actualCall("GPSEventPVT"); }
+	void react(const GPSEventSatReport &) { mock().actualCall("GPSEventSatReport"); }
+	void react(const GPSEventMaxNavSamples &) { mock().actualCall("GPSEventMaxNavSamples"); }
+	void react(const GPSEventMaxSatSamples &) { mock().actualCall("GPSEventMaxSatSamples"); }
 
 public:
-    TestGNSSListener(GPSDevice& dev) : m_device(dev) {
-        dev.subscribe(*this);
-    }
-    ~TestGNSSListener() {
-        m_device.unsubscribe(*this);
-    }
+	TestGNSSListener(GPSDevice &dev) : m_device(dev) { dev.subscribe(*this); }
+	~TestGNSSListener() { m_device.unsubscribe(*this); }
 };
 
 extern ConfigurationStore *configuration_store;
@@ -66,203 +42,190 @@ extern Timer *system_timer;
 extern Scheduler *system_scheduler;
 
 
-TEST_GROUP(M8)
-{
-    FakeLog *logger;
-    ConfigurationStore *fake_config;
-    FakeRTC *fake_rtc;
-    FakeTimer *fake_timer;
-    uint64_t m_current_ms = 0;
-    unsigned int m_iTOW = 0;
+TEST_GROUP(M8) {
+	FakeLog *logger;
+	ConfigurationStore *fake_config;
+	FakeRTC *fake_rtc;
+	FakeTimer *fake_timer;
+	uint64_t m_current_ms = 0;
+	unsigned int m_iTOW = 0;
 
-    void setup() {
-        logger = new FakeLog("GNSS");
-        fake_config = new FakeConfigurationStore;
-        configuration_store = fake_config;
-        fake_rtc = new FakeRTC;
-        rtc = fake_rtc;
-        fake_timer = new FakeTimer;
-        system_timer = fake_timer;
-        system_scheduler = new Scheduler(system_timer);
-    }
+	void setup() {
+		logger = new FakeLog("GNSS");
+		fake_config = new FakeConfigurationStore;
+		configuration_store = fake_config;
+		fake_rtc = new FakeRTC;
+		rtc = fake_rtc;
+		fake_timer = new FakeTimer;
+		system_timer = fake_timer;
+		system_scheduler = new Scheduler(system_timer);
+	}
 
-    void teardown() {
-        mock().clear();
-        delete logger;
-        delete fake_config;
-        delete fake_timer;
-        delete fake_rtc; rtc = nullptr;
-    }
+	void teardown() {
+		mock().clear();
+		delete logger;
+		delete fake_config;
+		delete fake_timer;
+		delete fake_rtc;
+		rtc = nullptr;
+	}
 
-    void expect_power_on() {
-        // Updated for 2026-05 M10Q reset-hold fix (analog of SAT_RESET BSP fix):
-        // NRST is now held LOW during VDD ramp, then released after stabilize.
-        // Sequence: init_pin(RST) → clear(RST) → delay → set(PWR_EN) → delay →
-        //           set(RST) → delay → GPSEventPowerOn.
-        mock().expectOneCall("acquire_sensors_pwr");
-        mock().expectOneCall("init_pin").withParameter("pin", BSP::GPIO::GPIO_GPS_RST);
-        mock().expectOneCall("clear").withParameter("pin", BSP::GPIO::GPIO_GPS_RST);
-        mock().expectOneCall("delay_ms").ignoreOtherParameters();
-        mock().expectOneCall("set").withParameter("pin", BSP::GPIO::GPIO_GPS_PWR_EN);
-        mock().expectOneCall("delay_ms").ignoreOtherParameters();
-        mock().expectOneCall("set").withParameter("pin", BSP::GPIO::GPIO_GPS_RST);
-        mock().expectOneCall("delay_ms").ignoreOtherParameters();
-        mock().expectOneCall("GPSEventPowerOn");
-    }
+	void expect_power_on() {
+		// Updated for 2026-05 M10Q reset-hold fix (analog of SAT_RESET BSP fix):
+		// NRST is now held LOW during VDD ramp, then released after stabilize.
+		// Sequence: init_pin(RST) → clear(RST) → delay → set(PWR_EN) → delay →
+		//           set(RST) → delay → GPSEventPowerOn.
+		mock().expectOneCall("acquire_sensors_pwr");
+		mock().expectOneCall("init_pin").withParameter("pin", BSP::GPIO::GPIO_GPS_RST);
+		mock().expectOneCall("clear").withParameter("pin", BSP::GPIO::GPIO_GPS_RST);
+		mock().expectOneCall("delay_ms").ignoreOtherParameters();
+		mock().expectOneCall("set").withParameter("pin", BSP::GPIO::GPIO_GPS_PWR_EN);
+		mock().expectOneCall("delay_ms").ignoreOtherParameters();
+		mock().expectOneCall("set").withParameter("pin", BSP::GPIO::GPIO_GPS_RST);
+		mock().expectOneCall("delay_ms").ignoreOtherParameters();
+		mock().expectOneCall("GPSEventPowerOn");
+	}
 
-    void expect_power_off() {
-        // Updated for 2026-05 M10Q discharge-wait fix (enter_shutdown now:
-        // init_pin(RST) → clear(RST) → clear(PWR_EN) → delay(50ms) →
-        // release_to_highz(RST) → release_to_highz(EXT_INT) → release_sensors).
-        mock().expectOneCall("GPSEventPowerOff");
-        mock().expectOneCall("init_pin").withParameter("pin", BSP::GPIO::GPIO_GPS_RST);
-        mock().expectOneCall("clear").withParameter("pin", BSP::GPIO::GPIO_GPS_RST);
-        mock().expectOneCall("clear").withParameter("pin", BSP::GPIO::GPIO_GPS_PWR_EN);
-        mock().expectOneCall("delay_ms").ignoreOtherParameters();
-        mock().expectOneCall("release_to_highz").withParameter("pin", BSP::GPIO::GPIO_GPS_RST);
-        mock().expectOneCall("release_to_highz").withParameter("pin", BSP::GPIO::GPIO_GPS_EXT_INT);
-        mock().expectOneCall("release_sensors_pwr");
-    }
+	void expect_power_off() {
+		// Updated for 2026-05 M10Q discharge-wait fix (enter_shutdown now:
+		// init_pin(RST) → clear(RST) → clear(PWR_EN) → delay(50ms) →
+		// release_to_highz(RST) → release_to_highz(EXT_INT) → release_sensors).
+		mock().expectOneCall("GPSEventPowerOff");
+		mock().expectOneCall("init_pin").withParameter("pin", BSP::GPIO::GPIO_GPS_RST);
+		mock().expectOneCall("clear").withParameter("pin", BSP::GPIO::GPIO_GPS_RST);
+		mock().expectOneCall("clear").withParameter("pin", BSP::GPIO::GPIO_GPS_PWR_EN);
+		mock().expectOneCall("delay_ms").ignoreOtherParameters();
+		mock().expectOneCall("release_to_highz").withParameter("pin", BSP::GPIO::GPIO_GPS_RST);
+		mock().expectOneCall("release_to_highz").withParameter("pin", BSP::GPIO::GPIO_GPS_EXT_INT);
+		mock().expectOneCall("release_sensors_pwr");
+	}
 
-    void increment_time_ms(uint64_t ms = 0)
-    {
-        while (ms)
-        {
-            fake_timer->increment_counter(1);
-            if (fake_timer->get_counter() % 1000 == 0)
-                fake_rtc->incrementtime(1);
-            system_scheduler->run();
-            ms--;
-            //DEBUG_TRACE("timer=%lu rtc=%lu", fake_timer->get_counter(), rtc->gettime());
-        }
-        system_scheduler->run();
-    }
+	void increment_time_ms(uint64_t ms = 0) {
+		while (ms) {
+			fake_timer->increment_counter(1);
+			if (fake_timer->get_counter() % 1000 == 0) fake_rtc->incrementtime(1);
+			system_scheduler->run();
+			ms--;
+			//DEBUG_TRACE("timer=%lu rtc=%lu", fake_timer->get_counter(), rtc->gettime());
+		}
+		system_scheduler->run();
+	}
 
-    void ubx_compute_crc(const uint8_t * const buffer, const unsigned int length, uint8_t &ck_a, uint8_t &ck_b) {
-        ck_a = 0;
-        ck_b = 0;
-        for (unsigned int i = 0; i < length; i++)
-        {
-            ck_a = ck_a + buffer[i];
-            ck_b = ck_b + ck_a;
-        }
-    }
+	void ubx_compute_crc(const uint8_t *const buffer, const unsigned int length, uint8_t &ck_a, uint8_t &ck_b) {
+		ck_a = 0;
+		ck_b = 0;
+		for (unsigned int i = 0; i < length; i++) {
+			ck_a = ck_a + buffer[i];
+			ck_b = ck_b + ck_a;
+		}
+	}
 
-    void inject_error(unsigned int flags) {
-        nrf_libuarte_async_evt_t evt;
-        evt.type = NRF_LIBUARTE_ASYNC_EVT_ERROR;
-        evt.data.errorsrc = flags;
-        nrf_libuarte_inject_event(&evt);
-    }
+	void inject_error(unsigned int flags) {
+		nrf_libuarte_async_evt_t evt;
+		evt.type = NRF_LIBUARTE_ASYNC_EVT_ERROR;
+		evt.data.errorsrc = flags;
+		nrf_libuarte_inject_event(&evt);
+	}
 
-    template <typename T>
-    void ubx_inject_message(UBX::MessageClass cls, uint8_t id, T content) {
-        unsigned int content_size;
-        if constexpr (std::is_same<T, UBX::Empty>::value) {
-            content_size = 0;
-        } else {
-            content_size = sizeof(content);
-        };
-        UBX::HeaderAndPayloadCRC raw;
-        UBX::HeaderAndPayloadCRC *msg = &raw;
-        msg->syncChars[0] = UBX::SYNC_CHAR1;
-        msg->syncChars[1] = UBX::SYNC_CHAR2;
-        msg->msgClass = cls;
-        msg->msgId = id;
-        msg->msgLength = content_size;
-        std::memcpy(msg->payload, &content, content_size);
-        ubx_compute_crc((const uint8_t * const)&msg->msgClass, content_size + sizeof(UBX::Header) - 2,
-                        msg->payload[msg->msgLength],
-                        msg->payload[msg->msgLength+1]);
+	template <typename T> void ubx_inject_message(UBX::MessageClass cls, uint8_t id, T content) {
+		unsigned int content_size;
+		if constexpr (std::is_same<T, UBX::Empty>::value) {
+			content_size = 0;
+		} else {
+			content_size = sizeof(content);
+		};
+		UBX::HeaderAndPayloadCRC raw;
+		UBX::HeaderAndPayloadCRC *msg = &raw;
+		msg->syncChars[0] = UBX::SYNC_CHAR1;
+		msg->syncChars[1] = UBX::SYNC_CHAR2;
+		msg->msgClass = cls;
+		msg->msgId = id;
+		msg->msgLength = content_size;
+		std::memcpy(msg->payload, &content, content_size);
+		ubx_compute_crc((const uint8_t *const)&msg->msgClass, content_size + sizeof(UBX::Header) - 2,
+		                msg->payload[msg->msgLength], msg->payload[msg->msgLength + 1]);
 
-        nrf_libuarte_async_evt_t evt;
-        evt.type = NRF_LIBUARTE_ASYNC_EVT_RX_DATA;
-        evt.data.rxtx.length = content_size + sizeof(UBX::Header) + 2;
-        evt.data.rxtx.p_data = (uint8_t *)&raw;
-        nrf_libuarte_inject_event(&evt);
-    }
+		nrf_libuarte_async_evt_t evt;
+		evt.type = NRF_LIBUARTE_ASYNC_EVT_RX_DATA;
+		evt.data.rxtx.length = content_size + sizeof(UBX::Header) + 2;
+		evt.data.rxtx.p_data = (uint8_t *)&raw;
+		nrf_libuarte_inject_event(&evt);
+	}
 
-    void ubx_ack(UBX::MessageClass cls, uint8_t id) {
-        UBX::ACK::MSG_ACK ack = {
-                cls,
-                id
-        };
-        ubx_inject_message(UBX::MessageClass::MSG_CLASS_ACK, UBX::ACK::ID_ACK, ack);
-    }
+	void ubx_ack(UBX::MessageClass cls, uint8_t id) {
+		UBX::ACK::MSG_ACK ack = { cls, id };
+		ubx_inject_message(UBX::MessageClass::MSG_CLASS_ACK, UBX::ACK::ID_ACK, ack);
+	}
 
-    void ubx_nack(UBX::MessageClass cls, uint8_t id) {
-        UBX::ACK::MSG_NACK nack = {
-                cls,
-                id
-        };
-        ubx_inject_message(UBX::MessageClass::MSG_CLASS_ACK, UBX::ACK::ID_NACK, nack);
-    }
-    void ubx_pvt(double lat, double lon, bool is_valid = true) {
-        UBX::NAV::PVT::MSG_PVT pvt;
-        pvt.iTow = m_iTOW;
-        pvt.lon = lon * 1E6;
-        pvt.lat = lat * 1E6;
-        pvt.valid = is_valid ? (UBX::NAV::PVT::VALID::VALID_FULLY_RESOLVED |
-                UBX::NAV::PVT::VALID_VALID_DATE |
-                UBX::NAV::PVT::VALID_VALID_TIME ) : 0;
-        pvt.fixType = is_valid ? UBX::NAV::PVT::FIXTYPE_2D : UBX::NAV::PVT::FIXTYPE_NO;
-        ubx_inject_message(UBX::MessageClass::MSG_CLASS_NAV, UBX::NAV::ID_PVT, pvt);
-    }
-    void ubx_status(bool is_valid) {
-        UBX::NAV::STATUS::MSG_STATUS status;
-        status.iTow = m_iTOW;
-        status.fixStat = is_valid;
-        ubx_inject_message(UBX::MessageClass::MSG_CLASS_NAV, UBX::NAV::ID_STATUS, status);
-    }
-    void ubx_dop() {
-       UBX::NAV::DOP::MSG_DOP dop;
-       dop.iTow = m_iTOW;
-       ubx_inject_message(UBX::MessageClass::MSG_CLASS_NAV, UBX::NAV::ID_DOP, dop);
-    }
-    void ubx_mga_ack(bool success, unsigned int num_messages) {
-        UBX::MGA::MSG_ACK ack;
-        ack.infoCode = !success;
-        ack.msgPayloadStart = num_messages;
-        ubx_inject_message(UBX::MessageClass::MSG_CLASS_MGA, UBX::MGA::ID_ACK, ack);
-    }
-    void ubx_mga_dbd(unsigned int num_messages) {
-        struct {
-            uint8_t data[64];
-        } x;
-        for (unsigned int i = 0; i < num_messages; i++) {
-            ubx_inject_message(UBX::MessageClass::MSG_CLASS_MGA, UBX::MGA::ID_DBD, x);
-            increment_time_ms();
-        }
-    }
+	void ubx_nack(UBX::MessageClass cls, uint8_t id) {
+		UBX::ACK::MSG_NACK nack = { cls, id };
+		ubx_inject_message(UBX::MessageClass::MSG_CLASS_ACK, UBX::ACK::ID_NACK, nack);
+	}
+	void ubx_pvt(double lat, double lon, bool is_valid = true) {
+		UBX::NAV::PVT::MSG_PVT pvt;
+		pvt.iTow = m_iTOW;
+		pvt.lon = lon * 1E6;
+		pvt.lat = lat * 1E6;
+		pvt.valid = is_valid ? (UBX::NAV::PVT::VALID::VALID_FULLY_RESOLVED | UBX::NAV::PVT::VALID_VALID_DATE
+		                        | UBX::NAV::PVT::VALID_VALID_TIME)
+		                     : 0;
+		pvt.fixType = is_valid ? UBX::NAV::PVT::FIXTYPE_2D : UBX::NAV::PVT::FIXTYPE_NO;
+		ubx_inject_message(UBX::MessageClass::MSG_CLASS_NAV, UBX::NAV::ID_PVT, pvt);
+	}
+	void ubx_status(bool is_valid) {
+		UBX::NAV::STATUS::MSG_STATUS status;
+		status.iTow = m_iTOW;
+		status.fixStat = is_valid;
+		ubx_inject_message(UBX::MessageClass::MSG_CLASS_NAV, UBX::NAV::ID_STATUS, status);
+	}
+	void ubx_dop() {
+		UBX::NAV::DOP::MSG_DOP dop;
+		dop.iTow = m_iTOW;
+		ubx_inject_message(UBX::MessageClass::MSG_CLASS_NAV, UBX::NAV::ID_DOP, dop);
+	}
+	void ubx_mga_ack(bool success, unsigned int num_messages) {
+		UBX::MGA::MSG_ACK ack;
+		ack.infoCode = !success;
+		ack.msgPayloadStart = num_messages;
+		ubx_inject_message(UBX::MessageClass::MSG_CLASS_MGA, UBX::MGA::ID_ACK, ack);
+	}
+	void ubx_mga_dbd(unsigned int num_messages) {
+		struct {
+			uint8_t data[64];
+		} x;
+		for (unsigned int i = 0; i < num_messages; i++) {
+			ubx_inject_message(UBX::MessageClass::MSG_CLASS_MGA, UBX::MGA::ID_DBD, x);
+			increment_time_ms();
+		}
+	}
 };
 
-TEST(M8, FailedToSyncCommsError)
-{
-    M10QAsyncReceiver m;
-    TestGNSSListener listener(m);
-    GPSNavSettings settings;
-    settings.assistnow_autonomous_enable = false;
-    settings.assistnow_offline_enable = false;
-    settings.debug_enable = true;
-    settings.dyn_model = BaseGNSSDynModel::PORTABLE;
-    settings.fix_mode = BaseGNSSFixMode::AUTO;
-    settings.hacc_filter_en = false;
-    settings.hdop_filter_en = false;
-    settings.max_nav_samples = 30;
+TEST(M8, FailedToSyncCommsError) {
+	M10QAsyncReceiver m;
+	TestGNSSListener listener(m);
+	GPSNavSettings settings;
+	settings.assistnow_autonomous_enable = false;
+	settings.assistnow_offline_enable = false;
+	settings.debug_enable = true;
+	settings.dyn_model = BaseGNSSDynModel::PORTABLE;
+	settings.fix_mode = BaseGNSSFixMode::AUTO;
+	settings.hacc_filter_en = false;
+	settings.hdop_filter_en = false;
+	settings.max_nav_samples = 30;
 
-    expect_power_on();
-    m.power_on(settings);
-    mock().expectOneCall("GPSEventError");
-    // R4 (2026-08) : sur erreur irrecuperable le driver coupe desormais le rail
-    // lui-meme (check_for_power_off) au lieu d'attendre un power_off() du client —
-    // un abonne peut tres bien ignorer l'evenement (session deja terminee, PWRON
-    // GNSS qui n'abonne personne) et la FSM restait figee rail allume.
-    // L'attente doit donc etre declaree AVANT l'avance de temps qui declenche l'erreur.
-    expect_power_off();
-    // 4 debits sondes: 6 essais sur le premier + 2 sur chacun des trois autres,
-    // a 500 ms => 6000 ms pile. Marge pour ne pas dependre de la phase du tick.
-    increment_time_ms(7000);
-    increment_time_ms();
+	expect_power_on();
+	m.power_on(settings);
+	mock().expectOneCall("GPSEventError");
+	// R4 (2026-08) : sur erreur irrecuperable le driver coupe desormais le rail
+	// lui-meme (check_for_power_off) au lieu d'attendre un power_off() du client —
+	// un abonne peut tres bien ignorer l'evenement (session deja terminee, PWRON
+	// GNSS qui n'abonne personne) et la FSM restait figee rail allume.
+	// L'attente doit donc etre declaree AVANT l'avance de temps qui declenche l'erreur.
+	expect_power_off();
+	// 4 debits sondes: 6 essais sur le premier + 2 sur chacun des trois autres,
+	// a 500 ms => 6000 ms pile. Marge pour ne pas dependre de la phase du tick.
+	increment_time_ms(7000);
+	increment_time_ms();
 }
 
 // Regression 2026-08 — "M10QAsyncReceiver: failed to sync comms" definitif.
@@ -275,891 +238,877 @@ TEST(M8, FailedToSyncCommsError)
 // mourait sur GPSEventError, et state_configure -- seul endroit qui renegocie le
 // port et seul endroit qui envoie le CFG-RST capable d'effacer la BBR -- etait
 // derriere ce sync. Aucun filet de securite ne rattrapait ce cas.
-TEST(M8, BootSyncFallsBackToSecondBaudWhenBbrRetained)
-{
-    M10QAsyncReceiver m;
-    TestGNSSListener listener(m);
-    GPSNavSettings settings;
-    settings.assistnow_autonomous_enable = false;
-    settings.assistnow_offline_enable = false;
-    settings.debug_enable = true;
-    settings.dyn_model = BaseGNSSDynModel::PORTABLE;
-    settings.fix_mode = BaseGNSSFixMode::AUTO;
-    settings.hacc_filter_en = false;
-    settings.hdop_filter_en = false;
-    settings.max_nav_samples = 30;
+TEST(M8, BootSyncFallsBackToSecondBaudWhenBbrRetained) {
+	M10QAsyncReceiver m;
+	TestGNSSListener listener(m);
+	GPSNavSettings settings;
+	settings.assistnow_autonomous_enable = false;
+	settings.assistnow_offline_enable = false;
+	settings.debug_enable = true;
+	settings.dyn_model = BaseGNSSDynModel::PORTABLE;
+	settings.fix_mode = BaseGNSSFixMode::AUTO;
+	settings.hacc_filter_en = false;
+	settings.hdop_filter_en = false;
+	settings.max_nav_samples = 30;
 
-    expect_power_on();
-    m.power_on(settings);
-    increment_time_ms();
-    // Premiere sonde: 9600 (defaut usine), le recepteur reste muet.
-    CHECK_EQUAL(NRF_UARTE_BAUDRATE_9600, g_fake_last_baudrate);
+	expect_power_on();
+	m.power_on(settings);
+	increment_time_ms();
+	// Premiere sonde: 9600 (defaut usine), le recepteur reste muet.
+	CHECK_EQUAL(NRF_UARTE_BAUDRATE_9600, g_fake_last_baudrate);
 
-    // 6 x 500 ms de timeouts sans reponse -> le driver doit passer au baud suivant
-    // au lieu d'abandonner la session. Marge au-dela des 3000 ms exacts: le
-    // moment ou tombe le 6e timeout depend de la phase du tick du scheduler.
-    increment_time_ms(3500);
-    CHECK_EQUAL(NRF_UARTE_BAUDRATE_460800, g_fake_last_baudrate);
+	// 6 x 500 ms de timeouts sans reponse -> le driver doit passer au baud suivant
+	// au lieu d'abandonner la session. Marge au-dela des 3000 ms exacts: le
+	// moment ou tombe le 6e timeout depend de la phase du tick du scheduler.
+	increment_time_ms(3500);
+	CHECK_EQUAL(NRF_UARTE_BAUDRATE_460800, g_fake_last_baudrate);
 
-    // Le M10Q repond a 460800 (NACK sur le CFG-MSG invalide de la sonde) : la
-    // session doit continuer. Aucun GPSEventError n'est attendu -- le mock fait
-    // echouer le test s'il en arrive un.
-    ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms(100);
+	// Le M10Q repond a 460800 (NACK sur le CFG-MSG invalide de la sonde) : la
+	// session doit continuer. Aucun GPSEventError n'est attendu -- le mock fait
+	// echouer le test s'il en arrive un.
+	ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms(100);
 
-    m.power_off();
-    expect_power_off();
-    increment_time_ms();
+	m.power_off();
+	expect_power_off();
+	increment_time_ms();
 }
 
 // Le baud qui a repondu est memorise: la session suivante le sonde en premier,
 // donc une carte a BBR retenue ne paie les sondes perdues qu'une fois par boot.
-TEST(M8, BootSyncCachesWorkingBaudForNextSession)
-{
-    M10QAsyncReceiver m;
-    TestGNSSListener listener(m);
-    GPSNavSettings settings;
-    settings.assistnow_autonomous_enable = false;
-    settings.assistnow_offline_enable = false;
-    settings.debug_enable = true;
-    settings.dyn_model = BaseGNSSDynModel::PORTABLE;
-    settings.fix_mode = BaseGNSSFixMode::AUTO;
-    settings.hacc_filter_en = false;
-    settings.hdop_filter_en = false;
-    settings.max_nav_samples = 30;
+TEST(M8, BootSyncCachesWorkingBaudForNextSession) {
+	M10QAsyncReceiver m;
+	TestGNSSListener listener(m);
+	GPSNavSettings settings;
+	settings.assistnow_autonomous_enable = false;
+	settings.assistnow_offline_enable = false;
+	settings.debug_enable = true;
+	settings.dyn_model = BaseGNSSDynModel::PORTABLE;
+	settings.fix_mode = BaseGNSSFixMode::AUTO;
+	settings.hacc_filter_en = false;
+	settings.hdop_filter_en = false;
+	settings.max_nav_samples = 30;
 
-    // Session 1: muet a 9600, repond a 460800.
-    expect_power_on();
-    m.power_on(settings);
-    increment_time_ms();
-    increment_time_ms(3500);
-    CHECK_EQUAL(NRF_UARTE_BAUDRATE_460800, g_fake_last_baudrate);
-    ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms(100);
-    m.power_off();
-    expect_power_off();
-    increment_time_ms();
+	// Session 1: muet a 9600, repond a 460800.
+	expect_power_on();
+	m.power_on(settings);
+	increment_time_ms();
+	increment_time_ms(3500);
+	CHECK_EQUAL(NRF_UARTE_BAUDRATE_460800, g_fake_last_baudrate);
+	ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms(100);
+	m.power_off();
+	expect_power_off();
+	increment_time_ms();
 
-    // Session 2: la premiere sonde doit maintenant partir directement a 460800.
-    // Sentinelle: sans elle le CHECK ci-dessous passerait "a vide" si aucune
-    // sonde n'etait emise du tout (la variable garderait la valeur de la session 1).
-    g_fake_last_baudrate = NRF_UARTE_BAUDRATE_1000000;
-    expect_power_on();
-    m.power_on(settings);
-    increment_time_ms();
-    CHECK_EQUAL(NRF_UARTE_BAUDRATE_460800, g_fake_last_baudrate);
+	// Session 2: la premiere sonde doit maintenant partir directement a 460800.
+	// Sentinelle: sans elle le CHECK ci-dessous passerait "a vide" si aucune
+	// sonde n'etait emise du tout (la variable garderait la valeur de la session 1).
+	g_fake_last_baudrate = NRF_UARTE_BAUDRATE_1000000;
+	expect_power_on();
+	m.power_on(settings);
+	increment_time_ms();
+	CHECK_EQUAL(NRF_UARTE_BAUDRATE_460800, g_fake_last_baudrate);
 
-    ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms(100);
-    m.power_off();
-    expect_power_off();
-    increment_time_ms();
+	ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms(100);
+	m.power_off();
+	expect_power_off();
+	increment_time_ms();
 }
 
-TEST(M8, FailedToChangeBaudRate)
-{
-    M10QAsyncReceiver m;
-    TestGNSSListener listener(m);
-    GPSNavSettings settings;
-    settings.assistnow_autonomous_enable = false;
-    settings.assistnow_offline_enable = false;
-    settings.debug_enable = true;
-    settings.dyn_model = BaseGNSSDynModel::PORTABLE;
-    settings.fix_mode = BaseGNSSFixMode::AUTO;
-    settings.hacc_filter_en = false;
-    settings.hdop_filter_en = false;
-    settings.max_nav_samples = 30;
+TEST(M8, FailedToChangeBaudRate) {
+	M10QAsyncReceiver m;
+	TestGNSSListener listener(m);
+	GPSNavSettings settings;
+	settings.assistnow_autonomous_enable = false;
+	settings.assistnow_offline_enable = false;
+	settings.debug_enable = true;
+	settings.dyn_model = BaseGNSSDynModel::PORTABLE;
+	settings.fix_mode = BaseGNSSFixMode::AUTO;
+	settings.hacc_filter_en = false;
+	settings.hdop_filter_en = false;
+	settings.max_nav_samples = 30;
 
-    expect_power_on();
-    m.power_on(settings);
-    increment_time_ms();
-    ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    mock().expectOneCall("GPSEventError");
-    // R4 (2026-08) : sur erreur irrecuperable le driver coupe desormais le rail
-    // lui-meme (check_for_power_off) au lieu d'attendre un power_off() du client —
-    // un abonne peut tres bien ignorer l'evenement (session deja terminee, PWRON
-    // GNSS qui n'abonne personne) et la FSM restait figee rail allume.
-    // L'attente doit donc etre declaree AVANT l'avance de temps qui declenche l'erreur.
-    expect_power_off();
-    increment_time_ms(3000);
-    increment_time_ms();
+	expect_power_on();
+	m.power_on(settings);
+	increment_time_ms();
+	ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	mock().expectOneCall("GPSEventError");
+	// R4 (2026-08) : sur erreur irrecuperable le driver coupe desormais le rail
+	// lui-meme (check_for_power_off) au lieu d'attendre un power_off() du client —
+	// un abonne peut tres bien ignorer l'evenement (session deja terminee, PWRON
+	// GNSS qui n'abonne personne) et la FSM restait figee rail allume.
+	// L'attente doit donc etre declaree AVANT l'avance de temps qui declenche l'erreur.
+	expect_power_off();
+	increment_time_ms(3000);
+	increment_time_ms();
 }
 
 // Regression: a l'abandon du fast-path BBR, l'UART doit revenir sur le debit
 // auquel le recepteur repond REELLEMENT. Sans cela setup_uart_port() repartait
 // a 460800 vers un M10Q qui ecoutait a 9600 et la session mourait — une session
 // sur deux sur une carte sans pile de sauvegarde.
-TEST(M8, FastPathGiveUpRestoresSyncedBaud)
-{
-    M10QAsyncReceiver m;
-    TestGNSSListener listener(m);
-    GPSNavSettings settings;
-    settings.assistnow_autonomous_enable = false;
-    settings.assistnow_offline_enable = false;
-    settings.debug_enable = true;
-    settings.dyn_model = BaseGNSSDynModel::PORTABLE;
-    settings.fix_mode = BaseGNSSFixMode::AUTO;
-    settings.hacc_filter_en = false;
-    settings.hdop_filter_en = false;
-    settings.max_nav_samples = 30;
+TEST(M8, FastPathGiveUpRestoresSyncedBaud) {
+	M10QAsyncReceiver m;
+	TestGNSSListener listener(m);
+	GPSNavSettings settings;
+	settings.assistnow_autonomous_enable = false;
+	settings.assistnow_offline_enable = false;
+	settings.debug_enable = true;
+	settings.dyn_model = BaseGNSSDynModel::PORTABLE;
+	settings.fix_mode = BaseGNSSFixMode::AUTO;
+	settings.hacc_filter_en = false;
+	settings.hdop_filter_en = false;
+	settings.max_nav_samples = 30;
 
-    // --- Session 1: configure complete jusqu'a SEC-UNIQID, ce qui arme
-    // m_gnss_info_valid (prerequis du fast-path).
-    expect_power_on();
-    m.power_on(settings);
-    increment_time_ms();
-    ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);   // sync 9600
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_PRT);    // step 0
-    // Le step 0 est "fire and forget": il repose une tache a +1000 ms avant que
-    // le step 1 n'emette la sonde. Attendre moins laisse l'injection suivante
-    // tomber dans le vide (le filtre d'attente n'est pas encore arme).
-    increment_time_ms(1100);
-    ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);   // step 1: sync MAX
-    increment_time_ms();
-    // A partir d'ici le recepteur est passe a 460800: le driver doit l'avoir
-    // enregistre, sinon un bridge ouvert dans le meme cycle parlerait a 9600.
-    CHECK_EQUAL(NRF_UARTE_BAUDRATE_460800, g_fake_last_baudrate);
+	// --- Session 1: configure complete jusqu'a SEC-UNIQID, ce qui arme
+	// m_gnss_info_valid (prerequis du fast-path).
+	expect_power_on();
+	m.power_on(settings);
+	increment_time_ms();
+	ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);  // sync 9600
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_PRT);  // step 0
+	// Le step 0 est "fire and forget": il repose une tache a +1000 ms avant que
+	// le step 1 n'emette la sonde. Attendre moins laisse l'injection suivante
+	// tomber dans le vide (le filtre d'attente n'est pas encore arme).
+	increment_time_ms(1100);
+	ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);  // step 1: sync MAX
+	increment_time_ms();
+	// A partir d'ici le recepteur est passe a 460800: le driver doit l'avoir
+	// enregistre, sinon un bridge ouvert dans le meme cycle parlerait a 9600.
+	CHECK_EQUAL(NRF_UARTE_BAUDRATE_460800, g_fake_last_baudrate);
 
-    m.power_off();
-    expect_power_off();
-    increment_time_ms(200);
+	m.power_off();
+	expect_power_off();
+	increment_time_ms(200);
 }
 
-TEST(M8, FailedToReceivePVT)
-{
-    M10QAsyncReceiver m;
-    TestGNSSListener listener(m);
-    GPSNavSettings settings;
-    settings.assistnow_autonomous_enable = false;
-    settings.assistnow_offline_enable = false;
-    settings.debug_enable = true;
-    settings.dyn_model = BaseGNSSDynModel::PORTABLE;
-    settings.fix_mode = BaseGNSSFixMode::AUTO;
-    settings.hacc_filter_en = false;
-    settings.hdop_filter_en = false;
-    settings.max_nav_samples = 30;
+TEST(M8, FailedToReceivePVT) {
+	M10QAsyncReceiver m;
+	TestGNSSListener listener(m);
+	GPSNavSettings settings;
+	settings.assistnow_autonomous_enable = false;
+	settings.assistnow_offline_enable = false;
+	settings.debug_enable = true;
+	settings.dyn_model = BaseGNSSDynModel::PORTABLE;
+	settings.fix_mode = BaseGNSSFixMode::AUTO;
+	settings.hacc_filter_en = false;
+	settings.hdop_filter_en = false;
+	settings.max_nav_samples = 30;
 
-    // Power on
-    expect_power_on();
-    m.power_on(settings);
-    increment_time_ms();
-    ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    // Configure
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_PRT);
-    increment_time_ms(500);
-    ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_GNSS);
-    increment_time_ms();
-    increment_time_ms(200);
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_CFG);
-    increment_time_ms();
-    // !!! Soft Reset !!!
-    increment_time_ms(1000);
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_ODO);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_TP5);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_TP5);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_PM2);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_RXM);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_NAV5);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_NAVX5);
-    increment_time_ms();
+	// Power on
+	expect_power_on();
+	m.power_on(settings);
+	increment_time_ms();
+	ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	// Configure
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_PRT);
+	increment_time_ms(500);
+	ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_GNSS);
+	increment_time_ms();
+	increment_time_ms(200);
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_CFG);
+	increment_time_ms();
+	// !!! Soft Reset !!!
+	increment_time_ms(1000);
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_ODO);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_TP5);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_TP5);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_PM2);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_RXM);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_NAV5);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_NAVX5);
+	increment_time_ms();
 
-    // Start receive
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
+	// Start receive
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
 
-    // Receive
-    mock().expectOneCall("GPSEventError");
-    // R4 (2026-08) : sur erreur irrecuperable le driver coupe desormais le rail
-    // lui-meme (check_for_power_off) au lieu d'attendre un power_off() du client —
-    // un abonne peut tres bien ignorer l'evenement (session deja terminee, PWRON
-    // GNSS qui n'abonne personne) et la FSM restait figee rail allume.
-    // L'attente doit donc etre declaree AVANT l'avance de temps qui declenche l'erreur.
-    expect_power_off();
-    increment_time_ms(5000);
-    increment_time_ms();
+	// Receive
+	mock().expectOneCall("GPSEventError");
+	// R4 (2026-08) : sur erreur irrecuperable le driver coupe desormais le rail
+	// lui-meme (check_for_power_off) au lieu d'attendre un power_off() du client —
+	// un abonne peut tres bien ignorer l'evenement (session deja terminee, PWRON
+	// GNSS qui n'abonne personne) et la FSM restait figee rail allume.
+	// L'attente doit donc etre declaree AVANT l'avance de temps qui declenche l'erreur.
+	expect_power_off();
+	increment_time_ms(5000);
+	increment_time_ms();
 }
 
-TEST(M8, PVTReportAfterPowerOffDemand)
-{
-    M10QAsyncReceiver m;
-    TestGNSSListener listener(m);
-    GPSNavSettings settings;
-    settings.assistnow_autonomous_enable = false;
-    settings.assistnow_offline_enable = false;
-    settings.debug_enable = true;
-    settings.dyn_model = BaseGNSSDynModel::PORTABLE;
-    settings.fix_mode = BaseGNSSFixMode::AUTO;
-    settings.hacc_filter_en = false;
-    settings.hdop_filter_en = false;
-    settings.max_nav_samples = 30;
+TEST(M8, PVTReportAfterPowerOffDemand) {
+	M10QAsyncReceiver m;
+	TestGNSSListener listener(m);
+	GPSNavSettings settings;
+	settings.assistnow_autonomous_enable = false;
+	settings.assistnow_offline_enable = false;
+	settings.debug_enable = true;
+	settings.dyn_model = BaseGNSSDynModel::PORTABLE;
+	settings.fix_mode = BaseGNSSFixMode::AUTO;
+	settings.hacc_filter_en = false;
+	settings.hdop_filter_en = false;
+	settings.max_nav_samples = 30;
 
-    // Power on
-    expect_power_on();
-    m.power_on(settings);
-    increment_time_ms();
-    ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    // Configure
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_PRT);
-    increment_time_ms(500);
-    ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_GNSS);
-    increment_time_ms();
-    increment_time_ms(200);
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_CFG);
-    increment_time_ms();
-    // !!! Soft Reset !!!
-    increment_time_ms(1000);
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_ODO);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_TP5);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_TP5);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_PM2);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_RXM);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_NAV5);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_NAVX5);
-    increment_time_ms();
+	// Power on
+	expect_power_on();
+	m.power_on(settings);
+	increment_time_ms();
+	ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	// Configure
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_PRT);
+	increment_time_ms(500);
+	ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_GNSS);
+	increment_time_ms();
+	increment_time_ms(200);
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_CFG);
+	increment_time_ms();
+	// !!! Soft Reset !!!
+	increment_time_ms(1000);
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_ODO);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_TP5);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_TP5);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_PM2);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_RXM);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_NAV5);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_NAVX5);
+	increment_time_ms();
 
-    // Start receive
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
+	// Start receive
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
 
-    // Receive
-    m.power_off();
-    expect_power_off();
-    ubx_pvt(-12, 20);
-    ubx_status(true);
-    ubx_dop();
-    increment_time_ms();
+	// Receive
+	m.power_off();
+	expect_power_off();
+	ubx_pvt(-12, 20);
+	ubx_status(true);
+	ubx_dop();
+	increment_time_ms();
 
-    // Stop receiving
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms(100);
+	// Stop receiving
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms(100);
 }
 
-TEST(M8, PVTReportSuccessWithoutANO)
-{
-    M10QAsyncReceiver m;
-    TestGNSSListener listener(m);
-    GPSNavSettings settings;
-    settings.assistnow_autonomous_enable = false;
-    settings.assistnow_offline_enable = false;
-    settings.debug_enable = true;
-    settings.dyn_model = BaseGNSSDynModel::PORTABLE;
-    settings.fix_mode = BaseGNSSFixMode::AUTO;
-    settings.hacc_filter_en = false;
-    settings.hdop_filter_en = false;
-    settings.max_nav_samples = 30;
+TEST(M8, PVTReportSuccessWithoutANO) {
+	M10QAsyncReceiver m;
+	TestGNSSListener listener(m);
+	GPSNavSettings settings;
+	settings.assistnow_autonomous_enable = false;
+	settings.assistnow_offline_enable = false;
+	settings.debug_enable = true;
+	settings.dyn_model = BaseGNSSDynModel::PORTABLE;
+	settings.fix_mode = BaseGNSSFixMode::AUTO;
+	settings.hacc_filter_en = false;
+	settings.hdop_filter_en = false;
+	settings.max_nav_samples = 30;
 
-    // Power on
-    expect_power_on();
-    m.power_on(settings);
-    increment_time_ms();
-    ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    // Configure
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_PRT);
-    increment_time_ms(500);
-    ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_GNSS);
-    increment_time_ms();
-    increment_time_ms(200);
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_CFG);
-    increment_time_ms();
-    // !!! Soft Reset !!!
-    increment_time_ms(1000);
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_ODO);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_TP5);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_TP5);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_PM2);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_RXM);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_NAV5);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_NAVX5);
-    increment_time_ms();
+	// Power on
+	expect_power_on();
+	m.power_on(settings);
+	increment_time_ms();
+	ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	// Configure
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_PRT);
+	increment_time_ms(500);
+	ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_GNSS);
+	increment_time_ms();
+	increment_time_ms(200);
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_CFG);
+	increment_time_ms();
+	// !!! Soft Reset !!!
+	increment_time_ms(1000);
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_ODO);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_TP5);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_TP5);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_PM2);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_RXM);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_NAV5);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_NAVX5);
+	increment_time_ms();
 
-    // Start receive
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
+	// Start receive
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
 
-    // Receive
-    mock().expectOneCall("GPSEventPVT");
-    ubx_pvt(-12, 20);
-    ubx_status(true);
-    ubx_dop();
-    increment_time_ms();
+	// Receive
+	mock().expectOneCall("GPSEventPVT");
+	ubx_pvt(-12, 20);
+	ubx_status(true);
+	ubx_dop();
+	increment_time_ms();
 
-    // Stop receiving
-    m.power_off();
-    expect_power_off();
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms(100);
+	// Stop receiving
+	m.power_off();
+	expect_power_off();
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms(100);
 }
 
-TEST(M8, PVTReportSuccessWithANO)
-{
-    M10QAsyncReceiver m;
-    TestGNSSListener listener(m);
-    GPSNavSettings settings;
-    settings.assistnow_autonomous_enable = true;
-    settings.assistnow_offline_enable = false;
-    settings.debug_enable = true;
-    settings.dyn_model = BaseGNSSDynModel::PORTABLE;
-    settings.fix_mode = BaseGNSSFixMode::AUTO;
-    settings.hacc_filter_en = false;
-    settings.hdop_filter_en = false;
-    settings.max_nav_samples = 30;
+TEST(M8, PVTReportSuccessWithANO) {
+	M10QAsyncReceiver m;
+	TestGNSSListener listener(m);
+	GPSNavSettings settings;
+	settings.assistnow_autonomous_enable = true;
+	settings.assistnow_offline_enable = false;
+	settings.debug_enable = true;
+	settings.dyn_model = BaseGNSSDynModel::PORTABLE;
+	settings.fix_mode = BaseGNSSFixMode::AUTO;
+	settings.hacc_filter_en = false;
+	settings.hdop_filter_en = false;
+	settings.max_nav_samples = 30;
 
-    // Power on
-    expect_power_on();
-    m.power_on(settings);
-    increment_time_ms();
-    ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    // Configure
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_PRT);
-    increment_time_ms(500);
-    ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_GNSS);
-    increment_time_ms();
-    increment_time_ms(200);
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_CFG);
-    increment_time_ms();
-    // !!! Soft Reset !!!
-    increment_time_ms(1000);
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_ODO);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_TP5);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_TP5);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_PM2);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_RXM);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_NAV5);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_NAVX5);
-    increment_time_ms();
+	// Power on
+	expect_power_on();
+	m.power_on(settings);
+	increment_time_ms();
+	ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	// Configure
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_PRT);
+	increment_time_ms(500);
+	ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_GNSS);
+	increment_time_ms();
+	increment_time_ms(200);
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_CFG);
+	increment_time_ms();
+	// !!! Soft Reset !!!
+	increment_time_ms(1000);
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_ODO);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_TP5);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_TP5);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_PM2);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_RXM);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_NAV5);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_NAVX5);
+	increment_time_ms();
 
-    // Start receive
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
+	// Start receive
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
 
-    // Receive
-    mock().expectOneCall("GPSEventPVT");
-    ubx_pvt(-12, 20);
-    ubx_status(true);
-    ubx_dop();
-    increment_time_ms();
+	// Receive
+	mock().expectOneCall("GPSEventPVT");
+	ubx_pvt(-12, 20);
+	ubx_status(true);
+	ubx_dop();
+	increment_time_ms();
 
-    // Stop receiving
-    m.power_off();
-    expect_power_off();
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    increment_time_ms(100);
+	// Stop receiving
+	m.power_off();
+	expect_power_off();
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	increment_time_ms(100);
 
-    ubx_mga_ack(true, 56);
-    ubx_mga_dbd(56);
-    increment_time_ms(1000);
+	ubx_mga_ack(true, 56);
+	ubx_mga_dbd(56);
+	increment_time_ms(1000);
 }
 
-TEST(M8, PVTReportSuccessWithANOMissingDBDAck)
-{
-    M10QAsyncReceiver m;
-    TestGNSSListener listener(m);
-    GPSNavSettings settings;
-    settings.assistnow_autonomous_enable = true;
-    settings.assistnow_offline_enable = false;
-    settings.debug_enable = true;
-    settings.dyn_model = BaseGNSSDynModel::PORTABLE;
-    settings.fix_mode = BaseGNSSFixMode::AUTO;
-    settings.hacc_filter_en = false;
-    settings.hdop_filter_en = false;
-    settings.max_nav_samples = 30;
+TEST(M8, PVTReportSuccessWithANOMissingDBDAck) {
+	M10QAsyncReceiver m;
+	TestGNSSListener listener(m);
+	GPSNavSettings settings;
+	settings.assistnow_autonomous_enable = true;
+	settings.assistnow_offline_enable = false;
+	settings.debug_enable = true;
+	settings.dyn_model = BaseGNSSDynModel::PORTABLE;
+	settings.fix_mode = BaseGNSSFixMode::AUTO;
+	settings.hacc_filter_en = false;
+	settings.hdop_filter_en = false;
+	settings.max_nav_samples = 30;
 
-    // Power on
-    expect_power_on();
-    m.power_on(settings);
-    increment_time_ms();
-    ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    // Configure
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_PRT);
-    increment_time_ms(500);
-    ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_GNSS);
-    increment_time_ms();
-    increment_time_ms(200);
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_CFG);
-    increment_time_ms();
-    // !!! Soft Reset !!!
-    increment_time_ms(1000);
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_ODO);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_TP5);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_TP5);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_PM2);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_RXM);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_NAV5);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_NAVX5);
-    increment_time_ms();
+	// Power on
+	expect_power_on();
+	m.power_on(settings);
+	increment_time_ms();
+	ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	// Configure
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_PRT);
+	increment_time_ms(500);
+	ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_GNSS);
+	increment_time_ms();
+	increment_time_ms(200);
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_CFG);
+	increment_time_ms();
+	// !!! Soft Reset !!!
+	increment_time_ms(1000);
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_ODO);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_TP5);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_TP5);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_PM2);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_RXM);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_NAV5);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_NAVX5);
+	increment_time_ms();
 
-    // Start receive
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
+	// Start receive
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
 
-    // Receive
-    mock().expectOneCall("GPSEventPVT");
-    ubx_pvt(-12, 20);
-    ubx_status(true);
-    ubx_dop();
-    increment_time_ms();
+	// Receive
+	mock().expectOneCall("GPSEventPVT");
+	ubx_pvt(-12, 20);
+	ubx_status(true);
+	ubx_dop();
+	increment_time_ms();
 
-    // Stop receiving
-    m.power_off();
-    expect_power_off();
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms(1100);
+	// Stop receiving
+	m.power_off();
+	expect_power_off();
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms(1100);
 }
 
-TEST(M8, PVTReportSuccessWithANOMissingDBDs)
-{
-    M10QAsyncReceiver m;
-    TestGNSSListener listener(m);
-    GPSNavSettings settings;
-    settings.assistnow_autonomous_enable = true;
-    settings.assistnow_offline_enable = false;
-    settings.debug_enable = true;
-    settings.dyn_model = BaseGNSSDynModel::PORTABLE;
-    settings.fix_mode = BaseGNSSFixMode::AUTO;
-    settings.hacc_filter_en = false;
-    settings.hdop_filter_en = false;
-    settings.max_nav_samples = 30;
+TEST(M8, PVTReportSuccessWithANOMissingDBDs) {
+	M10QAsyncReceiver m;
+	TestGNSSListener listener(m);
+	GPSNavSettings settings;
+	settings.assistnow_autonomous_enable = true;
+	settings.assistnow_offline_enable = false;
+	settings.debug_enable = true;
+	settings.dyn_model = BaseGNSSDynModel::PORTABLE;
+	settings.fix_mode = BaseGNSSFixMode::AUTO;
+	settings.hacc_filter_en = false;
+	settings.hdop_filter_en = false;
+	settings.max_nav_samples = 30;
 
-    // Power on
-    expect_power_on();
-    m.power_on(settings);
-    increment_time_ms();
-    ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    // Configure
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_PRT);
-    increment_time_ms(500);
-    ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_GNSS);
-    increment_time_ms();
-    increment_time_ms(200);
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_CFG);
-    increment_time_ms();
-    // !!! Soft Reset !!!
-    increment_time_ms(1000);
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_ODO);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_TP5);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_TP5);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_PM2);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_RXM);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_NAV5);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_NAVX5);
-    increment_time_ms();
+	// Power on
+	expect_power_on();
+	m.power_on(settings);
+	increment_time_ms();
+	ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	// Configure
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_PRT);
+	increment_time_ms(500);
+	ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_GNSS);
+	increment_time_ms();
+	increment_time_ms(200);
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_CFG);
+	increment_time_ms();
+	// !!! Soft Reset !!!
+	increment_time_ms(1000);
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_ODO);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_TP5);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_TP5);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_PM2);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_RXM);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_NAV5);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_NAVX5);
+	increment_time_ms();
 
-    // Start receive
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
+	// Start receive
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
 
-    // Receive
-    mock().expectOneCall("GPSEventPVT");
-    ubx_pvt(-12, 20);
-    ubx_status(true);
-    ubx_dop();
-    increment_time_ms();
+	// Receive
+	mock().expectOneCall("GPSEventPVT");
+	ubx_pvt(-12, 20);
+	ubx_status(true);
+	ubx_dop();
+	increment_time_ms();
 
-    // Stop receiving
-    m.power_off();
-    expect_power_off();
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    increment_time_ms(100);
+	// Stop receiving
+	m.power_off();
+	expect_power_off();
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	increment_time_ms(100);
 
-    // Send MGA-DBD
-    ubx_mga_ack(true, 56);
-    increment_time_ms(1000);
-    ubx_mga_ack(true, 56);
-    increment_time_ms(1000);
-    ubx_mga_ack(true, 56);
-    increment_time_ms(1000);
+	// Send MGA-DBD
+	ubx_mga_ack(true, 56);
+	increment_time_ms(1000);
+	ubx_mga_ack(true, 56);
+	increment_time_ms(1000);
+	ubx_mga_ack(true, 56);
+	increment_time_ms(1000);
 }
 
 
-TEST(M8, PVTReportSuccessWithANOAndStartNewReceive)
-{
-    M10QAsyncReceiver m;
-    TestGNSSListener listener(m);
-    GPSNavSettings settings;
-    settings.assistnow_autonomous_enable = true;
-    settings.assistnow_offline_enable = false;
-    settings.debug_enable = true;
-    settings.dyn_model = BaseGNSSDynModel::PORTABLE;
-    settings.fix_mode = BaseGNSSFixMode::AUTO;
-    settings.hacc_filter_en = false;
-    settings.hdop_filter_en = false;
-    settings.max_nav_samples = 30;
+TEST(M8, PVTReportSuccessWithANOAndStartNewReceive) {
+	M10QAsyncReceiver m;
+	TestGNSSListener listener(m);
+	GPSNavSettings settings;
+	settings.assistnow_autonomous_enable = true;
+	settings.assistnow_offline_enable = false;
+	settings.debug_enable = true;
+	settings.dyn_model = BaseGNSSDynModel::PORTABLE;
+	settings.fix_mode = BaseGNSSFixMode::AUTO;
+	settings.hacc_filter_en = false;
+	settings.hdop_filter_en = false;
+	settings.max_nav_samples = 30;
 
-    // Power on
-    expect_power_on();
-    m.power_on(settings);
-    increment_time_ms();
-    ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    // Configure
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_PRT);
-    increment_time_ms(500);
-    ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_GNSS);
-    increment_time_ms();
-    increment_time_ms(200);
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_CFG);
-    increment_time_ms();
-    // !!! Soft Reset !!!
-    increment_time_ms(1000);
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_ODO);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_TP5);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_TP5);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_PM2);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_RXM);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_NAV5);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_NAVX5);
-    increment_time_ms();
+	// Power on
+	expect_power_on();
+	m.power_on(settings);
+	increment_time_ms();
+	ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	// Configure
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_PRT);
+	increment_time_ms(500);
+	ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_GNSS);
+	increment_time_ms();
+	increment_time_ms(200);
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_CFG);
+	increment_time_ms();
+	// !!! Soft Reset !!!
+	increment_time_ms(1000);
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_ODO);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_TP5);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_TP5);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_PM2);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_RXM);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_NAV5);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_NAVX5);
+	increment_time_ms();
 
-    // Start receive
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
+	// Start receive
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
 
-    // Receive
-    mock().expectOneCall("GPSEventPVT");
-    ubx_pvt(-12, 20);
-    ubx_status(true);
-    ubx_dop();
-    increment_time_ms();
+	// Receive
+	mock().expectOneCall("GPSEventPVT");
+	ubx_pvt(-12, 20);
+	ubx_status(true);
+	ubx_dop();
+	increment_time_ms();
 
-    // Stop receiving
-    m.power_off();
-    expect_power_off();
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    increment_time_ms(100);
+	// Stop receiving
+	m.power_off();
+	expect_power_off();
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	increment_time_ms(100);
 
-    // Send MGA-DBD
-    ubx_mga_ack(true, 56);
-    increment_time_ms();
-    ubx_mga_dbd(56);
-    increment_time_ms(1000);
+	// Send MGA-DBD
+	ubx_mga_ack(true, 56);
+	increment_time_ms();
+	ubx_mga_dbd(56);
+	increment_time_ms(1000);
 
 
-    // Power on
-    expect_power_on();
-    m.power_on(settings);
-    increment_time_ms();
-    ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    // Configure
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_PRT);
-    increment_time_ms(500);
-    ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_GNSS);
-    increment_time_ms();
-    increment_time_ms(200);
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_CFG);
-    increment_time_ms();
-    // !!! Soft Reset !!!
-    increment_time_ms(1000);
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_ODO);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_TP5);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_TP5);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_PM2);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_RXM);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_NAV5);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_NAVX5);
-    increment_time_ms();
-    ubx_mga_ack(true, 0);
-    increment_time_ms();
+	// Power on
+	expect_power_on();
+	m.power_on(settings);
+	increment_time_ms();
+	ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	// Configure
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_PRT);
+	increment_time_ms(500);
+	ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_GNSS);
+	increment_time_ms();
+	increment_time_ms(200);
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_CFG);
+	increment_time_ms();
+	// !!! Soft Reset !!!
+	increment_time_ms(1000);
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_ODO);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_TP5);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_TP5);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_PM2);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_RXM);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_NAV5);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_NAVX5);
+	increment_time_ms();
+	ubx_mga_ack(true, 0);
+	increment_time_ms();
 
-    for (unsigned int i = 0; i < 31; i++) {
-        increment_time_ms(5);
-    }
-    for (unsigned int i = 0; i < 56; i++) {
-        ubx_mga_ack(true, 0);
-        increment_time_ms();
-    }
-    increment_time_ms(5);
+	for (unsigned int i = 0; i < 31; i++) {
+		increment_time_ms(5);
+	}
+	for (unsigned int i = 0; i < 56; i++) {
+		ubx_mga_ack(true, 0);
+		increment_time_ms();
+	}
+	increment_time_ms(5);
 
-    // Start receive
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
+	// Start receive
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
 }
 
 
-TEST(M8, FailedToStartReceive)
-{
-    M10QAsyncReceiver m;
-    TestGNSSListener listener(m);
-    GPSNavSettings settings;
-    settings.assistnow_autonomous_enable = false;
-    settings.assistnow_offline_enable = false;
-    settings.debug_enable = true;
-    settings.dyn_model = BaseGNSSDynModel::PORTABLE;
-    settings.fix_mode = BaseGNSSFixMode::AUTO;
-    settings.hacc_filter_en = false;
-    settings.hdop_filter_en = false;
-    settings.max_nav_samples = 30;
+TEST(M8, FailedToStartReceive) {
+	M10QAsyncReceiver m;
+	TestGNSSListener listener(m);
+	GPSNavSettings settings;
+	settings.assistnow_autonomous_enable = false;
+	settings.assistnow_offline_enable = false;
+	settings.debug_enable = true;
+	settings.dyn_model = BaseGNSSDynModel::PORTABLE;
+	settings.fix_mode = BaseGNSSFixMode::AUTO;
+	settings.hacc_filter_en = false;
+	settings.hdop_filter_en = false;
+	settings.max_nav_samples = 30;
 
-    // Power on
-    expect_power_on();
-    m.power_on(settings);
-    increment_time_ms();
-    ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    // Configure
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_PRT);
-    increment_time_ms(500);
-    ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_GNSS);
-    increment_time_ms();
-    mock().expectOneCall("GPSEventError");
-    // R4 (2026-08) : sur erreur irrecuperable le driver coupe desormais le rail
-    // lui-meme (check_for_power_off) au lieu d'attendre un power_off() du client —
-    // un abonne peut tres bien ignorer l'evenement (session deja terminee, PWRON
-    // GNSS qui n'abonne personne) et la FSM restait figee rail allume.
-    // L'attente doit donc etre declaree AVANT l'avance de temps qui declenche l'erreur.
-    expect_power_off();
-    increment_time_ms(1000);
-    increment_time_ms(1000);
-    increment_time_ms(1000);
-    increment_time_ms(1000);
-    increment_time_ms();
+	// Power on
+	expect_power_on();
+	m.power_on(settings);
+	increment_time_ms();
+	ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	// Configure
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_PRT);
+	increment_time_ms(500);
+	ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_GNSS);
+	increment_time_ms();
+	mock().expectOneCall("GPSEventError");
+	// R4 (2026-08) : sur erreur irrecuperable le driver coupe desormais le rail
+	// lui-meme (check_for_power_off) au lieu d'attendre un power_off() du client —
+	// un abonne peut tres bien ignorer l'evenement (session deja terminee, PWRON
+	// GNSS qui n'abonne personne) et la FSM restait figee rail allume.
+	// L'attente doit donc etre declaree AVANT l'avance de temps qui declenche l'erreur.
+	expect_power_off();
+	increment_time_ms(1000);
+	increment_time_ms(1000);
+	increment_time_ms(1000);
+	increment_time_ms(1000);
+	increment_time_ms();
 }
 
 
-TEST(M8, UartCommsErrorDuringReceive)
-{
-    M10QAsyncReceiver m;
-    TestGNSSListener listener(m);
-    GPSNavSettings settings;
-    settings.assistnow_autonomous_enable = false;
-    settings.assistnow_offline_enable = false;
-    settings.debug_enable = true;
-    settings.dyn_model = BaseGNSSDynModel::PORTABLE;
-    settings.fix_mode = BaseGNSSFixMode::AUTO;
-    settings.hacc_filter_en = false;
-    settings.hdop_filter_en = false;
-    settings.max_nav_samples = 30;
+TEST(M8, UartCommsErrorDuringReceive) {
+	M10QAsyncReceiver m;
+	TestGNSSListener listener(m);
+	GPSNavSettings settings;
+	settings.assistnow_autonomous_enable = false;
+	settings.assistnow_offline_enable = false;
+	settings.debug_enable = true;
+	settings.dyn_model = BaseGNSSDynModel::PORTABLE;
+	settings.fix_mode = BaseGNSSFixMode::AUTO;
+	settings.hacc_filter_en = false;
+	settings.hdop_filter_en = false;
+	settings.max_nav_samples = 30;
 
-    // Power on
-    expect_power_on();
-    m.power_on(settings);
-    increment_time_ms();
-    ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    // Configure
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_PRT);
-    increment_time_ms(500);
-    ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_GNSS);
-    increment_time_ms();
-    increment_time_ms(200);
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_CFG);
-    increment_time_ms();
-    // !!! Soft Reset !!!
-    increment_time_ms(1000);
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_ODO);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_TP5);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_TP5);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_PM2);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_RXM);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_NAV5);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_NAVX5);
-    increment_time_ms();
+	// Power on
+	expect_power_on();
+	m.power_on(settings);
+	increment_time_ms();
+	ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	// Configure
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_PRT);
+	increment_time_ms(500);
+	ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_GNSS);
+	increment_time_ms();
+	increment_time_ms(200);
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_CFG);
+	increment_time_ms();
+	// !!! Soft Reset !!!
+	increment_time_ms(1000);
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_ODO);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_TP5);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_TP5);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_PM2);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_RXM);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_NAV5);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_NAVX5);
+	increment_time_ms();
 
-    // Start receive
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
+	// Start receive
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
 
-    // Receive
-    inject_error(0x01);
-    increment_time_ms();
-    inject_error(0x01);
-    mock().expectOneCall("GPSEventError");
-    // R4 (2026-08) : sur erreur irrecuperable le driver coupe desormais le rail
-    // lui-meme (check_for_power_off) au lieu d'attendre un power_off() du client —
-    // un abonne peut tres bien ignorer l'evenement (session deja terminee, PWRON
-    // GNSS qui n'abonne personne) et la FSM restait figee rail allume.
-    // L'attente doit donc etre declaree AVANT l'avance de temps qui declenche l'erreur.
-    expect_power_off();
-    increment_time_ms();
-    inject_error(0x01);
-    increment_time_ms();
-    increment_time_ms();
+	// Receive
+	inject_error(0x01);
+	increment_time_ms();
+	inject_error(0x01);
+	mock().expectOneCall("GPSEventError");
+	// R4 (2026-08) : sur erreur irrecuperable le driver coupe desormais le rail
+	// lui-meme (check_for_power_off) au lieu d'attendre un power_off() du client —
+	// un abonne peut tres bien ignorer l'evenement (session deja terminee, PWRON
+	// GNSS qui n'abonne personne) et la FSM restait figee rail allume.
+	// L'attente doit donc etre declaree AVANT l'avance de temps qui declenche l'erreur.
+	expect_power_off();
+	increment_time_ms();
+	inject_error(0x01);
+	increment_time_ms();
+	increment_time_ms();
 }
 
 
-TEST(M8, UartCommsErrorDuringConfig)
-{
-    M10QAsyncReceiver m;
-    TestGNSSListener listener(m);
-    GPSNavSettings settings;
-    settings.assistnow_autonomous_enable = false;
-    settings.assistnow_offline_enable = false;
-    settings.debug_enable = true;
-    settings.dyn_model = BaseGNSSDynModel::PORTABLE;
-    settings.fix_mode = BaseGNSSFixMode::AUTO;
-    settings.hacc_filter_en = false;
-    settings.hdop_filter_en = false;
-    settings.max_nav_samples = 30;
+TEST(M8, UartCommsErrorDuringConfig) {
+	M10QAsyncReceiver m;
+	TestGNSSListener listener(m);
+	GPSNavSettings settings;
+	settings.assistnow_autonomous_enable = false;
+	settings.assistnow_offline_enable = false;
+	settings.debug_enable = true;
+	settings.dyn_model = BaseGNSSDynModel::PORTABLE;
+	settings.fix_mode = BaseGNSSFixMode::AUTO;
+	settings.hacc_filter_en = false;
+	settings.hdop_filter_en = false;
+	settings.max_nav_samples = 30;
 
-    // Power on
-    expect_power_on();
-    m.power_on(settings);
-    increment_time_ms();
-    ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    // Configure
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_PRT);
-    increment_time_ms(500);
-    increment_time_ms();
-    inject_error(0x01);
-    increment_time_ms();
-    inject_error(0x01);
-    increment_time_ms();
-    inject_error(0x01);
-    mock().expectOneCall("GPSEventError");
-    // R4 (2026-08) : sur erreur irrecuperable le driver coupe desormais le rail
-    // lui-meme (check_for_power_off) au lieu d'attendre un power_off() du client —
-    // un abonne peut tres bien ignorer l'evenement (session deja terminee, PWRON
-    // GNSS qui n'abonne personne) et la FSM restait figee rail allume.
-    // L'attente doit donc etre declaree AVANT l'avance de temps qui declenche l'erreur.
-    expect_power_off();
-    increment_time_ms();
-    increment_time_ms();
+	// Power on
+	expect_power_on();
+	m.power_on(settings);
+	increment_time_ms();
+	ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	// Configure
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_PRT);
+	increment_time_ms(500);
+	increment_time_ms();
+	inject_error(0x01);
+	increment_time_ms();
+	inject_error(0x01);
+	increment_time_ms();
+	inject_error(0x01);
+	mock().expectOneCall("GPSEventError");
+	// R4 (2026-08) : sur erreur irrecuperable le driver coupe desormais le rail
+	// lui-meme (check_for_power_off) au lieu d'attendre un power_off() du client —
+	// un abonne peut tres bien ignorer l'evenement (session deja terminee, PWRON
+	// GNSS qui n'abonne personne) et la FSM restait figee rail allume.
+	// L'attente doit donc etre declaree AVANT l'avance de temps qui declenche l'erreur.
+	expect_power_off();
+	increment_time_ms();
+	increment_time_ms();
 }
 
 // Regression R1 (2026-08) — le RX libuarte restait mort apres une erreur toleree.
@@ -1172,166 +1121,163 @@ TEST(M8, UartCommsErrorDuringConfig)
 // au-dela du step 1 la suite n'etait qu'une cascade de TIMEOUT (jamais ERROR),
 // donc la branche de recuperation qui rappelle set_baudrate n'etait jamais
 // prise. La premiere erreur de framing en cours de configure tuait la session.
-TEST(M8, FramingErrorDuringConfigureRestartsRx)
-{
-    M10QAsyncReceiver m;
-    TestGNSSListener listener(m);
-    GPSNavSettings settings;
-    settings.assistnow_autonomous_enable = false;
-    settings.assistnow_offline_enable = false;
-    settings.debug_enable = true;
-    settings.dyn_model = BaseGNSSDynModel::PORTABLE;
-    settings.fix_mode = BaseGNSSFixMode::AUTO;
-    settings.hacc_filter_en = false;
-    settings.hdop_filter_en = false;
-    settings.max_nav_samples = 30;
+TEST(M8, FramingErrorDuringConfigureRestartsRx) {
+	M10QAsyncReceiver m;
+	TestGNSSListener listener(m);
+	GPSNavSettings settings;
+	settings.assistnow_autonomous_enable = false;
+	settings.assistnow_offline_enable = false;
+	settings.debug_enable = true;
+	settings.dyn_model = BaseGNSSDynModel::PORTABLE;
+	settings.fix_mode = BaseGNSSFixMode::AUTO;
+	settings.hacc_filter_en = false;
+	settings.hdop_filter_en = false;
+	settings.max_nav_samples = 30;
 
-    expect_power_on();
-    m.power_on(settings);
-    increment_time_ms();
-    ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    // Entree dans configure: step 0 (VALSET port UART) puis attente de 1 s.
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_PRT);
-    increment_time_ms(500);
-    increment_time_ms();
-    CHECK_TRUE(m_is_rx_enabled);
+	expect_power_on();
+	m.power_on(settings);
+	increment_time_ms();
+	ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	// Entree dans configure: step 0 (VALSET port UART) puis attente de 1 s.
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_PRT);
+	increment_time_ms(500);
+	increment_time_ms();
+	CHECK_TRUE(m_is_rx_enabled);
 
-    // Erreur de framing 0x04 = transition NMEA->UBX, toleree pendant le boot.
-    inject_error(0x04);
-    // handle_error a coupe le RX — on le verifie explicitement, sinon le test
-    // passerait meme si l'erreur n'avait jamais ete delivree.
-    CHECK_FALSE(m_is_rx_enabled);
-    increment_time_ms();
-    // ...
-    // ... et la reprise doit avoir ete postee au scheduler (elle ne peut pas
-    // s'executer en contexte ISR).
-    increment_time_ms(10);
-    CHECK_TRUE(m_is_rx_enabled);
+	// Erreur de framing 0x04 = transition NMEA->UBX, toleree pendant le boot.
+	inject_error(0x04);
+	// handle_error a coupe le RX — on le verifie explicitement, sinon le test
+	// passerait meme si l'erreur n'avait jamais ete delivree.
+	CHECK_FALSE(m_is_rx_enabled);
+	increment_time_ms();
+	// ...
+	// ... et la reprise doit avoir ete postee au scheduler (elle ne peut pas
+	// s'executer en contexte ISR).
+	increment_time_ms(10);
+	CHECK_TRUE(m_is_rx_enabled);
 
-    // Le recepteur peut donc de nouveau etre entendu: la session continue.
-    ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms(100);
+	// Le recepteur peut donc de nouveau etre entendu: la session continue.
+	ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms(100);
 
-    m.power_off();
-    expect_power_off();
-    increment_time_ms();
+	m.power_off();
+	expect_power_off();
+	increment_time_ms();
 }
 
-TEST(M8, UartCommsErrorDuringConfigAndRecover)
-{
-    M10QAsyncReceiver m;
-    TestGNSSListener listener(m);
-    GPSNavSettings settings;
-    settings.assistnow_autonomous_enable = false;
-    settings.assistnow_offline_enable = false;
-    settings.debug_enable = true;
-    settings.dyn_model = BaseGNSSDynModel::PORTABLE;
-    settings.fix_mode = BaseGNSSFixMode::AUTO;
-    settings.hacc_filter_en = false;
-    settings.hdop_filter_en = false;
-    settings.max_nav_samples = 30;
+TEST(M8, UartCommsErrorDuringConfigAndRecover) {
+	M10QAsyncReceiver m;
+	TestGNSSListener listener(m);
+	GPSNavSettings settings;
+	settings.assistnow_autonomous_enable = false;
+	settings.assistnow_offline_enable = false;
+	settings.debug_enable = true;
+	settings.dyn_model = BaseGNSSDynModel::PORTABLE;
+	settings.fix_mode = BaseGNSSFixMode::AUTO;
+	settings.hacc_filter_en = false;
+	settings.hdop_filter_en = false;
+	settings.max_nav_samples = 30;
 
-    // Power on
-    expect_power_on();
-    m.power_on(settings);
-    increment_time_ms();
-    ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    // Configure
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_PRT);
-    increment_time_ms(500);
-    ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    inject_error(0x01);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_GNSS);
-    increment_time_ms();
-    inject_error(0x01);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_GNSS);
-    increment_time_ms();
+	// Power on
+	expect_power_on();
+	m.power_on(settings);
+	increment_time_ms();
+	ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	// Configure
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_PRT);
+	increment_time_ms(500);
+	ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	inject_error(0x01);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_GNSS);
+	increment_time_ms();
+	inject_error(0x01);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_GNSS);
+	increment_time_ms();
 }
 
 
-TEST(M8, PVTReportSuccessWithMGAOverflow)
-{
-    M10QAsyncReceiver m;
-    TestGNSSListener listener(m);
-    GPSNavSettings settings;
-    settings.assistnow_autonomous_enable = true;
-    settings.assistnow_offline_enable = false;
-    settings.debug_enable = true;
-    settings.dyn_model = BaseGNSSDynModel::PORTABLE;
-    settings.fix_mode = BaseGNSSFixMode::AUTO;
-    settings.hacc_filter_en = false;
-    settings.hdop_filter_en = false;
-    settings.max_nav_samples = 30;
+TEST(M8, PVTReportSuccessWithMGAOverflow) {
+	M10QAsyncReceiver m;
+	TestGNSSListener listener(m);
+	GPSNavSettings settings;
+	settings.assistnow_autonomous_enable = true;
+	settings.assistnow_offline_enable = false;
+	settings.debug_enable = true;
+	settings.dyn_model = BaseGNSSDynModel::PORTABLE;
+	settings.fix_mode = BaseGNSSFixMode::AUTO;
+	settings.hacc_filter_en = false;
+	settings.hdop_filter_en = false;
+	settings.max_nav_samples = 30;
 
-    // Power on
-    expect_power_on();
-    m.power_on(settings);
-    increment_time_ms();
-    ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    // Configure
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_PRT);
-    increment_time_ms(500);
-    ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_GNSS);
-    increment_time_ms();
-    increment_time_ms(200);
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_CFG);
-    increment_time_ms();
-    // !!! Soft Reset !!!
-    increment_time_ms(1000);
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_ODO);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_TP5);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_TP5);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_PM2);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_RXM);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_NAV5);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_NAVX5);
-    increment_time_ms();
+	// Power on
+	expect_power_on();
+	m.power_on(settings);
+	increment_time_ms();
+	ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	// Configure
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_PRT);
+	increment_time_ms(500);
+	ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_GNSS);
+	increment_time_ms();
+	increment_time_ms(200);
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_CFG);
+	increment_time_ms();
+	// !!! Soft Reset !!!
+	increment_time_ms(1000);
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_ODO);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_TP5);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_TP5);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_PM2);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_RXM);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_NAV5);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_NAVX5);
+	increment_time_ms();
 
-    // Start receive
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
+	// Start receive
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
 
-    // Receive
-    mock().expectOneCall("GPSEventPVT");
-    ubx_pvt(-12, 20);
-    ubx_status(true);
-    ubx_dop();
-    increment_time_ms();
+	// Receive
+	mock().expectOneCall("GPSEventPVT");
+	ubx_pvt(-12, 20);
+	ubx_status(true);
+	ubx_dop();
+	increment_time_ms();
 
-    m.power_off();
-    expect_power_off();
-    increment_time_ms();
+	m.power_off();
+	expect_power_off();
+	increment_time_ms();
 
-    // Stop receiving
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
-    increment_time_ms();
-    increment_time_ms(100);
+	// Stop receiving
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
+	increment_time_ms();
+	increment_time_ms(100);
 
-    // Fetch database
-    ubx_mga_ack(true, 300);
-    increment_time_ms();
-    ubx_mga_dbd(300);
-    increment_time_ms(1000);
+	// Fetch database
+	ubx_mga_ack(true, 300);
+	increment_time_ms();
+	ubx_mga_dbd(300);
+	increment_time_ms(1000);
 }

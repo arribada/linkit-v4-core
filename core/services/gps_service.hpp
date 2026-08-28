@@ -19,61 +19,43 @@
 class GPSLogFormatter : public LogFormatter {
 public:
 	const std::string header() override {
-		return "log_datetime,batt_voltage,iTOW,fix_datetime,valid,onTime,ttff,fixType,flags,flags2,flags3,numSV,lon,lat,height,hMSL,hAcc,vAcc,velN,velE,velD,gSpeed,headMot,sAcc,headAcc,pDOP,vDOP,hDOP,headVeh\r\n";
+		return "log_datetime,batt_voltage,iTOW,fix_datetime,valid,onTime,ttff,fixType,flags,flags2,flags3,numSV,lon,"
+		       "lat,height,hMSL,hAcc,vAcc,velN,velE,velD,gSpeed,headMot,sAcc,headAcc,pDOP,vDOP,hDOP,headVeh\r\n";
 	}
-	const std::string log_entry(const LogEntry& e) override {
+	const std::string log_entry(const LogEntry &e) override {
 		char entry[512], d1[128], d2[128];
 		const auto *gps = reinterpret_cast<const GPSLogEntry *>(&e);
 
-		snprintf(d1, sizeof(d1), "%02hhu/%02hhu/%04hu %02hhu:%02hhu:%02hhu",
-		        gps->header.day, gps->header.month, gps->header.year,
-		        gps->header.hours, gps->header.minutes, gps->header.seconds);
-        snprintf(d2, sizeof(d2), "%02hhu/%02hhu/%04hu %02hhu:%02hhu:%02hhu",
-                gps->info.day, gps->info.month, gps->info.year,
-                gps->info.hour, gps->info.min, gps->info.sec);
+		snprintf(d1, sizeof(d1), "%02hhu/%02hhu/%04hu %02hhu:%02hhu:%02hhu", gps->header.day, gps->header.month,
+		         gps->header.year, gps->header.hours, gps->header.minutes, gps->header.seconds);
+		snprintf(d2, sizeof(d2), "%02hhu/%02hhu/%04hu %02hhu:%02hhu:%02hhu", gps->info.day, gps->info.month,
+		         gps->info.year, gps->info.hour, gps->info.min, gps->info.sec);
 
 		// Convert to CSV
-		snprintf(entry, sizeof(entry), "%s,%f,%u,%s,%u,%u,%u,%u,%u,%u,%u,%u,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f\r\n",
-				d1,
-				(double)gps->info.batt_voltage/1000,
-				(unsigned int)gps->info.iTOW,
-				d2,
-				(unsigned int)gps->info.valid,
-				(unsigned int)gps->info.onTime,
-				(unsigned int)gps->info.ttff,
-				(unsigned int)gps->info.fixType,
-				(unsigned int)gps->info.flags,
-				(unsigned int)gps->info.flags2,
-				(unsigned int)gps->info.flags3,
-				(unsigned int)gps->info.numSV,
-				gps->info.lon,
-				gps->info.lat,
-				(double)gps->info.height / 1000,
-				(double)gps->info.hMSL / 1000,
-				(double)gps->info.hAcc / 1000,
-				(double)gps->info.vAcc / 1000,
-				(double)gps->info.velN / 1000,
-				(double)gps->info.velE / 1000,
-				(double)gps->info.velD / 1000,
-				(double)gps->info.gSpeed / 1000,
-				(double)gps->info.headMot,
-				(double)gps->info.sAcc / 1000,
-				(double)gps->info.headAcc,
-				(double)gps->info.pDOP,
-				(double)gps->info.vDOP,
-				(double)gps->info.hDOP,
-				(double)gps->info.headVeh);
+		snprintf(entry, sizeof(entry),
+		         "%s,%f,%u,%s,%u,%u,%u,%u,%u,%u,%u,%u,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f\r\n", d1,
+		         (double)gps->info.batt_voltage / 1000, (unsigned int)gps->info.iTOW, d2, (unsigned int)gps->info.valid,
+		         (unsigned int)gps->info.onTime, (unsigned int)gps->info.ttff, (unsigned int)gps->info.fixType,
+		         (unsigned int)gps->info.flags, (unsigned int)gps->info.flags2, (unsigned int)gps->info.flags3,
+		         (unsigned int)gps->info.numSV, gps->info.lon, gps->info.lat, (double)gps->info.height / 1000,
+		         (double)gps->info.hMSL / 1000, (double)gps->info.hAcc / 1000, (double)gps->info.vAcc / 1000,
+		         (double)gps->info.velN / 1000, (double)gps->info.velE / 1000, (double)gps->info.velD / 1000,
+		         (double)gps->info.gSpeed / 1000, (double)gps->info.headMot, (double)gps->info.sAcc / 1000,
+		         (double)gps->info.headAcc, (double)gps->info.pDOP, (double)gps->info.vDOP, (double)gps->info.hDOP,
+		         (double)gps->info.headVeh);
 		return std::string(entry);
 	}
 };
 
 /// @brief GNSS acquisition service — periodic fixes, cold start, fastloc/CloudLocate fallback.
-class GPSService : public Service, public GPSEventListener  {
+class GPSService : public Service, public GPSEventListener {
 public:
-	GPSService(GPSDevice& device, Logger *logger) : Service(ServiceIdentifier::GNSS_SENSOR, "GNSS", logger), m_device(device) {
-	    m_device.subscribe(*this);
+	GPSService(GPSDevice &device, Logger *logger)
+	    : Service(ServiceIdentifier::GNSS_SENSOR, "GNSS", logger),
+	      m_device(device) {
+		m_device.subscribe(*this);
 	}
-	void notify_peer_event(ServiceEvent& e) override;
+	void notify_peer_event(ServiceEvent &e) override;
 
 	/// Manual / DTE entry-point for the V_BCKP coin-cell charge mode.
 	/// duration_s > 0  → start (or extend) a charge session for the given seconds.
@@ -91,7 +73,6 @@ public:
 	void set_backup_charge_callbacks(std::function<void()> on_start, std::function<void()> on_stop);
 
 protected:
-
 	// Service interface methods
 	void service_init() override;
 	void service_term() override;
@@ -102,19 +83,19 @@ protected:
 	unsigned int service_next_timeout() override;
 	bool service_is_triggered_on_surfaced(bool &) override;
 	bool service_is_usable_underwater() override;
-	bool service_is_triggered_on_event(ServiceEvent&, bool&) override;
+	bool service_is_triggered_on_event(ServiceEvent &, bool &) override;
 
 private:
-	GPSDevice&   m_device;
-	bool         m_is_first_fix_found = false;
+	GPSDevice &m_device;
+	bool m_is_first_fix_found = false;
 	/// @brief One-shot request for a true cold start (CFG-RST navBbrMask=0xFFFF).
 	/// Set by the GNP28 surface trigger (and any future periodic/stuck hook),
 	/// consumed and cleared in service_initiate when building GPSNavSettings.
-	bool         m_force_cold_start = false;
-	bool         m_is_first_schedule = true;
+	bool m_force_cold_start = false;
+	bool m_is_first_schedule = true;
 	unsigned int m_cold_start_ntry = 0;  ///< Consecutive failed acquisitions (reset on fix or surface)
-	uint64_t     m_wakeup_time = 0;
-	std::time_t  m_next_schedule = 0;
+	uint64_t m_wakeup_time = 0;
+	std::time_t m_next_schedule = 0;
 	struct {
 		GNSSData data;
 	} m_gnss_data = {};
@@ -131,8 +112,8 @@ private:
 	bool m_defer_gnss_until_argos_first_tx = false;
 #endif
 	unsigned int m_pending_backup_duration_s = 0;  ///< Set when waiting for M10 poweroff to retry
-	Scheduler::TaskHandle m_backup_exit_task;     ///< Auto-exit timer once backup-charge is active
-	Scheduler::TaskHandle m_backup_retry_task;    ///< Retry scheduler used while waiting for M10 poweroff
+	Scheduler::TaskHandle m_backup_exit_task;      ///< Auto-exit timer once backup-charge is active
+	Scheduler::TaskHandle m_backup_retry_task;     ///< Retry scheduler used while waiting for M10 poweroff
 	// 2026-05 deep-idle refactor: removed m_backup_periodic_task,
 	// backup_charge_schedule_next(), backup_charge_periodic_fire(). Recharge now
 	// happens implicitly during the deep-idle window after each GPS session,
@@ -208,6 +189,7 @@ private:
 	// right pattern (double-blink red vs fast blink red). True = deep-idle
 	// engaged (rail stays on, PMREQ-backup); false = full power-off.
 	bool m_last_dispatch_was_deep_idle = false;
+
 public:
 	bool last_dispatch_was_deep_idle() const { return m_last_dispatch_was_deep_idle; }
 #ifdef BENCH_TEST
@@ -234,7 +216,6 @@ public:
 	void bench_inject_nofix();
 #endif
 private:
-
 	void backup_charge_stop_internal();
 	void schedule_backup_charge_retry(unsigned int attempt);
 	/// @brief Safety net 3.5 — (re-)arm the GPS-event health watchdog.
@@ -259,15 +240,14 @@ public:
 	void set_deep_idle_inhibit_first_session(bool inhibit);
 
 private:
-
-    void react(const GPSEventMaxNavSamples&) override;
-    void react(const GPSEventMaxSatSamples&) override;
-    void react(const GPSEventPVT&) override;
-    void react(const GPSEventPVTDegraded&) override;
-    void react(const GPSEventRawMeasurement&) override;
-    void react(const GPSEventCloudLocateReady&) override;
-    void react(const GPSEventError&) override;
-    void react(const GPSEventPowerOff&) override;
+	void react(const GPSEventMaxNavSamples &) override;
+	void react(const GPSEventMaxSatSamples &) override;
+	void react(const GPSEventPVT &) override;
+	void react(const GPSEventPVTDegraded &) override;
+	void react(const GPSEventRawMeasurement &) override;
+	void react(const GPSEventCloudLocateReady &) override;
+	void react(const GPSEventError &) override;
+	void react(const GPSEventPowerOff &) override;
 
 	// Private methods for GNSS
 	void task_process_gnss_data();

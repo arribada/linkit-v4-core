@@ -5,13 +5,12 @@
 
 
 #define BLOCK_COUNT   (256)
-#define BLOCK_SIZE    (64*1024)
+#define BLOCK_SIZE    (64 * 1024)
 #define PAGE_SIZE     (256)
-#define MAX_FILE_SIZE (4*1024*1024)
+#define MAX_FILE_SIZE (4 * 1024 * 1024)
 
 
-TEST_GROUP(RamFileSystem)
-{
+TEST_GROUP(RamFileSystem) {
 	RamFlash *ram_flash;
 	LFSFileSystem *fs;
 	uint8_t wr_buffer[128];
@@ -35,8 +34,7 @@ TEST_GROUP(RamFileSystem)
 };
 
 
-TEST(RamFileSystem, FileClassOperations)
-{
+TEST(RamFileSystem, FileClassOperations) {
 	LFSFile *f = new LFSFile(fs, "test", LFS_O_WRONLY | LFS_O_CREAT);
 
 	// Populate file with data
@@ -50,14 +48,14 @@ TEST(RamFileSystem, FileClassOperations)
 	MEMCMP_EQUAL(wr_buffer, rd_buffer, sizeof(rd_buffer));
 
 	// Check seek works from 50% of file
-	f->seek(sizeof(rd_buffer)/2);
-	CHECK_EQUAL(sizeof(rd_buffer)/2, f->read(rd_buffer, sizeof(rd_buffer)/2));
-	MEMCMP_EQUAL(&wr_buffer[sizeof(rd_buffer)/2], rd_buffer, sizeof(rd_buffer)/2);
+	f->seek(sizeof(rd_buffer) / 2);
+	CHECK_EQUAL(sizeof(rd_buffer) / 2, f->read(rd_buffer, sizeof(rd_buffer) / 2));
+	MEMCMP_EQUAL(&wr_buffer[sizeof(rd_buffer) / 2], rd_buffer, sizeof(rd_buffer) / 2);
 	std::memset(rd_buffer, 0, sizeof(rd_buffer));
 
 	// Check reading past the end of the file terminates early
-	f->seek(sizeof(rd_buffer)/2);
-	CHECK_EQUAL(sizeof(rd_buffer)/2, f->read(rd_buffer, sizeof(rd_buffer)));
+	f->seek(sizeof(rd_buffer) / 2);
+	CHECK_EQUAL(sizeof(rd_buffer) / 2, f->read(rd_buffer, sizeof(rd_buffer)));
 
 	// Check EOF condition
 	CHECK_EQUAL(0, f->read(rd_buffer, sizeof(rd_buffer)));
@@ -71,8 +69,7 @@ TEST(RamFileSystem, FileClassOperations)
 	CHECK_THROWS(int, new LFSFile(fs, "test", LFS_O_RDONLY));
 }
 
-TEST(RamFileSystem, CircularFileClassOperations)
-{
+TEST(RamFileSystem, CircularFileClassOperations) {
 	LFSCircularFile *f = new LFSCircularFile(fs, "test", LFS_O_WRONLY | LFS_O_CREAT, 16);
 
 	// Write 50% of file size (offset=50%)

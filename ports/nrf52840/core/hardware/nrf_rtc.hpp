@@ -13,7 +13,7 @@
 
 class NrfRTC final : public RTC {
 public:
-	static NrfRTC& get_instance() {
+	static NrfRTC &get_instance() {
 		static NrfRTC instance;
 		return instance;
 	}
@@ -28,8 +28,8 @@ public:
 private:
 	bool m_is_set;
 	NrfRTC() : m_is_set(false) {}
-	NrfRTC(NrfRTC const&) = delete;
-	void operator=(NrfRTC const&) = delete;
+	NrfRTC(NrfRTC const &) = delete;
+	void operator=(NrfRTC const &) = delete;
 
 	/// @brief Seconds since boot (derived from 64-bit tick count / 8 Hz).
 	int64_t getuptime();

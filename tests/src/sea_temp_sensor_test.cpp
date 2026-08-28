@@ -17,8 +17,7 @@ extern Scheduler *system_scheduler;
 extern RTC *rtc;
 
 
-TEST_GROUP(SeaTempSensor)
-{
+TEST_GROUP(SeaTempSensor) {
 	FakeConfigurationStore *fake_config_store;
 	FakeTimer *fake_timer;
 	FakeLog *fake_logger;
@@ -54,24 +53,21 @@ TEST_GROUP(SeaTempSensor)
 
 	void notify_gnss_active() {
 		ServiceEvent e;
-		e.event_type = ServiceEventType::SERVICE_ACTIVE,
-		e.event_source = ServiceIdentifier::GNSS_SENSOR;
+		e.event_type = ServiceEventType::SERVICE_ACTIVE, e.event_source = ServiceIdentifier::GNSS_SENSOR;
 		e.event_originator_unique_id = 0x12345678;
 		ServiceManager::notify_peer_event(e);
 	}
 
 	void notify_gnss_inactive() {
 		ServiceEvent e;
-		e.event_type = ServiceEventType::SERVICE_INACTIVE,
-		e.event_source = ServiceIdentifier::GNSS_SENSOR;
+		e.event_type = ServiceEventType::SERVICE_INACTIVE, e.event_source = ServiceIdentifier::GNSS_SENSOR;
 		e.event_originator_unique_id = 0x12345678;
 		ServiceManager::notify_peer_event(e);
 	}
 };
 
 
-TEST(SeaTempSensor, SensorDisabled)
-{
+TEST(SeaTempSensor, SensorDisabled) {
 	MockSensor drv;
 	SeaTempSensorService s(drv, logger);
 	unsigned int num_callbacks = 0;
@@ -92,7 +88,7 @@ TEST(SeaTempSensor, SensorDisabled)
 
 	// Sampling should happen every 10
 	for (unsigned int i = 0; i < 5; i++) {
-		fake_timer->increment_counter(period*1000);
+		fake_timer->increment_counter(period * 1000);
 		system_scheduler->run();
 	}
 
@@ -103,8 +99,7 @@ TEST(SeaTempSensor, SensorDisabled)
 }
 
 
-TEST(SeaTempSensor, SchedulingPeriodic)
-{
+TEST(SeaTempSensor, SchedulingPeriodic) {
 	MockSensor drv;
 	SeaTempSensorService s(drv, logger);
 	unsigned int num_callbacks = 0;
@@ -126,7 +121,7 @@ TEST(SeaTempSensor, SchedulingPeriodic)
 	// Sampling should happen every 10
 	for (unsigned int i = 0; i < 5; i++) {
 		mock().expectOneCall("read").onObject(&drv).withUnsignedIntParameter("port", 0).andReturnValue((double)i);
-		fake_timer->increment_counter(period*1000);
+		fake_timer->increment_counter(period * 1000);
 		system_scheduler->run();
 	}
 
@@ -144,8 +139,7 @@ TEST(SeaTempSensor, SchedulingPeriodic)
 }
 
 
-TEST(SeaTempSensor, SchedulingNoPeriodic)
-{
+TEST(SeaTempSensor, SchedulingNoPeriodic) {
 	MockSensor drv;
 	SeaTempSensorService s(drv, logger);
 	unsigned int num_callbacks = 0;
@@ -166,7 +160,7 @@ TEST(SeaTempSensor, SchedulingNoPeriodic)
 
 	// Sampling should happen every 10
 	for (unsigned int i = 0; i < 5; i++) {
-		fake_timer->increment_counter(period*1000);
+		fake_timer->increment_counter(period * 1000);
 		system_scheduler->run();
 	}
 
@@ -176,8 +170,7 @@ TEST(SeaTempSensor, SchedulingNoPeriodic)
 	s.stop();
 }
 
-TEST(SeaTempSensor, SchedulingTxEnableOneShot)
-{
+TEST(SeaTempSensor, SchedulingTxEnableOneShot) {
 	MockSensor drv;
 	SeaTempSensorService s(drv, logger);
 	unsigned int num_callbacks = 0;
@@ -204,7 +197,7 @@ TEST(SeaTempSensor, SchedulingTxEnableOneShot)
 	// Sampling should happen once in one-shot mode
 	for (unsigned int i = 0; i < 1; i++) {
 		mock().expectOneCall("read").onObject(&drv).withUnsignedIntParameter("port", 0).andReturnValue((double)i);
-		fake_timer->increment_counter(period*1000);
+		fake_timer->increment_counter(period * 1000);
 		system_scheduler->run();
 	}
 
@@ -224,8 +217,7 @@ TEST(SeaTempSensor, SchedulingTxEnableOneShot)
 }
 
 
-TEST(SeaTempSensor, SchedulingTxEnableMean)
-{
+TEST(SeaTempSensor, SchedulingTxEnableMean) {
 	MockSensor drv;
 	SeaTempSensorService s(drv, logger);
 	unsigned int num_callbacks = 0;
@@ -245,7 +237,7 @@ TEST(SeaTempSensor, SchedulingTxEnableMean)
 	configuration_store->write_param(ParamID::SEA_TEMP_SENSOR_ENABLE_TX_SAMPLE_PERIOD, tx_period);
 	configuration_store->write_param(ParamID::SEA_TEMP_SENSOR_ENABLE_TX_MAX_SAMPLES, max_samples);
 
-	s.start([&num_callbacks,&sensorData](ServiceEvent &event) {
+	s.start([&num_callbacks, &sensorData](ServiceEvent &event) {
 		if (event.event_type == ServiceEventType::SERVICE_LOG_UPDATED) {
 			num_callbacks++;
 			sensorData = std::get<ServiceSensorData>(event.event_data);
@@ -274,8 +266,7 @@ TEST(SeaTempSensor, SchedulingTxEnableMean)
 	s.stop();
 }
 
-TEST(SeaTempSensor, SchedulingTxEnableMedian)
-{
+TEST(SeaTempSensor, SchedulingTxEnableMedian) {
 	MockSensor drv;
 	SeaTempSensorService s(drv, logger);
 	unsigned int num_callbacks = 0;
@@ -295,7 +286,7 @@ TEST(SeaTempSensor, SchedulingTxEnableMedian)
 	configuration_store->write_param(ParamID::SEA_TEMP_SENSOR_ENABLE_TX_SAMPLE_PERIOD, tx_period);
 	configuration_store->write_param(ParamID::SEA_TEMP_SENSOR_ENABLE_TX_MAX_SAMPLES, max_samples);
 
-	s.start([&num_callbacks,&sensorData](ServiceEvent &event) {
+	s.start([&num_callbacks, &sensorData](ServiceEvent &event) {
 		if (event.event_type == ServiceEventType::SERVICE_LOG_UPDATED) {
 			num_callbacks++;
 			sensorData = std::get<ServiceSensorData>(event.event_data);
@@ -324,8 +315,7 @@ TEST(SeaTempSensor, SchedulingTxEnableMedian)
 	s.stop();
 }
 
-TEST(SeaTempSensor, SchedulingTxEnableMaxSamplesTerminates)
-{
+TEST(SeaTempSensor, SchedulingTxEnableMaxSamplesTerminates) {
 	MockSensor drv;
 	SeaTempSensorService s(drv, logger);
 	unsigned int num_callbacks = 0;
@@ -345,7 +335,7 @@ TEST(SeaTempSensor, SchedulingTxEnableMaxSamplesTerminates)
 	configuration_store->write_param(ParamID::SEA_TEMP_SENSOR_ENABLE_TX_SAMPLE_PERIOD, tx_period);
 	configuration_store->write_param(ParamID::SEA_TEMP_SENSOR_ENABLE_TX_MAX_SAMPLES, max_samples);
 
-	s.start([&num_callbacks,&sensorData](ServiceEvent &event) {
+	s.start([&num_callbacks, &sensorData](ServiceEvent &event) {
 		if (event.event_type == ServiceEventType::SERVICE_LOG_UPDATED) {
 			num_callbacks++;
 			sensorData = std::get<ServiceSensorData>(event.event_data);

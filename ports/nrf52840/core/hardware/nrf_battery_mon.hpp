@@ -19,10 +19,10 @@
 /// @brief Supported cell chemistries — each has its own voltage range and discharge LUT.
 /// Selected at compile time via -DBATTERY_CHEMISTRY=<enum_name> (default NCR18650).
 enum BatteryChemistry {
-	BATT_CHEM_S18650_2600,            ///< Sony/Murata US18650VTC5 (Li-ion, 3.2-4.2 V)
-	BATT_CHEM_CGR18650_2250,          ///< Panasonic CGR18650 (Li-ion, 3.2-4.2 V)
-	BATT_CHEM_NCR18650_3100_3400,     ///< Panasonic NCR18650B (Li-ion, 3.2-4.2 V) — default
-	BATT_CHEM_LS17500_2P              ///< 2× Saft LS17500 in parallel (Li-SOCl2, 2.7-3.7 V)
+	BATT_CHEM_S18650_2600,         ///< Sony/Murata US18650VTC5 (Li-ion, 3.2-4.2 V)
+	BATT_CHEM_CGR18650_2250,       ///< Panasonic CGR18650 (Li-ion, 3.2-4.2 V)
+	BATT_CHEM_NCR18650_3100_3400,  ///< Panasonic NCR18650B (Li-ion, 3.2-4.2 V) — default
+	BATT_CHEM_LS17500_2P           ///< 2× Saft LS17500 in parallel (Li-SOCl2, 2.7-3.7 V)
 };
 
 class NrfBatteryMonitor : public BatteryMonitor {
@@ -43,8 +43,6 @@ private:
 	void internal_update() override;
 
 public:
-	NrfBatteryMonitor(uint8_t adc_channel,
-			BatteryChemistry chem = BATT_CHEM_LS17500_2P,
-			uint8_t critical_level = 5,
-			uint8_t low_level = 10);
+	NrfBatteryMonitor(uint8_t adc_channel, BatteryChemistry chem = BATT_CHEM_LS17500_2P, uint8_t critical_level = 5,
+	                  uint8_t low_level = 10);
 };
