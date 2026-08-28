@@ -4,7 +4,7 @@
 
 The LinkIt V4 application project uses CMake and the arm-none-eabi-gcc compiler.
 
-See [docs/2-Building.md](../../docs/2-Building.md) for full build instructions, or use the build scripts in `scripts/`.
+See the [Build section of the root README](../../README.md#2-build) for full build instructions, or use the build scripts in [`../../scripts/`](../../scripts/).
 
 ### Quick build
 

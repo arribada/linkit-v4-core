@@ -14,8 +14,9 @@ Long-running services that orchestrate tracker behavior. Each service inherits f
 | **Sensors** | `*_sensor_service.hpp` (axl, pressure, thermistor, sea_temp, als, ph, cdt) |
 | **Mortality** | `mortality_service.{cpp,hpp}` (RSPB) |
 | **Mode classifiers** | `hauled_mode_service.{cpp,hpp}` (hauled-out animal), `moored_mode_service.{cpp,hpp}` (stationary vessel), `rate_limiter.{cpp,hpp}` — static classes, not `Service` subclasses: state in `.noinit` RAM + CRC16, fed from the `ServiceManager::notify_peer_event` funnel, consumed by the `ConfigurationStore` override cascade |
-| **Cloudlocate** | `cloudlocate_*.{cpp,hpp}` |
-| **Power / Cam** | `low_battery_service.hpp`, `cam_service.hpp` |
+| **Cloudlocate** | no file of its own — the logic is spread across `gps_service.cpp`, `argos_tx_service.cpp`, `lora_tx_service.cpp` and both packet builders |
+| **Cam** | `cam_service.{cpp,hpp}` |
+| **Shared plumbing** | `service.{cpp,hpp}` (base class, `ServiceManager`, cooldown), `depth_pile.{cpp,hpp}`, `rate_limiter.{cpp,hpp}`, `memory_monitor_service.hpp` |
 
 ## Adding a new service
 

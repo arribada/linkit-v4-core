@@ -8,9 +8,10 @@ DTE (Data Terminal Equipment) protocol — the line-based command interface used
 |------|------|
 | `dte_handler.{cpp,hpp}` | Parses incoming DTE lines, dispatches to commands |
 | `dte_commands.{cpp,hpp}` | All DTE command definitions (PARMR, PARMW, CMDR, FACTR, …) |
-| `dte_params.cpp` | The `param_map[]` — single source of truth for DTE keys, types, ranges, defaults |
+| `dte_params.cpp` | The `param_map[]` — DTE keys, encodings, ranges, permitted values. **Default values are not here**: they live in [`../configuration/config_store.hpp`](../configuration/config_store.hpp) `default_params`, aligned by index |
 | `base_types.hpp` | Type tags used by the param map (`BaseEncoding`, `BaseMap`) |
-| `base64.hpp`, `json.hpp` | Encoding helpers |
+| `base64.hpp` | Base64 encoding helper (vendor drop-in) |
+| `dte_protocol.hpp` | Encoder/decoder + the Argos allcast `PassPredictCodec` |
 
 ## Adding a new command
 
