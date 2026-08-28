@@ -250,6 +250,35 @@ If you'd like to contribute, start by searching through the issues and pull requ
 * If you've added a new feature, document it with a simple example.
 * Please submit your PR using the release_candidate branch.
 
+### Repository tooling
+
+Five config files at the root shape how tools see this repository. None of them
+changes what is committed or compiled — a fresh clone builds exactly the same.
+
+| File | What it does |
+|------|--------------|
+| `.clang-format` | The C/C++ style, derived from the code that was already here (tabs, attached braces, pointer on the right, 120 columns). Data tables are wrapped in `// clang-format off` / `// clang-format on` because their hand alignment is the documentation. |
+| `.editorconfig` | The same values, applied by your editor while you type. VSCode needs the *EditorConfig for VS Code* extension. |
+| `.gitattributes` | Marks the Nordic SDK and third-party libraries as vendor, so GitHub stops counting them in the language bar and collapses them in pull-request diffs. Also freezes vendor line endings and normalises ours to LF. |
+| `.ignore` | Read by ripgrep, fd, fzf and the VSCode search box — **not** by git. Keeps the same vendor out of search results: `rg --files` returns ~440 files instead of ~12 700. Escape hatch: `rg --no-ignore`. |
+| `.git-blame-ignore-revs` | Lists the two whitespace-only commits so `git blame` skips them. Enable once with `git config blame.ignoreRevsFile .git-blame-ignore-revs`; GitHub honours it with no setup. |
+
+**Formatting is checked in CI, on the files a pull request touches only.** Pin the
+same version CI uses, or you will fight it:
+
+```bash
+pip3 install --user clang-format==23.1.0
+clang-format -i <the files you changed>
+```
+
+Two more CI checks run in seconds and need only `python3`
+(see [`scripts/README.md`](scripts/README.md)):
+
+```bash
+python3 scripts/check_param_tables.py   # the three DTE parameter tables stay aligned
+python3 scripts/check_doc_links.py      # no README points at a file that does not exist
+```
+
 ## Owners
 
 <p align="center">

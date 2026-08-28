@@ -27,6 +27,14 @@ All build scripts source `build_config.sh` (created by `setup_environment.sh`) a
 |--------|---------|
 | `run_tests.sh` | Build and run the host test suite |
 | `log_stack_dump.py` | Decode a hex stack-dump captured from the device using `addr2line` |
+| `check_param_tables.py` | Guard the three parallel DTE parameter tables (`ParamID`, `param_map[]`, `default_params`). Compares lengths, and names between the first and third — which catches an entry inserted at the wrong index. Run by the `consistency` CI job. |
+| `check_doc_links.py` | Check that every relative markdown link in our own docs resolves. Markdown links only, never file names in backticks — widening it to prose produces false positives, and a check with false positives gets switched off. Run by the `consistency` CI job. |
+
+Both take no arguments, need only `python3`, and run in well under a second:
+
+```bash
+python3 scripts/check_param_tables.py && python3 scripts/check_doc_links.py
+```
 
 ## Adding a new build target
 
