@@ -189,14 +189,14 @@ public:
 	void send(uint8_t *buffer, unsigned int sz, bool notify_sent = false, bool use_ext_buffer = false);
 	void wait_send() { wait_tx_idle(); }
 	void set_baudrate(unsigned int baudrate);
-	/// @brief Relance la reception apres une erreur UART.
+	/// @brief Restart reception after a UART error.
 	///
-	/// `handle_error()` ARRETE le RX libuarte pour ne pas boucler sur l'erreur,
-	/// et le seul endroit qui le relancait etait `set_baudrate()`. Toute branche
-	/// qui tolere l'erreur sans changer de debit laissait donc l'UART sourd
-	/// jusqu'a la fin de l'etat : plus un octet ne remontait, le seuil de
-	/// MAX_FRAMING_ERRORS_BOOT devenait inatteignable, et la premiere erreur de
-	/// framing en cours de `configure` tuait la session. No-op si le RX tourne.
+	/// `handle_error()` STOPS the libuarte RX so as not to loop on the error, and
+	/// the only place that restarted it was `set_baudrate()`. Any branch that
+	/// tolerates the error without changing rate therefore left the UART deaf until
+	/// the end of the state: not another byte came back, the MAX_FRAMING_ERRORS_BOOT
+	/// threshold became unreachable, and the first framing error during `configure`
+	/// killed the session. No-op if the RX is running.
 	void restart_rx();
 	void start_dbd_filter();
 	void stop_dbd_filter();
@@ -234,8 +234,8 @@ private:
 	uint8_t m_rx_buffer[1024];
 	unsigned int m_rx_buffer_offset;
 	bool m_is_init;
-	/// RX arrete par handle_error() et pas encore relance. Evite un double
-	/// start_rx (qui re-armerait les buffers DMA du libuarte).
+	/// RX stopped by handle_error() and not restarted yet. Prevents a double
+	/// start_rx (which would re-arm the libuarte DMA buffers).
 	bool m_rx_stopped = false;
 
 	// Bounded wait for previous TX to complete (max 100ms with 1ms polling)

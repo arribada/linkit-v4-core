@@ -71,8 +71,8 @@ void UBXComms::init() {
 	m_nav_report.dop.iTow = -1;
 	m_nav_report.status.iTow = -1;
 	m_rx_stopped = false;
-	// Interdit la bascule VSYS 3,3 V -> 2,3 V tant que cette liaison est en
-	// service (cf. GPIOPins::set_gnss_uart_active).
+	// Forbids the VSYS 3.3 V -> 2.3 V drop while this link is in service
+	// (see GPIOPins::set_gnss_uart_active).
 	GPIOPins::set_gnss_uart_active(true);
 }
 
@@ -82,8 +82,8 @@ void UBXComms::deinit() {
 		m_is_init = false;
 		m_rx_stopped = false;
 	}
-	// Toujours relacher, meme si l'UART n'etait pas initialise: deinit() est
-	// idempotent et appele sur tous les chemins de teardown.
+	// Always release, even if the UART was not initialised: deinit() is idempotent
+	// and called on every teardown path.
 	GPIOPins::set_gnss_uart_active(false);
 }
 
@@ -165,10 +165,10 @@ void UBXComms::send_with_expect(uint8_t *buffer, unsigned int sz, UBX::MessageCl
 }
 
 void UBXComms::send(uint8_t *buffer, unsigned int sz, bool notify_sent, bool use_ext_buffer) {
-	// Meme garde que send_raw() et set_baudrate(): emettre sur une instance
-	// deinit (exit_shutdown dont le catch a avale l'echec libuarte) touche des
-	// ressources liberees — au mieux une cascade de timeouts, au pire un assert
-	// du SDK.
+	// Same guard as send_raw() and set_baudrate(): transmitting on a deinitialised
+	// instance (an exit_shutdown whose catch swallowed the libuarte failure)
+	// touches freed resources -- at best a cascade of timeouts, at worst an SDK
+	// assert.
 	if (!m_is_init) {
 		DEBUG_WARN("UBXComms::send: UART non initialise — ignore");
 		return;
@@ -201,9 +201,9 @@ void UBXComms::send(uint8_t *buffer, unsigned int sz, bool notify_sent, bool use
 }
 
 void UBXComms::set_baudrate(unsigned int baud) {
-	// Garde alignee sur send_raw(): sans elle, un appel depuis un etat ou l'UART
-	// a ete deinit (bridge ouvert depuis backupidle, exit_shutdown qui a throw)
-	// touche des canaux PPI liberes -> APP_ERROR_CHECK_BOOL(false) -> reset SoC.
+	// Guard aligned with send_raw(): without it, a call from a state where the UART
+	// has been deinitialised (a bridge opened from backupidle, an exit_shutdown that
+	// threw) touches freed PPI channels -> APP_ERROR_CHECK_BOOL(false) -> SoC reset.
 	if (!m_is_init) {
 		DEBUG_WARN("UBXComms::set_baudrate: UART non initialise — ignore");
 		return;

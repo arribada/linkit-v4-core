@@ -8,14 +8,14 @@
 #include <cstdint>
 #include <ctime>
 
-/// @brief D'ou vient l'heure que porte la RTC en ce moment.
+/// @brief Where the time the RTC currently holds came from.
 ///
-/// Sans cette distinction, `is_set()` repond « oui » aussi bien pour une heure
-/// synchronisee sur satellite que pour une valeur restauree du flash qui peut
-/// avoir des semaines de retard — et le firmware annoncait les deux au recepteur
-/// GNSS avec la meme confiance de +/- 2 s. Mesure au banc le 2026-08-25: apres un
-/// reset, `LAST_KNOWN_RTC` a repose une heure vieille de 52 jours, et l'assistance
-/// sauvegardee trois minutes plus tot a ete jetee par la garde anti-recul.
+/// Without that distinction, `is_set()` answers "yes" both for a satellite-
+/// synchronised time and for a value restored from flash that may be weeks
+/// behind -- and the firmware announced both to the GNSS receiver with the same
+/// +/- 2 s confidence. Measured on the bench on 2026-08-25: after a reset,
+/// `LAST_KNOWN_RTC` restored a time 52 days old, and the assistance data saved
+/// three minutes earlier was thrown away by the anti-rollback guard.
 enum class RtcSource : uint8_t {
 	NONE = 0,  ///< jamais posee, ou horloge virtuelle de repli
 	RESTORED,  ///< relue du flash au demarrage — erreur NON bornable
@@ -35,56 +35,56 @@ public:
 	//  Provenance et derive (2026-08) — logique commune, pas de portage.
 	// ─────────────────────────────────────────────────────────────────────
 
-	/// Fenetre minimale entre deux synchros GNSS pour que la mesure de derive
-	/// ait un sens. En dessous, le quantum d'une seconde domine le resultat.
+	/// Minimum window between two GNSS synchronisations for a drift measurement to
+	/// mean anything. Below it, the one-second quantum dominates the result.
 	static constexpr std::time_t MIN_DRIFT_WINDOW_S = 900;
 
-	/// Derive supposee tant qu'aucune mesure n'est disponible. Un quartz
-	/// horloger 32,768 kHz non compense tient typiquement +/- 20 ppm sur la
-	/// plage de temperature d'une balise.
+	/// Drift assumed while no measurement is available. An uncompensated
+	/// 32.768 kHz watch crystal typically holds +/- 20 ppm over the temperature
+	/// range a tag sees.
 	static constexpr int32_t DEFAULT_DRIFT_PPM = 20;
 
-	/// Borne de credibilite d'une mesure de derive: au-dela, ce n'est plus un
-	/// quartz qui derive, c'est une horloge qui a saute.
+	/// Credibility bound on a drift measurement: beyond it, that is not a crystal
+	/// drifting, it is a clock that jumped.
 	static constexpr int32_t MAX_CREDIBLE_PPM = 200;
 
 	RtcSource source() const { return m_source; }
 	int32_t drift_ppm() const { return m_drift_ppm; }
 
-	/// @brief Incertitude d'un bond de la chaine pseudo-RTC (RSPB / TPL5111).
+	/// @brief Uncertainty of one hop of the pseudo-RTC chain (RSPB / TPL5111).
 	///
-	/// Sur une carte a TPL5111, le temps hors tension N'EST PAS inconnu: il vaut
-	/// la periode de reveil, fixee par une resistance et exposee en parametre.
-	/// L'erreur se borne donc a la tolerance du minuteur, et il serait dommage
-	/// de se priver d'assistance temporelle sur ce seul motif.
+	/// On a TPL5111 board the time spent unpowered is NOT unknown: it is the wake
+	/// period, set by a resistor and exposed as a parameter. The error is therefore
+	/// bounded by the timer's tolerance, and it would be a shame to give up time
+	/// assistance on that ground alone.
 	///
-	/// ATTENTION: cette borne ne vaut que si le reveil vient bien du TPL. Un
-	/// reveil manuel (aimant), un WDT ou un reset logiciel cassent la chaine —
-	/// l'appelant doit alors declarer RESTORED et non PSEUDO.
+	/// CAUTION: this bound only holds if the wake really came from the TPL. A manual
+	/// wake (magnet), a watchdog or a software reset break the chain -- the caller
+	/// must then declare RESTORED rather than PSEUDO.
 	void set_pseudo_uncertainty_s(unsigned int u) { m_pseudo_unc_s = u; }
 
-	/// @brief Age, en secondes, de la derniere pose d'heure.
+	/// @brief Age, in seconds, of the last time that was set.
 	unsigned int age_s() {
 		if (m_source == RtcSource::NONE) return 0;
 		std::time_t now = gettime();
 		return (now > m_set_at) ? static_cast<unsigned int>(now - m_set_at) : 0u;
 	}
 
-	/// @brief Declare d'ou vient l'heure qui vient d'etre posee.
-	/// A appeler juste APRES settime().
+	/// @brief Declare where the time just set came from.
+	/// To be called just AFTER settime().
 	void note_source(RtcSource src) {
 		m_source = src;
 		m_set_at = gettime();
 	}
 
-	/// @brief Pose une heure GNSS et mesure la derive du quartz au passage.
+	/// @brief Set a GNSS time and measure the crystal drift on the way.
 	///
-	/// @param prev heure que portait la RTC juste avant (sa croyance)
-	/// @param now  heure vraie, issue du PVT
+	/// @param prev the time the RTC held just before (what it believed)
+	/// @param now  the true time, from the PVT
 	///
-	/// L'ecart entre les deux, rapporte au temps ecoule depuis la synchro
-	/// precedente, EST la derive. Aucune sonde a ajouter: les deux valeurs sont
-	/// deja lues au point de synchronisation.
+	/// The gap between the two, over the time elapsed since the previous
+	/// synchronisation, IS the drift. No probe to add: both values are already read
+	/// at the synchronisation point.
 	void note_gnss_sync(std::time_t prev, std::time_t now) {
 		constexpr std::time_t RTC_MIN_REAL = 946684800;  // 2000-01-01
 
@@ -95,8 +95,8 @@ public:
 				long err = static_cast<long>(prev - now);
 				long ppm = (err * 1000000L) / static_cast<long>(elapsed);
 				if (ppm <= MAX_CREDIBLE_PPM && ppm >= -MAX_CREDIBLE_PPM) {
-					// Lissage doux: une mesure isolee porte le quantum d'une
-					// seconde, la moyenne converge sur quelques sessions.
+					// Gentle smoothing: a single measurement carries the one-second
+					// quantum, the average converges over a few sessions.
 					m_drift_ppm = (m_drift_ppm == 0)
 					                  ? static_cast<int32_t>(ppm)
 					                  : static_cast<int32_t>((3 * static_cast<long>(m_drift_ppm) + ppm) / 4);
@@ -109,30 +109,27 @@ public:
 		m_last_gnss_sync = now;
 	}
 
-	/// @brief Incertitude honnete sur l'heure courante, en secondes.
-	/// @return 0 = ne PAS injecter d'assistance temporelle (erreur non bornable).
+	/// @brief Honest uncertainty on the current time, in seconds.
+	/// @return 0 = do NOT inject time assistance (the error cannot be bounded).
 	///
-	/// C'est cette valeur qui doit remplir le champ `tAccS` de MGA-INI-TIME.
-	/// Annoncer 2 s sur une heure restauree revient a affirmer au recepteur une
-	/// contrainte fausse qu'il va utiliser pour restreindre sa recherche.
+	/// This is the value that must fill the `tAccS` field of MGA-INI-TIME.
+	/// Announcing 2 s on a restored time means asserting a false constraint to the
+	/// receiver, which it will then use to narrow its search.
 	unsigned int time_accuracy_s() {
-		// if/else et non switch: le projet compile avec -Werror=switch-enum ET
-		// -Werror=switch-default, ce qui rend tout switch sur enum class verbeux
-		// pour rien ici.
 		unsigned int base;
 		if (m_source == RtcSource::GNSS) {
 			base = 2;
 		} else if (m_source == RtcSource::OPERATOR) {
 			base = 60;
 		} else if (m_source == RtcSource::PSEUDO) {
-			// Borne d'UN bond de la chaine. Elle sous-estime apres plusieurs
-			// cycles TPL sans le moindre fix, faute d'un ancrage persiste du
-			// dernier point de synchro — documente, et sans consequence sur une
-			// carte a BBR ou l'injection est de toute facon sautee.
+			// Bound for ONE hop of the chain. It underestimates after several TPL
+			// cycles without a single fix, for want of a persisted anchor on the last
+			// synchronisation point -- documented, and of no consequence on a BBR
+			// board where the injection is skipped anyway.
 			base = (m_pseudo_unc_s > 0) ? m_pseudo_unc_s : 60;
 		} else {
-			// NONE ou RESTORED: le temps passe hors tension est inconnu, donc
-			// l'erreur ne se borne pas. Mieux vaut ne rien affirmer au recepteur.
+			// NONE or RESTORED: the time spent unpowered is unknown, so the error
+			// cannot be bounded. Better to assert nothing to the receiver.
 			return 0;
 		}
 		int32_t d = (m_drift_ppm < 0) ? -m_drift_ppm : m_drift_ppm;

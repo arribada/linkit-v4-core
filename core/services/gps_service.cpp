@@ -428,10 +428,10 @@ unsigned int GPSService::service_next_schedule_in_ms() {
 	// cycle happens transparently — `power_off()` here, the next iteration
 	// of this function will see state == poweroff and proceed normally,
 	// then `power_on()` will cold-boot at the upcoming acquisition.
-	// !m_deep_idle_is_sentinel : le lambda auto-off (voir plus bas) possede deja
-	// cette garde. Sans elle ici, le cycle prophylactique de 24 h coupe le rail
-	// sur une configuration "ne jamais couper" — et sur une carte sans pile
-	// V_BCKP c'est ce rail qui EST le seul support de l'ephemeride.
+	// !m_deep_idle_is_sentinel: the auto-off lambda (see below) already carries
+	// this guard. Without it here, the 24 h prophylactic cycle cuts the rail on a
+	// "never cut" configuration -- and on a board with no V_BCKP cell that rail IS
+	// the only thing holding the ephemeris.
 	if (m_device.is_in_deep_idle() && m_deep_idle_started_at_ms > 0 && !m_deep_idle_is_sentinel) {
 		uint64_t now_ms = PMU::get_timestamp_ms();
 		constexpr uint64_t DEEP_IDLE_HARD_CAP_MS = static_cast<uint64_t>(DEEP_IDLE_HARD_CAP_S) * MS_PER_SEC;
@@ -819,16 +819,16 @@ unsigned int GPSService::service_next_timeout() {
 	// Must exceed the GNSS acquisition timeout to avoid premature termination
 	GNSSConfig gnss_config;
 	configuration_store->get_gnss_configuration(gnss_config);
-	// 2026-08 : le filet doit couvrir le budget que service_initiate() va
-	// REELLEMENT donner au driver. Un cold start force (escalade
-	// GNSS_COLD_START_AFTER_NTRY ou GNSS_TRIGGER_COLD_START_ON_SURFACED) demande
-	// acquisition_timeout_cold_start meme quand un fix a deja ete obtenu ; sans
-	// ce test on armait le filet sur acquisition_timeout (+30 s) et on annulait
-	// la session a 150 s alors que le driver visait 530 s. Le recepteur qu'on
-	// vient d'effacer n'avait donc jamais le temps de retelecharger ses
-	// ephemerides : l'escalade de recuperation ne pouvait pas aboutir.
-	// m_force_cold_start est encore arme ici — Service::reschedule() calcule ce
-	// timeout AVANT d'appeler service_initiate(), qui seul le consomme.
+	// 2026-08: the safety net has to cover the budget service_initiate() will
+	// ACTUALLY give the driver. A forced cold start (the
+	// GNSS_COLD_START_AFTER_NTRY or GNSS_TRIGGER_COLD_START_ON_SURFACED escalation)
+	// asks for acquisition_timeout_cold_start even when a fix has already been
+	// obtained; without this test we armed the net on acquisition_timeout (+30 s)
+	// and cancelled the session at 150 s while the driver was aiming for 530 s. The
+	// receiver we had just wiped therefore never had time to re-download its
+	// ephemeris: the recovery escalation could not succeed.
+	// m_force_cold_start is still armed here -- Service::reschedule() computes this
+	// timeout BEFORE calling service_initiate(), which is the only consumer.
 	bool cold_budget = !m_is_first_fix_found || m_force_cold_start;
 	unsigned int timeout_s = cold_budget ? gnss_config.acquisition_timeout_cold_start : gnss_config.acquisition_timeout;
 	return (timeout_s + SERVICE_SAFETY_MARGIN_S) * MS_PER_SEC;
@@ -1355,9 +1355,9 @@ void GPSService::bench_inject_fix(double lat, double lon, uint32_t hAcc_mm, uint
 	// Short-circuit any real acquisition still in flight so a later real PVT
 	// doesn't double-log on top of the injected one.
 	m_is_active = false;
-	// R20: terminer la session comme les vrais chemins (react(GPSEventPVT)),
-	// sinon le recepteur reste en `receive` rail allume et le power_on suivant
-	// porte m_num_power_on a 2 — plus aucun power_off ne coupe.
+	// R20: end the session the way the real paths do (react(GPSEventPVT)), or the
+	// receiver stays in `receive` with the rail powered and the next power_on takes
+	// m_num_power_on to 2 -- after which no power_off cuts anything.
 	try_enter_deep_idle_or_poweroff();
 	// Mark the GNSS service initiated so gnss_data_callback → task_process_gnss_data
 	// → service_complete() runs its FULL path instead of bailing on

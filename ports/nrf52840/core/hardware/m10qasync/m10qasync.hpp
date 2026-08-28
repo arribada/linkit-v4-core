@@ -136,21 +136,21 @@ private:
 	/// that never heard it.
 	unsigned int m_synced_baud = 9600;
 
-	/// Masque de constellations effectivement accepte par le recepteur et donc
-	/// present dans sa couche BBR. Compare au masque demande pour la session:
-	/// le fast-path saute le step 2 (`setup_gnss_channel_sharing`), or ce masque
-	/// varie par session (gps_service force |0x0F tant qu'aucun fix n'a ete
-	/// obtenu). Sentinelle = on ignore ce que contient le recepteur.
+	/// Constellation mask the receiver actually accepted, and therefore what its BBR
+	/// layer holds. Compared against the mask requested for the session: the fast
+	/// path skips step 2 (`setup_gnss_channel_sharing`), yet that mask varies per
+	/// session (gps_service forces |0x0F until a fix has been obtained). The
+	/// sentinel means we do not know what the receiver holds.
 	static constexpr unsigned int CONSTELLATION_MASK_UNKNOWN = 0xFFFFFFFFu;
 	unsigned int m_applied_constellation_mask = CONSTELLATION_MASK_UNKNOWN;
 
-	/// L'heure synchronisee a-t-elle deja ete persistee pour CETTE session ?
-	/// La RTC est repositionnee a chaque PVT (1 Hz): sans ce verrou, on
-	/// ecrirait le parametre en flash une fois par seconde.
+	/// Has the synchronised time already been persisted for THIS session? The RTC is
+	/// re-set on every PVT (1 Hz): without this latch we would write the parameter
+	/// to flash once a second.
 	bool m_rtc_persisted_this_session = false;
 
-	/// Effacement de la couche de config BBR deja tente pour CETTE configure
-	/// (qu'il ait ete acquitte ou non). Evite de reboucler sur l'etape 200.
+	/// BBR config erase already attempted for THIS configure run (acknowledged or
+	/// not). Stops step 200 from looping.
 	bool m_bbr_config_cleared = false;
 
 	// GNSS device info (cached from configure phase)
@@ -203,21 +203,21 @@ private:
 	enum OpState { IDLE, PENDING, SUCCESS, TIMEOUT, NACK, ERROR };
 
 	State m_state = State::idle;
-	/// 2026-08 (A1) — `volatile` obligatoire: ce champ est ecrit depuis le
-	/// contexte ISR (react(SendComplete/AckNack/CfgValget/Error), appeles par le
-	/// handler libuarte) et relu en boucle par les `state_*()` qui tournent en
-	/// contexte principal. Sans qualificatif, rien n'interdit au compilateur de
-	/// garder la valeur en registre d'une iteration de `while (true)` a l'autre:
-	/// la reponse posee par l'ISR ne serait jamais vue et l'etat partirait en
-	/// timeout alors que le recepteur a repondu.
+	/// 2026-08 (A1) — `volatile` is mandatory: this field is written from ISR
+	/// context (react(SendComplete/AckNack/CfgValget/Error), called by the libuarte
+	/// handler) and read back in a loop by the `state_*()` functions running in main
+	/// context. Without the qualifier nothing stops the compiler from keeping the
+	/// value in a register from one `while (true)` iteration to the next: the reply
+	/// posted by the ISR would never be seen and the state would time out even
+	/// though the receiver answered.
 	///
-	/// Ce que cela ne resout PAS (documente sciemment): la sequence
-	/// lecture-decision-ecriture des `state_*()` n'est pas atomique vis-a-vis de
-	/// l'ISR. Une reponse tardive de l'operation precedente qui arriverait entre
-	/// le passage a PENDING et l'emission suivante serait comptee pour la
-	/// nouvelle operation. Le filtre d'attente (`m_expect`, desarme des qu'il a
-	/// matche) rend le cas tres improbable; le corriger proprement demande de
-	/// deporter les six handlers vers le scheduler comme NavReport/SatReport.
+	/// What this does NOT solve (knowingly documented): the read-decide-write
+	/// sequence in `state_*()` is not atomic with respect to the ISR. A late reply
+	/// to the previous operation, arriving between the move to PENDING and the next
+	/// send, would be counted for the new operation. The expectation filter
+	/// (`m_expect`, disarmed as soon as it matches) makes that very unlikely; fixing
+	/// it properly means moving the six handlers onto the scheduler the way
+	/// NavReport and SatReport already are.
 	volatile OpState m_op_state = OpState::IDLE;
 
 	// State machine
@@ -269,21 +269,21 @@ private:
 	void initiate_timeout(unsigned int timeout_ms = 1000);
 	void on_timeout();
 	void save_config();
-	/// @brief Efface la configuration sauvegardee en couche BBR du recepteur.
+	/// @brief Erase the configuration saved in the receiver's BBR layer.
 	///
-	/// C'est la seule porte de sortie d'une couche BBR corrompue ou verrouillee.
-	/// Jusqu'ici le firmware n'avait AUCUN moyen de l'effacer: `setup_uart_port`
-	/// ecrit le debit en BBR|RAM, `save_config` recopie tout en BBR, `soft_reset`
-	/// ne touche que les donnees de navigation (navBbrMask), aucun CFG-VALDEL
-	/// n'etait instancie nulle part, et $FACTR n'agit pas sur le M10Q. Un debit
-	/// exotique ecrit en BBR (via le bridge u-center par exemple) devenait donc
-	/// un verrou definitif que la sonde de boot ne rattrape pas forcement.
+	/// This is the only way out of a corrupt or locked BBR layer. Until now the
+	/// firmware had NO means of erasing it: `setup_uart_port` writes the baud rate
+	/// to BBR|RAM, `save_config` copies everything into BBR, `soft_reset` only
+	/// touches the navigation data (navBbrMask), no CFG-VALDEL was instantiated
+	/// anywhere, and $FACTR does not act on the M10Q. An exotic rate written into
+	/// BBR (through the u-center bridge, for instance) therefore became a permanent
+	/// lock that the boot probe does not necessarily recover from.
 	///
-	/// Emis avec le CFG-RST d'un COLD START: on efface alors a la fois les
-	/// donnees de navigation (navBbrMask=0xFFFF) et la configuration persistee,
-	/// ce qui ramene le recepteur a un etat d'usine deterministe au prochain
-	/// demarrage. La configuration RAM en cours n'est pas touchee (loadMask=0),
-	/// la session continue donc normalement.
+	/// Sent together with the CFG-RST of a COLD START: that erases both the
+	/// navigation data (navBbrMask=0xFFFF) and the persisted configuration, which
+	/// returns the receiver to a deterministic factory state at the next start-up.
+	/// The RAM configuration in use is not touched (loadMask=0), so the session
+	/// continues normally.
 	void clear_config();
 	void soft_reset();
 	void setup_uart_port();

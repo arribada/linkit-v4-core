@@ -90,17 +90,16 @@ void M10QAsyncReceiver::clear_config() {
 		.loadMask = 0,  // pas de rechargement: la config RAM en cours reste active
 		.deviceMask = CFG::CFG::DEVMASK_BBR,
 	};
-	// ACQUITTEMENT ATTENDU. La regle generale de la classe UBX-CFG (interface
-	// description M10 SPG 5.10, §3.10) est "acquitte par ACK-ACK si traite,
-	// ACK-NAK sinon", et CFG-CFG ne porte AUCUNE clause derogatoire — contrairement
-	// a CFG-RST, dont la spec dit explicitement de ne pas attendre de reponse.
-	// Emettre sans attendre revenait donc a jeter la seule preuve que
-	// l'effacement a eu lieu.
+	// AN ACKNOWLEDGEMENT IS EXPECTED. The general rule for the UBX-CFG class (M10
+	// SPG 5.10 interface description, §3.10) is "acknowledged by ACK-ACK if
+	// processed, ACK-NAK otherwise", and CFG-CFG carries NO exemption clause --
+	// unlike CFG-RST, whose spec explicitly says not to expect a reply. Sending
+	// without waiting therefore threw away the only proof that the erase happened.
 	//
-	// Enjeu concret: CFG-CFG a ete SUPPRIME du protocole 34.20 (SPG 5.20), ou il
-	// est remplace par UBX-CFG-OTP. Sur un module approvisionne avec ce firmware,
-	// l'effacement echouerait en silence et l'echappatoire BBR n'existerait plus.
-	// L'absence d'ACK est donc l'information a remonter, pas un detail.
+	// Why it matters: CFG-CFG was REMOVED from protocol 34.20 (SPG 5.20), where it
+	// is replaced by UBX-CFG-OTP. On a module provisioned with that firmware the
+	// erase would fail silently and the BBR escape hatch would no longer exist. The
+	// absence of an ACK is the thing to report, not a detail.
 	initiate_timeout();
 	m_ubx_comms.send_packet_with_expect(MessageClass::MSG_CLASS_CFG, CFG::ID_CFG, cfg_msg_cfg_cfg);
 }
@@ -127,11 +126,11 @@ void M10QAsyncReceiver::soft_reset() {
 	};
 	m_ubx_comms.send_packet(MessageClass::MSG_CLASS_CFG, CFG::ID_RST, cfg_msg_cfg_rst);
 	m_ubx_comms.wait_send();
-	// 2026-08 : la demande de cold start est consommee ICI, une fois le CFG-RST
-	// reellement emis. Sans cela le drapeau restait colle dans m_nav_settings et,
-	// sur le chemin de reveil chaud (qui ne rafraichissait pas les reglages),
-	// chaque session suivante re-effacait la BBR — l'exact inverse du but du
-	// deep-idle. Le log ci-dessus est la trace terrain que le wipe a bien eu lieu.
+	// 2026-08: the cold-start request is consumed HERE, once the CFG-RST has
+	// actually been sent. Without that the flag stayed stuck in m_nav_settings and,
+	// on the warm-wake path (which did not refresh the settings), every following
+	// session erased the BBR again -- the exact opposite of what deep-idle is for.
+	// The log above is the field evidence that the wipe did happen.
 	if (m_nav_settings.cold_start) {
 		DEBUG_INFO("M10QAsyncReceiver: COLD START applique (BBR effacee) — demande consommee");
 		m_nav_settings.cold_start = false;
@@ -332,9 +331,8 @@ void M10QAsyncReceiver::setup_expert_navigation_settings() {
 }
 
 void M10QAsyncReceiver::supply_time_assistance() {
-	// Le recepteur qui a garde sa BBR a sa propre base de temps GNSS, forcement
-	// meilleure que la notre. On ne lui apprend rien, on ne risque que de le
-	// contraindre a tort.
+	// A receiver that kept its BBR has its own GNSS time base, necessarily better
+	// than ours. We teach it nothing, and risk only constraining it wrongly.
 	if (m_bbr_retained) {
 		DEBUG_INFO("M10QAsyncReceiver::supply_time_assistance: BBR retained — the receiver has its own time, injection "
 		           "unnecessary");
@@ -344,11 +342,10 @@ void M10QAsyncReceiver::supply_time_assistance() {
 		return;
 	}
 
-	// Incertitude REELLE sur notre heure. Zero = provenance non bornable
-	// (heure restauree du flash, ou horloge virtuelle): dans ce cas le champ
-	// tAccS ne peut pas etre rempli honnetement, et une heure fausse annoncee
-	// comme sure est pire que pas d'heure du tout — elle restreint la fenetre
-	// de recherche du recepteur autour d'une valeur erronee.
+	// The REAL uncertainty on our time. Zero means the source cannot be bounded (a
+	// time restored from flash, or a virtual clock): the tAccS field then cannot be
+	// filled in honestly, and a wrong time announced as certain is worse than no
+	// time at all -- it narrows the receiver's search window around a wrong value.
 	const unsigned int tacc = rtc->time_accuracy_s();
 	if (tacc == 0) {
 		DEBUG_INFO("M10QAsyncReceiver::supply_time_assistance: time source accuracy not boundable (%s) — no injection",
@@ -396,9 +393,9 @@ void M10QAsyncReceiver::supply_position_assistance() {
 		return;
 	}
 
-	// L'age de la position ne se calcule que si l'heure courante est fiable.
-	// Avec une heure restauree du flash, l'ecart peut valoir des semaines et
-	// l'age serait une fiction — on prefere ne rien injecter.
+	// The age of the position can only be computed if the current time is reliable.
+	// With a time restored from flash the gap can be weeks, and the age would be a
+	// fiction -- better to inject nothing.
 	if (rtc->time_accuracy_s() == 0) {
 		DEBUG_INFO("M10QAsyncReceiver::supply_position_assistance: time unreliable — position age not computable, "
 		           "no injection");
@@ -411,9 +408,9 @@ void M10QAsyncReceiver::supply_position_assistance() {
 	const std::time_t now_t = rtc->gettime();
 	const unsigned long age_s = (now_t > fix_t) ? (unsigned long)(now_t - fix_t) : 0UL;
 
-	// Vitesse de reference: celle MESUREE au dernier fix (gSpeed, mm/s), bornee.
-	// Le plancher couvre l'animal immobile au moment du fix mais parti depuis;
-	// le plafond evite qu'une valeur aberrante fasse exploser le rayon.
+	// Reference speed: the one MEASURED at the last fix (gSpeed, mm/s), bounded.
+	// The floor covers an animal that was still at the moment of the fix but has
+	// moved since; the ceiling stops an outlier from blowing up the radius.
 	static constexpr unsigned long POS_SPEED_FLOOR_CM_S = 50;    // 0,5 m/s
 	static constexpr unsigned long POS_SPEED_CEIL_CM_S = 500;    // 5 m/s
 	static constexpr unsigned long POS_ACC_MAX_CM = 30000000UL;  // 300 km
@@ -421,10 +418,10 @@ void M10QAsyncReceiver::supply_position_assistance() {
 	if (speed_cm_s < POS_SPEED_FLOOR_CM_S) speed_cm_s = POS_SPEED_FLOOR_CM_S;
 	if (speed_cm_s > POS_SPEED_CEIL_CM_S) speed_cm_s = POS_SPEED_CEIL_CM_S;
 
-	// Rayon d'incertitude honnete: precision du fix + marge + ce que la bete a
-	// pu parcourir depuis. Sans ce terme, on annoncait au recepteur une position
-	// vieille de plusieurs jours avec la precision qu'elle avait a l'instant du
-	// fix — une contrainte fausse qu'il utilise pour restreindre sa recherche.
+	// An honest uncertainty radius: the accuracy of the fix, plus a margin, plus
+	// how far the animal could have travelled since. Without that last term we were
+	// handing the receiver a position days old with the accuracy it had at the
+	// instant of the fix -- a false constraint it uses to narrow its search.
 	const unsigned long acc_cm = (unsigned long)last_gps.info.hAcc / 10UL + 100UL + age_s * speed_cm_s;
 	if (acc_cm > POS_ACC_MAX_CM) {
 		DEBUG_INFO("M10QAsyncReceiver::supply_position_assistance: position trop vieille (age %lu s, rayon %lu km) — "
@@ -915,9 +912,9 @@ GNSSAlmanacStatus M10QAsyncReceiver::get_almanac_status(unsigned int ano_stale_t
 bool M10QAsyncReceiver::start_bridge(PassthroughCallback rx_callback) {
 	if (m_bridge_active) return true;
 
-	// En deep-idle l'UART est deinit et ses canaux PPI sont liberes: la suite de
-	// cette fonction n'appelle exit_shutdown() que depuis `idle`, puis touche
-	// l'UART -> canal PPI libere -> APP_ERROR_CHECK_BOOL(false) -> reset du SoC.
+	// In deep-idle the UART is deinitialised and its PPI channels are released: the
+	// rest of this function only calls exit_shutdown() from `idle`, then touches the
+	// UART -> released PPI channel -> APP_ERROR_CHECK_BOOL(false) -> SoC reset.
 	if (STATE_EQUAL(backupidle) || STATE_EQUAL(enterbackup)) {
 		DEBUG_WARN("M10QAsyncReceiver::start_bridge: refuse — GNSS en deep-idle, "
 		           "sortir d'abord avec $GNSSBCKP#001;0");
@@ -934,18 +931,17 @@ bool M10QAsyncReceiver::start_bridge(PassthroughCallback rx_callback) {
 		exit_shutdown();
 	}
 
-	// Se mettre au debit auquel le M10Q repond REELLEMENT — mais lequel depend de
-	// ce qu'on vient de faire au recepteur:
-	//   - on arrivait de `idle`: exit_shutdown() ci-dessus a coupe puis reallume
-	//     le rail, donc le M10Q vient de faire un POR et repart au debit de BOOT
-	//     (9600 si la BBR est perdue, MAX si elle est retenue) — c'est l'indice
-	//     de sondage qui le sait, pas m_synced_baud;
-	//   - sinon le recepteur est deja alimente et configure: il parle a
+	// Move to the rate the M10Q ACTUALLY answers on -- but which one that is depends
+	// on what we have just done to the receiver:
+	//   - coming from `idle`: exit_shutdown() above cut and re-applied the rail, so
+	//     the M10Q has just done a POR and comes back at its BOOT rate (9600 if the
+	//     BBR is lost, MAX if it was retained) -- it is the probe index that knows
+	//     this, not m_synced_baud;
+	//   - otherwise the receiver is already powered and configured: it talks at
 	//     m_synced_baud.
-	// Constate au banc: forcer m_synced_baud (460800, herite de la derniere
-	// session) sur un recepteur fraichement redemarre a 9600 rendait le bridge
-	// muet — le defaut meme que ce correctif etait cense supprimer, mais dans
-	// l'autre sens.
+	// Observed on the bench: forcing m_synced_baud (460800, inherited from the last
+	// session) onto a freshly restarted receiver at 9600 left the bridge mute --
+	// the very fault this fix was meant to remove, but in the other direction.
 	const unsigned int bridge_baud = was_idle ? boot_baud_for_step(0) : m_synced_baud;
 	m_ubx_comms.set_baudrate(bridge_baud);
 
@@ -968,11 +964,11 @@ void M10QAsyncReceiver::stop_bridge() {
 
 	// Power off the GNSS and return to idle
 	enter_shutdown();
-	// Remettre la MEME base que power_off_immediate(): le bridge a prempte tous
-	// les clients (il annule les taches et coupe le rail sans passer par la FSM).
-	// Sans cela m_num_power_on restait a 1 apres un PWRON GNSS suivi d'un bridge,
-	// et plus AUCUNE session suivante ne pouvait couper le rail: ~25-30 mA en
-	// continu jusqu'au prochain reset.
+	// Restore the SAME baseline as power_off_immediate(): the bridge has pre-empted
+	// every client (it cancels the tasks and cuts the rail without going through the
+	// FSM). Without this, m_num_power_on stayed at 1 after a PWRON GNSS followed by
+	// a bridge, and NO subsequent session could cut the rail any more: ~25-30 mA
+	// continuously until the next reset.
 	m_state = State::idle;
 	m_num_power_on = 0;
 	m_powering_off = false;
@@ -981,9 +977,9 @@ void M10QAsyncReceiver::stop_bridge() {
 	m_unrecoverable_error = false;
 	m_pmreq_baud = DEFAULT_BAUDRATE;  // le rail vient d'etre coupe
 	m_bbr_retained = false;
-	// La liste doit rester alignee sur power_off_immediate(): ces cinq-la
-	// manquaient, et un drapeau de deep-idle ou un compteur de reveil herite du
-	// bridge se serait applique a la premiere session suivante.
+	// This list must stay aligned with power_off_immediate(): these five were
+	// missing, and a deep-idle flag or a wake counter inherited from the bridge
+	// would have applied to the first session after it.
 	m_deep_idle_pending = false;
 	m_enterbackup_warm = false;
 	m_consecutive_wake_failures = 0;

@@ -117,11 +117,11 @@ void PMU::storage_off_check() {
 	//   - The nRF52840 operates from 1.7 V to 3.6 V on VDD (datasheet).
 	//   - LED is off in storage state, so the ~3 V Vf is not required.
 	GPIOPins::init_pin(BSP::GPIO_VSYS_SEL);  // apply BSP config (open-drain S0D1)
-	                                         // 2026-08 : abaisser le seuil POF AVANT de descendre le rail. POFCON est
-	                                         // arme a 2,7 V (initialise():194) ; laisser 2,7 V face a un rail a 2,3 V
-	                                         // asserte POFWARN en permanence, et si SYSTEMOFF est refuse (debugger
-	                                         // attache, champ NFC) on tombe dans la boucle WFI ci-dessous avec une
-	                                         // interruption POF qui se re-declenche sans fin.
+	                                         // 2026-08: lower the POF threshold BEFORE dropping the rail. POFCON is
+	                                         // armed at 2.7 V (initialise():194); leaving 2.7 V against a 2.3 V rail
+	                                         // asserts POFWARN permanently, and if SYSTEMOFF is refused (a debugger
+	                                         // attached, an NFC field) we fall into the WFI loop below with a POF
+	                                         // interrupt that re-triggers endlessly.
 #ifdef SOFTDEVICE_PRESENT
 	if (nrf_sdh_is_enabled()) sd_power_pof_threshold_set(NRF_POWER_THRESHOLD_V20);
 #endif
@@ -527,18 +527,18 @@ void PMU::reduce_power_rails() {
 	// and DCDC quiescent current. Only safe when all peripherals are powered off
 	// (GPS, SMD, sensors all use separate power rails at 3.3V and are not affected).
 	// The nRF52840 DCDC operates down to 1.8 V with full functionality (CPU, RAM,
-	// BLE, RTC), donc 2,3 V laisse une marge confortable cote nRF.
+	// BLE, RTC), so 2.3 V leaves a comfortable margin on the nRF side.
 #if defined(VSYS_SEL) && !defined(BOARD_RSPB)
-	// Conditions pour descendre a 2,3 V :
-	//   - LED eteinte (Vf ~3 V, il lui faut le rail 3,3 V) ;
-	//   - VSENSORS relache (garde d'origine — inoperante sur LinkIt ou
-	//     SENSORS_PWR_PIN n'existe pas, mais correcte sur les cartes qui l'ont) ;
-	//   - 2026-08 : UART GNSS a l'arret. En etat `receive` la seule tache en
-	//     file est le chien de garde NAV de 5 s, donc sans ce verrou la bascule
-	//     tombait entre chaque NAV-PVT, liaison 460800 active et rail GNSS
-	//     asserte. On ne descend le rail commun que quand plus personne ne
-	//     parle au recepteur ; en deep-idle l'UART est deinit et le M10Q dort
-	//     en backup, donc l'economie est conservee la ou elle compte.
+	// Conditions for dropping to 2.3 V:
+	//   - LED off (Vf ~3 V, it needs the 3.3 V rail);
+	//   - VSENSORS released (the original guard -- inoperative on LinkIt where
+	//     SENSORS_PWR_PIN does not exist, but correct on the boards that have it);
+	//   - 2026-08: GNSS UART stopped. In the `receive` state the only queued task
+	//     is the 5 s NAV watchdog, so without this interlock the rail toggled
+	//     between every NAV-PVT with the 460800 link active and the GNSS rail
+	//     asserted. The shared rail is only dropped once nobody is talking to the
+	//     receiver any more; in deep-idle the UART is deinitialised and the M10Q
+	//     sleeps in backup, so the saving is kept where it counts.
 	if (!GPIOPins::get_sensors_pwr_state() && !GPIOPins::is_gnss_uart_active() && status_led
 	    && status_led->get_state() == RGBLedColor::BLACK && !status_led->is_flashing()) {
 		// Lower the POF brownout threshold BELOW the idle rail BEFORE dropping VSYS:

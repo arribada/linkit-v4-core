@@ -37,17 +37,17 @@ public:
 	static void release_sensors_pwr();  ///< Decrement refcount, power off if reaches 0
 	static bool get_sensors_pwr_state();
 	static uint8_t get_sensors_pwr_refcount();
-	/// @brief Verrou "l'UART GNSS est en service" (2026-08).
+	/// @brief "The GNSS UART is in service" interlock (2026-08).
 	///
-	/// PMU::reduce_power_rails() fait descendre VSYS a 2,3 V des que le
-	/// scheduler est libre plus de 250 ms. En etat `receive` la seule tache en
-	/// file est le chien de garde NAV de 5 s: la bascule tombe donc entre
-	/// chaque NAV-PVT, rail GNSS allume et UART a 460800. L'interverrouillage
-	/// existant (`!get_sensors_pwr_state()`) est du code MORT sur LinkIt, ou
-	/// SENSORS_PWR_PIN n'existe pas et le refcount reste a 0 a vie.
+	/// PMU::reduce_power_rails() drops VSYS to 2.3 V as soon as the scheduler is
+	/// idle for more than 250 ms. In the `receive` state the only queued task is
+	/// the 5 s NAV watchdog, so the rail toggles between every NAV-PVT, with the
+	/// GNSS rail powered and the UART at 460800. The existing interlock
+	/// (`!get_sensors_pwr_state()`) is DEAD code on LinkIt, where SENSORS_PWR_PIN
+	/// does not exist and the refcount stays at 0 for life.
 	///
-	/// Pose/retire par UBXComms::init()/deinit(), c'est-a-dire exactement la
-	/// duree de vie de l'UART — un seul point, impossible a desynchroniser.
+	/// Taken and released by UBXComms::init()/deinit(), i.e. exactly the lifetime
+	/// of the UART -- one single point, impossible to desynchronise.
 	static void set_gnss_uart_active(bool active);
 	static bool is_gnss_uart_active();
 
@@ -73,16 +73,16 @@ public:
 	/// @brief Release pin to high-impedance (input/disconnected).
 	static void release_to_highz(uint32_t pin);
 
-	/// @brief Relacher une sortie a drain ouvert en MAINTENANT un niveau haut
-	///        defini, via le tirage interne (~13 kOhm).
+	/// @brief Release an open-drain output while HOLDING a defined high level,
+	///        through the internal pull-up (~13 kOhm).
 	///
-	/// release_to_highz() passe par nrf_gpio_cfg_default(), qui remet la broche en
-	/// entree SANS tirage: la ligne flotte. C'est acceptable quand un tirage
-	/// externe existe, pas quand il n'y en a pas. Cas d'usage: la broche USR_NRST
-	/// du module KIM2, que sa datasheet declare "should not be left floating" et
-	/// pour laquelle la carte linkit-v4 ne prevoit aucun tirage externe. On garde
-	/// une entree (et non une sortie poussee) pour qu'une sonde SWD cablee sur le
-	/// meme net puisse toujours tirer le reset sans conflit.
+	/// release_to_highz() goes through nrf_gpio_cfg_default(), which returns the pin
+	/// to an input WITHOUT a pull: the line floats. That is acceptable where an
+	/// external pull exists, not where there is none. Use case: the KIM2 module's
+	/// USR_NRST pin, which its datasheet declares "should not be left floating" and
+	/// for which the linkit-v4 board provides no external pull. It stays an input
+	/// (rather than a driven output) so an SWD probe wired on the same net can still
+	/// pull the reset without a conflict.
 	static void release_to_pullup(uint32_t pin);
 
 private:

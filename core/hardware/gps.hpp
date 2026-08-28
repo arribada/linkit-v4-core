@@ -233,13 +233,13 @@ public:
 	virtual void stop_bridge() {}
 	virtual bool is_bridge_active() const { return false; }
 
-	/// @brief Le recepteur est-il alimente / la machine a etats hors repos ?
+	/// @brief Is the receiver powered / the state machine out of idle?
 	///
-	/// Sert a rattraper un `PWRON GNSS` DTE laisse en l'air: cette commande
-	/// incremente le compteur de clients sans aucune minuterie, et seul un
-	/// `PWRON OFF` le decremente. Oublie, il ne repasse jamais a zero — chaque
-	/// session de service fait alors +1/-1 AU-DESSUS du compte fuite et plus
-	/// rien ne coupe le rail (~25-30 mA en continu sur un appareil scelle).
+	/// Used to recover from a DTE `PWRON GNSS` left dangling: that command
+	/// increments the client count with no timer at all, and only a `PWRON OFF`
+	/// decrements it. Forgotten, it never returns to zero -- every service session
+	/// then does +1/-1 ABOVE the leaked count and nothing cuts the rail any more
+	/// (~25-30 mA continuously on a sealed device).
 	virtual bool is_powered() const { return false; }
 	virtual bool bridge_send(const uint8_t *, size_t) { return false; }
 	virtual void bridge_process_rx() {}
