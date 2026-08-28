@@ -158,7 +158,7 @@ void ArgosTxService::service_init() {
 	m_last_preconfig_mod = KineisModulation::LDA2;
 	m_modulation_preconfig.reset();
 	m_consecutive_device_errors = 0;
-	m_device_error_suspend_until = 0;
+	m_device_error_hold_until = 0;
 	m_is_underwater = false;
 	m_prepared_doppler_packet.clear();
 	m_prepared_doppler_size_bits = 0;
@@ -382,6 +382,19 @@ unsigned int ArgosTxService::schedule_doppler(ArgosConfig &argos_config, std::ti
 		m_sched.schedule_at(m_doppler_pause_until_rtc);
 		return remaining_s * 1000;
 	}
+
+	// This mode skips the backoff ladder on purpose (see the note further down),
+	// but never the suspension. The two are not interchangeable: the ladder only
+	// spaces retries, whereas the suspension is what stops a wedged radio, and
+	// the guard in service_initiate() reschedules through here. Leave the
+	// suspension out and that guard lands back on the burst cadence, hits the
+	// guard again a few seconds later and spins -- the same wake/log/skip loop
+	// the probe deadline was added to kill, only faster.
+	if (m_consecutive_device_errors >= DEVICE_ERROR_MAX_CONSECUTIVE) {
+		bool held = false;
+		unsigned int delay_ms = apply_device_error_hold(0, now, held);
+		if (held) return delay_ms;
+	}
 	m_doppler_pause_until_rtc = 0;
 
 	unsigned int max_msg = configuration_store->read_param<unsigned int>(ParamID::SURFACING_BURST_MAX_MSG);
@@ -413,13 +426,20 @@ unsigned int ArgosTxService::schedule_doppler(ArgosConfig &argos_config, std::ti
 	}
 
 	// Subsequent msg: progressive interval capped at max_s.
+	//
+	// Deliberately NOT clamped by apply_device_error_hold, unlike SURFACING_BURST.
+	// A backoff only earns its keep if something can end it early, and this mode
+	// has nothing to offer: no surfacing event and no GNSS fix, so a hold here
+	// would just push messages out of the sequence with no way to bring them
+	// back. The strike counter still climbs and the suspension in
+	// service_initiate() still stops a wedged radio -- what is skipped is the
+	// spacing between messages of one sequence, which is the mode's own cadence.
 	unsigned int interval_s =
 	    argos_config.surfacing_burst_init_s + (m_doppler_seq_count - 1) * argos_config.surfacing_burst_step_s;
 	if (interval_s > argos_config.surfacing_burst_max_s) interval_s = argos_config.surfacing_burst_max_s;
 	DEBUG_TRACE("ArgosTxService::DOPPLER: msg #%u in %u s", m_doppler_seq_count + 1, interval_s);
 	m_sched.schedule_at(now + (std::time_t)interval_s);
 	return interval_s * 1000;
-	return Service::SCHEDULE_DISABLED;
 }
 
 /// @brief SURFACING_BURST: Doppler phase, then GNSS phase once a fix lands.
@@ -482,7 +502,9 @@ unsigned int ArgosTxService::schedule_surfacing_burst(ArgosConfig &argos_config,
 			// to-back transition) is too recent.
 			if (m_doppler_burst_count == 0) {
 				DEBUG_TRACE("ArgosTxService::SURFACING_BURST: Doppler #%u (immediate)", m_doppler_burst_count + 1);
+				bool held = false;
 				unsigned int delay_ms = apply_spacing_guard(0, argos_config.surfacing_burst_init_s, now);
+				delay_ms = apply_device_error_hold(delay_ms, now, held);
 				if (delay_ms == 0) m_sched.schedule_at(now);
 				return delay_ms;
 			}
@@ -495,8 +517,13 @@ unsigned int ArgosTxService::schedule_surfacing_burst(ArgosConfig &argos_config,
 			// Demoted to TRACE: per progressive ping. Burst start/end markers
 			// stay at INFO; intermediate scheduling is verbose forensics.
 			DEBUG_TRACE("ArgosTxService::SURFACING_BURST: Doppler #%u in %u s", m_doppler_burst_count + 1, interval_s);
-			m_sched.schedule_at(now + interval_s);
-			return interval_s * 1000;
+			bool held = false;
+			unsigned int delay_ms = apply_device_error_hold(interval_s * 1000, now, held);
+			// The helper re-anchors the scheduler itself when it clamps; only
+			// anchor here when it did not. `held` says so explicitly rather than
+			// inferring it from the returned value.
+			if (!held) m_sched.schedule_at(now + interval_s);
+			return delay_ms;
 		}
 		// Promote branch fell through: continue to Phase 2 below.
 	}
@@ -533,6 +560,12 @@ unsigned int ArgosTxService::schedule_surfacing_burst(ArgosConfig &argos_config,
 			// (TCXO drift + CLS rate-limit risk). Defer to at least
 			// surfacing_burst_init_s after the previous TX.
 			unsigned int delay_ms = apply_spacing_guard(0, argos_config.surfacing_burst_init_s, now);
+			// Normally a no-op here: a GNSS fix is one of the events that clears
+			// the hold, and reaching phase 2 usually means one just landed. It is
+			// not guaranteed though -- should_promote_doppler_to_gnss() can enter
+			// this phase off a pile entry with no fresh peer event -- so honour it.
+			bool held = false;
+			delay_ms = apply_device_error_hold(delay_ms, now, held);
 			if (delay_ms == 0) m_sched.schedule_at(now);
 			return delay_ms;
 		}
@@ -742,15 +775,15 @@ void ArgosTxService::service_initiate() {
 	// those wake-ups exist and why removing them is not a local change.
 	if (m_consecutive_device_errors >= DEVICE_ERROR_MAX_CONSECUTIVE) {
 		std::time_t now = service_current_time();
-		if (DEVICE_ERROR_PROBE_PERIOD_S && now < m_device_error_suspend_until) {
+		if (DEVICE_ERROR_PROBE_PERIOD_S && now < m_device_error_hold_until) {
 			DEBUG_WARN("ArgosTxService::service_initiate: skipping TX — %u consecutive device errors, "
 			           "suspended for another %llu s",
-			           m_consecutive_device_errors, (unsigned long long)(m_device_error_suspend_until - now));
+			           m_consecutive_device_errors, (unsigned long long)(m_device_error_hold_until - now));
 			// Reschedule rather than complete-without-reschedule. The latter
 			// leaves the safety-net timeout armed, and that timeout is what
 			// used to spin this guard once per service_next_timeout().
 			cancel_safety_timeout();
-			m_sched.set_earliest_schedule(m_device_error_suspend_until);
+			m_sched.set_earliest_schedule(m_device_error_hold_until);
 			service_complete();
 			return;
 		}
@@ -1017,7 +1050,7 @@ void ArgosTxService::notify_peer_event(ServiceEvent &e) {
 			DEBUG_INFO("ArgosTxService: clearing %u-error suspension on new GPS session — fresh TX opportunity",
 			           m_consecutive_device_errors);
 			m_consecutive_device_errors = 0;
-			m_device_error_suspend_until = 0;
+			m_device_error_hold_until = 0;
 			// Clearing the counter is not enough on its own. A suspension parks
 			// the service on a probe deadline up to DEVICE_ERROR_PROBE_PERIOD_S
 			// out, and that floor outlives the counter: without dropping it and
@@ -1155,7 +1188,7 @@ void ArgosTxService::notify_peer_event(ServiceEvent &e) {
 				DEBUG_INFO("ArgosTxService: clearing %u-error suspension on surface event — fresh session",
 				           m_consecutive_device_errors);
 				m_consecutive_device_errors = 0;
-				m_device_error_suspend_until = 0;
+				m_device_error_hold_until = 0;
 				// No reschedule needed here, unlike the GNSS branch: the
 				// earliest-TX floor is overwritten with dry_time_before_tx a
 				// few lines below, and Service::notify_underwater_state(false)
@@ -1220,6 +1253,19 @@ void ArgosTxService::notify_peer_event(ServiceEvent &e) {
 	// timing penalty vs the LoRa "immediately after" guarantee.
 	if (e.event_source == ServiceIdentifier::GNSS_SENSOR && e.event_type == ServiceEventType::GNSS_CLOUDLOCATE_READY) {
 		if (m_is_surfacing_burst && !m_has_gnss_fix_since_surfacing && !m_is_tx_pending) {
+			// service_reschedule(true) means "fire now" and skips
+			// service_next_schedule_in_ms() entirely, so none of the scheduling
+			// gates run -- including the device-error hold. That makes this a
+			// third way out of a backoff, next to the GNSS fix and the surface
+			// event, and an unintended one: a CloudLocate becoming ready seconds
+			// after a failed TX would transmit straight through the hold. Defer
+			// to the normal path instead; it still fires at the burst cadence
+			// once the hold lifts, and the CloudLocate stays in the pile.
+			if (m_device_error_hold_until != 0 && service_current_time() < m_device_error_hold_until) {
+				DEBUG_INFO("ArgosTxService::notify_peer_event: GNSS_CLOUDLOCATE_READY during a device-error hold — "
+				           "deferring to the normal schedule");
+				return;
+			}
 			DEBUG_INFO("ArgosTxService::notify_peer_event: GNSS_CLOUDLOCATE_READY — rescheduling early CloudLocate TX");
 			m_scheduled_task = [this]() { process_doppler_burst(); };
 			service_reschedule(true);
@@ -2345,6 +2391,7 @@ void ArgosTxService::react(KineisEventTxComplete const &) {
 #endif
 	m_is_tx_pending = false;
 	m_consecutive_device_errors = 0;
+	m_device_error_hold_until = 0;
 
 #if VALIDATION_LOG_ENABLE
 	{
@@ -2487,6 +2534,11 @@ void ArgosTxService::react(KineisEventTxComplete const &) {
 
 /// @brief Device error event — increment backoff counter, complete service with error.
 void ArgosTxService::react(KineisEventDeviceError const &) {
+	// Called exactly once, here at the top, because it does two jobs: it reports
+	// whether a TX of OURS was in flight, and it clears the flag + stops the
+	// send. Every branch below reads the result rather than calling it again.
+	const bool was_our_tx_in_flight = service_cancel();
+
 	// Distinguish "device cooldown reject" from a real device error. The SmdSat
 	// 30-min autofallback cooldown is itself the recovery path — counting it as
 	// a device error would burn the 3-strike session budget within ~3 surface
@@ -2500,11 +2552,39 @@ void ArgosTxService::react(KineisEventDeviceError const &) {
 #if VALIDATION_LOG_ENABLE
 		DEBUG_INFO("[VAL-SAT] argos_react_skip_cooldown remaining_ms=%u (no error increment)", cooldown_ms);
 #endif
-		if (service_cancel()) {
+		if (was_our_tx_in_flight) {
 			unsigned int backoff_s = (cooldown_ms / 1000) + 1;  // +1 s margin
-			m_sched.set_earliest_schedule(service_current_time() + backoff_s);
+			// Same two consumers as the exponential backoff below. This branch
+			// is SmdSat-only (KIM2 has no cooldown notion), and without the hold
+			// it was the one place where a SURFACING_BURST on SMD behaved
+			// differently from the same burst on KIM2: the module was refusing
+			// for up to 30 min and the burst kept pinging at 5 s regardless.
+			m_device_error_hold_until = service_current_time() + (std::time_t)backoff_s;
+			m_sched.set_earliest_schedule(m_device_error_hold_until);
 			service_complete();
 		}
+		return;
+	}
+
+	// Only a failure of OUR transmission counts. KineisDevice::notify broadcasts
+	// to every subscriber, and ArgosTxService is not the only one: on the KIM2
+	// build ArgosRxService is handed the same device object, so a refused
+	// downlink, a rejected AT+DL or an error during reception all arrive here.
+	// None of them is a transmit fault, and with no TX pending none of them even
+	// produced a visible effect — they just ratcheted the counter until the
+	// guard in service_initiate() started refusing to transmit. Three failed RX
+	// windows could mute a healthy transmitter.
+	//
+	// LoRaTxService has had this guard since its own version of the problem
+	// (repeated warm-up failures across dives climbing to the strike limit); it
+	// is the same test, on purpose, so the three backends behave alike.
+	//
+	// The cost is that a genuine TX error arriving AFTER the safety timeout has
+	// already run service_cancel() is dropped. That is the right trade: the
+	// timeout has by then cancelled and rescheduled the TX anyway, so the late
+	// error would only be double-counting a failure already handled.
+	if (!was_our_tx_in_flight) {
+		DEBUG_TRACE("ArgosTxService::react: KineisEventDeviceError with no TX of ours in flight — not counted");
 		return;
 	}
 
@@ -2538,7 +2618,7 @@ void ArgosTxService::react(KineisEventDeviceError const &) {
 		}
 	}
 
-	if (service_cancel()) {
+	{
 		if (m_consecutive_device_errors >= DEVICE_ERROR_MAX_CONSECUTIVE) {
 			// Max errors reached: stop transmitting, but on a deadline rather
 			// than on the arrival of an outside event. Four things end it --
@@ -2558,7 +2638,7 @@ void ArgosTxService::react(KineisEventDeviceError const &) {
 			// service_initiate() and rearmed itself -- a wake/log/skip loop
 			// once per service_next_timeout() that transmitted nothing and
 			// cost an LFS commit per pass.
-			m_device_error_suspend_until = service_current_time() + (std::time_t)DEVICE_ERROR_PROBE_PERIOD_S;
+			m_device_error_hold_until = service_current_time() + (std::time_t)DEVICE_ERROR_PROBE_PERIOD_S;
 			DEBUG_ERROR("ArgosTxService: %u consecutive device errors — suspending TX for %u s, then one probe "
 			            "(a GPS session or a surface event clears it sooner)",
 			            m_consecutive_device_errors, DEVICE_ERROR_PROBE_PERIOD_S);
@@ -2566,7 +2646,7 @@ void ArgosTxService::react(KineisEventDeviceError const &) {
 			// see the note on DEVICE_ERROR_PROBE_PERIOD_S for what the latter
 			// did to the safety-net timeout.
 			cancel_safety_timeout();
-			m_sched.set_earliest_schedule(m_device_error_suspend_until);
+			m_sched.set_earliest_schedule(m_device_error_hold_until);
 			service_complete();
 		} else {
 			// Exponential backoff: 1 min, 2 min, 4 min... saturating at
@@ -2592,7 +2672,13 @@ void ArgosTxService::react(KineisEventDeviceError const &) {
 			unsigned int backoff_ms = Backoff::doubling_capped(
 			    DEVICE_ERROR_BACKOFF_BASE_MS, DEVICE_ERROR_BACKOFF_MAX_MS, m_consecutive_device_errors);
 			DEBUG_WARN("ArgosTxService: backoff %u ms before next TX attempt", backoff_ms);
-			m_sched.set_earliest_schedule(service_current_time() + backoff_ms / 1000);
+			// Two consumers, one instant. set_earliest_schedule reaches the
+			// periodic and prepass schedulers; m_device_error_hold_until reaches
+			// the burst paths, which schedule themselves and never read that
+			// floor. Setting only the first is what made this ladder a log line
+			// in SURFACING_BURST.
+			m_device_error_hold_until = service_current_time() + (std::time_t)(backoff_ms / 1000);
+			m_sched.set_earliest_schedule(m_device_error_hold_until);
 			service_complete();
 		}
 	}
@@ -2629,6 +2715,29 @@ unsigned int ArgosTxService::apply_spacing_guard(unsigned int proposed_delay_ms,
 	// fire "early" relative to our spacing.
 	m_sched.schedule_at(now + (std::time_t)(deferred_ms / 1000) + 1);
 	return deferred_ms;
+}
+
+/// @brief Clamp a burst schedule to a pending device-error backoff/suspension.
+/// @param proposed_delay_ms  what the burst cadence asked for.
+/// @param now                current RTC epoch second.
+/// @return the delay the caller should return, in ms.
+unsigned int ArgosTxService::apply_device_error_hold(unsigned int proposed_delay_ms, std::time_t now, bool &held) {
+	held = false;
+	if (m_device_error_hold_until == 0) return proposed_delay_ms;
+	if (now >= m_device_error_hold_until) {
+		// Elapsed. Drop it here rather than leaving a stale instant behind: the
+		// periodic path self-clears inside the scheduler, the burst path has no
+		// equivalent.
+		m_device_error_hold_until = 0;
+		return proposed_delay_ms;
+	}
+	unsigned int hold_ms = (unsigned int)(m_device_error_hold_until - now) * 1000u;
+	if (hold_ms <= proposed_delay_ms) return proposed_delay_ms;  // burst is already slower
+	DEBUG_INFO("ArgosTxService: burst TX held %u ms by the device-error backoff (cadence asked %u ms)", hold_ms,
+	           proposed_delay_ms);
+	m_sched.schedule_at(m_device_error_hold_until);
+	held = true;
+	return hold_ms;
 }
 
 

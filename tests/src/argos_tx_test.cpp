@@ -177,6 +177,33 @@ TEST_GROUP(ArgosTxService) {
 	// jitter, no time-sync burst, no low-battery gating -- so that a schedule
 	// that moves says something about the code under test and nothing else.
 	// Used by the device-error tests at the end of this file.
+	void inject_cloudlocate_ready() {
+		ServiceEvent e;
+		e.event_source = ServiceIdentifier::GNSS_SENSOR;
+		e.event_type = ServiceEventType::GNSS_CLOUDLOCATE_READY;
+		e.event_originator_unique_id = 0x12345678;
+		ServiceManager::notify_peer_event(e);
+	}
+
+	// SURFACING_BURST with a short, readable Doppler cadence: first message
+	// immediate, then 5 s, 15 s, 25 s... Used by the device-error burst tests,
+	// where the whole point is that 5 s is what the backoff has to override.
+	void configure_surfacing_burst(BaseArgosMode mode = BaseArgosMode::SURFACING_BURST) {
+		fake_config_store->write_param(ParamID::ARGOS_MODE, mode);
+		fake_config_store->write_param(ParamID::ARGOS_DEPTH_PILE, BaseDepthPile::DEPTH_PILE_1);
+		fake_config_store->write_param(ParamID::ARGOS_HEXID, (unsigned int)0x01234567U);
+		fake_config_store->write_param(ParamID::GNSS_EN, true);
+		fake_config_store->write_param(ParamID::LB_EN, false);
+		fake_config_store->write_param(ParamID::TR_NOM, (unsigned int)60);
+		fake_config_store->write_param(ParamID::ARGOS_TX_JITTER_EN, false);
+		fake_config_store->write_param(ParamID::ARGOS_TIME_SYNC_BURST_EN, false);
+		fake_config_store->write_param(ParamID::UNDERWATER_EN, (bool)true);
+		fake_config_store->write_param(ParamID::DRY_TIME_BEFORE_TX, (unsigned int)0);
+		fake_config_store->write_param(ParamID::SURFACING_BURST_INIT_S, (unsigned int)5);
+		fake_config_store->write_param(ParamID::SURFACING_BURST_STEP_S, (unsigned int)10);
+		fake_config_store->write_param(ParamID::SURFACING_BURST_MAX_S, (unsigned int)60);
+	}
+
 	void configure_plain_legacy(unsigned int tr_nom_s = 10) {
 		fake_config_store->write_param(ParamID::ARGOS_MODE, BaseArgosMode::LEGACY);
 		fake_config_store->write_param(ParamID::ARGOS_DEPTH_PILE, BaseDepthPile::DEPTH_PILE_1);
@@ -4093,6 +4120,306 @@ TEST(ArgosTxService, RebootClearsTheErrorCount) {
 	t += serv.get_last_schedule();
 	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
+	system_scheduler->run();
+	mock().checkExpectations();
+}
+
+// KineisDevice::notify broadcasts to every subscriber, and on the KIM2 build
+// ArgosRxService holds the same device object as this service. A refused
+// downlink, a rejected AT+DL or an error during reception therefore arrive in
+// react(KineisEventDeviceError) with no transmission of ours in flight. They
+// must not move the strike counter: three failed RX windows muting a healthy
+// transmitter is the failure this guard exists to prevent, and it is silent --
+// with nothing pending there is no backoff and no reschedule to notice, only
+// the count creeping up until service_initiate() starts refusing.
+TEST(ArgosTxService, DeviceErrorWithNoTxInFlightIsNotCounted) {
+	configure_plain_legacy();
+
+	// One transmission expected, at the end. If the guard is missing, five
+	// strikes suspend the service and it never happens.
+	mock().expectOneCall("send").onObject(mock_kineis).ignoreOtherParameters();
+	mock().ignoreOtherCalls();
+
+	ArgosTxService serv(*mock_kineis);
+	std::time_t t = 1652105502000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+
+	serv.start();
+	inject_gps_location(true, 11.8768, -33.8232, t / 1000, true);
+	unsigned int nominal = serv.get_last_schedule();
+
+	// Five errors with nothing of ours in flight.
+	for (unsigned int i = 0; i < 5; i++)
+		mock_kineis->notify(KineisEventDeviceError({}));
+
+	// Untouched schedule: no backoff was armed either, which is the other half
+	// of "not counted".
+	CHECK_EQUAL(nominal, serv.get_last_schedule());
+
+	t += serv.get_last_schedule();
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	system_scheduler->run();
+	mock().checkExpectations();
+}
+
+// --- The backoff has to reach the burst modes too ---------------------------
+// SURFACING_BURST drives itself with ArgosTxScheduler::schedule_at(), which
+// writes the next TX instant directly. set_earliest_schedule -- the floor the
+// backoff used to set -- is only read by schedule_periodic and schedule_prepass,
+// so in the mode the turtles actually run the ladder was a log line and nothing
+// else: the WARN announced 60000 ms while the next Doppler went out on the
+// burst's own 5 s cadence.
+
+TEST(ArgosTxService, BackoffSpacesTheSurfacingBurstDoppler) {
+	configure_surfacing_burst();
+
+	mock().expectOneCall("send").onObject(mock_kineis).ignoreOtherParameters();
+	mock().ignoreOtherCalls();
+
+	ArgosTxService serv(*mock_kineis);
+	std::time_t t = 1652105502000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+
+	serv.start();
+	inject_gps_location(true, 11.8768, -33.8232, t / 1000, true);
+
+	// Dive, then surface: opens the Doppler burst.
+	notify_underwater_state(true);
+	t += 60000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	notify_underwater_state(false);
+
+	// First Doppler goes out, and fails.
+	t += serv.get_last_schedule();
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	system_scheduler->run();
+	mock_kineis->notify(KineisEventDeviceError({}));
+
+	// SURFACING_BURST_INIT_S is 5 s. Without the hold the next Doppler lands
+	// there and the announced backoff means nothing.
+	CHECK_EQUAL(60000U, serv.get_last_schedule());
+}
+
+// ...and the way out is the one the mode already has. A GNSS fix promotes the
+// burst to its phase 2 and clears the strike counter; it must clear the hold
+// with it, or the beacon sits out the backoff with a fresh position in hand.
+TEST(ArgosTxService, SurfacingBurstBackoffIsClearedByAGnssFix) {
+	configure_surfacing_burst();
+
+	mock().expectOneCall("send").onObject(mock_kineis).ignoreOtherParameters();
+	mock().ignoreOtherCalls();
+
+	ArgosTxService serv(*mock_kineis);
+	std::time_t t = 1652105502000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+
+	serv.start();
+	inject_gps_location(true, 11.8768, -33.8232, t / 1000, true);
+
+	notify_underwater_state(true);
+	t += 60000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	notify_underwater_state(false);
+
+	t += serv.get_last_schedule();
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	system_scheduler->run();
+	mock_kineis->notify(KineisEventDeviceError({}));
+	CHECK_EQUAL(60000U, serv.get_last_schedule());
+
+	// A fix lands ten seconds later, well inside the hold.
+	t += 10000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	inject_gps_location(true, 11.8768, -33.8232, t / 1000, true);
+
+	CHECK_COMPARE(serv.get_last_schedule(), <, 60000U);
+}
+
+// The other exit the mode has: surfacing again.
+TEST(ArgosTxService, SurfacingBurstBackoffIsClearedByASurfaceEvent) {
+	configure_surfacing_burst();
+
+	mock().expectOneCall("send").onObject(mock_kineis).ignoreOtherParameters();
+	mock().ignoreOtherCalls();
+
+	ArgosTxService serv(*mock_kineis);
+	std::time_t t = 1652105502000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+
+	serv.start();
+	inject_gps_location(true, 11.8768, -33.8232, t / 1000, true);
+
+	notify_underwater_state(true);
+	t += 60000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	notify_underwater_state(false);
+
+	t += serv.get_last_schedule();
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	system_scheduler->run();
+	mock_kineis->notify(KineisEventDeviceError({}));
+	CHECK_EQUAL(60000U, serv.get_last_schedule());
+
+	// Down and up again inside the hold.
+	notify_underwater_state(true);
+	t += 20000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	notify_underwater_state(false);
+
+	CHECK_COMPARE(serv.get_last_schedule(), <, 60000U);
+}
+
+// DOPPLER is exempt, deliberately, and this pins that it stays exempt. The mode
+// has no surfacing event and no GNSS fix, so a hold could never be lifted
+// early: it would only push messages out of the sequence with no way to bring
+// them back. The strike counter still climbs and the suspension in
+// service_initiate() still stops a wedged radio -- what is skipped is the
+// spacing inside one sequence, which is the mode's own cadence.
+TEST(ArgosTxService, DopplerModeIsDeliberatelyNotSpacedByTheBackoff) {
+	configure_surfacing_burst(BaseArgosMode::DOPPLER);
+
+	mock().expectOneCall("send").onObject(mock_kineis).ignoreOtherParameters();
+	mock().ignoreOtherCalls();
+
+	ArgosTxService serv(*mock_kineis);
+	std::time_t t = 1652105502000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+
+	serv.start();
+	inject_gps_location(true, 11.8768, -33.8232, t / 1000, true);
+
+	t += serv.get_last_schedule();
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	system_scheduler->run();
+	mock_kineis->notify(KineisEventDeviceError({}));
+
+	// The sequence cadence, not the 60 s ladder.
+	CHECK_COMPARE(serv.get_last_schedule(), <, 60000U);
+}
+
+// The SmdSat autofallback cooldown is a refusal, not a fault, so it never
+// touches the strike counter -- but it still has to space the burst, and on the
+// same mechanism. It is SMD-only (KIM2 has no cooldown notion), which made it
+// the one place where the same burst behaved differently on the two backends:
+// the module was refusing for up to half an hour while the Doppler kept pinging
+// every five seconds.
+TEST(ArgosTxService, CooldownRejectAlsoSpacesTheSurfacingBurst) {
+	configure_surfacing_burst();
+
+	mock().expectOneCall("send").onObject(mock_kineis).ignoreOtherParameters();
+	mock().ignoreOtherCalls();
+
+	ArgosTxService serv(*mock_kineis);
+	std::time_t t = 1652105502000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+
+	serv.start();
+	inject_gps_location(true, 11.8768, -33.8232, t / 1000, true);
+
+	notify_underwater_state(true);
+	t += 60000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	notify_underwater_state(false);
+
+	mock_kineis->test_set_cooldown_remaining_ms(300000);  // 5 min left
+
+	t += serv.get_last_schedule();
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	system_scheduler->run();
+	mock_kineis->notify(KineisEventDeviceError({}));
+
+	// Past the cooldown with the +1 s margin, not the 5 s burst cadence.
+	CHECK_EQUAL(301000U, serv.get_last_schedule());
+}
+
+// DOPPLER skips the ladder, but the suspension is a different thing and it must
+// still land. Without this the guard in service_initiate() reschedules through
+// the burst cadence, hits the guard again seconds later and spins -- the same
+// wake/log/skip loop the probe deadline exists to kill, only faster.
+TEST(ArgosTxService, DopplerModeStillHonoursTheSuspension) {
+	configure_surfacing_burst(BaseArgosMode::DOPPLER);
+
+	mock().expectNCalls(3, "send").onObject(mock_kineis).ignoreOtherParameters();
+	mock().ignoreOtherCalls();
+
+	ArgosTxService serv(*mock_kineis);
+	std::time_t t = 1652105502000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+
+	serv.start();
+	inject_gps_location(true, 11.8768, -33.8232, t / 1000, true);
+
+	for (unsigned int i = 0; i < 3; i++) {
+		t += serv.get_last_schedule();
+		fake_rtc->settime(t / 1000);
+		fake_timer->set_counter(t);
+		system_scheduler->run();
+		mock_kineis->notify(KineisEventDeviceError({}));
+	}
+
+	// Parked on the probe deadline, far beyond any burst cadence.
+	CHECK_COMPARE(serv.get_last_schedule(), >, DEVICE_ERROR_BACKOFF_MAX_MS_FOR_TEST);
+}
+
+// GNSS_CLOUDLOCATE_READY reschedules with immediate=true, which skips
+// service_next_schedule_in_ms() and therefore every scheduling gate, the
+// device-error hold included. That made it a third, unintended way out of a
+// backoff: a CloudLocate becoming ready seconds after a failed TX transmitted
+// straight through the hold. The authorised exits are the GNSS fix and the
+// surface event, and this is neither.
+TEST(ArgosTxService, CloudLocateReadyDoesNotBypassTheDeviceErrorHold) {
+	configure_surfacing_burst();
+
+	mock().expectOneCall("send").onObject(mock_kineis).ignoreOtherParameters();
+	mock().ignoreOtherCalls();
+
+	ArgosTxService serv(*mock_kineis);
+	std::time_t t = 1652105502000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+
+	serv.start();
+	inject_gps_location(true, 11.8768, -33.8232, t / 1000, true);
+
+	notify_underwater_state(true);
+	t += 60000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	notify_underwater_state(false);
+
+	t += serv.get_last_schedule();
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	system_scheduler->run();
+	mock_kineis->notify(KineisEventDeviceError({}));
+	CHECK_EQUAL(60000U, serv.get_last_schedule());
+
+	// A CloudLocate becomes ready inside the hold. It must not fire a TX: the
+	// single `send` expected above has already been consumed, so a second one
+	// fails the test.
+	t += 5000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	inject_cloudlocate_ready();
 	system_scheduler->run();
 	mock().checkExpectations();
 }

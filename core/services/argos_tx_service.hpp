@@ -151,6 +151,20 @@ private:
 	// has completed (m_last_tx_uptime_ms == 0).
 	unsigned int apply_spacing_guard(unsigned int proposed_delay_ms, unsigned int min_spacing_s, std::time_t now);
 
+	// Clamp a BURST schedule to the device-error backoff/suspension.
+	//
+	// The periodic and prepass schedulers get that delay through
+	// ArgosTxScheduler::set_earliest_schedule, but SURFACING_BURST drives itself
+	// with schedule_at(), which writes the next TX instant directly and never
+	// reads that floor. Without this the ladder was pure logging in the mode the
+	// turtles actually run: the WARN said "backoff 60000 ms" while the next
+	// Doppler went out on the burst's own 5 s cadence.
+	//
+	// Returns the delay the caller should return, in ms: the proposed one when
+	// no hold is pending or the burst is already slower than it, otherwise the
+	// hold. Re-anchors the scheduler, exactly like apply_spacing_guard.
+	unsigned int apply_device_error_hold(unsigned int proposed_delay_ms, std::time_t now, bool &held);
+
 	// FastLoc priority (2026-05): peek depth pile; if the latest entry is a
 	// FastLoc (or real FIX/UPDATE) less than max_age_s old, returns true and
 	// the caller should route to process_gnss_burst instead of
@@ -241,5 +255,12 @@ private:
 #define ARGOS_TX_ERROR_SUSPEND_S 3600
 #endif
 	static constexpr unsigned int DEVICE_ERROR_PROBE_PERIOD_S = ARGOS_TX_ERROR_SUSPEND_S;
-	std::time_t m_device_error_suspend_until = 0;
+
+	/// @brief Epoch second before which no TX may go out, 0 when none pending.
+	/// Written by both device-error regimes -- the backoff sets it to
+	/// now + the ladder value, the suspension to now + DEVICE_ERROR_PROBE_PERIOD_S
+	/// -- so the guard in service_initiate() and the burst paths read one value
+	/// rather than each keeping their own idea of when TX may resume. Cleared by
+	/// a successful TX and by every event that clears the strike counter.
+	std::time_t m_device_error_hold_until = 0;
 };
