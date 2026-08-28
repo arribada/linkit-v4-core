@@ -547,6 +547,7 @@ target_sources(${TARGET_NAME} PRIVATE
     ${CORE_DIR}/hardware/sensor.cpp
     ${CORE_DIR}/hardware/reed.cpp
     ${CORE_DIR}/sm/gentracker.cpp
+    ${CORE_DIR}/sm/gentracker_config_state.cpp
     ${CORE_DIR}/sm/ledsm.cpp
     ${CORE_DIR}/sm/buzzm.cpp
     ${CORE_DIR}/services/service.cpp
