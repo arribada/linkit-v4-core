@@ -4460,8 +4460,11 @@ def c_prepass_repli_bruyant(r, case):
         return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
     mk = b.mark()
     b._send('%GPS 43.6 3.9 5000 9\r')
-    vues = _attendre_trace(b, [r'prepass (?:demande mais|impossible)', r'repli periodique',
-                               r'emission periodique', r'aucun passage calculable'],
+    # Ces motifs suivent les messages du firmware, traduits en anglais en 2026-08.
+    # On vise la partie stable ("prepass ...", "periodic TX") pour qu'une reformulation
+    # ne casse pas silencieusement le cas.
+    vues = _attendre_trace(b, [r'prepass (?:requested but|impossible)', r'periodic TX',
+                               r'no pass is computable'],
                            120, depuis=mk)
     try:
         b.enter_config()
@@ -5354,8 +5357,8 @@ def c_ciel_prepasse_reelle(r, case):
     _, hacc, _ = _attend_fix_reel(b, 330, depuis=mk)
     if hacc is None:
         return r.record(case, 'ERROR', 'pas de position reelle — prepasse non evaluable')
-    vues = _attendre_trace(b, [r'prepass', r'next pass', r'repli periodique',
-                               r'emission periodique'], 150, depuis=mk)
+    vues = _attendre_trace(b, [r'prepass', r'next pass', r'next window',
+                               r'periodic TX'], 150, depuis=mk)
     aop = None
     try:
         b.enter_config(); aop = _statr(b, ['PPT01', 'PPT02']); b.exit_config()

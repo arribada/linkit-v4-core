@@ -274,7 +274,7 @@ def t4_cold_start(b):
     idx = b.mark()
     req = b.wait(r"COLD START demand", 260, since=idx)
     applied = b.wait(r"COLD START appliqu", 90, since=idx) if req else None
-    cleared = b.wait(r"clear_bbr_config|effacement de la config BBR", 5, since=idx)
+    cleared = b.wait(r"clear_bbr_config|erasing the receiver BBR config", 5, since=idx)
     ok = bool(req and applied)
     record("T4", "escalade cold start (GNP54=2)", ok,
            ("demande + application observées" if ok else
@@ -385,7 +385,7 @@ def t8_pwron_leak(b):
     b.wait(r"PWRON|power_on", 15, since=idx)
     time.sleep(2)
     b.send("%OP")
-    caught = b.wait(r"GNSS encore aliment", 20, since=idx)
+    caught = b.wait(r"GNSS still powered", 20, since=idx)
     ok = bool(caught)
     record("T8", "fuite de rail PWRON GNSS (C3)", ok,
            "filet de sortie de config déclenché" if ok else
