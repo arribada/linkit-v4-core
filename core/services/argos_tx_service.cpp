@@ -1061,8 +1061,15 @@ void ArgosTxService::notify_peer_event(ServiceEvent &e) {
 		// Field case 2026-06-30: a KIM2 AT+PING brown-out at ~01:00 left an RSPB
 		// unit TX-suspended for 6.5 h until a manual reboot, despite the battery
 		// recovering within the hour.
-		if (m_consecutive_device_errors > 0) {
-			DEBUG_INFO("ArgosTxService: clearing %u-error suspension on new GPS session — fresh TX opportunity",
+		// A REAL FIX, not merely a session. Every GNSS session ends with a log
+		// update, NO_FIX ones included, and a tag under poor sky can produce
+		// those every few minutes. Clearing on any of them would cap the
+		// 3-strike suspension at the GNSS retry cadence: the beacon would keep
+		// retrying a wedged radio for as long as the sky stayed bad, which is
+		// the opposite of what the suspension is for. A fix is also what the
+		// clear is worth having for -- there is now something new to transmit.
+		if (m_consecutive_device_errors > 0 && entry.info.valid) {
+			DEBUG_INFO("ArgosTxService: clearing %u-error suspension on a new GPS fix — fresh TX opportunity",
 			           m_consecutive_device_errors);
 			m_consecutive_device_errors = 0;
 			m_device_error_hold_until = 0;
@@ -1074,7 +1081,13 @@ void ArgosTxService::notify_peer_event(ServiceEvent &e) {
 			// purpose -- an unconditional reschedule on every GPS log would
 			// change the cadence of every mode.
 			m_sched.set_earliest_schedule(service_current_time());
-			service_reschedule();
+			// NOT while a TX of ours is in flight. Service::reschedule() runs
+			// deschedule() -- which cancels the safety-net timeout -- BEFORE it
+			// tests m_is_initiated and returns; calling it mid-TX therefore
+			// disarms that timeout and re-arms nothing, leaving the service
+			// initiated for good if the module never answers. The completing TX
+			// reschedules on its own, and the floor is already dropped.
+			if (!is_initiated()) service_reschedule();
 		}
 
 		// First-message gate: a real GPS position fix is what corrects the RTC,

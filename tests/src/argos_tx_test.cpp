@@ -4526,3 +4526,97 @@ TEST(ArgosTxService, CertificationOnLdkTransmitsATruncatedFrame) {
 	system_scheduler->run();
 	mock().checkExpectations();
 }
+
+// Every GNSS session ends with a log update, NO_FIX ones included, and a tag
+// under poor sky produces those every few minutes. If any of them cleared the
+// suspension, the 3-strike limit would be capped at the GNSS retry cadence: the
+// beacon would keep powering a wedged radio for as long as the sky stayed bad,
+// which is the opposite of what the suspension is for.
+TEST(ArgosTxService, NoFixGpsSessionDoesNotClearTheSuspension) {
+	configure_plain_legacy();
+
+	// Three failures and nothing after them, whatever the GNSS does.
+	mock().expectNCalls(3, "send").onObject(mock_kineis).ignoreOtherParameters();
+	mock().ignoreOtherCalls();
+
+	ArgosTxService serv(*mock_kineis);
+	std::time_t t = 1652105502000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+
+	serv.start();
+	inject_gps_location(true, 11.8768, -33.8232, t / 1000, true);
+
+	for (unsigned int i = 0; i < 3; i++) {
+		t += serv.get_last_schedule();
+		fake_rtc->settime(t / 1000);
+		fake_timer->set_counter(t);
+		system_scheduler->run();
+		mock_kineis->notify(KineisEventDeviceError({}));
+	}
+
+	// Five failed GNSS sessions, three minutes apart.
+	for (unsigned int k = 0; k < 5; k++) {
+		t += 180000;
+		fake_rtc->settime(t / 1000);
+		fake_timer->set_counter(t);
+		inject_gps_nofix(t / 1000);
+		system_scheduler->run();
+	}
+	mock().checkExpectations();
+}
+
+// Service::reschedule() runs deschedule() -- which cancels the safety-net
+// timeout -- BEFORE it tests m_is_initiated and returns. So rescheduling while
+// one of our transmissions is in flight disarms that TX's timeout and re-arms
+// nothing: if the module never answers, the service stays initiated for good.
+// The GPS-fix recovery must therefore not reschedule mid-TX.
+TEST(ArgosTxService, GpsFixDuringAnInFlightTxLeavesItsSafetyTimeoutArmed) {
+	configure_plain_legacy();
+
+	// Three transmissions: one that fails, one left in flight, and the one that
+	// only happens if the safety timeout survived to recover the service.
+	mock().expectNCalls(3, "send").onObject(mock_kineis).ignoreOtherParameters();
+	mock().ignoreOtherCalls();
+
+	ArgosTxService serv(*mock_kineis);
+	std::time_t t = 1652105502000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+
+	serv.start();
+	inject_gps_location(true, 11.8768, -33.8232, t / 1000, true);
+
+	// First TX fails, so the strike counter is non-zero and the GPS branch below
+	// will take its clearing path.
+	t += serv.get_last_schedule();
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	system_scheduler->run();
+	mock_kineis->notify(KineisEventDeviceError({}));
+
+	// Second TX starts and stays in flight -- no TxComplete, no DeviceError.
+	t += serv.get_last_schedule();
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	system_scheduler->run();
+
+	// A fix lands while it is still in flight.
+	inject_gps_location(true, 11.8768, -33.8232, t / 1000, true);
+
+	// service_next_timeout() is 30 s. The timeout must still be armed: it fires,
+	// cancels the stuck TX and reschedules.
+	t += 31000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	system_scheduler->run();
+
+	// ...and the service transmits again. Without the timeout it would sit
+	// initiated for ever and this third send would never happen. Advance by the
+	// schedule the recovery actually armed, so exactly one TX falls due.
+	t += serv.get_last_schedule();
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	system_scheduler->run();
+	mock().checkExpectations();
+}
