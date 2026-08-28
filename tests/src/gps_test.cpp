@@ -1314,3 +1314,62 @@ TEST(GPSService, NoPvtWatchdogDoesNotResetACloudLocateOnlyTag) {
 	system_scheduler->run();
 	mock().checkExpectations();
 }
+
+// m_consecutive_dead_sessions counts acquisitions that ended with neither a PVT
+// nor a CloudLocate, and every Nth one forces a COLD START -- which wipes the
+// receiver's backup RAM and destroys its ephemeris. That is the right medicine
+// for a wedged M10Q and the wrong one for a healthy receiver that simply went
+// under water: it makes the NEXT fix harder. On an animal that dives through
+// most of its acquisition windows, nothing else was driving the counter.
+TEST(GPSService, DiveCutSessionIsNotCountedAsAGnssFailure) {
+	fake_config_store->write_param(ParamID::GNSS_EN, (bool)true);
+	fake_config_store->write_param(ParamID::UNDERWATER_EN, (bool)true);
+	fake_config_store->write_param(ParamID::DLOC_ARG_NOM, 0U);
+	fake_config_store->write_param(ParamID::GNSS_ACQ_TIMEOUT, 60U);
+	fake_config_store->write_param(ParamID::GNSS_COLD_ACQ_TIMEOUT, 60U);
+	// Every dead session forces a cold start, so one dive would be enough.
+	fake_config_store->write_param(ParamID::GNSS_COLD_START_AFTER_NTRY, 1U);
+
+	fake_rtc->settime(0);
+	mock().ignoreOtherCalls();
+
+	GPSService s(*mock_m10q, fake_log);
+	s.start();
+
+	// First acquisition starts.
+	increment_time_s(FIRST_AQPERIOD);
+	CHECK_FALSE(mock_m10q->last_nav_settings().cold_start);
+
+	// The animal dives mid-acquisition, then surfaces again.
+	notify_underwater_state(true);
+	increment_time_s(10);
+	notify_underwater_state(false);
+
+	// Next acquisition must NOT be a cold start: nothing failed.
+	increment_time_s(FIRST_AQPERIOD + 5);
+	CHECK_FALSE(mock_m10q->last_nav_settings().cold_start);
+}
+
+// ...and the counterpart, so the test above cannot pass for the wrong reason:
+// a session that really does end without a fix still escalates.
+TEST(GPSService, GenuineNoFixSessionStillEscalatesToAColdStart) {
+	fake_config_store->write_param(ParamID::GNSS_EN, (bool)true);
+	fake_config_store->write_param(ParamID::UNDERWATER_EN, (bool)true);
+	fake_config_store->write_param(ParamID::DLOC_ARG_NOM, 0U);
+	fake_config_store->write_param(ParamID::GNSS_ACQ_TIMEOUT, 30U);
+	fake_config_store->write_param(ParamID::GNSS_COLD_ACQ_TIMEOUT, 30U);
+	fake_config_store->write_param(ParamID::GNSS_COLD_START_AFTER_NTRY, 1U);
+
+	fake_rtc->settime(0);
+	mock().ignoreOtherCalls();
+
+	GPSService s(*mock_m10q, fake_log);
+	s.start();
+
+	increment_time_s(FIRST_AQPERIOD);
+	CHECK_FALSE(mock_m10q->last_nav_settings().cold_start);
+
+	// Let the acquisition run out with no fix at all, then the next one.
+	increment_time_s(120);
+	CHECK_TRUE(mock_m10q->last_nav_settings().cold_start);
+}

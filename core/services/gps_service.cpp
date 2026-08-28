@@ -169,8 +169,8 @@ void GPSService::arm_health_wdt() {
 		    configuration_store->get_gnss_configuration(gnss_config);
 		    if (!gnss_config.enable) {
 			    DEBUG_INFO("GPS Health WDT: no GPS event in %u h, and GNSS_EN=0 — expected, not a fault. No reset; "
-			               "re-arming. Clears by itself if GNSS is re-enabled.",
-			               HEALTH_WDT_HOURS);
+				           "re-arming. Clears by itself if GNSS is re-enabled.",
+				           HEALTH_WDT_HOURS);
 			    arm_health_wdt();
 			    return;
 		    }
@@ -183,15 +183,15 @@ void GPSService::arm_health_wdt() {
 		    // stops transmitting too, the next firing takes the reset branch.
 		    if (beacon_is_transmitting(WINDOW_S)) {
 			    DEBUG_WARN("GPS Health WDT: no GPS event in %u h, but the beacon transmitted within that window — it "
-			               "is working. No reset; forcing a COLD START on the next acquisition and re-arming.",
-			               HEALTH_WDT_HOURS);
+				           "is working. No reset; forcing a COLD START on the next acquisition and re-arming.",
+				           HEALTH_WDT_HOURS);
 			    m_force_cold_start = true;
 			    arm_health_wdt();
 			    return;
 		    }
 
 		    DEBUG_ERROR("GPS Health WDT: no GPS event and no transmission in %u h — nothing is working, soft reset",
-		                HEALTH_WDT_HOURS);
+			            HEALTH_WDT_HOURS);
 		    // 2026-06: snapshot the (free-running, crystal-accurate) RTC to flash
 		    // right before the soft reset so the post-reset restore from
 		    // LAST_KNOWN_RTC does NOT jump time backward by up to the 30-min
@@ -222,8 +222,8 @@ void GPSService::arm_no_pvt_wdt() {
 		    // mode was added for.
 		    if (configuration_store->read_param<bool>(ParamID::GNSS_CLOUDLOCATE_ONLY)) {
 			    DEBUG_INFO("GPS No-PVT WDT: no real PVT in %u days, and GNSS_CLOUDLOCATE_ONLY=1 — expected, not a "
-			               "fault. No reset; re-arming.",
-			               NO_PVT_WDT_DAYS);
+				           "fault. No reset; re-arming.",
+				           NO_PVT_WDT_DAYS);
 			    arm_no_pvt_wdt();
 			    return;
 		    }
@@ -234,8 +234,8 @@ void GPSService::arm_no_pvt_wdt() {
 		    // is rejecting every fix -- a cold start might.
 		    if (beacon_is_transmitting(WINDOW_S)) {
 			    DEBUG_WARN("GPS No-PVT WDT: no real PVT in %u days, but the beacon is still transmitting. No reset; "
-			               "forcing a COLD START on the next acquisition and re-arming.",
-			               NO_PVT_WDT_DAYS);
+				           "forcing a COLD START on the next acquisition and re-arming.",
+				           NO_PVT_WDT_DAYS);
 			    m_force_cold_start = true;
 			    arm_no_pvt_wdt();
 			    return;
@@ -982,54 +982,79 @@ GPSLogEntry GPSService::invalid_log_entry() {
 	// The counter is reset by the three success callbacks (gnss_data_callback,
 	// gnss_degraded_callback, gnss_cloudlocate_callback). Single-arm via
 	// m_stuck_recovery_in_flight so we don't queue multiple recoveries.
-	m_consecutive_dead_sessions++;
+	//
+	// A session the DIVE cut short is not a GNSS failure, and neither the count
+	// nor the escalations below apply to it. notify_underwater_state sets the
+	// underwater flag before calling service_cancel(), so this reads true for a
+	// dive and false for an ordinary acquisition timeout.
+	//
+	// Counting them was actively harmful rather than merely inaccurate: every
+	// Nth dead session forces a COLD START, which wipes the backup RAM and
+	// destroys the ephemeris -- making the next fix HARDER, on a receiver that
+	// was working fine and simply went under water. On an animal that dives
+	// through most of its acquisition windows, nothing else drove the counter.
+	//
+	// Skipping rather than clearing the counter on surfacing: clearing would
+	// also erase the genuine consecutive failures accumulated from one surface
+	// session to the next, which is exactly what the counter is for.
+	//
+	// Note the whole block is skipped, not just the increment: with the counter
+	// left at 0, `m_consecutive_dead_sessions % cold_after_ntry` is 0 too, so
+	// guarding the increment alone would have forced a cold start on every
+	// dive-cut session -- the opposite of the intent.
+	if (service_is_underwater()) {
+		DEBUG_TRACE("GPSService: session cut short by a dive — not counted as a dead session");
+	} else {
+		m_consecutive_dead_sessions++;
 
-	// Auto cold-start escalation (GNSS_COLD_START_AFTER_NTRY). When enabled
-	// (>0), every Nth consecutive dead session requests a TRUE cold start (BBR
-	// wipe) on the next acquisition — flushes stale/corrupt ephemeris/almanac
-	// that a plain rail-cycle (which preserves V_BCKP/BBR) would NOT clear.
-	// Fires well before the heavier STUCK_THRESHOLD rail-cycle and re-fires
-	// every N sessions while still stuck. Counter resets on any fix, so healthy
-	// tags never reach N — no regression when the param is left at 0 (default).
-	unsigned int cold_after_ntry = service_read_param<unsigned int>(ParamID::GNSS_COLD_START_AFTER_NTRY);
-	if (cold_after_ntry > 0 && (m_consecutive_dead_sessions % cold_after_ntry) == 0) {
-		m_force_cold_start = true;
-		DEBUG_WARN("GPSService: %u consecutive dead sessions >= NTRY %u — next acquisition COLD START (BBR wipe)",
-		           m_consecutive_dead_sessions, cold_after_ntry);
-		VAL_GNSS("dispatch=cold_start_after_ntry sessions=%u ntry=%u", m_consecutive_dead_sessions, cold_after_ntry);
-	}
+		// Auto cold-start escalation (GNSS_COLD_START_AFTER_NTRY). When enabled
+		// (>0), every Nth consecutive dead session requests a TRUE cold start (BBR
+		// wipe) on the next acquisition — flushes stale/corrupt ephemeris/almanac
+		// that a plain rail-cycle (which preserves V_BCKP/BBR) would NOT clear.
+		// Fires well before the heavier STUCK_THRESHOLD rail-cycle and re-fires
+		// every N sessions while still stuck. Counter resets on any fix, so healthy
+		// tags never reach N — no regression when the param is left at 0 (default).
+		unsigned int cold_after_ntry = service_read_param<unsigned int>(ParamID::GNSS_COLD_START_AFTER_NTRY);
+		if (cold_after_ntry > 0 && (m_consecutive_dead_sessions % cold_after_ntry) == 0) {
+			m_force_cold_start = true;
+			DEBUG_WARN("GPSService: %u consecutive dead sessions >= NTRY %u — next acquisition COLD START (BBR wipe)",
+			           m_consecutive_dead_sessions, cold_after_ntry);
+			VAL_GNSS("dispatch=cold_start_after_ntry sessions=%u ntry=%u", m_consecutive_dead_sessions,
+			         cold_after_ntry);
+		}
 
-	if (m_consecutive_dead_sessions >= STUCK_THRESHOLD && !m_stuck_recovery_in_flight) {
-		m_stuck_recovery_in_flight = true;
-		VAL_GNSS("dispatch=stuck_recovery_armed sessions=%u", m_consecutive_dead_sessions);
-		DEBUG_WARN("GPSService: %u consecutive dead sessions — scheduling hard rail-cycle",
-		           m_consecutive_dead_sessions);
-		// Fire after current invalidate completes (~1 s), then 30 s rail-down
-		// for a clean M10Q hardware reset before normal scheduling resumes.
-		m_stuck_recovery_arm_task = system_scheduler->post_task_prio(
-		    [this]() {
-			    // Guard: if a new acquisition is in flight when we'd yank the
-			    // rail, skip this recovery cycle. The counter is NOT reset so the
-			    // next dead session will re-arm naturally.
-			    if (m_is_active) {
-				    VAL_GNSS("dispatch=stuck_recovery_skipped_active");
-				    m_stuck_recovery_in_flight = false;
-				    return;
-			    }
-			    VAL_GNSS("dispatch=stuck_recovery_rail_down");
-			    DEBUG_WARN("GPSService: stuck recovery — power_off_immediate, 30 s rail-down");
-			    m_device.power_off_immediate();
-			    m_stuck_recovery_done_task = system_scheduler->post_task_prio(
-			        [this]() {
-				        VAL_GNSS("dispatch=stuck_recovery_done");
-				        DEBUG_INFO("GPSService: stuck recovery — rail-down complete, rescheduling");
-				        m_stuck_recovery_in_flight = false;
-				        m_consecutive_dead_sessions = 0;  // fresh chance after recovery
-				        service_reschedule(false);
-			        },
-			        "GPSStuckRecoveryDone", Scheduler::DEFAULT_PRIORITY, 30 * MS_PER_SEC);
-		    },
-		    "GPSStuckRecoveryArmed", Scheduler::DEFAULT_PRIORITY, 1 * MS_PER_SEC);
+		if (m_consecutive_dead_sessions >= STUCK_THRESHOLD && !m_stuck_recovery_in_flight) {
+			m_stuck_recovery_in_flight = true;
+			VAL_GNSS("dispatch=stuck_recovery_armed sessions=%u", m_consecutive_dead_sessions);
+			DEBUG_WARN("GPSService: %u consecutive dead sessions — scheduling hard rail-cycle",
+			           m_consecutive_dead_sessions);
+			// Fire after current invalidate completes (~1 s), then 30 s rail-down
+			// for a clean M10Q hardware reset before normal scheduling resumes.
+			m_stuck_recovery_arm_task = system_scheduler->post_task_prio(
+			    [this]() {
+				    // Guard: if a new acquisition is in flight when we'd yank the
+				    // rail, skip this recovery cycle. The counter is NOT reset so the
+				    // next dead session will re-arm naturally.
+				    if (m_is_active) {
+					    VAL_GNSS("dispatch=stuck_recovery_skipped_active");
+					    m_stuck_recovery_in_flight = false;
+					    return;
+				    }
+				    VAL_GNSS("dispatch=stuck_recovery_rail_down");
+				    DEBUG_WARN("GPSService: stuck recovery — power_off_immediate, 30 s rail-down");
+				    m_device.power_off_immediate();
+				    m_stuck_recovery_done_task = system_scheduler->post_task_prio(
+				        [this]() {
+					        VAL_GNSS("dispatch=stuck_recovery_done");
+					        DEBUG_INFO("GPSService: stuck recovery — rail-down complete, rescheduling");
+					        m_stuck_recovery_in_flight = false;
+					        m_consecutive_dead_sessions = 0;  // fresh chance after recovery
+					        service_reschedule(false);
+				        },
+				        "GPSStuckRecoveryDone", Scheduler::DEFAULT_PRIORITY, 30 * MS_PER_SEC);
+			    },
+			    "GPSStuckRecoveryArmed", Scheduler::DEFAULT_PRIORITY, 1 * MS_PER_SEC);
+		}
 	}
 
 	GPSLogEntry gps_entry{};

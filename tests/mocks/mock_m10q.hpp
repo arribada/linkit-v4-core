@@ -51,14 +51,23 @@ public:
 
 	void power_on(const GPSNavSettings &nav_settings) override {
 		DEBUG_TRACE("MockM10Q::power_on()");
+		m_last_nav_settings = nav_settings;
 		mock()
 		    .actualCall("power_on")
 		    .onObject(this)
 		    .withParameterOfType("const GPSNavSettings&", "nav_settings", &nav_settings);
 	}
 
+	// Test helper: the settings handed to the last power_on. The installed
+	// comparator only looks at fix_mode and dyn_model, so anything else -- the
+	// cold_start flag in particular -- is invisible through the mock parameter.
+	const GPSNavSettings &last_nav_settings() const { return m_last_nav_settings; }
+
 	void power_off() override {
 		DEBUG_TRACE("MockM10Q::power_off()");
 		mock().actualCall("power_off").onObject(this);
 	}
+
+private:
+	GPSNavSettings m_last_nav_settings{};
 };

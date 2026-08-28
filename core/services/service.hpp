@@ -145,6 +145,13 @@ protected:
 	virtual void service_initiate() = 0;
 	/// @brief Cancel an active service task (e.g., GPS acquisition timeout).
 	/// @return true if the task was active and cancelled.
+	/// @brief Is the device currently submerged?
+	/// Exposed so a service can tell a session IT abandoned from one the dive
+	/// cut short: notify_underwater_state sets this before calling
+	/// service_cancel(), so it reads true for the dive and false for an ordinary
+	/// timeout.
+	bool service_is_underwater() const { return m_is_underwater; }
+
 	virtual bool service_cancel() { return false; }
 	/// @brief Safety timeout after which service_cancel is called automatically.
 	/// @return Timeout in ms, or 0 for no timeout.
