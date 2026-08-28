@@ -2114,8 +2114,17 @@ TEST(ArgosTxService, SurfacingBurstDopplerMaxMsg) {
 	system_scheduler->run();
 	mock_kineis->notify(KineisEventTxComplete({}));
 
-	// After 2 Doppler, burst should stop (SCHEDULE_DISABLED)
-	CHECK_TRUE(Service::SCHEDULE_DISABLED == serv.get_last_schedule());
+	// After 2 Doppler the BURST stops -- SURFACING_BURST_MAX_MSG is honoured --
+	// but the beacon does not go silent. It drops to the presence heartbeat at
+	// the nominal period, which is a different and much slower thing than the
+	// 5 s burst cadence the cap exists to limit.
+	//
+	// This assertion used to be SCHEDULE_DISABLED. That left the service owning
+	// nothing, and only a dive→surface transition or a new valid fix could
+	// bring it back: an animal that stopped diving and was not getting fixes
+	// vanished from the screens for the rest of the deployment.
+	CHECK_COMPARE(serv.get_last_schedule(), !=, Service::SCHEDULE_DISABLED);
+	CHECK_COMPARE(serv.get_last_schedule(), >, 5000U);  // nominal, not burst cadence
 }
 
 TEST(ArgosTxService, SurfacingBurstAdaptiveModulationPreSwitch) {

@@ -50,6 +50,11 @@ protected:
 	/// @{
 	unsigned int schedule_doppler(ArgosConfig &argos_config, std::time_t now);
 	unsigned int schedule_surfacing_burst(ArgosConfig &argos_config, std::time_t now);
+
+	/// @brief Presence heartbeat while a surfacing burst waits for the next dive,
+	/// instead of the SCHEDULE_DISABLED that used to silence the beacon for the
+	/// rest of the deployment. See the definition for the full reasoning.
+	unsigned int schedule_surfacing_heartbeat(ArgosConfig &argos_config, std::time_t now);
 	unsigned int schedule_without_gnss(ArgosConfig &argos_config, std::time_t now);
 	unsigned int schedule_with_gnss(ArgosConfig &argos_config, std::time_t now);
 	/// @}
@@ -243,6 +248,9 @@ private:
 	static constexpr unsigned int DEVICE_ERROR_BACKOFF_BASE_MS = 60000;
 	static constexpr unsigned int DEVICE_ERROR_BACKOFF_MAX_MS = 600000;
 	unsigned int m_consecutive_device_errors = 0;
+	/// @brief Latch so the "session budget ignored on this board" warning is
+	/// said once and not on every transmission that follows it.
+	bool m_ntime_sat_ignored_logged = false;
 
 	/// @brief How long TX stays suspended after DEVICE_ERROR_MAX_CONSECUTIVE
 	/// strikes, before one probe dispatch is allowed through.

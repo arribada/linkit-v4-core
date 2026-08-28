@@ -460,6 +460,32 @@ unsigned int ArgosTxService::schedule_doppler(ArgosConfig &argos_config, std::ti
 /// Split out of service_next_schedule_in_ms(), which tested argos_config.mode
 /// nine times in 489 lines. The gates it runs first -- cooldown, rate limit,
 /// prepass, critical battery, certification -- are NOT repeated here.
+/// @brief Presence heartbeat while a surfacing burst waits for the next dive.
+///
+/// The three places that set m_awaiting_surfacing used to return
+/// SCHEDULE_DISABLED, which leaves the service owning nothing at all. Only two
+/// things clear that flag: a dive→surface transition, or a NEW VALID GPS fix. A
+/// NO_FIX clears neither. So an animal that stopped diving -- hauled out,
+/// stranded, a failed underwater sensor, or simply a long stay at the surface --
+/// and that is not getting fixes went silent for the rest of the deployment,
+/// indistinguishable on the screens from a dead radio.
+///
+/// A position-less Doppler is what the beacon has to say in that state, and it
+/// is enough: the ground segment rebuilds a Doppler position from the reception
+/// instants alone. At the NOMINAL period, deliberately, not the burst cadence --
+/// SURFACING_BURST_MAX_MSG caps the fast burst at each surfacing and that cap is
+/// still honoured; this is the slow heartbeat underneath it. And it costs
+/// nothing while the animal is actually diving, because
+/// notify_underwater_state(true) deschedules the service outright.
+unsigned int ArgosTxService::schedule_surfacing_heartbeat(ArgosConfig &argos_config, std::time_t now) {
+	DEBUG_INFO("ArgosTxService: burst finished, waiting for the next surfacing — presence heartbeat at the nominal "
+	           "period meanwhile (not a fault).");
+	m_scheduled_task = [this]() { process_doppler_burst(); };
+	m_scheduled_mode =
+	    argos_config.adaptive_modulation ? adaptive_doppler_modulation() : resolve_non_adaptive_modulation();
+	return m_sched.schedule_legacy(argos_config, now);
+}
+
 unsigned int ArgosTxService::schedule_surfacing_burst(ArgosConfig &argos_config, std::time_t now) {
 	// 2026-05-25 modulation fix: SURFACING_BURST was unconditionally
 	// hardcoded to LDA2, ignoring both `argos_config.adaptive_modulation`
@@ -497,7 +523,7 @@ unsigned int ArgosTxService::schedule_surfacing_burst(ArgosConfig &argos_config,
 			m_is_surfacing_burst = false;
 			m_awaiting_surfacing = true;
 			m_first_gnss_tx_sent = false;
-			return Service::SCHEDULE_DISABLED;
+			return schedule_surfacing_heartbeat(argos_config, now);
 		}
 
 		// FastLoc priority (2026-05): if a fresh FastLoc / FIX is in the
@@ -554,7 +580,7 @@ unsigned int ArgosTxService::schedule_surfacing_burst(ArgosConfig &argos_config,
 			m_awaiting_surfacing = true;
 			m_has_gnss_fix_since_surfacing = false;
 			m_first_gnss_tx_sent = false;
-			return Service::SCHEDULE_DISABLED;
+			return schedule_surfacing_heartbeat(argos_config, now);
 		}
 
 		if (argos_config.sensor_tx_enable) {
@@ -598,11 +624,7 @@ unsigned int ArgosTxService::schedule_surfacing_burst(ArgosConfig &argos_config,
 	// diving and is not getting fixes stays silent indefinitely -- and it used
 	// to do so without a single line in the log, not even at TRACE, which makes
 	// it indistinguishable from a dead radio on a recovered device. Say it.
-	if (m_awaiting_surfacing) {
-		DEBUG_INFO("ArgosTxService: burst finished — no TX scheduled until the next surfacing event or a new GPS "
-		           "fix. This is the SURFACING_BURST idle state, not a fault.");
-		return Service::SCHEDULE_DISABLED;
-	}
+	if (m_awaiting_surfacing) return schedule_surfacing_heartbeat(argos_config, now);
 
 	// Not yet surfaced (boot): send Doppler at legacy rate
 	m_scheduled_task = [this]() { process_doppler_burst(); };
@@ -2540,13 +2562,31 @@ void ArgosTxService::react(KineisEventTxComplete const &) {
 	// a dead beacon afterwards, and the log is the only thing that can tell the
 	// two apart on a recovered device.
 	if (argos_config.shutdown_ntime_sat > 0 && m_session_tx_count >= argos_config.shutdown_ntime_sat) {
-		DEBUG_ERROR("ArgosTxService: session TX budget reached (%u/%u) — powering down ON PURPOSE. The counter "
-		            "resets at boot only, so on a board that is not power-cycled by its duty cycle this is a "
-		            "one-shot lifetime budget (SHUTDOWN_NTIME_SAT / LB_SHUTDOWN_NTIME_SAT).",
+#if defined(BOARD_RSPB)
+		DEBUG_ERROR("ArgosTxService: session TX budget reached (%u/%u) — powering down ON PURPOSE "
+		            "(SHUTDOWN_NTIME_SAT / LB_SHUTDOWN_NTIME_SAT). The TPL5111 duty cycle restores power and the "
+		            "counter resets on the next boot.",
 		            m_session_tx_count, argos_config.shutdown_ntime_sat);
 		configuration_store->save_params();  // Flush before shutdown
 		PMU::powerdown();
 		return;
+#else
+		// RSPB only. There the TPL5111 cuts power and MCU_DONE ends each duty
+		// cycle, so "session" really is one cycle and the budget resets on the
+		// next boot. On a board that stays powered, m_session_tx_count is reset
+		// in service_init and nowhere else -- so a parameter documented as a
+		// per-session cap would silently become a one-shot lifetime cap and end
+		// the deployment. At TR_NOM=60 s a budget of 100 would kill the beacon
+		// 100 minutes in. Honour the parameter where it means what it says,
+		// ignore it where it does not, and say so once.
+		if (!m_ntime_sat_ignored_logged) {
+			m_ntime_sat_ignored_logged = true;
+			DEBUG_WARN("ArgosTxService: session TX budget reached (%u/%u) but SHUTDOWN_NTIME_SAT only applies to "
+			           "RSPB, whose duty cycle power-cycles the board. Ignored here — it would be a lifetime cap, "
+			           "not a per-session one. Transmission continues.",
+			           m_session_tx_count, argos_config.shutdown_ntime_sat);
+		}
+#endif
 	}
 
 	// Post-TX adaptive modulation: pre-switch to VLDA4 while SMD is still
