@@ -12,7 +12,7 @@ Usage:
   # Send a raw MEAS20 blob directly (hex, 20 bytes = 40 hex chars)
   python3 test_cloudlocate.py --raw-blob <40_hex_chars> --format meas20 --locate
 
-  # Use a custom token (default from turtle_tracker.cfg)
+  # Use a custom token (a default is inlined below)
   python3 test_cloudlocate.py --decode <hex> --locate --token "QkVCQzNBMEUyODozRjkwMzMzNg=="
 """
 
@@ -27,7 +27,7 @@ try:
 except ImportError:
     HAS_REQUESTS = False
 
-# Default token from turtle_tracker.cfg
+# Default token (previously quoted from a template under template_conf/)
 DEFAULT_TOKEN_B64 = "QkVCQzNBMEUyODozRjkwMzMzNg=="
 
 # Packet constants (from argos_packet_builder.hpp)

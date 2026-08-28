@@ -143,7 +143,8 @@ tests/bench/rspb_bench.py --cycles 5     # observe + validate N duty-cycles
 ```
 
 ### Config sets to upload (you upload; I observe & validate)
-Each is a param set; RCONF/SECKEY = the CLS creds from `template_conf/turtle_tracker.cfg`.
+Each is a param set; RCONF/SECKEY are inlined in `argos_validate.py` (they used to be
+quoted from a template under `template_conf/`, which no longer ships one).
 
 | # | Scenario | Key params | Expected in the log |
 |---|---|---|---|

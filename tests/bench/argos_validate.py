@@ -18,8 +18,9 @@ Usage:
 import sys, time, re
 from kim_bench import Bench
 
-# Standard Kineis radio configs (device-independent RF params) + AES key, taken
-# from template_conf/turtle_tracker.cfg. The board keeps its own factory Argos ID
+# Standard Kineis radio configs (device-independent RF params) + AES key. These
+# used to be quoted from a template under template_conf/, which no longer ships
+# one, so they live here now. The board keeps its own factory Argos ID
 # (HEXID already 3FEBA4 in config); we only provision the missing RADIOCONF.
 CREDS = {
     "ARGOS_RADIOCONF_LDK":   "03921FB104B92859209B18ABD009DE96",
