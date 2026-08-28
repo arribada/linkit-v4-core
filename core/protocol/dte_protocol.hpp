@@ -1403,7 +1403,7 @@ private:
 					// answered with its ENTIRE configuration to a typo, and a long
 					// enough key was enough to force a huge response. We record them
 					// so that the caller can tell the difference.
-					DEBUG_WARN("DTEDecoder: clef inconnue \"%s\" ignoree", key.c_str());
+					DEBUG_WARN("DTEDecoder: unknown key \"%s\" ignored", key.c_str());
 					rejected_keys.push_back(key);
 				}
 			}
@@ -1702,12 +1702,12 @@ public:
 		size_t length = 0;
 		for (unsigned int k = 0; k < size_of_length_field; k++) {
 			if (!isxdigit(static_cast<unsigned char>(str[str_pos + k]))) {
-				DEBUG_ERROR("DTE_PROTOCOL_BAD_FORMAT: champ de longueur non hexadecimal");
+				DEBUG_ERROR("DTE_PROTOCOL_BAD_FORMAT: length field is not hexadecimal");
 				throw DTE_PROTOCOL_BAD_FORMAT;
 			}
 		}
 		if (sscanf(&str[str_pos], "%3zX", &length) != 1) {
-			DEBUG_ERROR("DTE_PROTOCOL_BAD_FORMAT: champ de longueur illisible");
+			DEBUG_ERROR("DTE_PROTOCOL_BAD_FORMAT: length field unreadable");
 			throw DTE_PROTOCOL_BAD_FORMAT;
 		}
 		str_pos += size_of_length_field;

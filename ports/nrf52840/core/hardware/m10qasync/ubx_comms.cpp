@@ -330,7 +330,7 @@ void UBXComms::handle_error(unsigned int error_type) {
 
 void UBXComms::restart_rx() {
 	if (!m_is_init || !m_rx_stopped) return;
-	DEBUG_TRACE("UBXComms::restart_rx: reprise de la reception apres erreur UART");
+	DEBUG_TRACE("UBXComms::restart_rx: resuming reception after a UART error");
 	m_rx_buffer_offset = 0;
 	nrf_libuarte_async_start_rx(BSP::UARTAsync_Inits[m_instance].uart);
 	m_rx_stopped = false;

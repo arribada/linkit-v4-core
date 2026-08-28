@@ -82,7 +82,7 @@ void M10QAsyncReceiver::save_config() {
 }
 
 void M10QAsyncReceiver::clear_config() {
-	DEBUG_INFO("M10QAsyncReceiver::clear_config: effacement de la config BBR du recepteur (CFG-CFG clear)");
+	DEBUG_INFO("M10QAsyncReceiver::clear_config: erasing the receiver BBR config (CFG-CFG clear)");
 	VAL_GNSS("clear_bbr_config");
 	CFG::CFG::MSG_CFG cfg_msg_cfg_cfg = {
 		.clearMask = 0xFFFFFFFF,
@@ -336,8 +336,8 @@ void M10QAsyncReceiver::supply_time_assistance() {
 	// meilleure que la notre. On ne lui apprend rien, on ne risque que de le
 	// contraindre a tort.
 	if (m_bbr_retained) {
-		DEBUG_INFO("M10QAsyncReceiver::supply_time_assistance: BBR retenue — le recepteur a sa propre heure, injection "
-		           "inutile");
+		DEBUG_INFO("M10QAsyncReceiver::supply_time_assistance: BBR retained — the receiver has its own time, injection "
+		           "unnecessary");
 		m_step++;
 		m_op_state = OpState::IDLE;
 		run_state_machine();
@@ -351,7 +351,7 @@ void M10QAsyncReceiver::supply_time_assistance() {
 	// de recherche du recepteur autour d'une valeur erronee.
 	const unsigned int tacc = rtc->time_accuracy_s();
 	if (tacc == 0) {
-		DEBUG_INFO("M10QAsyncReceiver::supply_time_assistance: heure de provenance non bornable (%s) — pas d'injection",
+		DEBUG_INFO("M10QAsyncReceiver::supply_time_assistance: time source accuracy not boundable (%s) — no injection",
 		           rtc->source() == RtcSource::RESTORED ? "restauree du flash" : "jamais synchronisee");
 		m_step++;
 		m_op_state = OpState::IDLE;
@@ -400,8 +400,8 @@ void M10QAsyncReceiver::supply_position_assistance() {
 	// Avec une heure restauree du flash, l'ecart peut valoir des semaines et
 	// l'age serait une fiction — on prefere ne rien injecter.
 	if (rtc->time_accuracy_s() == 0) {
-		DEBUG_INFO("M10QAsyncReceiver::supply_position_assistance: heure non fiable — age de la position incalculable, "
-		           "pas d'injection");
+		DEBUG_INFO("M10QAsyncReceiver::supply_position_assistance: time unreliable — position age not computable, "
+		           "no injection");
 		return;
 	}
 

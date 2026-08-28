@@ -63,7 +63,7 @@ std::string DTEHandler::read_params_by_filter(int error_code, std::vector<ParamI
 	// freezes the board. So we distinguish the two cases: nothing requested, or
 	// nothing recognised.
 	if (params.size() == 0 && !rejected_keys.empty()) {
-		DEBUG_WARN("DTEHandler::read_params_by_filter: %u clef(s) demandee(s), aucune reconnue",
+		DEBUG_WARN("DTEHandler::read_params_by_filter: %u key(s) requested, none recognised",
 		           static_cast<unsigned>(rejected_keys.size()));
 		return DTEEncoder::encode(resp_cmd, (int)DTEError::PARAM_KEY_UNRECOGNISED);
 	}
@@ -1903,7 +1903,7 @@ DTEAction DTEHandler::handle_dte_message(const std::string &req, std::string &re
 	// Command never identified: we cannot name the response, and above all we
 	// must not dispatch to an arbitrary handler.
 	if (command >= DTECommand::__NUM_REQ) {
-		DEBUG_WARN("DTEHandler: commande non identifiee, aucun aiguillage");
+		DEBUG_WARN("DTEHandler: unrecognised command, nothing dispatched");
 		return action;
 	}
 

@@ -1481,7 +1481,7 @@ void M10QAsyncReceiver::state_poweroff() {
 		// Le deep-idle suppose un recepteur qui repond: y aller apres une erreur
 		// irrecuperable, c'est enchainer 12 sondes de 500 ms puis retomber ici
 		// de toute facon, rail allume pendant tout ce temps.
-		DEBUG_WARN("M10QAsyncReceiver: deep-idle annule (erreur irrecuperable) — coupure du rail");
+		DEBUG_WARN("M10QAsyncReceiver: deep-idle cancelled (unrecoverable error) — cutting the rail");
 		VAL_GNSS("deep_idle_cancelled reason=unrecoverable_error");
 		m_deep_idle_pending = false;
 	}
@@ -1967,7 +1967,7 @@ void M10QAsyncReceiver::state_configure() {
 			}
 			if (m_step == ConfigStep::ERASE_ACKED) {
 				m_bbr_config_cleared = true;
-				DEBUG_INFO("M10QAsyncReceiver: effacement config BBR ACQUITTE par le recepteur");
+				DEBUG_INFO("M10QAsyncReceiver: BBR config erase ACKNOWLEDGED by the receiver");
 				VAL_GNSS("clear_bbr_config_acked");
 				m_step = ConfigStep::NORMAL_AFTER_ERASE;
 				m_op_state = OpState::IDLE;
@@ -2112,9 +2112,9 @@ void M10QAsyncReceiver::state_configure() {
 				// CONFIGURATION n'est pas disponible sur ce module: si un debit
 				// exotique s'y trouve persiste, seule la sonde multi-debits le
 				// rattrapera. C'est une information de terrain, pas un detail.
-				DEBUG_ERROR("M10QAsyncReceiver: effacement config BBR NON ACQUITTE — "
-				            "CFG-CFG indisponible sur ce firmware recepteur (cf. SPG 5.20). "
-				            "Le cold start continue, mais la couche de config BBR n'est PAS effacee");
+				DEBUG_ERROR("M10QAsyncReceiver: BBR config erase NOT ACKNOWLEDGED — "
+				            "CFG-CFG unavailable on this receiver firmware (see SPG 5.20). "
+				            "The cold start continues, but the BBR config layer is NOT erased");
 				VAL_GNSS("clear_bbr_config_unsupported");
 				m_bbr_config_cleared = true;  // ne pas boucler
 				m_step = ConfigStep::NORMAL_AFTER_ERASE;

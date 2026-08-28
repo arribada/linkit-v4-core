@@ -85,10 +85,10 @@ void ArgosTxService::service_init() {
 		const GPSLogEntry &last_gps = configuration_store->get_last_gps_entry();
 		if (last_gps.info.valid) {
 			m_sched.set_last_location(last_gps.info.lon, last_gps.info.lat);
-			DEBUG_INFO("ArgosTxService: position de prepass amorcee depuis le dernier fix persiste (lon=%f lat=%f)",
+			DEBUG_INFO("ArgosTxService: prepass position seeded from the persisted last fix (lon=%f lat=%f)",
 			           last_gps.info.lon, last_gps.info.lat);
 		} else {
-			DEBUG_INFO("ArgosTxService: aucune position persistee — prepass indisponible jusqu'au premier fix");
+			DEBUG_INFO("ArgosTxService: no persisted position — prepass unavailable until the first fix");
 		}
 	}
 
@@ -129,9 +129,9 @@ void ArgosTxService::service_init() {
 	// stayed mute, without the slightest trace. We flag it loudly here; the
 	// blocking is done upstream, on the configuration interface side.
 	if (argos_config.mode == BaseArgosMode::PASS_PREDICTION && !argos_config.gnss_en) {
-		DEBUG_ERROR("ArgosTxService: CONFIGURATION INCOMPATIBLE — PASS_PREDICTION exige GNSS_EN=1 "
-		            "(la prevision de passage se calcule a partir d'une position). AUCUNE emission "
-		            "ne sera planifiee tant que cette combinaison est en place.");
+		DEBUG_ERROR("ArgosTxService: INCOMPATIBLE CONFIGURATION — PASS_PREDICTION requires GNSS_EN=1 "
+		            "(pass prediction is computed from a position). NO transmission will be "
+		            "scheduled while this combination is in place.");
 		if (status_led) status_led->flash(RGBLedColor::RED, 200);
 	}
 
@@ -267,19 +267,19 @@ unsigned int ArgosTxService::service_next_schedule_in_ms() {
 		std::time_t aos = 0;
 		AopEtat etat = aop_etat(argos_config, now, age_s);
 		if (etat != AopEtat::UTILISABLE) {
-			DEBUG_WARN("ArgosTxService: prepass demande mais %s (age=%u s) — emission periodique", aop_etat_texte(etat),
-			           age_s);
+			DEBUG_WARN("ArgosTxService: prepass requested but %s (age=%u s) — falling back to periodic TX",
+			           aop_etat_texte(etat), age_s);
 		} else {
 			BasePassPredict &pp = configuration_store->read_pass_predict();
 			aos = m_sched.next_pass_epoch(argos_config, pp, now);
 			if (aos <= 0) {
-				DEBUG_WARN("ArgosTxService: prepass demande mais aucun passage calculable — emission periodique");
+				DEBUG_WARN("ArgosTxService: prepass requested but no pass is computable — falling back to periodic TX");
 			} else if (argos_config.prepass_max_wait_s
 			           && aos > now + static_cast<std::time_t>(argos_config.prepass_max_wait_s)) {
-				DEBUG_INFO("ArgosTxService: prochaine fenetre dans %lld s > attente max %u s — emission periodique",
+				DEBUG_INFO("ArgosTxService: next window in %lld s > max wait %u s — falling back to periodic TX",
 				           static_cast<long long>(aos - now), argos_config.prepass_max_wait_s);
 			} else {
-				DEBUG_INFO("ArgosTxService: emission alignee sur la prochaine fenetre (dans %lld s)",
+				DEBUG_INFO("ArgosTxService: TX aligned on the next satellite window (in %lld s)",
 				           static_cast<long long>(aos - now));
 				m_sched.set_earliest_schedule(aos);
 			}
@@ -593,8 +593,8 @@ unsigned int ArgosTxService::schedule_without_gnss(ArgosConfig &argos_config, st
 	// in the field. The incompatibility is reported at startup in
 	// service_init(); we say it again here so the log states WHY
 	// no transmission is scheduled any more.
-	DEBUG_ERROR("ArgosTxService: mode %d avec GNSS_EN=0 — aucun ordonnancement possible, "
-	            "TX desactive (configuration incompatible)",
+	DEBUG_ERROR("ArgosTxService: mode %d with GNSS_EN=0 — no scheduling is possible, "
+	            "TX disabled (incompatible configuration)",
 	            static_cast<int>(argos_config.mode));
 	if (status_led) status_led->flash(RGBLedColor::RED, 200);
 	return Service::SCHEDULE_DISABLED;
@@ -707,7 +707,7 @@ unsigned int ArgosTxService::schedule_with_gnss(ArgosConfig &argos_config, std::
 		// touched by the scheduler.
 		unsigned int schedule = m_sched.schedule_prepass(argos_config, pass_predict, now);
 		if (schedule == ArgosTxScheduler::INVALID_SCHEDULE) {
-			DEBUG_WARN("ArgosTxService: aucun passage calculable — repli periodique");
+			DEBUG_WARN("ArgosTxService: no pass is computable — falling back to periodic TX");
 			refresh_prepass_status(argos_config, now, 0);
 			return m_sched.schedule_legacy(argos_config, now);
 		}
@@ -716,7 +716,7 @@ unsigned int ArgosTxService::schedule_with_gnss(ArgosConfig &argos_config, std::
 		// periodic mode (0 = no safeguard).
 		static constexpr unsigned int MS_PER_S = 1000;
 		if (argos_config.prepass_max_wait_s && schedule > argos_config.prepass_max_wait_s * MS_PER_S) {
-			DEBUG_INFO("ArgosTxService: prochaine fenetre dans %u s > attente max %u s — repli periodique",
+			DEBUG_INFO("ArgosTxService: next window in %u s > max wait %u s — falling back to periodic TX",
 			           schedule / MS_PER_S, argos_config.prepass_max_wait_s);
 			refresh_prepass_status(argos_config, now, now + schedule / MS_PER_S);
 			return m_sched.schedule_legacy(argos_config, now);

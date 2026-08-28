@@ -946,7 +946,7 @@ void ConfigurationState::exit() {
 	// with NO way at all of noticing it. We only cut power if something is
 	// really powered on, so as not to release VSENSORS without having taken it.
 	if (gps_device && gps_device->is_powered()) {
-		DEBUG_WARN("exit: ConfigurationState — GNSS encore alimente (PWRON non annule) | coupure du rail");
+		DEBUG_WARN("exit: ConfigurationState — GNSS still powered (PWRON not cancelled) | cutting the rail");
 		gps_device->power_off_immediate();
 	}
 	led_handle::dispatch<SetLEDOff>({});
