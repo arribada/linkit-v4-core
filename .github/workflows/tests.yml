@@ -51,8 +51,12 @@ jobs:
           cd tests/build
           cmake -GNinja ..
 
-      - name: Compile TrackerTests + TurtleSimulation
-        run: ninja -C tests/build TrackerTests TurtleSimulation
+      # RSPBSimulation is compiled but not run. It has its own source list in
+      # tests/CMakeLists.txt (39 of its 43 sources are shared with the other two
+      # targets, but the list is maintained separately), so leaving it out of CI
+      # let a stale list pass here and fail on the first local RSPB build.
+      - name: Compile TrackerTests + TurtleSimulation + RSPBSimulation
+        run: ninja -C tests/build TrackerTests TurtleSimulation RSPBSimulation
 
       - name: Upload test binaries
         uses: actions/upload-artifact@v4
@@ -61,8 +65,30 @@ jobs:
           path: |
             tests/build/TrackerTests
             tests/build/TurtleSimulation
+            tests/build/RSPBSimulation
           retention-days: 1
           if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # Static consistency checks. Both run in seconds, need nothing but python3,
+  # and are green on main today -- they exist to keep it that way.
+  # ---------------------------------------------------------------------------
+  consistency:
+    name: Consistency checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # The three DTE parameter tables are aligned by index across three files.
+      # Only one of them has a compile-time guard; this is the other two.
+      - name: Parameter tables in sync
+        run: python3 scripts/check_param_tables.py
+
+      # Catches READMEs that point at files which were renamed or deleted.
+      - name: Documentation links resolve
+        run: python3 scripts/check_doc_links.py
 
   # ---------------------------------------------------------------------------
   # Unit tests — the fast suite, runs everything except the SWS group.
