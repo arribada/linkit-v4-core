@@ -9,14 +9,15 @@
 #include "filesystem.hpp"
 
 /// @brief OTA file type identifiers (sent by pylinkit during BLE OTA).
+// clang-format off
 enum class OTAFileIdentifier {
-	MCU_FIRMWARE = 0,  ///< nRF52840 firmware update
-	ARTIC_FIRMWARE =
-	    1,  ///< ARTIC-R2 firmware update //Deprecated - no longer supported, but keep identifier for backward compatibility with older pylinkit versions
-	GPS_CONFIG = 2,         ///< GPS configuration file
+	MCU_FIRMWARE      = 0,  ///< nRF52840 firmware update
+	ARTIC_FIRMWARE    = 1,  ///< ARTIC-R2 firmware update //Deprecated - no longer supported, but keep identifier for backward compatibility with older pylinkit versions
+	GPS_CONFIG        = 2,  ///< GPS configuration file
 	SMD_FIRMWARE_UART = 3,  ///< SMD firmware update via UART (AT commands)
-	SMD_FIRMWARE_SPI = 4    ///< SMD firmware update via SPI (Protocol A+)
+	SMD_FIRMWARE_SPI  = 4   ///< SMD firmware update via SPI (Protocol A+)
 };
+// clang-format on
 
 /// @brief Abstract OTA file updater — manages file transfer lifecycle.
 class OTAFileUpdater {
