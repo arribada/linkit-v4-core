@@ -4423,3 +4423,35 @@ TEST(ArgosTxService, CloudLocateReadyDoesNotBypassTheDeviceErrorHold) {
 	system_scheduler->run();
 	mock().checkExpectations();
 }
+
+// CERT_TX_PAYLOAD comes straight from an operator and, unlike every other
+// burst, the certification path checked nothing before handing it to the
+// module. VLDA4 carries three bytes; a four-byte payload is refused, that
+// refusal counts as a device error, and three of them suspend TX for an hour
+// -- on a configuration mistake that cannot fix itself. No fallback to a wider
+// modulation here: a certification frame sent on a modulation the operator did
+// not ask for is worthless.
+TEST(ArgosTxService, CertificationPayloadTooLongForVlda4IsRefusedNotTransmitted) {
+	fake_config_store->write_param(ParamID::ARGOS_MODE, BaseArgosMode::OFF);
+	fake_config_store->write_param(ParamID::CERT_TX_ENABLE, true);
+	fake_config_store->write_param(ParamID::CERT_TX_PAYLOAD, std::string("AABBCCDD"));  // 4 bytes = 32 bits
+	fake_config_store->write_param(ParamID::CERT_TX_MODULATION, BaseArgosModulation::A4);
+	fake_config_store->write_param(ParamID::CERT_TX_REPETITION, (unsigned int)60);
+	fake_config_store->write_param(ParamID::LB_EN, false);
+
+	// expectNoCall, not merely "no expectation": with ignoreOtherCalls() an
+	// attempted send would be silently swallowed and the test would pass for the
+	// wrong reason.
+	mock().expectNoCall("send");
+	mock().ignoreOtherCalls();
+
+	ArgosTxService serv(*mock_kineis);
+	std::time_t t = 1652105502000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	mock_kineis->test_set_current_modulation(KineisModulation::VLDA4);
+
+	serv.start();
+	system_scheduler->run();
+	mock().checkExpectations();
+}

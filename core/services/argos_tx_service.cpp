@@ -1393,6 +1393,24 @@ void ArgosTxService::process_certification_burst() {
 		service_complete(nullptr, nullptr, true);
 		return;
 	}
+	// Every other burst checks the packet against the modulation before handing
+	// it over; this one did not, and it is the one burst whose payload comes
+	// straight from an operator (CERT_TX_PAYLOAD). VLDA4 holds three bytes, so a
+	// four-byte certification payload is refused by the module -- which counts
+	// as a device error, and three of those suspend TX for an hour, repeatedly,
+	// on a configuration mistake that will never fix itself.
+	//
+	// No fallback here, unlike the other bursts: the operator picked this
+	// modulation deliberately, and a certification frame sent on a different one
+	// is worthless. Refuse it and say why.
+	if (!size_fits_modulation(size_bits, cert_mode)) {
+		DEBUG_ERROR("ArgosTxService::process_certification_burst: CERT_TX_PAYLOAD is %u bits, too long for %s — TX "
+		            "aborted (shorten the payload or pick a wider modulation)",
+		            size_bits, argos_modulation_to_string(argos_config.cert_tx_modulation));
+		service_complete();
+		return;
+	}
+
 	m_last_val_tx_type = "cert";
 	m_kineis.send(cert_mode, packet, size_bits);
 }
