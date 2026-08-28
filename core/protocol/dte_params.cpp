@@ -29,6 +29,8 @@
 #define LORA_RAK3172 0
 #endif
 
+// one line per parameter; column alignment is how this table is read
+// clang-format off
 const BaseMap param_map[] = {
 	{ "ARGOS_DECID", "IDP12", BaseEncoding::UINT, 0U, 0xFFFFFFFFU, {}, true, true },
 	{ "ARGOS_HEXID", "IDT06", BaseEncoding::HEXADECIMAL, 0U, 0xFFFFFFFFU, {}, true, true },
@@ -523,6 +525,7 @@ const BaseMap param_map[] = {
 	// the beacon cannot actually use.
 	{ "PP_POSITION_MARGIN_KM", "PPP12", BaseEncoding::UINT, 0U, 100U, {}, true, true },
 };
+// clang-format on
 
 const size_t param_map_size = sizeof(param_map) / sizeof(param_map[0]);
 static_assert(sizeof(param_map) / sizeof(param_map[0]) == (size_t)ParamID::__PARAM_SIZE,

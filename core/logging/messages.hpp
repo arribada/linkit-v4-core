@@ -10,6 +10,8 @@
 
 static constexpr size_t MAX_LOG_SIZE = 128;
 
+// packed wire structs: field order and hand alignment are the format
+// clang-format off
 static constexpr const char *log_type_name[16] = {
 	"GPS",
 	"CAM",
@@ -250,3 +252,5 @@ struct __attribute__((packed)) MortalityLogEntry {
 static_assert(sizeof(MortalityInfo) <= MAX_LOG_PAYLOAD, "MortalityInfo wrong size");
 
 
+
+// clang-format on

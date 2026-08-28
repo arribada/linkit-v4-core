@@ -172,6 +172,8 @@ protected:
 	// nothing in the logs to say why.
 	static inline const unsigned int m_config_version_code = 0x1c07e800 | 0x20;
 	static inline const unsigned int m_config_version_code_aop = 0x1c07e800 | 0x03;
+	// one line per ParamID slot; the alignment IS the index map
+	// clang-format off
 	static inline const std::array<BaseType,MAX_CONFIG_ITEMS> default_params { {
 		/* ARGOS_DECID */ 0U,
 		/* ARGOS_HEXID */ 0U,
@@ -445,6 +447,9 @@ protected:
 		/* [264] PP_RX_MIN_CULMINATION */ 20U,     // RX: a downlink needs a good pass — a grazing one wastes the whole window (previous hardcoded value)
 		/* [265] PP_POSITION_MARGIN_KM */ 0U,      // no position uncertainty by default
 	}};
+	// clang-format on
+	// hand-aligned AOP record, one field per line
+	// clang-format off
 	static inline const BasePassPredict default_prepass = {
 		/* version_code */ m_config_version_code_aop,
 		/* num_records */  25,
@@ -476,6 +481,7 @@ protected:
 			{ 0xFD, (SatDownlinkStatus_t)1, (SatUplinkStatus_t)1, { 2026, 8, 10, 5, 28, 51 }, 7161.616, 98.561,   7.186, -25.138, 100.5531,  0.0 },
 		}
 	};
+	// clang-format on
 
 	std::array<BaseType, MAX_CONFIG_ITEMS> m_params;
 	bool m_credentials_dirty = true;  // true on first boot to ensure initial write

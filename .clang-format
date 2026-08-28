@@ -1,0 +1,84 @@
+# ============================================================================
+# clang-format for linkit-v4-core
+# ============================================================================
+# Derived from the code that is already here, not from a vendor preset.
+# Measured over the first-party tree (2026-08):
+#   34 102 tab-indented lines  vs 11 502 space-indented   -> tabs
+#    2 156 `if (...) {`        vs  1 193 lone `{`         -> attached braces
+#      692 `} else`            vs    195 `else` alone     -> K&R
+#      818 `Type *name`        vs    135 `Type* name`     -> pointer on the right
+#   line length p99 = 118 columns                         -> ColumnLimit 120
+#
+# The goal is to reproduce the existing style, not to impose a new one.
+#
+# Vendor is NOT covered by this file. Never run clang-format on
+# ports/nrf52840/drivers/, libraries/, bma400.c/.h/_defs.h, stc311x_*,
+# Generic_I2C.*, heap_4.c, tinyfsm.hpp or base64.hpp -- see .gitattributes.
+#
+# Version matters: two clang-format majors do not agree. Both this machine and
+# CI use the pip package pinned in .github/workflows/tests.yml.
+---
+Language: Cpp
+BasedOnStyle: LLVM
+Standard: c++17
+
+# --- Indentation ------------------------------------------------------------
+UseTab: ForIndentation        # tabs to indent, spaces to align continuations
+TabWidth: 4
+IndentWidth: 4
+ContinuationIndentWidth: 4
+AccessModifierOffset: -4
+IndentCaseLabels: false
+IndentPPDirectives: None      # 38 #if in argos_tx_service.cpp alone; leave them
+NamespaceIndentation: None
+
+# --- Braces -----------------------------------------------------------------
+BreakBeforeBraces: Attach
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortLoopsOnASingleLine: false
+AllowShortCaseLabelsOnASingleLine: true
+AllowShortBlocksOnASingleLine: Empty
+
+# --- Line breaking ----------------------------------------------------------
+ColumnLimit: 120
+AlignAfterOpenBracket: Align
+BinPackArguments: true
+BinPackParameters: true
+BreakBeforeBinaryOperators: NonAssignment
+BreakBeforeTernaryOperators: true
+BreakConstructorInitializers: BeforeColon
+PackConstructorInitializers: CurrentLine
+Cpp11BracedListStyle: false   # keeps `{ "ARGOS_DECID", ... }` spaced, the way
+                              # param_map[] and default_params are written
+
+# --- Spacing / pointers -----------------------------------------------------
+PointerAlignment: Right
+ReferenceAlignment: Pointer
+DerivePointerAlignment: false
+SpaceAfterCStyleCast: false
+SpaceBeforeParens: ControlStatements
+SpacesBeforeTrailingComments: 2
+
+# --- Alignment --------------------------------------------------------------
+AlignConsecutiveMacros: AcrossEmptyLinesAndComments
+AlignConsecutiveAssignments: None
+AlignConsecutiveDeclarations: None
+AlignTrailingComments: true
+AlignEscapedNewlines: Left
+AlignOperands: Align
+
+# --- Includes: DO NOT REORDER -----------------------------------------------
+# Include order is load-bearing on this platform: sdk_config.h and the board
+# header must come before the nrfx headers. Sorting them breaks the firmware
+# build with errors that point nowhere useful.
+SortIncludes: Never
+IncludeBlocks: Preserve
+
+# --- Comments ---------------------------------------------------------------
+ReflowComments: false         # never re-wrap a comment. This one option is what
+                              # keeps the first formatting pass reviewable.
+KeepEmptyLinesAtTheStartOfBlocks: false
+MaxEmptyLinesToKeep: 2
+FixNamespaceComments: false
+SortUsingDeclarations: false
