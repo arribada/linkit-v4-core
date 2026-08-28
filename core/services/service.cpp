@@ -451,7 +451,26 @@ std::string ServiceManager::bench_schedule_report() {
 /// @param immediate  true to schedule with 0 delay.
 void Service::reschedule(bool immediate) {
 	DEBUG_TRACE("Service::reschedule: service %s", m_name);
-	deschedule();
+	// Keep the safety-net timeout when a session of ours is already in flight.
+	//
+	// This used to deschedule() unconditionally, cancelling BOTH tasks, and then
+	// return a few lines down at the m_is_initiated test without re-arming
+	// anything. m_task_timeout is armed in exactly one place -- run_scheduled_task
+	// -- so a reschedule() arriving mid-session destroyed that session's only
+	// framework net, permanently, and the service stayed initiated with nothing
+	// pending if the device never answered.
+	//
+	// Not hypothetical, and not confined to one service: GPSService holds an
+	// initiated hardware session for tens of seconds to several minutes and is
+	// wired straight into this path -- Service::notify_peer_event ->
+	// service_is_triggered_on_event -> reschedule(immediate), which
+	// GPSService answers true to on every accelerometer wake-up when
+	// GNSS_TRIGGER_ON_AXL_WAKEUP is set (the moored-mode configuration). On a
+	// moving animal that is most sessions. The M10Q driver arms its own timeouts
+	// while receiving, so the usual cost is the loss of defence in depth rather
+	// than a hang; the states that upload the assistance database arm none, and
+	// there this timeout is the only thing that can end the session.
+	deschedule(!m_is_initiated);
 
 	// Underwater short-circuit: re-arming here is wasted work and creates a
 	// log-spam loop. Sequence: notify_underwater_state(true) calls deschedule()
@@ -577,8 +596,8 @@ void Service::handle_task_exception(const char *where, bool cancel_timeout) {
 }
 
 /// @brief Cancel all pending tasks (period + timeout).
-void Service::deschedule() {
-	system_scheduler->cancel_task(m_task_timeout);
+void Service::deschedule(bool cancel_timeout) {
+	if (cancel_timeout) system_scheduler->cancel_task(m_task_timeout);
 	system_scheduler->cancel_task(m_task_period);
 	// Cancellation is a DECISION that is observable on the bench. Without this
 	// line, a dive that cancels a service which is merely "scheduled" (and not

@@ -1096,3 +1096,61 @@ TEST(GPSService, MooredModeDisabledLeavesAcquisitionPeriodUntouched) {
 	}
 	CHECK_FALSE(MooredModeService::is_moored());
 }
+
+// Service::reschedule() cancels the pending tasks and then, a few lines later,
+// returns at the m_is_initiated test without re-arming anything. The safety-net
+// timeout is armed in exactly one place -- run_scheduled_task -- so cancelling
+// it there used to destroy the net of a session still in progress, for good.
+//
+// GPSService is the service that path actually reaches in production: it holds
+// an initiated hardware session for tens of seconds to several minutes, and
+// Service::notify_peer_event -> service_is_triggered_on_event ->
+// reschedule(immediate) fires on every accelerometer wake-up once
+// GNSS_TRIGGER_ON_AXL_WAKEUP is set -- the moored-mode configuration, on a
+// moving animal, i.e. most sessions. The M10Q arms its own timeouts while
+// receiving, so the usual cost was lost defence in depth; the states that
+// upload the assistance database arm none, and there this is the only net.
+//
+// The rail stays powered until something ends the session, so "no power_off"
+// is the failure being guarded against.
+TEST(GPSService, AxlWakeDuringAnAcquisitionLeavesItsSafetyTimeoutArmed) {
+	fake_config_store->write_param(ParamID::LB_EN, (bool)false);
+	fake_config_store->write_param(ParamID::LB_THRESHOLD, 0U);
+	fake_config_store->write_param(ParamID::GNSS_EN, (bool)true);
+	fake_config_store->write_param(ParamID::DLOC_ARG_NOM, 0U);
+	fake_config_store->write_param(ParamID::GNSS_ACQ_TIMEOUT, 60U);
+	fake_config_store->write_param(ParamID::GNSS_COLD_ACQ_TIMEOUT, 60U);
+	fake_config_store->write_param(ParamID::GNSS_HDOPFILT_EN, (bool)false);
+	fake_config_store->write_param(ParamID::GNSS_HDOPFILT_THR, 0U);
+	fake_config_store->write_param(ParamID::UNDERWATER_EN, (bool)true);
+	fake_config_store->write_param(ParamID::GNSS_TRIGGER_ON_AXL_WAKEUP, (bool)true);
+
+	fake_rtc->settime(0);
+
+	GPSService s(*mock_m10q, fake_log);
+	s.start();
+
+	// Acquisition starts and stays in flight -- no fix will ever arrive. Only
+	// the rail being cut is asserted; the power_on that follows the recovery is
+	// correct behaviour and not what this test is about.
+	mock().ignoreOtherCalls();
+	increment_time_s(FIRST_AQPERIOD);
+
+	// An accelerometer wake lands mid-acquisition.
+	ServiceEvent e;
+	e.event_type = ServiceEventType::SERVICE_LOG_UPDATED;
+	ServiceSensorData sensor_data = {};
+	sensor_data.port[AXLSensorPort::WAKEUP_TRIGGERED] = 1.0;
+	e.event_data = sensor_data;
+	e.event_source = ServiceIdentifier::AXL_SENSOR;
+	e.event_originator_unique_id = 0x12345678;
+	s.notify_peer_event(e);
+
+	// The net must still fire and cut the rail. Without it the session would sit
+	// there powered, with nothing pending, until the 24 h health watchdog.
+	// GNSS_ACQ_TIMEOUT is 60 s and service_next_timeout() adds its margin, so
+	// 120 s covers one firing and not a second acquisition cycle.
+	mock().expectOneCall("power_off").onObject(mock_m10q);
+	increment_time_s(120);
+	mock().checkExpectations();
+}

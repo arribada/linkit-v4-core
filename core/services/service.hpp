@@ -71,7 +71,13 @@ private:
 #endif
 
 	void reschedule(bool immediate = false);
-	void deschedule();
+	/// @brief Cancel pending tasks.
+	/// @param cancel_timeout  false to keep the safety-net timeout armed. Only
+	///        reschedule() passes false, and only when a session of ours is
+	///        already in flight -- that timeout belongs to the session, and
+	///        nothing would ever put it back (it is armed in exactly one place,
+	///        run_scheduled_task).
+	void deschedule(bool cancel_timeout = true);
 
 	/// @brief Body of the scheduled-period task: arm the timeout, then initiate.
 	/// Runs from the scheduler, so it is the outermost frame service code has —
