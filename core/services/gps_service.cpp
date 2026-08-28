@@ -333,6 +333,7 @@ void GPSService::try_enter_deep_idle_or_poweroff() {
 /// deep-idle refactor): never trust that prior state left the rail clean. Cuts
 /// rail even if state == idle/poweroff — safe no-op in those cases.
 void GPSService::service_term() {
+	system_scheduler->cancel_task(m_initiate_retry_task);
 	system_scheduler->cancel_task(m_backup_exit_task);
 	system_scheduler->cancel_task(m_backup_retry_task);
 	system_scheduler->cancel_task(m_deep_idle_auto_off_task);
@@ -608,10 +609,35 @@ void GPSService::service_initiate() {
 #if VALIDATION_LOG_ENABLE
 		DEBUG_INFO("[VAL-GNSS] service_initiate_deferred reason=already_active");
 #endif
-		system_scheduler->post_task_prio([this]() { service_initiate(); }, "GPSServiceInitiateRetry",
-		                                 Scheduler::DEFAULT_PRIORITY, 200);
+		// Bounded, cancellable, and it cannot throw out of the scheduler.
+		//
+		// The handle used to be discarded, which made this the one GPS task
+		// service_term() could not cancel -- and it calls power_on() further
+		// down, so a deferral posted just before teardown could re-power the
+		// M10Q rail on a service that had been shut down. It also called
+		// service_initiate() straight from a scheduler task, outside the
+		// try/catch that Service::run_scheduled_task wraps around it, so a
+		// throw here reached the task runner and terminated.
+		if (++m_initiate_retry_count > INITIATE_RETRY_MAX) {
+			DEBUG_ERROR("GPSService::service_initiate: still active after %u deferrals — giving up on this slot",
+			            INITIATE_RETRY_MAX);
+			m_initiate_retry_count = 0;
+			return;
+		}
+		m_initiate_retry_task = system_scheduler->post_task_prio(
+		    [this]() {
+			    if (!is_started()) return;  // torn down while we were waiting
+			    try {
+				    service_initiate();
+			    } catch (...) {
+				    DEBUG_ERROR("GPSService: exception from the deferred service_initiate — dropping this slot");
+			    }
+		    },
+		    "GPSServiceInitiateRetry", Scheduler::DEFAULT_PRIORITY, 200);
 		return;
 	}
+
+	m_initiate_retry_count = 0;  // past the re-entry gate: this slot is ours
 
 	// 2026-05 deep-idle refactor: cancel any pending auto-poweroff. We're about
 	// to acquire a fresh fix — the disposition will be re-armed at end of

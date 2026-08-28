@@ -162,6 +162,19 @@ private:
 	// already queued.
 	unsigned int m_consecutive_dead_sessions = 0;
 	bool m_stuck_recovery_in_flight = false;
+	/// @brief Deferred re-entry into service_initiate() when a session is still
+	/// active. Held so teardown can cancel it: without a handle it was the one
+	/// GPS task service_term() could not stop, and it calls power_on() -- so it
+	/// could re-power the M10Q rail after the service had been shut down.
+	Scheduler::TaskHandle m_initiate_retry_task;
+	/// @brief Consecutive 200 ms deferrals, so the retry cannot run for ever.
+	unsigned int m_initiate_retry_count = 0;
+	/// @brief Deferrals allowed before giving up. 25 x 200 ms = 5 s, an order of
+	/// magnitude more than the teardown chain needs. Giving up is safe: the
+	/// framework safety-net timeout armed before service_initiate() is still
+	/// running and will cancel and reschedule the session.
+	static constexpr unsigned int INITIATE_RETRY_MAX = 25;
+
 	Scheduler::TaskHandle m_stuck_recovery_arm_task;
 	Scheduler::TaskHandle m_stuck_recovery_done_task;
 	static constexpr unsigned int STUCK_THRESHOLD = 20;

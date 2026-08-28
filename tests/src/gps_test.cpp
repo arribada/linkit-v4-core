@@ -1154,3 +1154,55 @@ TEST(GPSService, AxlWakeDuringAnAcquisitionLeavesItsSafetyTimeoutArmed) {
 	increment_time_s(120);
 	mock().checkExpectations();
 }
+
+// service_initiate() is virtual code called from a scheduler task, and
+// Service::run_scheduled_task wraps it in catch(...) -> handle_task_exception.
+// That handler used to log, cancel the timeout, clear m_is_initiated and
+// return -- leaving the service owning nothing at all: the period task had
+// already fired (it is what threw) and the timeout had just been cancelled.
+// A single transient throw therefore stopped GNSS acquisition dead until an
+// unrelated peer event happened along, and on a periodic tracker with no
+// underwater sensor there is no such event.
+//
+// Not a theoretical path for this service: service_initiate() reads half a
+// dozen configuration parameters and, on RSPB, drives the battery gauge over
+// an I2C bus that is documented as wedgeable. Here the throw is staged with a
+// type mismatch on GNSS_CLOUDLOCATE_ALWAYS, which is read at exactly one place
+// in the firmware -- inside service_initiate(), before the rail is powered.
+TEST(GPSService, ServiceInitiateThrowRecoversInsteadOfGoingInert) {
+	fake_config_store->write_param(ParamID::LB_EN, (bool)false);
+	fake_config_store->write_param(ParamID::LB_THRESHOLD, 0U);
+	fake_config_store->write_param(ParamID::GNSS_EN, (bool)true);
+	fake_config_store->write_param(ParamID::DLOC_ARG_NOM, 0U);
+	fake_config_store->write_param(ParamID::GNSS_ACQ_TIMEOUT, 60U);
+	fake_config_store->write_param(ParamID::GNSS_COLD_ACQ_TIMEOUT, 60U);
+	fake_config_store->write_param(ParamID::GNSS_HDOPFILT_EN, (bool)false);
+	fake_config_store->write_param(ParamID::GNSS_HDOPFILT_THR, 0U);
+	// No underwater sensor: surfacing cannot come to the rescue, which is the
+	// configuration where going inert used to be permanent.
+	fake_config_store->write_param(ParamID::UNDERWATER_EN, (bool)false);
+
+	// A bool parameter holding a string. read_param<bool> throws
+	// std::bad_variant_access the moment service_initiate() reaches it.
+	fake_config_store->write_param(ParamID::GNSS_CLOUDLOCATE_ALWAYS, std::string("not-a-bool"));
+
+	fake_rtc->settime(0);
+
+	GPSService s(*mock_m10q, fake_log);
+	s.start();
+
+	// The first acquisition throws before the rail is powered, so nothing here.
+	mock().expectNoCall("power_on");
+	increment_time_s(FIRST_AQPERIOD);
+	mock().checkExpectations();
+	mock().clear();
+
+	// Put the parameter back and let the deferred recovery run.
+	fake_config_store->write_param(ParamID::GNSS_CLOUDLOCATE_ALWAYS, (bool)false);
+
+	// EXCEPTION_RETRY_MS is 5 s; then the next acquisition falls due.
+	mock().expectOneCall("power_on").onObject(mock_m10q).ignoreOtherParameters();
+	mock().ignoreOtherCalls();
+	increment_time_s(60);
+	mock().checkExpectations();
+}

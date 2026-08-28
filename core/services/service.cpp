@@ -593,12 +593,39 @@ void Service::handle_task_exception(const char *where, bool cancel_timeout) {
 
 	if (cancel_timeout) system_scheduler->cancel_task(m_task_timeout);
 	m_is_initiated = false;
+
+	// Recover a schedule. At this point the service owns nothing: the period
+	// task has already fired -- it is what threw -- and the timeout has either
+	// just been cancelled or already run. Before this, a single transient throw
+	// out of service_initiate() left the service inert until an unrelated peer
+	// event happened along, and on a configuration that has no such event (a
+	// periodic tracker with no underwater sensor) until a watchdog reset the
+	// device. GPSService reaches this from ordinary config reads and from the
+	// battery gauge on a wedged I2C bus, so it is not a theoretical path.
+	//
+	// Deferred rather than immediate on purpose: service_next_schedule_in_ms()
+	// is virtual and is itself a plausible source of the throw, so calling
+	// reschedule() straight from this handler could throw right back out of it.
+	// The inner catch is the same argument one level down.
+	if (m_is_started) {
+		m_task_exception_retry = system_scheduler->post_task_prio(
+		    [this]() {
+			    try {
+				    reschedule();
+			    } catch (...) {
+				    DEBUG_ERROR("Service::handle_task_exception: recovery reschedule threw for service %s", m_name);
+			    }
+		    },
+		    "ServiceExceptionRetry", Scheduler::DEFAULT_PRIORITY, EXCEPTION_RETRY_MS);
+	}
 }
 
 /// @brief Cancel all pending tasks (period + timeout).
 void Service::deschedule(bool cancel_timeout) {
 	if (cancel_timeout) system_scheduler->cancel_task(m_task_timeout);
 	system_scheduler->cancel_task(m_task_period);
+	// A real schedule supersedes any pending exception recovery.
+	system_scheduler->cancel_task(m_task_exception_retry);
 	// Cancellation is a DECISION that is observable on the bench. Without this
 	// line, a dive that cancels a service which is merely "scheduled" (and not
 	// "initiated") triggers no pass through reschedule(): the bench value stayed

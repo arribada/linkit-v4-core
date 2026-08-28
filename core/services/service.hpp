@@ -60,6 +60,14 @@ private:
 	bool m_is_initiated = false;
 	Scheduler::TaskHandle m_task_period;
 	Scheduler::TaskHandle m_task_timeout;
+	/// @brief Deferred recovery armed when service code throws. See
+	/// handle_task_exception: without it a single transient throw left the
+	/// service owning no task at all.
+	Scheduler::TaskHandle m_task_exception_retry;
+	/// @brief Delay before that recovery. Long enough that a deterministic
+	/// throw becomes a slow trickle in the log rather than a storm, short
+	/// enough that a transient one costs one skipped cycle.
+	static constexpr unsigned int EXCEPTION_RETRY_MS = 5000;
 	std::function<void(ServiceEvent &)> m_data_notification_callback;
 	ServiceIdentifier m_service_id = ServiceIdentifier::UNKNOWN;
 	unsigned int m_unique_id = 0;
