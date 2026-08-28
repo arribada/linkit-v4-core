@@ -734,8 +734,11 @@ unsigned int ArgosTxService::schedule_with_gnss(ArgosConfig &argos_config, std::
 void ArgosTxService::service_initiate() {
 	DEBUG_TRACE("ArgosTxService::service_initiate");
 
-	// Skip TX if device has failed too many consecutive times this session.
-	// This prevents battery drain from persistent hardware failures (e.g. SPI breakdown).
+	// Skip TX if the device has failed too many consecutive times this session.
+	// Second copy of the guard in react(KineisEventDeviceError); this one
+	// catches the wake-ups that the un-cancelled safety-net timeout keeps
+	// generating while suspended. See the long note on that branch for why
+	// those wake-ups exist and why removing them is not a local change.
 	if (m_consecutive_device_errors >= DEVICE_ERROR_MAX_CONSECUTIVE) {
 		DEBUG_WARN("ArgosTxService::service_initiate: skipping TX — %u consecutive device errors, suspending until "
 		           "next session",
@@ -2507,12 +2510,37 @@ void ArgosTxService::react(KineisEventDeviceError const &) {
 
 	if (service_cancel()) {
 		if (m_consecutive_device_errors >= DEVICE_ERROR_MAX_CONSECUTIVE) {
-			// Max errors reached — stop rescheduling to save battery. The
-			// counter is re-armed (TX resumes) on: a new GPS session
-			// (notify_peer_event GNSS branch), a surface event (UW branch),
-			// a successful TX, or a reboot (service_init). The GPS-session
-			// re-arm is what lets a land tracker recover from a transient
-			// fault without a manual power-cycle.
+			// Max errors reached: stop transmitting. The counter is cleared
+			// (and TX resumes) on a new GPS session (notify_peer_event GNSS
+			// branch), a surface event (UW branch), a successful TX, or a
+			// reboot (service_init). The GPS-session clear is what lets a land
+			// tracker recover from a transient fault without a power-cycle --
+			// the 2026-06-30 field case, where a KIM2 brown-out cost 6.5 h.
+			//
+			// Read what this does NOT do, because the shape suggests it: it
+			// does not park the service. service_complete(..., false) skips
+			// reschedule(), and reschedule() is the only caller of
+			// deschedule() -- the one place that cancels the safety-net
+			// timeout armed by run_scheduled_task() just before us. That
+			// timeout therefore survives, fires service_next_timeout() later,
+			// runs service_cancel() and calls reschedule() itself, at zero
+			// delay; service_initiate() then hits its own copy of this guard,
+			// skips, and completes without rescheduling again -- rearming the
+			// timeout. So a suspended service wakes, logs and skips forever,
+			// roughly once per timeout, and each pass costs a DEBUG_WARN (an
+			// LFS commit on the device). It is not the battery saving the
+			// wording implies.
+			//
+			// That loop is also what makes the recovery above actually work:
+			// `if (!service_is_scheduled()) service_reschedule()` in the GNSS
+			// branch cannot fire here, because m_last_schedule is only reset
+			// by deschedule(). What resumes TX is the next loop pass finding
+			// the counter cleared. Cancelling the timeout to silence the loop
+			// would therefore make this suspension permanent on a land
+			// tracker. Replace it with an explicit probe deadline first, the
+			// way LoRaTxService does it (DEVICE_ERROR_PROBE_PERIOD_S).
+			// Pinned by ArgosTxService/DeviceErrorAtThresholdKeepsWaking...
+			// and .../DeviceErrorSuspensionIsClearedByANewGpsSession.
 			DEBUG_ERROR("ArgosTxService: %u consecutive device errors — suspending TX until next GPS session",
 			            m_consecutive_device_errors);
 			service_complete(nullptr, nullptr, false);  // no reschedule
