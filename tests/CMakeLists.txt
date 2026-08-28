@@ -243,6 +243,7 @@ target_sources(${PROJECT_NAME} PRIVATE
     "${NRF_DIR}/core/hardware/nrf_switch.cpp"
     # nrf_battery_mon.cpp excluded: depends on nrf_delay.h (Nordic SDK, not available in test builds)
     "${NRF_DIR}/core/hardware/m10qasync/m10qasync.cpp"
+    "${NRF_DIR}/core/hardware/m10qasync/m10qasync_config.cpp"
     "${NRF_DIR}/core/hardware/m10qasync/ubx_comms.cpp"
     "${NRF_DIR}/core/hardware/nrf_uart_async.cpp"
     "${NRF_DIR}/core/hardware/lora_rak3172/lora_rak3172.cpp"
@@ -446,6 +447,7 @@ target_sources(${TURTLE_SIM_NAME} PRIVATE
     "${NRF_DIR}/core/hardware/nrf_switch.cpp"
     # nrf_battery_mon.cpp excluded: depends on nrf_delay.h (Nordic SDK, not available in test builds)
     "${NRF_DIR}/core/hardware/m10qasync/m10qasync.cpp"
+    "${NRF_DIR}/core/hardware/m10qasync/m10qasync_config.cpp"
     "${NRF_DIR}/core/hardware/m10qasync/ubx_comms.cpp"
     "${NRF_DIR}/core/hardware/nrf_uart_async.cpp"
     "${NRF_DIR}/core/hardware/lora_rak3172/lora_rak3172.cpp"
@@ -612,6 +614,7 @@ target_sources(${RSPB_SIM_NAME} PRIVATE
     "${LINUX_DIR}/interrupt_lock.cpp"
     "${NRF_DIR}/core/hardware/nrf_switch.cpp"
     "${NRF_DIR}/core/hardware/m10qasync/m10qasync.cpp"
+    "${NRF_DIR}/core/hardware/m10qasync/m10qasync_config.cpp"
     "${NRF_DIR}/core/hardware/m10qasync/ubx_comms.cpp"
     "${NRF_DIR}/core/hardware/nrf_uart_async.cpp"
     "${NRF_DIR}/core/hardware/lora_rak3172/lora_rak3172.cpp"

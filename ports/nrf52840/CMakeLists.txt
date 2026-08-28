@@ -656,6 +656,7 @@ endif()
 # Always use M10Q GPS module
 target_sources(${TARGET_NAME} PRIVATE
     ${PROJ_DIR}/core/hardware/m10qasync/m10qasync.cpp
+        ${PROJ_DIR}/core/hardware/m10qasync/m10qasync_config.cpp
     ${PROJ_DIR}/core/hardware/m10qasync/ubx_comms.cpp
 )
 
