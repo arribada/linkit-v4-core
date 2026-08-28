@@ -5,6 +5,29 @@
 
 #include "dte_commands.hpp"
 
+// clang-format off
+// Every argument below is a PROTOTYPE slot -- what the parser should expect on
+// the wire -- not a stored parameter. Three of BaseMap's fields are therefore
+// meaningless here and carry the same value in all 111 of them: `key` is "",
+// `is_implemented` and `is_writable` are false. Only the name, the encoding and
+// the accepted range say anything.
+//
+// Spelling those three out per argument cost ten lines apiece and buried the
+// four that matter. ARG() states exactly the four.
+#define ARG(NAME, ENC, MIN, MAX)                                                                    \
+	{                                                                                               \
+		.name = NAME, .key = "", .encoding = BaseEncoding::ENC, .min_value = MIN, .max_value = MAX, \
+		.permitted_values = {}, .is_implemented = false, .is_writable = false                       \
+	}
+
+// The only argument in the table that constrains its values to a set.
+#define ARG_PV(NAME, ENC, MIN, MAX, ...)                                                            \
+	{                                                                                               \
+		.name = NAME, .key = "", .encoding = BaseEncoding::ENC, .min_value = MIN, .max_value = MAX, \
+		.permitted_values = __VA_ARGS__, .is_implemented = false, .is_writable = false              \
+	}
+
+
 const DTECommandMap command_map[] = {
 	{
 		.name = "PARML",
@@ -18,16 +41,7 @@ const DTECommandMap command_map[] = {
 		.command = DTECommand::PARMR_REQ,
 		.prototype = 
 		{
-			{
-				.name = "keys",
-				.key = "",
-				.encoding = BaseEncoding::KEY_LIST,
-				.min_value = 0,
-				.max_value = 0,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			}
+			ARG("keys", KEY_LIST, 0, 0)
 		}
 	},
 	{
@@ -35,16 +49,7 @@ const DTECommandMap command_map[] = {
 		.command = DTECommand::PARMW_REQ,
 		.prototype = 
 		{
-			{
-				.name = "key_values",
-				.key = "",
-				.encoding = BaseEncoding::KEY_VALUE_LIST,
-				.min_value = 0,
-				.max_value = 0,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			}
+			ARG("key_values", KEY_VALUE_LIST, 0, 0)
 		}
 	},
 	{
@@ -59,16 +64,7 @@ const DTECommandMap command_map[] = {
 		.command = DTECommand::PROFW_REQ,
 		.prototype = 
 		{
-			{
-				.name = "profile_name",
-				.key = "",
-				.encoding = BaseEncoding::TEXT,
-				.min_value = 1,
-				.max_value = 128,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			}
+			ARG("profile_name", TEXT, 1, 128)
 		}
 	},
 	{
@@ -76,16 +72,7 @@ const DTECommandMap command_map[] = {
 		.command = DTECommand::PASPW_REQ,
 		.prototype = 
 		{
-			{
-				.name = "prepass_file",
-				.key = "",
-				.encoding = BaseEncoding::BASE64,
-				.min_value = 0,
-				.max_value = 0,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			}
+			ARG("prepass_file", BASE64, 0, 0)
 		}
 	},
 	{
@@ -93,16 +80,7 @@ const DTECommandMap command_map[] = {
 		.command = DTECommand::SECUR_REQ,
 		.prototype = 
 		{
-				{
-					.name = "accesscode",
-					.key = "",
-					.encoding = BaseEncoding::HEXADECIMAL,
-					.min_value = 0U,
-					.max_value = 0U,
-					.permitted_values = {},
-					.is_implemented = false,
-					.is_writable = false
-				},
+				ARG("accesscode", HEXADECIMAL, 0U, 0U),
 		}
 	},
 	{
@@ -110,26 +88,8 @@ const DTECommandMap command_map[] = {
 		.command = DTECommand::DUMPM_REQ,
 		.prototype = 
 		{
-			{
-				.name = "start_address",
-				.key = "",
-				.encoding = BaseEncoding::HEXADECIMAL,
-				.min_value = 0U,
-				.max_value = 0U,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			},
-			{
-				.name = "length",
-				.key = "",
-				.encoding = BaseEncoding::HEXADECIMAL,
-				.min_value = 0U,
-				.max_value = 0x500U,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			}
+			ARG("start_address", HEXADECIMAL, 0U, 0U),
+			ARG("length", HEXADECIMAL, 0U, 0x500U)
 		}
 	},
 	{
@@ -137,16 +97,8 @@ const DTECommandMap command_map[] = {
 		.command = DTECommand::DUMPD_REQ,
 		.prototype =
 		{
-			{
-				.name = "d_type",
-				.key = "",
-				.encoding = BaseEncoding::HEXADECIMAL,
-				.min_value = 0U,
-				.max_value = 12U,  // Updated: includes MORTALITY(12)
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			},
+			// Updated: includes MORTALITY(12)
+			ARG("d_type", HEXADECIMAL, 0U, 12U),
 		}
 	},
 	{
@@ -154,16 +106,7 @@ const DTECommandMap command_map[] = {
 		.command = DTECommand::RSTVW_REQ,
 		.prototype =
 		{
-				{
-					.name = "index",
-					.key = "",
-					.encoding = BaseEncoding::HEXADECIMAL,
-					.min_value = 0U,
-					.max_value = 0U,
-					.permitted_values = { 1U, 2U, 3U, 4U },
-					.is_implemented = false,
-					.is_writable = false
-				},
+				ARG_PV("index", HEXADECIMAL, 0U, 0U, { 1U, 2U, 3U, 4U }),
 		}
 	},
 	{
@@ -185,16 +128,7 @@ const DTECommandMap command_map[] = {
 		.command = DTECommand::STATR_REQ,
 		.prototype =
 		{
-			{
-				.name = "keys",
-				.key = "",
-				.encoding = BaseEncoding::KEY_LIST,
-				.min_value = 0,
-				.max_value = 0,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			}
+			ARG("keys", KEY_LIST, 0, 0)
 		}
 	},
 	{
@@ -202,16 +136,8 @@ const DTECommandMap command_map[] = {
 		.command = DTECommand::ERASE_REQ,
 		.prototype =
 		{
-			{
-				.name = "log_type",
-				.key = "",
-				.encoding = BaseEncoding::UINT,
-				.min_value = 1U,
-				.max_value = 14U,  // Updated: includes MORTALITY(14)
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			}
+			// Updated: includes MORTALITY(14)
+			ARG("log_type", UINT, 1U, 14U)
 		}
 	},
 	{
@@ -219,36 +145,10 @@ const DTECommandMap command_map[] = {
 		.command = DTECommand::SCALW_REQ,
 		.prototype =
 		{
-			{
-				.name = "sensor",
-				.key = "",
-				.encoding = BaseEncoding::UINT,
-				.min_value = 0U,
-				.max_value = 8U,  // Updated: includes SWS (device_id=8, see m_scalx in dte_handler.hpp)
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			},
-			{
-				.name = "offset",
-				.key = "",
-				.encoding = BaseEncoding::UINT,
-				.min_value = 0U,
-				.max_value = 0U,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			},
-			{
-				.name = "value",
-				.key = "",
-				.encoding = BaseEncoding::FLOAT,
-				.min_value = 0.0,
-				.max_value = 0.0,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			}
+			// Updated: includes SWS (device_id=8, see m_scalx in dte_handler.hpp)
+			ARG("sensor", UINT, 0U, 8U),
+			ARG("offset", UINT, 0U, 0U),
+			ARG("value", FLOAT, 0.0, 0.0)
 		}
 	},
 	{
@@ -256,51 +156,15 @@ const DTECommandMap command_map[] = {
 		.command = DTECommand::ARGOSTX_REQ,
 		.prototype =
 		{
-			{
-				.name = "modulation",
-				.key = "",
-				.encoding = BaseEncoding::UINT,
-				.min_value = 0U,
-				.max_value = 2U,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			},
-			{
-				// Stored mode: size (decimal string, e.g. "24")
-				// Custom mode: radioconf (32-char hex string)
-				.name = "radioconf_or_size",
-				.key = "",
-				.encoding = BaseEncoding::TEXT,
-				.min_value = 0U,
-				.max_value = 0U,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			},
-			{
-				// Stored mode: tcxo (optional)
-				// Custom mode: size
-				.name = "size_or_tcxo",
-				.key = "",
-				.encoding = BaseEncoding::UINT,
-				.min_value = 0U,
-				.max_value = 0U,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			},
-			{
-				// Custom mode only: tcxo (optional)
-				.name = "tcxo",
-				.key = "",
-				.encoding = BaseEncoding::UINT,
-				.min_value = 0U,
-				.max_value = 0U,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			}
+			ARG("modulation", UINT, 0U, 2U),
+			// Stored mode: size (decimal string, e.g. "24")
+			// Custom mode: radioconf (32-char hex string)
+			ARG("radioconf_or_size", TEXT, 0U, 0U),
+			// Stored mode: tcxo (optional)
+			// Custom mode: size
+			ARG("size_or_tcxo", UINT, 0U, 0U),
+			// Custom mode only: tcxo (optional)
+			ARG("tcxo", UINT, 0U, 0U)
 		},
 		.min_args = 2  // modulation + radioconf_or_size required; rest optional
 	},
@@ -309,26 +173,9 @@ const DTECommandMap command_map[] = {
 		.command = DTECommand::SCALR_REQ,
 		.prototype =
 		{
-			{
-				.name = "sensor",
-				.key = "",
-				.encoding = BaseEncoding::UINT,
-				.min_value = 0U,
-				.max_value = 8U,  // Updated: includes SWS (device_id=8, see m_scalx in dte_handler.hpp)
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			},
-			{
-				.name = "offset",
-				.key = "",
-				.encoding = BaseEncoding::UINT,
-				.min_value = 0U,
-				.max_value = 0U,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			}
+			// Updated: includes SWS (device_id=8, see m_scalx in dte_handler.hpp)
+			ARG("sensor", UINT, 0U, 8U),
+			ARG("offset", UINT, 0U, 0U)
 		}
 	},
 	// SENSR - Sensor/GNSS read command
@@ -340,26 +187,10 @@ const DTECommandMap command_map[] = {
 		.command = DTECommand::SENSR_REQ,
 		.prototype =
 		{
-			{
-				.name = "sensors",
-				.key = "",
-				.encoding = BaseEncoding::UINT,
-				.min_value = 1U,
-				.max_value = 255U,  // Bitmask: 1=battery, 2=pressure, 4=GNSS, 8=accel, 16=thermistor, 32=sea_temp, 64=ALS, 128=pH
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			},
-			{
-				.name = "timeout",
-				.key = "",
-				.encoding = BaseEncoding::UINT,
-				.min_value = 5U,
-				.max_value = 300U,  // GNSS timeout in seconds (5-300s)
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			}
+			// Bitmask: 1=battery, 2=pressure, 4=GNSS, 8=accel, 16=thermistor, 32=sea_temp, 64=ALS, 128=pH
+			ARG("sensors", UINT, 1U, 255U),
+			// GNSS timeout in seconds (5-300s)
+			ARG("timeout", UINT, 5U, 300U)
 		}
 	},
 	// PWRON - Power on/off components command
@@ -371,16 +202,8 @@ const DTECommandMap command_map[] = {
 		.command = DTECommand::PWRON_REQ,
 		.prototype =
 		{
-			{
-				.name = "component",
-				.key = "",
-				.encoding = BaseEncoding::UINT,
-				.min_value = 0U,
-				.max_value = 4U,  // 0=all, 1=gnss, 2=sensors, 3=satellite, 4=off
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			}
+			// 0=all, 1=gnss, 2=sensors, 3=satellite, 4=off
+			ARG("component", UINT, 0U, 4U)
 		}
 	},
 	// SWSST - SWS analog calibration status read (no arguments)
@@ -421,16 +244,8 @@ const DTECommandMap command_map[] = {
 		.command = DTECommand::RTCW_REQ,
 		.prototype =
 		{
-			{
-				.name = "timestamp",
-				.key = "",
-				.encoding = BaseEncoding::UINT,
-				.min_value = 0U,
-				.max_value = 0U,  // No max limit for unix timestamp
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			}
+			// No max limit for unix timestamp
+			ARG("timestamp", UINT, 0U, 0U)
 		}
 	},
 	// SWSTST - SWS test mode start/stop
@@ -441,16 +256,8 @@ const DTECommandMap command_map[] = {
 		.command = DTECommand::SWSTST_REQ,
 		.prototype =
 		{
-			{
-				.name = "action",
-				.key = "",
-				.encoding = BaseEncoding::UINT,
-				.min_value = 0U,
-				.max_value = 1U,  // 0=stop, 1=start
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			}
+			// 0=stop, 1=start
+			ARG("action", UINT, 0U, 1U)
 		}
 	},
 	// SWSCAL - SWS guided calibration (LED-assisted air/water measurement)
@@ -461,16 +268,8 @@ const DTECommandMap command_map[] = {
 		.command = DTECommand::SWSCAL_REQ,
 		.prototype =
 		{
-			{
-				.name = "action",
-				.key = "",
-				.encoding = BaseEncoding::UINT,
-				.min_value = 0U,
-				.max_value = 1U,  // 0=cancel, 1=start
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			}
+			// 0=cancel, 1=start
+			ARG("action", UINT, 0U, 1U)
 		}
 	},
 	// SWSSTATS - SWS persistent diagnostic counters (audit 2026-05 R-MON-02)
@@ -484,16 +283,8 @@ const DTECommandMap command_map[] = {
 		.command = DTECommand::SWSSTATS_REQ,
 		.prototype =
 		{
-			{
-				.name = "action",
-				.key = "",
-				.encoding = BaseEncoding::UINT,
-				.min_value = 0U,
-				.max_value = 1U,  // 0=read, 1=clear+read
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			}
+			// 0=read, 1=clear+read
+			ARG("action", UINT, 0U, 1U)
 		}
 	},
 	// GNSSBR - GNSS UART bridge/passthrough mode (direct u-blox access via USB)
@@ -503,16 +294,8 @@ const DTECommandMap command_map[] = {
 		.command = DTECommand::GNSSBR_REQ,
 		.prototype =
 		{
-			{
-				.name = "action",
-				.key = "",
-				.encoding = BaseEncoding::UINT,
-				.min_value = 0U,
-				.max_value = 1U,  // 0=stop, 1=start
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			}
+			// 0=stop, 1=start
+			ARG("action", UINT, 0U, 1U)
 		}
 	},
 	// GNSSBCKP - GNSS backup-cell charge mode (rail ON, M10 in deep sleep)
@@ -528,16 +311,7 @@ const DTECommandMap command_map[] = {
 		.command = DTECommand::GNSSBCKP_REQ,
 		.prototype =
 		{
-			{
-				.name = "duration_s",
-				.key = "",
-				.encoding = BaseEncoding::UINT,
-				.min_value = 0U,
-				.max_value = 86400U,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			}
+			ARG("duration_s", UINT, 0U, 86400U)
 		}
 	},
 	// SMDDFU command - always available: VERSION action (5) works on SMD/KIM2/LoRa
@@ -549,16 +323,8 @@ const DTECommandMap command_map[] = {
 		.command = DTECommand::SMDDFU_REQ,
 		.prototype =
 		{
-			{
-				.name = "action",
-				.key = "",
-				.encoding = BaseEncoding::UINT,
-				.min_value = 0U,
-				.max_value = 5U,  // 0=enter, 1=exit, 2=status, 3=update, 4=info, 5=version
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			}
+			// 0=enter, 1=exit, 2=status, 3=update, 4=info, 5=version
+			ARG("action", UINT, 0U, 5U)
 		}
 	},
 	// COMCW command - Continuous Wave RF test (SMD / LoRa). KIM2 returns "unsupported".
@@ -572,26 +338,10 @@ const DTECommandMap command_map[] = {
 		.command = DTECommand::COMCW_REQ,
 		.prototype =
 		{
-			{
-				.name = "mode", .key = "", .encoding = BaseEncoding::UINT,
-				.min_value = 0U, .max_value = 1U,
-				.permitted_values = {}, .is_implemented = false, .is_writable = false
-			},
-			{
-				.name = "freq_hz", .key = "", .encoding = BaseEncoding::UINT,
-				.min_value = 0U, .max_value = 4294967295U,
-				.permitted_values = {}, .is_implemented = false, .is_writable = false
-			},
-			{
-				.name = "power_dbm", .key = "", .encoding = BaseEncoding::UINT,
-				.min_value = 0U, .max_value = 30U,
-				.permitted_values = {}, .is_implemented = false, .is_writable = false
-			},
-			{
-				.name = "duration_s", .key = "", .encoding = BaseEncoding::UINT,
-				.min_value = 0U, .max_value = 65535U,
-				.permitted_values = {}, .is_implemented = false, .is_writable = false
-			},
+			ARG("mode", UINT, 0U, 1U),
+			ARG("freq_hz", UINT, 0U, 4294967295U),
+			ARG("power_dbm", UINT, 0U, 30U),
+			ARG("duration_s", UINT, 0U, 65535U),
 		},
 		.min_args = 1  // mode is required; freq/power/duration optional (only for start)
 	},
@@ -615,16 +365,7 @@ const DTECommandMap command_map[] = {
 		.command = DTECommand::SATVF_REQ,
 		.prototype =
 		{
-			{
-				.name = "force",
-				.key = "",
-				.encoding = BaseEncoding::UINT,
-				.min_value = 0U,
-				.max_value = 1U,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			}
+			ARG("force", UINT, 0U, 1U)
 		}
 	},
 #if defined(LORA_RAK3172) && (LORA_RAK3172 == 1)
@@ -635,16 +376,7 @@ const DTECommandMap command_map[] = {
 		.command = DTECommand::LORATX_REQ,
 		.prototype =
 		{
-			{
-				.name = "size",
-				.key = "",
-				.encoding = BaseEncoding::UINT,
-				.min_value = 1U,
-				.max_value = 222U,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			}
+			ARG("size", UINT, 1U, 222U)
 		}
 	},
 	// LoRa UART bridge/passthrough mode (direct RUI3 AT access via USB)
@@ -654,16 +386,8 @@ const DTECommandMap command_map[] = {
 		.command = DTECommand::LORABR_REQ,
 		.prototype =
 		{
-			{
-				.name = "action",
-				.key = "",
-				.encoding = BaseEncoding::UINT,
-				.min_value = 0U,
-				.max_value = 1U,  // 0=stop, 1=start
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			}
+			// 0=stop, 1=start
+			ARG("action", UINT, 0U, 1U)
 		}
 	},
 #endif
@@ -675,16 +399,8 @@ const DTECommandMap command_map[] = {
 		.command = DTECommand::KIMBR_REQ,
 		.prototype =
 		{
-			{
-				.name = "action",
-				.key = "",
-				.encoding = BaseEncoding::UINT,
-				.min_value = 0U,
-				.max_value = 1U,  // 0=stop, 1=start
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			}
+			// 0=stop, 1=start
+			ARG("action", UINT, 0U, 1U)
 		}
 	},
 #endif
@@ -693,16 +409,7 @@ const DTECommandMap command_map[] = {
 		.command = DTECommand::PARML_RESP,
 		.prototype =
 		{
-			{
-				.name = "keys",
-				.key = "",
-				.encoding = BaseEncoding::KEY_LIST,
-				.min_value = 0,
-				.max_value = 0,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			}
+			ARG("keys", KEY_LIST, 0, 0)
 		}
 	},
 	{
@@ -710,16 +417,7 @@ const DTECommandMap command_map[] = {
 		.command = DTECommand::PARMR_RESP,
 		.prototype = 
 		{
-			{
-				.name = "key_values",
-				.key = "",
-				.encoding = BaseEncoding::KEY_VALUE_LIST,
-				.min_value = 0,
-				.max_value = 0,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			}
+			ARG("key_values", KEY_VALUE_LIST, 0, 0)
 		}
 	},
 	{
@@ -734,16 +432,7 @@ const DTECommandMap command_map[] = {
 		.command = DTECommand::PROFR_RESP,
 		.prototype = 
 		{
-			{
-				.name = "profile_name",
-				.key = "",
-				.encoding = BaseEncoding::TEXT,
-				.min_value = "",
-				.max_value = "",
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			}
+			ARG("profile_name", TEXT, "", "")
 		}
 	},
 	{
@@ -772,16 +461,7 @@ const DTECommandMap command_map[] = {
 		.command = DTECommand::DUMPM_RESP,
 		.prototype = 
 		{
-			{
-				.name = "data",
-				.key = "",
-				.encoding = BaseEncoding::BASE64,
-				.min_value = 0,
-				.max_value = 0,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			}
+			ARG("data", BASE64, 0, 0)
 		}
 	},
 	{
@@ -789,36 +469,9 @@ const DTECommandMap command_map[] = {
 		.command = DTECommand::DUMPD_RESP,
 		.prototype = 
 		{
-			{
-				.name = "mmm",
-				.key = "",
-				.encoding = BaseEncoding::HEXADECIMAL,
-				.min_value = 0U,
-				.max_value = 0xFFFU,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			},
-			{
-				.name = "MMM",
-				.key = "",
-				.encoding = BaseEncoding::HEXADECIMAL,
-				.min_value = 0U,
-				.max_value = 0xFFFU,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			},
-			{
-				.name = "data",
-				.key = "",
-				.encoding = BaseEncoding::BASE64,
-				.min_value = 0,
-				.max_value = 0,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			}
+			ARG("mmm", HEXADECIMAL, 0U, 0xFFFU),
+			ARG("MMM", HEXADECIMAL, 0U, 0xFFFU),
+			ARG("data", BASE64, 0, 0)
 		}
 	},
 	{
@@ -847,16 +500,7 @@ const DTECommandMap command_map[] = {
 		.command = DTECommand::STATR_RESP,
 		.prototype =
 		{
-			{
-				.name = "key_values",
-				.key = "",
-				.encoding = BaseEncoding::KEY_VALUE_LIST,
-				.min_value = 0,
-				.max_value = 0,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			}
+			ARG("key_values", KEY_VALUE_LIST, 0, 0)
 		}
 	},
 	{
@@ -885,16 +529,7 @@ const DTECommandMap command_map[] = {
 		.command = DTECommand::SCALR_RESP,
 		.prototype =
 		{
-			{
-				.name = "value",
-				.key = "",
-				.encoding = BaseEncoding::FLOAT,
-				.min_value = 0.0,
-				.max_value = 0.0,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			}
+			ARG("value", FLOAT, 0.0, 0.0)
 		}
 	},
 	// SENSR response - sensor readings
@@ -903,196 +538,26 @@ const DTECommandMap command_map[] = {
 		.command = DTECommand::SENSR_RESP,
 		.prototype =
 		{
-			{
-				.name = "batt_mv",
-				.key = "",
-				.encoding = BaseEncoding::UINT,
-				.min_value = 0U,
-				.max_value = 0U,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			},
-			{
-				.name = "batt_soc",
-				.key = "",
-				.encoding = BaseEncoding::UINT,
-				.min_value = 0U,
-				.max_value = 100U,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			},
-			{
-				.name = "pressure",
-				.key = "",
-				.encoding = BaseEncoding::FLOAT,
-				.min_value = 0.0,
-				.max_value = 0.0,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			},
-			{
-				.name = "temperature",
-				.key = "",
-				.encoding = BaseEncoding::FLOAT,
-				.min_value = 0.0,
-				.max_value = 0.0,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			},
-			{
-				.name = "altitude",
-				.key = "",
-				.encoding = BaseEncoding::FLOAT,
-				.min_value = 0.0,
-				.max_value = 0.0,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			},
-			{
-				.name = "lat",
-				.key = "",
-				.encoding = BaseEncoding::FLOAT,
-				.min_value = 0.0,
-				.max_value = 0.0,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			},
-			{
-				.name = "lon",
-				.key = "",
-				.encoding = BaseEncoding::FLOAT,
-				.min_value = 0.0,
-				.max_value = 0.0,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			},
-			{
-				.name = "hdop",
-				.key = "",
-				.encoding = BaseEncoding::FLOAT,
-				.min_value = 0.0,
-				.max_value = 0.0,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			},
-			{
-				.name = "num_sv",
-				.key = "",
-				.encoding = BaseEncoding::UINT,
-				.min_value = 0U,
-				.max_value = 0U,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			},
-			{
-				.name = "accel_x",
-				.key = "",
-				.encoding = BaseEncoding::FLOAT,
-				.min_value = 0.0,
-				.max_value = 0.0,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			},
-			{
-				.name = "accel_y",
-				.key = "",
-				.encoding = BaseEncoding::FLOAT,
-				.min_value = 0.0,
-				.max_value = 0.0,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			},
-			{
-				.name = "accel_z",
-				.key = "",
-				.encoding = BaseEncoding::FLOAT,
-				.min_value = 0.0,
-				.max_value = 0.0,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			},
-			{
-				.name = "accel_temp",
-				.key = "",
-				.encoding = BaseEncoding::FLOAT,
-				.min_value = 0.0,
-				.max_value = 0.0,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			},
-			{
-				.name = "activity",
-				.key = "",
-				.encoding = BaseEncoding::UINT,
-				.min_value = 0U,
-				.max_value = 255U,  // Activity level 0-255
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			},
-			{
-				.name = "thermistor_temp",
-				.key = "",
-				.encoding = BaseEncoding::FLOAT,
-				.min_value = 0.0,
-				.max_value = 0.0,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			},
-			{
-			.name = "sea_temp",
-			.key = "",
-			.encoding = BaseEncoding::FLOAT,
-			.min_value = 0.0,
-			.max_value = 0.0,
-			.permitted_values = {},
-			.is_implemented = false,
-			.is_writable = false
-		},
-		{
-			.name = "als_lux",
-			.key = "",
-			.encoding = BaseEncoding::FLOAT,
-			.min_value = 0.0,
-			.max_value = 0.0,
-			.permitted_values = {},
-			.is_implemented = false,
-			.is_writable = false
-		},
-		{
-			.name = "ph",
-			.key = "",
-			.encoding = BaseEncoding::FLOAT,
-			.min_value = 0.0,
-			.max_value = 0.0,
-			.permitted_values = {},
-			.is_implemented = false,
-			.is_writable = false
-		},
-		{
-			.name = "sensor_status",
-			.key = "",
-			.encoding = BaseEncoding::UINT,
-			.min_value = 0U,
-			.max_value = 0xFFU,
-			.permitted_values = {},
-			.is_implemented = false,
-			.is_writable = false
-		}
+			ARG("batt_mv", UINT, 0U, 0U),
+			ARG("batt_soc", UINT, 0U, 100U),
+			ARG("pressure", FLOAT, 0.0, 0.0),
+			ARG("temperature", FLOAT, 0.0, 0.0),
+			ARG("altitude", FLOAT, 0.0, 0.0),
+			ARG("lat", FLOAT, 0.0, 0.0),
+			ARG("lon", FLOAT, 0.0, 0.0),
+			ARG("hdop", FLOAT, 0.0, 0.0),
+			ARG("num_sv", UINT, 0U, 0U),
+			ARG("accel_x", FLOAT, 0.0, 0.0),
+			ARG("accel_y", FLOAT, 0.0, 0.0),
+			ARG("accel_z", FLOAT, 0.0, 0.0),
+			ARG("accel_temp", FLOAT, 0.0, 0.0),
+			// Activity level 0-255
+			ARG("activity", UINT, 0U, 255U),
+			ARG("thermistor_temp", FLOAT, 0.0, 0.0),
+			ARG("sea_temp", FLOAT, 0.0, 0.0),
+		ARG("als_lux", FLOAT, 0.0, 0.0),
+		ARG("ph", FLOAT, 0.0, 0.0),
+		ARG("sensor_status", UINT, 0U, 0xFFU)
 	}
 	},
 	// PWRON response - simple acknowledgement
@@ -1107,136 +572,19 @@ const DTECommandMap command_map[] = {
 		.command = DTECommand::SWSST_RESP,
 		.prototype =
 		{
-			{
-				.name = "air",
-				.key = "",
-				.encoding = BaseEncoding::UINT,
-				.min_value = 0U,
-				.max_value = 0U,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			},
-			{
-				.name = "water",
-				.key = "",
-				.encoding = BaseEncoding::UINT,
-				.min_value = 0U,
-				.max_value = 0U,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			},
-			{
-				.name = "threshold",
-				.key = "",
-				.encoding = BaseEncoding::UINT,
-				.min_value = 0U,
-				.max_value = 0U,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			},
-			{
-				.name = "hysteresis",
-				.key = "",
-				.encoding = BaseEncoding::UINT,
-				.min_value = 0U,
-				.max_value = 0U,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			},
-			{
-				.name = "raw_adc",
-				.key = "",
-				.encoding = BaseEncoding::UINT,
-				.min_value = 0U,
-				.max_value = 0U,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			},
-			{
-				.name = "filtered_adc",
-				.key = "",
-				.encoding = BaseEncoding::UINT,
-				.min_value = 0U,
-				.max_value = 0U,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			},
-			{
-				.name = "calibrated",
-				.key = "",
-				.encoding = BaseEncoding::BOOLEAN,
-				.min_value = 0U,
-				.max_value = 1U,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			},
-			{
-				.name = "underwater",
-				.key = "",
-				.encoding = BaseEncoding::BOOLEAN,
-				.min_value = 0U,
-				.max_value = 1U,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			},
-			{
-				.name = "time_in_state",
-				.key = "",
-				.encoding = BaseEncoding::UINT,
-				.min_value = 0U,
-				.max_value = 0U,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			},
-			{
-				.name = "surface_level",
-				.key = "",
-				.encoding = BaseEncoding::UINT,
-				.min_value = 0U,
-				.max_value = 5U,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			},
-			{
-				.name = "contrast_x10",
-				.key = "",
-				.encoding = BaseEncoding::UINT,
-				.min_value = 0U,
-				.max_value = 0U,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			},
-			{
-				.name = "observed_peak",
-				.key = "",
-				.encoding = BaseEncoding::UINT,
-				.min_value = 0U,
-				.max_value = 0U,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			},
-			{
-				.name = "sample_delay_us",
-				.key = "",
-				.encoding = BaseEncoding::UINT,
-				.min_value = 0U,
-				.max_value = 0U,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			}
+			ARG("air", UINT, 0U, 0U),
+			ARG("water", UINT, 0U, 0U),
+			ARG("threshold", UINT, 0U, 0U),
+			ARG("hysteresis", UINT, 0U, 0U),
+			ARG("raw_adc", UINT, 0U, 0U),
+			ARG("filtered_adc", UINT, 0U, 0U),
+			ARG("calibrated", BOOLEAN, 0U, 1U),
+			ARG("underwater", BOOLEAN, 0U, 1U),
+			ARG("time_in_state", UINT, 0U, 0U),
+			ARG("surface_level", UINT, 0U, 5U),
+			ARG("contrast_x10", UINT, 0U, 0U),
+			ARG("observed_peak", UINT, 0U, 0U),
+			ARG("sample_delay_us", UINT, 0U, 0U)
 		}
 	},
 	// SATDP response - simple OK/error acknowledgement
@@ -1251,36 +599,9 @@ const DTECommandMap command_map[] = {
 		.command = DTECommand::GNSSI_RESP,
 		.prototype =
 		{
-			{
-				.name = "unique_id",
-				.key = "",
-				.encoding = BaseEncoding::TEXT,
-				.min_value = "",
-				.max_value = "",
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			},
-			{
-				.name = "sw_version",
-				.key = "",
-				.encoding = BaseEncoding::TEXT,
-				.min_value = "",
-				.max_value = "",
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			},
-			{
-				.name = "hw_version",
-				.key = "",
-				.encoding = BaseEncoding::TEXT,
-				.min_value = "",
-				.max_value = "",
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			}
+			ARG("unique_id", TEXT, "", ""),
+			ARG("sw_version", TEXT, "", ""),
+			ARG("hw_version", TEXT, "", "")
 		}
 	},
 	// GNSSA response - almanac file status
@@ -1289,56 +610,11 @@ const DTECommandMap command_map[] = {
 		.command = DTECommand::GNSSA_RESP,
 		.prototype =
 		{
-			{
-				.name = "present",
-				.key = "",
-				.encoding = BaseEncoding::UINT,
-				.min_value = 0U,
-				.max_value = 1U,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			},
-			{
-				.name = "file_size",
-				.key = "",
-				.encoding = BaseEncoding::UINT,
-				.min_value = 0U,
-				.max_value = 0U,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			},
-			{
-				.name = "total_records",
-				.key = "",
-				.encoding = BaseEncoding::UINT,
-				.min_value = 0U,
-				.max_value = 0U,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			},
-			{
-				.name = "valid_records",
-				.key = "",
-				.encoding = BaseEncoding::UINT,
-				.min_value = 0U,
-				.max_value = 0U,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			},
-			{
-				.name = "stale",
-				.key = "",
-				.encoding = BaseEncoding::UINT,
-				.min_value = 0U,
-				.max_value = 1U,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			}
+			ARG("present", UINT, 0U, 1U),
+			ARG("file_size", UINT, 0U, 0U),
+			ARG("total_records", UINT, 0U, 0U),
+			ARG("valid_records", UINT, 0U, 0U),
+			ARG("stale", UINT, 0U, 1U)
 		}
 	},
 	// RTCW response - simple acknowledgement
@@ -1353,16 +629,7 @@ const DTECommandMap command_map[] = {
 		.command = DTECommand::SWSTST_RESP,
 		.prototype =
 		{
-			{
-				.name = "running",
-				.key = "",
-				.encoding = BaseEncoding::UINT,
-				.min_value = 0U,
-				.max_value = 1U,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			}
+			ARG("running", UINT, 0U, 1U)
 		}
 	},
 	// SWSCAL response - guided calibration result
@@ -1371,36 +638,10 @@ const DTECommandMap command_map[] = {
 		.command = DTECommand::SWSCAL_RESP,
 		.prototype =
 		{
-			{
-				.name = "status",
-				.key = "",
-				.encoding = BaseEncoding::UINT,
-				.min_value = 0U,
-				.max_value = 3U,  // 0=in progress, 1=success, 2=failed, 3=cancelled
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			},
-			{
-				.name = "air",
-				.key = "",
-				.encoding = BaseEncoding::UINT,
-				.min_value = 0U,
-				.max_value = 16383U,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			},
-			{
-				.name = "water",
-				.key = "",
-				.encoding = BaseEncoding::UINT,
-				.min_value = 0U,
-				.max_value = 16383U,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			}
+			// 0=in progress, 1=success, 2=failed, 3=cancelled
+			ARG("status", UINT, 0U, 3U),
+			ARG("air", UINT, 0U, 16383U),
+			ARG("water", UINT, 0U, 16383U)
 		}
 	},
 	// SWSSTATS response - persistent diagnostic counters (audit 2026-05 R-MON-02)
@@ -1409,27 +650,13 @@ const DTECommandMap command_map[] = {
 		.command = DTECommand::SWSSTATS_RESP,
 		.prototype =
 		{
-			{ .name = "stuck_recovery", .key = "", .encoding = BaseEncoding::UINT,
-			  .min_value = 0U, .max_value = 65535U, .permitted_values = {},
-			  .is_implemented = false, .is_writable = false },
-			{ .name = "coherence_recalib", .key = "", .encoding = BaseEncoding::UINT,
-			  .min_value = 0U, .max_value = 65535U, .permitted_values = {},
-			  .is_implemented = false, .is_writable = false },
-			{ .name = "dive_timeout", .key = "", .encoding = BaseEncoding::UINT,
-			  .min_value = 0U, .max_value = 65535U, .permitted_values = {},
-			  .is_implemented = false, .is_writable = false },
-			{ .name = "force_surface", .key = "", .encoding = BaseEncoding::UINT,
-			  .min_value = 0U, .max_value = 65535U, .permitted_values = {},
-			  .is_implemented = false, .is_writable = false },
-			{ .name = "spike_reject", .key = "", .encoding = BaseEncoding::UINT,
-			  .min_value = 0U, .max_value = 65535U, .permitted_values = {},
-			  .is_implemented = false, .is_writable = false },
-			{ .name = "peak_incoherent", .key = "", .encoding = BaseEncoding::UINT,
-			  .min_value = 0U, .max_value = 65535U, .permitted_values = {},
-			  .is_implemented = false, .is_writable = false },
-			{ .name = "saadc_init_retry", .key = "", .encoding = BaseEncoding::UINT,
-			  .min_value = 0U, .max_value = 65535U, .permitted_values = {},
-			  .is_implemented = false, .is_writable = false }
+			ARG("stuck_recovery", UINT, 0U, 65535U),
+			ARG("coherence_recalib", UINT, 0U, 65535U),
+			ARG("dive_timeout", UINT, 0U, 65535U),
+			ARG("force_surface", UINT, 0U, 65535U),
+			ARG("spike_reject", UINT, 0U, 65535U),
+			ARG("peak_incoherent", UINT, 0U, 65535U),
+			ARG("saadc_init_retry", UINT, 0U, 65535U)
 		}
 	},
 	// GNSSBR response - simple acknowledgement
@@ -1453,46 +680,14 @@ const DTECommandMap command_map[] = {
 		.command = DTECommand::SMDDFU_RESP,
 		.prototype =
 		{
-			{
-				.name = "status",
-				.key = "",
-				.encoding = BaseEncoding::UINT,  // DFU response status code
-				.min_value = 0U,
-				.max_value = 0xFFU,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			},
-			{
-				.name = "dfu_mode",
-				.key = "",
-				.encoding = BaseEncoding::BOOLEAN,  // True if in DFU mode
-				.min_value = 0U,
-				.max_value = 1U,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			},
-			{
-				.name = "progress",
-				.key = "",
-				.encoding = BaseEncoding::UINT,  // Progress percentage 0-100
-				.min_value = 0U,
-				.max_value = 100U,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			},
-			{
-				.name = "info",
-				.key = "",
-				.encoding = BaseEncoding::TEXT,  // Additional info (bootloader version, etc.)
-				.min_value = "",
-				.max_value = "",
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			}
+			// DFU response status code
+			ARG("status", UINT, 0U, 0xFFU),
+			// True if in DFU mode
+			ARG("dfu_mode", BOOLEAN, 0U, 1U),
+			// Progress percentage 0-100
+			ARG("progress", UINT, 0U, 100U),
+			// Additional info (bootloader version, etc.)
+			ARG("info", TEXT, "", "")
 		}
 	},
 	// COMCW response — status code + optional info string
@@ -1501,16 +696,8 @@ const DTECommandMap command_map[] = {
 		.command = DTECommand::COMCW_RESP,
 		.prototype =
 		{
-			{
-				.name = "status", .key = "", .encoding = BaseEncoding::UINT,
-				.min_value = 0U, .max_value = 0xFFU,
-				.permitted_values = {}, .is_implemented = false, .is_writable = false
-			},
-			{
-				.name = "info", .key = "", .encoding = BaseEncoding::TEXT,
-				.min_value = "", .max_value = "",
-				.permitted_values = {}, .is_implemented = false, .is_writable = false
-			},
+			ARG("status", UINT, 0U, 0xFFU),
+			ARG("info", TEXT, "", ""),
 		}
 	},
 #if defined(ARGOS_SMD) && (ARGOS_SMD == 1)
@@ -1520,16 +707,7 @@ const DTECommandMap command_map[] = {
 		.command = DTECommand::SMDTST_RESP,
 		.prototype =
 		{
-			{
-				.name = "info",
-				.key = "",
-				.encoding = BaseEncoding::TEXT,
-				.min_value = "",
-				.max_value = "",
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			}
+			ARG("info", TEXT, "", "")
 		}
 	},
 #endif
@@ -1538,66 +716,12 @@ const DTECommandMap command_map[] = {
 		.command = DTECommand::SATVF_RESP,
 		.prototype =
 		{
-			{
-				.name = "hw_id",
-				.key = "",
-				.encoding = BaseEncoding::UINT,
-				.min_value = (unsigned int)0,
-				.max_value = (unsigned int)0,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			},
-			{
-				.name = "hw_addr",
-				.key = "",
-				.encoding = BaseEncoding::UINT,
-				.min_value = (unsigned int)0,
-				.max_value = (unsigned int)0,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			},
-			{
-				.name = "hw_seckey",
-				.key = "",
-				.encoding = BaseEncoding::TEXT,
-				.min_value = "",
-				.max_value = "",
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			},
-			{
-				.name = "hw_rconf",
-				.key = "",
-				.encoding = BaseEncoding::TEXT,
-				.min_value = "",
-				.max_value = "",
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			},
-			{
-				.name = "match",
-				.key = "",
-				.encoding = BaseEncoding::UINT,
-				.min_value = (unsigned int)0,
-				.max_value = (unsigned int)0,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			},
-			{
-				.name = "forced",
-				.key = "",
-				.encoding = BaseEncoding::UINT,
-				.min_value = (unsigned int)0,
-				.max_value = (unsigned int)0,
-				.permitted_values = {},
-				.is_implemented = false,
-				.is_writable = false
-			}
+			ARG("hw_id", UINT, (unsigned int)0, (unsigned int)0),
+			ARG("hw_addr", UINT, (unsigned int)0, (unsigned int)0),
+			ARG("hw_seckey", TEXT, "", ""),
+			ARG("hw_rconf", TEXT, "", ""),
+			ARG("match", UINT, (unsigned int)0, (unsigned int)0),
+			ARG("forced", UINT, (unsigned int)0, (unsigned int)0)
 		}
 	},
 #if defined(LORA_RAK3172) && (LORA_RAK3172 == 1)
@@ -1620,5 +744,7 @@ const DTECommandMap command_map[] = {
 	},
 #endif
 };
+
+// clang-format on
 
 const size_t command_map_size = sizeof(command_map) / sizeof(command_map[0]);
