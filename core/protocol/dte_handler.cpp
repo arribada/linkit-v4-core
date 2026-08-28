@@ -1497,6 +1497,7 @@ std::string DTEHandler::PWRON_REQ(int error_code, std::vector<BaseType>& arg_lis
 		GPIOPins::set(SAT_PWR_EN);
 #else
 		GPIOPins::set(SAT_PWR_EN);
+		GPIOPins::release_to_pullup(SAT_RESET);
 		GPIOPins::set(SAT_EXTWAKEUP);
 #endif
 		break;
@@ -1540,8 +1541,10 @@ std::string DTEHandler::PWRON_REQ(int error_code, std::vector<BaseType>& arg_lis
 #elif defined(LORA_RAK3172) && (LORA_RAK3172 == 1)
 		GPIOPins::clear(SAT_PWR_EN);
 #else
-		GPIOPins::clear(SAT_PWR_EN);
 		GPIOPins::clear(SAT_EXTWAKEUP);
+		GPIOPins::init_pin(SAT_RESET);
+		GPIOPins::clear(SAT_RESET);
+		GPIOPins::clear(SAT_PWR_EN);
 #endif
 		GPIOPins::release_sensors_pwr();
 		break;
