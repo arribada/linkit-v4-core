@@ -2384,8 +2384,11 @@ TEST(ArgosTxService, FastlocHAccEncoding16bit)
 	CHECK(p500 != pmax);
 }
 
-// NOTE: LoRa fastloc packet tests require lora_tx_service.cpp in test build (not currently included).
-// LoRa fastloc encoding is validated via firmware build (build_linkitv4_lora.sh).
+// NOTE: lora_tx_service.cpp is now part of the TrackerTests build, so LoRaTxService
+// is compiled and linked here (and therefore warning-checked under -Werror in CI).
+// It has no test cases of its own yet: the shared behaviours -- critical-battery
+// gating, session TX limit, cooldown arming, device-error backoff, burst-state
+// reset -- are exercised only through their Argos twins in this file.
 
 // ============================================================================
 // COOLDOWN TESTS

@@ -213,6 +213,8 @@ target_sources(${PROJECT_NAME} PRIVATE
     "${ROOT_DIR}/core/services/argos_tx_service.cpp"
     "${ROOT_DIR}/core/services/argos_packet_builder.cpp"
     "${ROOT_DIR}/core/services/lora_packet_builder.cpp"
+    "${ROOT_DIR}/core/services/lora_tx_service.cpp"
+    "${ROOT_DIR}/core/scheduling/lora_tx_scheduler.cpp"
     "${ROOT_DIR}/core/services/depth_pile.cpp"
     "${ROOT_DIR}/core/services/rate_limiter.cpp"
     "${ROOT_DIR}/core/services/hauled_mode_service.cpp"
