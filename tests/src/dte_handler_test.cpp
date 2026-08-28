@@ -1678,6 +1678,62 @@ TEST(DTEHandler, PARMW_REQ_UnknownParamKey) {
 	STRCMP_EQUAL("$N;PARMW#005;XXXXX\r", resp.c_str());
 }
 
+// PyLinkit does not always push a whole configuration in one PARMW. A large set
+// is split into several commands, and the beacon may be reset between them. Each
+// batch must land without disturbing what an earlier one wrote.
+//
+// This works because PARMW_REQ only touches the parameters it was given, while
+// serialize_config() always writes the complete in-RAM table to config.dat. The
+// test pins that contract: nothing in a later batch may clear an earlier one,
+// and everything must survive a reload from flash.
+TEST(DTEHandler, PARMW_BatchedWritesDoNotClobberEachOther) {
+	std::string resp;
+
+	// Batch 1 -- Argos timing
+	std::string b1 = "$PARMW#010;ARP05=90,ARP16=8\r";
+	CHECK_TRUE(DTEAction::CONFIG_UPDATED == dte_handler->handle_dte_message(b1, resp));
+	STRCMP_EQUAL("$O;PARMW#000;\r", resp.c_str());
+	configuration_store->save_params();
+
+	// Batch 2 -- GNSS, a completely different part of the table
+	std::string b2 = "$PARMW#00F;GNP01=0,GNP02=1\r";
+	CHECK_TRUE(DTEAction::CONFIG_UPDATED == dte_handler->handle_dte_message(b2, resp));
+	STRCMP_EQUAL("$O;PARMW#000;\r", resp.c_str());
+	configuration_store->save_params();
+
+	// Batch 3 -- a string and a low-battery threshold
+	std::string b3 = "$PARMW#014;IDP11=FIELD,LBP02=25\r";
+	CHECK_TRUE(DTEAction::CONFIG_UPDATED == dte_handler->handle_dte_message(b3, resp));
+	STRCMP_EQUAL("$O;PARMW#000;\r", resp.c_str());
+	configuration_store->save_params();
+
+	// Every batch is still there, in RAM
+	CHECK_EQUAL(90U, configuration_store->read_param<unsigned int>(ParamID::TR_NOM));
+	CHECK_TRUE(BaseDepthPile::DEPTH_PILE_8
+	           == configuration_store->read_param<BaseDepthPile>(ParamID::ARGOS_DEPTH_PILE));
+	CHECK_FALSE(configuration_store->read_param<bool>(ParamID::GNSS_EN));
+	CHECK_TRUE(configuration_store->read_param<bool>(ParamID::GNSS_HDOPFILT_EN));
+	STRCMP_EQUAL("FIELD", configuration_store->read_param<std::string>(ParamID::PROFILE_NAME).c_str());
+	CHECK_EQUAL(25U, configuration_store->read_param<unsigned int>(ParamID::LB_THRESHOLD));
+
+	// ...and after a reboot, read back from config.dat
+	delete store;
+	store = new LFSConfigurationStore(*ram_filesystem);
+	store->init();
+	configuration_store = store;
+
+	CHECK_EQUAL(90U, configuration_store->read_param<unsigned int>(ParamID::TR_NOM));
+	CHECK_TRUE(BaseDepthPile::DEPTH_PILE_8
+	           == configuration_store->read_param<BaseDepthPile>(ParamID::ARGOS_DEPTH_PILE));
+	CHECK_FALSE(configuration_store->read_param<bool>(ParamID::GNSS_EN));
+	CHECK_TRUE(configuration_store->read_param<bool>(ParamID::GNSS_HDOPFILT_EN));
+	STRCMP_EQUAL("FIELD", configuration_store->read_param<std::string>(ParamID::PROFILE_NAME).c_str());
+	CHECK_EQUAL(25U, configuration_store->read_param<unsigned int>(ParamID::LB_THRESHOLD));
+
+	// A parameter no batch touched still holds its factory default
+	CHECK_EQUAL(0U, configuration_store->read_param<unsigned int>(ParamID::ARGOS_DECID));
+}
+
 TEST(DTEHandler, SATDP_REQ_NoSatelliteDevice) {
 	DTECommand command;
 	std::string req;
