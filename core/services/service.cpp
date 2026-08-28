@@ -766,11 +766,12 @@ std::string ServiceManager::bench_schedule_report() {
 void Service::reschedule(bool immediate) {
 	DEBUG_TRACE("Service::reschedule: service %s", m_name);
 	deschedule();
+
 	// Underwater short-circuit: re-arming here is wasted work and creates a
 	// log-spam loop. Sequence: notify_underwater_state(true) calls deschedule()
 	// then service_cancel() — and for services like GPSService, service_cancel()
 	// invokes service_complete() with shall_reschedule=true, which lands back
-	// here. The m_task_period lambda below already gates service_initiate() on
+	// here. run_scheduled_task() already gates service_initiate() on
 	// m_is_underwater, so the task would be a no-op, BUT it still arms a fresh
 	// m_task_timeout that fires ~70 s later, runs service_cancel() + reschedule()
 	// again, and the cycle repeats every ~70 s until resurface. The fix is to
@@ -781,120 +782,112 @@ void Service::reschedule(bool immediate) {
 		BENCH_SCHED_NOTE(SCHEDULE_DISABLED, "underwater");
 		return;
 	}
-	if (is_started()) {
-		if (service_is_enabled()) {
-			unsigned int next_schedule = immediate ? 0 : service_next_schedule_in_ms();
-			if (!m_is_initiated) {
-				if (next_schedule != SCHEDULE_DISABLED) {
-					DEBUG_TRACE("Service::reschedule: service %s scheduled in %u msecs", m_name, next_schedule);
-					BENCH_SCHED_NOTE(next_schedule, "scheduled");
-					m_last_schedule = next_schedule;
-					m_task_period = system_scheduler->post_task_prio(
-					    [this]() {
-						    // Barrier against unhandled exceptions in service code.
-						    // `service_initiate()` is virtual and runs user-defined logic that
-						    // may throw (e.g. ConfigStore::CONFIG_STORE_CORRUPTED, ErrorCode
-						    // enums, std::out_of_range from at(), bad_variant_access, etc.).
-						    // Without this catch, the exception escapes the scheduler task
-						    // runner and reaches std::terminate → __verbose_terminate_handler
-						    // → abort(), which on this platform hangs in fputc until WDT.
-						    // Catching here logs the failure and lets the service be
-						    // rescheduled on the next event/timer instead of bricking the FW.
-						    try {
-							    unsigned int timeout_ms = service_next_timeout();
-							    DEBUG_TRACE("Service::reschedule: service %s time out in %u msecs", m_name, timeout_ms);
-							    if (timeout_ms) {
-								    m_task_timeout = system_scheduler->post_task_prio(
-								        [this]() {
-									        try {
-										        DEBUG_TRACE("Service::reschedule: service %s timed out", m_name);
-										        service_cancel();
-										        if (m_is_initiated) notify_service_inactive();
-										        m_is_initiated = false;
-										        reschedule();
-									        } catch (ErrorCode e) {
-										        DEBUG_ERROR("Service::reschedule: timeout ErrorCode=%d in service %s — "
-												            "recovering",
-												            (int)e, m_name);
-										        m_is_initiated = false;
-									        } catch (const std::exception &e) {
-										        DEBUG_ERROR("Service::reschedule: timeout std::exception in service "
-												            "%s: %s — recovering",
-												            m_name, e.what());
-										        m_is_initiated = false;
-									        } catch (...) {
-										        DEBUG_ERROR("Service::reschedule: timeout unknown exception in service "
-												            "%s — recovering",
-												            m_name);
-										        m_is_initiated = false;
-									        }
-								        },
-								        "ServiceTimeoutPeriod", Scheduler::DEFAULT_PRIORITY, timeout_ms);
-							    }
-
-							    if (!m_is_underwater) {
-								    DEBUG_TRACE("Service::reschedule: service %s active", m_name);
-								    m_is_initiated = true;
-								    if (service_is_active_on_initiate()) notify_service_active();
-								    service_initiate();
-							    } else {
-								    DEBUG_TRACE("Service::reschedule: service %s can't run underwater", m_name);
-							    }
-						    } catch (ErrorCode e) {
-							    // Firmware-thrown enum (CONFIG_STORE_CORRUPTED, RESOURCE_NOT_AVAILABLE, etc.)
-							    DEBUG_ERROR("Service::reschedule: ErrorCode=%d in service %s task — recovering", (int)e,
-								            m_name);
-							    // Cancel the safety-net timeout we just armed: otherwise the service
-							    // is stuck waiting for `timeout_ms` before any retry. (See QA review B2.)
-							    system_scheduler->cancel_task(m_task_timeout);
-							    m_is_initiated = false;
-						    } catch (const std::bad_variant_access &e) {
-							    // Type mismatch when reading config_store params (variant<>).
-							    DEBUG_ERROR("Service::reschedule: bad_variant_access in service %s task (config type "
-								            "mismatch?) — recovering",
-								            m_name);
-							    system_scheduler->cancel_task(m_task_timeout);
-							    m_is_initiated = false;
-						    } catch (const std::out_of_range &e) {
-							    // Index out of range — typically from std::array::at() or vector::at().
-							    DEBUG_ERROR("Service::reschedule: out_of_range in service %s task (%s) — recovering",
-								            m_name, e.what());
-							    system_scheduler->cancel_task(m_task_timeout);
-							    m_is_initiated = false;
-						    } catch (const std::exception &e) {
-							    // Any other std exception (bad_alloc, runtime_error, …)
-							    DEBUG_ERROR("Service::reschedule: std::exception in service %s task: %s — recovering",
-								            m_name, e.what());
-							    system_scheduler->cancel_task(m_task_timeout);
-							    m_is_initiated = false;
-						    } catch (...) {
-							    // Last-resort barrier. Without this, the exception escapes the
-							    // scheduler runner and propagates up to terminate() →
-							    // __verbose_terminate_handler → abort() → fputc-hang → WDT
-							    // (15 min on this board). Log and recover instead.
-							    DEBUG_ERROR("Service::reschedule: unknown exception in service %s task — recovering",
-								            m_name);
-							    system_scheduler->cancel_task(m_task_timeout);
-							    m_is_initiated = false;
-						    }
-					    },
-					    "ServicePeriod", Scheduler::DEFAULT_PRIORITY, next_schedule);
-				} else {
-					DEBUG_TRACE("Service::reschedule: service %s schedule currently disabled", m_name);
-					BENCH_SCHED_NOTE(SCHEDULE_DISABLED, "no-schedule");
-				}
-			} else {
-				DEBUG_TRACE("Service::reschedule: service %s already initiated", m_name);
-				BENCH_SCHED_NOTE(next_schedule, "already-initiated");
-			}
-		} else {
-			DEBUG_TRACE("Service::reschedule: service %s is not enabled", m_name);
-			BENCH_SCHED_NOTE(SCHEDULE_DISABLED, "not-enabled");
-		}
-	} else {
+	if (!is_started()) {
 		DEBUG_TRACE("Service::reschedule: service %s is stopped", m_name);
 		BENCH_SCHED_NOTE(SCHEDULE_DISABLED, "stopped");
+		return;
 	}
+	if (!service_is_enabled()) {
+		DEBUG_TRACE("Service::reschedule: service %s is not enabled", m_name);
+		BENCH_SCHED_NOTE(SCHEDULE_DISABLED, "not-enabled");
+		return;
+	}
+
+	// Computed BEFORE the m_is_initiated test, deliberately. This is virtual and
+	// the overrides have side effects — ArgosTxService::service_next_schedule_in_ms
+	// picks m_scheduled_task and m_scheduled_mode, arms the cooldown, refreshes
+	// the prepass status. Moving it below the test would silently stop all of
+	// that from happening on an already-initiated service.
+	unsigned int next_schedule = immediate ? 0 : service_next_schedule_in_ms();
+
+	if (m_is_initiated) {
+		DEBUG_TRACE("Service::reschedule: service %s already initiated", m_name);
+		BENCH_SCHED_NOTE(next_schedule, "already-initiated");
+		return;
+	}
+	if (next_schedule == SCHEDULE_DISABLED) {
+		DEBUG_TRACE("Service::reschedule: service %s schedule currently disabled", m_name);
+		BENCH_SCHED_NOTE(SCHEDULE_DISABLED, "no-schedule");
+		return;
+	}
+
+	DEBUG_TRACE("Service::reschedule: service %s scheduled in %u msecs", m_name, next_schedule);
+	BENCH_SCHED_NOTE(next_schedule, "scheduled");
+	m_last_schedule = next_schedule;
+	m_task_period = system_scheduler->post_task_prio([this]() { run_scheduled_task(); }, "ServicePeriod",
+	                                                 Scheduler::DEFAULT_PRIORITY, next_schedule);
+}
+
+/// @brief Body of the scheduled-period task: arm the timeout, then initiate.
+void Service::run_scheduled_task() {
+	// Barrier against unhandled exceptions in service code. service_initiate()
+	// is virtual and runs user-defined logic that may throw (ErrorCode enums,
+	// std::out_of_range from at(), bad_variant_access, …). Without this catch
+	// the exception escapes the scheduler task runner and reaches
+	// std::terminate → __verbose_terminate_handler → abort(), which on this
+	// platform hangs in fputc until the watchdog fires 15 minutes later.
+	try {
+		unsigned int timeout_ms = service_next_timeout();
+		DEBUG_TRACE("Service::reschedule: service %s time out in %u msecs", m_name, timeout_ms);
+		if (timeout_ms) {
+			m_task_timeout = system_scheduler->post_task_prio(
+			    [this]() { on_service_timeout(); }, "ServiceTimeoutPeriod", Scheduler::DEFAULT_PRIORITY, timeout_ms);
+		}
+
+		if (!m_is_underwater) {
+			DEBUG_TRACE("Service::reschedule: service %s active", m_name);
+			m_is_initiated = true;
+			if (service_is_active_on_initiate()) notify_service_active();
+			service_initiate();
+		} else {
+			DEBUG_TRACE("Service::reschedule: service %s can't run underwater", m_name);
+		}
+	} catch (...) {
+		// Cancel the safety-net timeout we just armed: otherwise the service is
+		// stuck waiting for timeout_ms before any retry. (See QA review B2.)
+		handle_task_exception("task", true);
+	}
+}
+
+/// @brief Body of the timeout task: cancel the service and re-arm it.
+void Service::on_service_timeout() {
+	try {
+		DEBUG_TRACE("Service::reschedule: service %s timed out", m_name);
+		service_cancel();
+		if (m_is_initiated) notify_service_inactive();
+		m_is_initiated = false;
+		reschedule();
+	} catch (...) {
+		// No cancel here: this IS m_task_timeout, and it has already fired.
+		handle_task_exception("timeout", false);
+	}
+}
+
+/// @brief Report the exception currently being handled, then recover.
+void Service::handle_task_exception(const char *where, bool cancel_timeout) {
+	try {
+		throw;  // re-match the live exception; UB if called outside a catch
+	} catch (ErrorCode e) {
+		// Firmware-thrown enum (CONFIG_STORE_CORRUPTED, RESOURCE_NOT_AVAILABLE, …)
+		DEBUG_ERROR("Service::reschedule: %s ErrorCode=%d in service %s — recovering", where, (int)e, m_name);
+	} catch (const std::bad_variant_access &) {
+		// Type mismatch when reading config_store params (variant<>).
+		DEBUG_ERROR("Service::reschedule: %s bad_variant_access in service %s (config type mismatch?) — recovering",
+		            where, m_name);
+	} catch (const std::out_of_range &e) {
+		// Index out of range — typically from std::array::at() or vector::at().
+		DEBUG_ERROR("Service::reschedule: %s out_of_range in service %s (%s) — recovering", where, m_name, e.what());
+	} catch (const std::exception &e) {
+		// Any other std exception (bad_alloc, runtime_error, …)
+		DEBUG_ERROR("Service::reschedule: %s std::exception in service %s: %s — recovering", where, m_name, e.what());
+	} catch (...) {
+		// Last-resort barrier. Without this the exception escapes the scheduler
+		// runner and propagates up to terminate() → abort() → fputc-hang → WDT.
+		DEBUG_ERROR("Service::reschedule: %s unknown exception in service %s — recovering", where, m_name);
+	}
+
+	if (cancel_timeout) system_scheduler->cancel_task(m_task_timeout);
+	m_is_initiated = false;
 }
 
 /// @brief Cancel all pending tasks (period + timeout).

@@ -72,6 +72,26 @@ private:
 
 	void reschedule(bool immediate = false);
 	void deschedule();
+
+	/// @brief Body of the scheduled-period task: arm the timeout, then initiate.
+	/// Runs from the scheduler, so it is the outermost frame service code has —
+	/// an exception escaping it reaches std::terminate.
+	void run_scheduled_task();
+
+	/// @brief Body of the timeout task: cancel the service and re-arm it.
+	void on_service_timeout();
+
+	/// @brief Report the exception currently being handled, then recover.
+	///
+	/// MUST be called from inside a `catch` block: it rethrows to re-match the
+	/// live exception, and `throw;` outside a handler calls std::terminate.
+	///
+	/// @param where           short tag for the log line ("task" / "timeout")
+	/// @param cancel_timeout  also cancel m_task_timeout. True on the period
+	///                        path, where the timeout has just been armed and
+	///                        would otherwise block any retry until it fires;
+	///                        false on the timeout path, which IS that task.
+	void handle_task_exception(const char *where, bool cancel_timeout);
 	void notify_log_updated(ServiceEventData &data);
 	void notify_service_active();
 	void notify_service_inactive();
