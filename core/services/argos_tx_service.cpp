@@ -334,373 +334,399 @@ unsigned int ArgosTxService::service_next_schedule_in_ms() {
 		return period_ms;
 	}
 
-	if (argos_config.mode == BaseArgosMode::OFF) {
+	if (argos_config.mode == BaseArgosMode::OFF) return Service::SCHEDULE_DISABLED;
+	if (argos_config.mode == BaseArgosMode::DOPPLER) return schedule_doppler(argos_config, now);
+	if (argos_config.mode == BaseArgosMode::SURFACING_BURST) return schedule_surfacing_burst(argos_config, now);
+	if (!argos_config.gnss_en) return schedule_without_gnss(argos_config, now);
+	if (!service_is_time_known()) {
+		DEBUG_INFO("ArgosTxService: RTC time not known yet — TX disabled until first time fix");
 		return Service::SCHEDULE_DISABLED;
-	} else if (argos_config.mode == BaseArgosMode::DOPPLER) {
-		// DOPPLER burst pattern (2026-05): sequence of up to
-		// SURFACING_BURST_MAX_MSG messages with progressive spacing
-		// (surfacing_burst_init_s + (n-1)*step_s, capped at max_s). Between
-		// sequences: tx_interval_s pause (0 = next sequence chains
-		// immediately, effectively continuous progressive Doppler).
-		// Auto-triggered, works identically with UW=0 or UW=1 (the DOPPLER
-		// branch has no UW gate). Reuses surfacing_burst_* params and
-		// SURFACING_BURST_MAX_MSG — no new DTE params. The SURFACING_BURST
-		// branch below is untouched.
-		//
-		// FastLoc / GNSS auto-promotion preserved: a fresh fix (<60 s) in
-		// the depth pile turns this slot into a GNSS Argos packet via
-		// process_gnss_burst (caller routes by mode of the latest entry).
+	}
+	return schedule_with_gnss(argos_config, now);
+}
+
+/// @brief DOPPLER: progressive Doppler sequence, bounded by SURFACING_BURST_MAX_MSG.
+/// Split out of service_next_schedule_in_ms(), which tested argos_config.mode
+/// nine times in 489 lines. The gates it runs first -- cooldown, rate limit,
+/// prepass, critical battery, certification -- are NOT repeated here.
+unsigned int ArgosTxService::schedule_doppler(ArgosConfig &argos_config, std::time_t now) {
+	// DOPPLER burst pattern (2026-05): sequence of up to
+	// SURFACING_BURST_MAX_MSG messages with progressive spacing
+	// (surfacing_burst_init_s + (n-1)*step_s, capped at max_s). Between
+	// sequences: tx_interval_s pause (0 = next sequence chains
+	// immediately, effectively continuous progressive Doppler).
+	// Auto-triggered, works identically with UW=0 or UW=1 (the DOPPLER
+	// branch has no UW gate). Reuses surfacing_burst_* params and
+	// SURFACING_BURST_MAX_MSG — no new DTE params. The SURFACING_BURST
+	// branch below is untouched.
+	//
+	// FastLoc / GNSS auto-promotion preserved: a fresh fix (<60 s) in
+	// the depth pile turns this slot into a GNSS Argos packet via
+	// process_gnss_burst (caller routes by mode of the latest entry).
+	if (should_promote_doppler_to_gnss(60)) {
+		DEBUG_INFO("ArgosTxService::DOPPLER mode: fresh FastLoc/FIX — promoting to GNSS TX");
+		m_scheduled_task = [this]() { process_gnss_burst(); };
+	} else {
+		m_scheduled_task = [this]() { process_doppler_burst(); };
+	}
+	m_scheduled_mode = argos_config.adaptive_modulation ? KineisModulation::VLDA4 : resolve_non_adaptive_modulation();
+
+	// Inter-sequence pause guard. If a reschedule fires while we are
+	// supposed to be paused (e.g., UW surfaced event, GPS log update),
+	// honor the remaining pause instead of restarting the sequence.
+	if (m_doppler_pause_until_rtc != 0 && now < m_doppler_pause_until_rtc) {
+		unsigned int remaining_s = (unsigned int)(m_doppler_pause_until_rtc - now);
+		DEBUG_TRACE("ArgosTxService::DOPPLER: in pause, %u s remaining", remaining_s);
+		m_sched.schedule_at(m_doppler_pause_until_rtc);
+		return remaining_s * 1000;
+	}
+	m_doppler_pause_until_rtc = 0;
+
+	unsigned int max_msg = configuration_store->read_param<unsigned int>(ParamID::SURFACING_BURST_MAX_MSG);
+
+	// End of sequence. m_doppler_seq_count is post-incremented in
+	// service_initiate, so reaching max_msg here means the Nth msg
+	// already TX'd. Reset count and arm the inter-sequence pause.
+	if (max_msg > 0 && m_doppler_seq_count >= max_msg) {
+		unsigned int inter_s = argos_config.tx_interval_s;
+		DEBUG_INFO("ArgosTxService::DOPPLER: sequence end (%u/%u), %s", m_doppler_seq_count, max_msg,
+		           inter_s == 0 ? "chaining next sequence" : "pausing then next sequence");
+		m_doppler_seq_count = 0;
+		if (inter_s > 0) {
+			m_doppler_pause_until_rtc = now + (std::time_t)inter_s;
+			m_sched.schedule_at(m_doppler_pause_until_rtc);
+			return inter_s * 1000;
+		}
+		// inter_s == 0: chain straight into next sequence — fall
+		// through to the count==0 path below (which spacing-guards
+		// the first msg against being too close to the last TX).
+	}
+
+	// Within sequence. count == 0 = first msg, immediate (spacing-guarded).
+	if (m_doppler_seq_count == 0) {
+		DEBUG_TRACE("ArgosTxService::DOPPLER: msg #1 (immediate)");
+		unsigned int delay_ms = apply_spacing_guard(0, argos_config.surfacing_burst_init_s, now);
+		if (delay_ms == 0) m_sched.schedule_at(now);
+		return delay_ms;
+	}
+
+	// Subsequent msg: progressive interval capped at max_s.
+	unsigned int interval_s =
+	    argos_config.surfacing_burst_init_s + (m_doppler_seq_count - 1) * argos_config.surfacing_burst_step_s;
+	if (interval_s > argos_config.surfacing_burst_max_s) interval_s = argos_config.surfacing_burst_max_s;
+	DEBUG_TRACE("ArgosTxService::DOPPLER: msg #%u in %u s", m_doppler_seq_count + 1, interval_s);
+	m_sched.schedule_at(now + (std::time_t)interval_s);
+	return interval_s * 1000;
+	return Service::SCHEDULE_DISABLED;
+}
+
+/// @brief SURFACING_BURST: Doppler phase, then GNSS phase once a fix lands.
+/// Split out of service_next_schedule_in_ms(), which tested argos_config.mode
+/// nine times in 489 lines. The gates it runs first -- cooldown, rate limit,
+/// prepass, critical battery, certification -- are NOT repeated here.
+unsigned int ArgosTxService::schedule_surfacing_burst(ArgosConfig &argos_config, std::time_t now) {
+	// 2026-05-25 modulation fix: SURFACING_BURST was unconditionally
+	// hardcoded to LDA2, ignoring both `argos_config.adaptive_modulation`
+	// and `resolve_non_adaptive_modulation()` (which returns the user's
+	// configured ARGOS_MOD_DEFAULT, e.g. LDK).
+	//
+	// Symptom observed 2026-05-25: user configured LDK + adaptive=OFF.
+	// SMD STM32 flash correctly held LDK (write_credentials_from_config
+	// wrote + saved master RCONF, ARGOS_CACHED_MODULATION=1=LDK). But
+	// every TX hit "TX mode 0 != current modulation 1 — call
+	// switch_modulation() first" because m_scheduled_mode was LDA2.
+	// ensure_modulation() then overwrote the saved LDK RCONF with LDA2
+	// at runtime, defeating the user's config silently AND causing a
+	// per-TX flash write to the STM32 (wear + latency).
+	//
+	// Fix: match the pattern used by DUTY_CYCLE / LEGACY / PASS_PREDICTION
+	// further down. With adaptive=OFF, m_scheduled_mode now equals the
+	// saved RCONF modulation → ensure_modulation() is a no-op → no
+	// per-TX flash write → user's LDK config is honored AND persisted.
+	m_scheduled_mode = argos_config.adaptive_modulation ? KineisModulation::LDA2 : resolve_non_adaptive_modulation();
+
+	// Phase 1: Doppler burst with progressive intervals until GNSS fix
+	if (m_is_surfacing_burst && !m_has_gnss_fix_since_surfacing) {
+		// Check max Doppler message limit (0 = unlimited)
+		unsigned int max_msg = configuration_store->read_param<unsigned int>(ParamID::SURFACING_BURST_MAX_MSG);
+		if (max_msg > 0 && m_doppler_burst_count >= max_msg) {
+			DEBUG_INFO("ArgosTxService::SURFACING_BURST: Doppler limit reached (%u/%u), stopping burst",
+			           m_doppler_burst_count, max_msg);
+			// Arm cooldown if trigger mode is END_OF_DOPPLER (max messages reached without fix)
+			unsigned int trigger = configuration_store->read_param<unsigned int>(ParamID::COOLDOWN_TRIGGER_MODE);
+			if (trigger == (unsigned int)BaseCooldownTrigger::END_OF_DOPPLER && !m_cooldown_armed) {
+				m_cooldown_armed = true;
+				DEBUG_INFO("ArgosTxService: cooldown armed (END_OF_DOPPLER, max msg)");
+			}
+			m_is_surfacing_burst = false;
+			m_awaiting_surfacing = true;
+			m_first_gnss_tx_sent = false;
+			return Service::SCHEDULE_DISABLED;
+		}
+
+		// FastLoc priority (2026-05): if a fresh FastLoc / FIX is in the
+		// depth pile, promote to GNSS phase immediately rather than
+		// wasting this slot on a position-less Doppler. Fall through
+		// to phase 2 below; do NOT execute the Doppler scheduling.
 		if (should_promote_doppler_to_gnss(60)) {
-			DEBUG_INFO("ArgosTxService::DOPPLER mode: fresh FastLoc/FIX — promoting to GNSS TX");
-			m_scheduled_task = [this]() { process_gnss_burst(); };
+			DEBUG_INFO("ArgosTxService::SURFACING_BURST: fresh FastLoc/FIX in pile — promoting to GNSS phase");
+			m_has_gnss_fix_since_surfacing = true;
+			// Fall through to "Phase 2" below.
 		} else {
 			m_scheduled_task = [this]() { process_doppler_burst(); };
-		}
-		m_scheduled_mode =
-		    argos_config.adaptive_modulation ? KineisModulation::VLDA4 : resolve_non_adaptive_modulation();
 
-		// Inter-sequence pause guard. If a reschedule fires while we are
-		// supposed to be paused (e.g., UW surfaced event, GPS log update),
-		// honor the remaining pause instead of restarting the sequence.
-		if (m_doppler_pause_until_rtc != 0 && now < m_doppler_pause_until_rtc) {
-			unsigned int remaining_s = (unsigned int)(m_doppler_pause_until_rtc - now);
-			DEBUG_TRACE("ArgosTxService::DOPPLER: in pause, %u s remaining", remaining_s);
-			m_sched.schedule_at(m_doppler_pause_until_rtc);
-			return remaining_s * 1000;
-		}
-		m_doppler_pause_until_rtc = 0;
-
-		unsigned int max_msg = configuration_store->read_param<unsigned int>(ParamID::SURFACING_BURST_MAX_MSG);
-
-		// End of sequence. m_doppler_seq_count is post-incremented in
-		// service_initiate, so reaching max_msg here means the Nth msg
-		// already TX'd. Reset count and arm the inter-sequence pause.
-		if (max_msg > 0 && m_doppler_seq_count >= max_msg) {
-			unsigned int inter_s = argos_config.tx_interval_s;
-			DEBUG_INFO("ArgosTxService::DOPPLER: sequence end (%u/%u), %s", m_doppler_seq_count, max_msg,
-			           inter_s == 0 ? "chaining next sequence" : "pausing then next sequence");
-			m_doppler_seq_count = 0;
-			if (inter_s > 0) {
-				m_doppler_pause_until_rtc = now + (std::time_t)inter_s;
-				m_sched.schedule_at(m_doppler_pause_until_rtc);
-				return inter_s * 1000;
-			}
-			// inter_s == 0: chain straight into next sequence — fall
-			// through to the count==0 path below (which spacing-guards
-			// the first msg against being too close to the last TX).
-		}
-
-		// Within sequence. count == 0 = first msg, immediate (spacing-guarded).
-		if (m_doppler_seq_count == 0) {
-			DEBUG_TRACE("ArgosTxService::DOPPLER: msg #1 (immediate)");
-			unsigned int delay_ms = apply_spacing_guard(0, argos_config.surfacing_burst_init_s, now);
-			if (delay_ms == 0) m_sched.schedule_at(now);
-			return delay_ms;
-		}
-
-		// Subsequent msg: progressive interval capped at max_s.
-		unsigned int interval_s =
-		    argos_config.surfacing_burst_init_s + (m_doppler_seq_count - 1) * argos_config.surfacing_burst_step_s;
-		if (interval_s > argos_config.surfacing_burst_max_s) interval_s = argos_config.surfacing_burst_max_s;
-		DEBUG_TRACE("ArgosTxService::DOPPLER: msg #%u in %u s", m_doppler_seq_count + 1, interval_s);
-		m_sched.schedule_at(now + (std::time_t)interval_s);
-		return interval_s * 1000;
-	} else if (argos_config.mode == BaseArgosMode::SURFACING_BURST) {
-		// 2026-05-25 modulation fix: SURFACING_BURST was unconditionally
-		// hardcoded to LDA2, ignoring both `argos_config.adaptive_modulation`
-		// and `resolve_non_adaptive_modulation()` (which returns the user's
-		// configured ARGOS_MOD_DEFAULT, e.g. LDK).
-		//
-		// Symptom observed 2026-05-25: user configured LDK + adaptive=OFF.
-		// SMD STM32 flash correctly held LDK (write_credentials_from_config
-		// wrote + saved master RCONF, ARGOS_CACHED_MODULATION=1=LDK). But
-		// every TX hit "TX mode 0 != current modulation 1 — call
-		// switch_modulation() first" because m_scheduled_mode was LDA2.
-		// ensure_modulation() then overwrote the saved LDK RCONF with LDA2
-		// at runtime, defeating the user's config silently AND causing a
-		// per-TX flash write to the STM32 (wear + latency).
-		//
-		// Fix: match the pattern used by DUTY_CYCLE / LEGACY / PASS_PREDICTION
-		// further down. With adaptive=OFF, m_scheduled_mode now equals the
-		// saved RCONF modulation → ensure_modulation() is a no-op → no
-		// per-TX flash write → user's LDK config is honored AND persisted.
-		m_scheduled_mode =
-		    argos_config.adaptive_modulation ? KineisModulation::LDA2 : resolve_non_adaptive_modulation();
-
-		// Phase 1: Doppler burst with progressive intervals until GNSS fix
-		if (m_is_surfacing_burst && !m_has_gnss_fix_since_surfacing) {
-			// Check max Doppler message limit (0 = unlimited)
-			unsigned int max_msg = configuration_store->read_param<unsigned int>(ParamID::SURFACING_BURST_MAX_MSG);
-			if (max_msg > 0 && m_doppler_burst_count >= max_msg) {
-				DEBUG_INFO("ArgosTxService::SURFACING_BURST: Doppler limit reached (%u/%u), stopping burst",
-				           m_doppler_burst_count, max_msg);
-				// Arm cooldown if trigger mode is END_OF_DOPPLER (max messages reached without fix)
-				unsigned int trigger = configuration_store->read_param<unsigned int>(ParamID::COOLDOWN_TRIGGER_MODE);
-				if (trigger == (unsigned int)BaseCooldownTrigger::END_OF_DOPPLER && !m_cooldown_armed) {
-					m_cooldown_armed = true;
-					DEBUG_INFO("ArgosTxService: cooldown armed (END_OF_DOPPLER, max msg)");
-				}
-				m_is_surfacing_burst = false;
-				m_awaiting_surfacing = true;
-				m_first_gnss_tx_sent = false;
-				return Service::SCHEDULE_DISABLED;
-			}
-
-			// FastLoc priority (2026-05): if a fresh FastLoc / FIX is in the
-			// depth pile, promote to GNSS phase immediately rather than
-			// wasting this slot on a position-less Doppler. Fall through
-			// to phase 2 below; do NOT execute the Doppler scheduling.
-			if (should_promote_doppler_to_gnss(60)) {
-				DEBUG_INFO("ArgosTxService::SURFACING_BURST: fresh FastLoc/FIX in pile — promoting to GNSS phase");
-				m_has_gnss_fix_since_surfacing = true;
-				// Fall through to "Phase 2" below.
-			} else {
-				m_scheduled_task = [this]() { process_doppler_burst(); };
-
-				// First message is immediate (0 delay) — but apply spacing
-				// guard if a prior TX (e.g. from a prior session or a back-
-				// to-back transition) is too recent.
-				if (m_doppler_burst_count == 0) {
-					DEBUG_TRACE("ArgosTxService::SURFACING_BURST: Doppler #%u (immediate)", m_doppler_burst_count + 1);
-					unsigned int delay_ms = apply_spacing_guard(0, argos_config.surfacing_burst_init_s, now);
-					if (delay_ms == 0) m_sched.schedule_at(now);
-					return delay_ms;
-				}
-
-				// Progressive interval: init + (count-1) * step, capped at max
-				unsigned int interval_s = argos_config.surfacing_burst_init_s
-				                          + (m_doppler_burst_count - 1) * argos_config.surfacing_burst_step_s;
-				if (interval_s > argos_config.surfacing_burst_max_s) interval_s = argos_config.surfacing_burst_max_s;
-
-				// Demoted to TRACE: per progressive ping. Burst start/end markers
-				// stay at INFO; intermediate scheduling is verbose forensics.
-				DEBUG_TRACE("ArgosTxService::SURFACING_BURST: Doppler #%u in %u s", m_doppler_burst_count + 1,
-				            interval_s);
-				m_sched.schedule_at(now + interval_s);
-				return interval_s * 1000;
-			}
-			// Promote branch fell through: continue to Phase 2 below.
-		}
-
-		// Phase 2: GNSS fix available — switch to normal GNSS TX with tx_interval_s
-		if (m_has_gnss_fix_since_surfacing) {
-			if (!service_is_time_known()) {
-				DEBUG_TRACE("ArgosTxService::SURFACING_BURST: GNSS phase but RTC not set");
-				return Service::SCHEDULE_DISABLED;
-			}
-			if (m_depth_pile_manager.eligible() == 0) {
-				DEBUG_TRACE("ArgosTxService::SURFACING_BURST: GNSS phase but no eligible entries");
-				m_is_surfacing_burst = false;
-				m_awaiting_surfacing = true;
-				m_has_gnss_fix_since_surfacing = false;
-				m_first_gnss_tx_sent = false;
-				return Service::SCHEDULE_DISABLED;
-			}
-
-			if (argos_config.sensor_tx_enable) {
-				m_scheduled_task = [this]() { process_sensor_burst(); };
-			} else {
-				m_scheduled_task = [this]() { process_gnss_burst(); };
-			}
-
-			// First GNSS TX is immediate after fix, then use tx_interval_s
-			// Note: m_first_gnss_tx_sent is set in service_initiate(), not here,
-			// because scheduling can be called while a TX is still in progress.
-			if (!m_first_gnss_tx_sent) {
-				DEBUG_INFO("ArgosTxService::SURFACING_BURST: GNSS TX #1 (immediate after fix)");
-				// Spacing guard (2026-05): if a Doppler TX just completed
-				// seconds ago and the GPS fix arrived right after, firing
-				// the first GNSS TX immediately would put 2 TX back-to-back
-				// (TCXO drift + CLS rate-limit risk). Defer to at least
-				// surfacing_burst_init_s after the previous TX.
+			// First message is immediate (0 delay) — but apply spacing
+			// guard if a prior TX (e.g. from a prior session or a back-
+			// to-back transition) is too recent.
+			if (m_doppler_burst_count == 0) {
+				DEBUG_TRACE("ArgosTxService::SURFACING_BURST: Doppler #%u (immediate)", m_doppler_burst_count + 1);
 				unsigned int delay_ms = apply_spacing_guard(0, argos_config.surfacing_burst_init_s, now);
 				if (delay_ms == 0) m_sched.schedule_at(now);
 				return delay_ms;
 			}
 
-			// Demoted to TRACE: per Phase-2 ping. The "GNSS TX #1" INFO at burst
-			// promotion already marks the entry; per-ping interval is verbose.
-			DEBUG_TRACE("ArgosTxService::SURFACING_BURST: GNSS TX in %u s", argos_config.tx_interval_s);
-			return m_sched.schedule_legacy(argos_config, now);
-		}
+			// Progressive interval: init + (count-1) * step, capped at max
+			unsigned int interval_s =
+			    argos_config.surfacing_burst_init_s + (m_doppler_burst_count - 1) * argos_config.surfacing_burst_step_s;
+			if (interval_s > argos_config.surfacing_burst_max_s) interval_s = argos_config.surfacing_burst_max_s;
 
-		// Burst ended — wait for next surfacing event
-		if (m_awaiting_surfacing) {
-			return Service::SCHEDULE_DISABLED;
+			// Demoted to TRACE: per progressive ping. Burst start/end markers
+			// stay at INFO; intermediate scheduling is verbose forensics.
+			DEBUG_TRACE("ArgosTxService::SURFACING_BURST: Doppler #%u in %u s", m_doppler_burst_count + 1, interval_s);
+			m_sched.schedule_at(now + interval_s);
+			return interval_s * 1000;
 		}
-
-		// Not yet surfaced (boot): send Doppler at legacy rate
-		m_scheduled_task = [this]() { process_doppler_burst(); };
-		return m_sched.schedule_legacy(argos_config, now);
-	} else {
-		if (!argos_config.gnss_en) {
-			// BaseGnssStrategy::REUSE_LAST (Plan 1 follow-up): no GPS power-on
-			// but the TX uses the most recent cached fix from the depth pile
-			// (peek without consume, age-checked vs GNSS_REUSE_FIX_MAX_AGE_S).
-			// If no usable cached entry, process_gnss_burst_from_cached()
-			// internally falls back to a Doppler-only TX so the cycle still
-			// happens. For FRESH and OFF, the existing process_doppler_burst
-			// path is preserved exactly (no behavior change).
-			if (argos_config.gnss_strategy == BaseGnssStrategy::REUSE_LAST) {
-				m_scheduled_task = [this]() { process_gnss_burst_from_cached(); };
-			} else if (should_promote_doppler_to_gnss(60)) {
-				// FastLoc priority (2026-05): a fresh FastLoc / FIX in the
-				// pile is more useful than a position-less Doppler. Use
-				// process_gnss_burst — it auto-selects the FastLoc packet
-				// builder for FASTLOC entries (argos_tx_service.cpp ~1020).
-				DEBUG_INFO("ArgosTxService: fresh FastLoc/FIX in pile — promoting Doppler slot to GNSS TX");
-				m_scheduled_task = [this]() { process_gnss_burst(); };
-			} else {
-				m_scheduled_task = [this]() { process_doppler_burst(); };
-			}
-			if (argos_config.mode == BaseArgosMode::DUTY_CYCLE) {
-				m_scheduled_mode =
-				    argos_config.adaptive_modulation ? KineisModulation::VLDA4 : resolve_non_adaptive_modulation();
-				return report_duty_cycle_schedule(m_sched.schedule_duty_cycle(argos_config, now), argos_config);
-			}
-			if (argos_config.mode == BaseArgosMode::LEGACY) {
-				m_scheduled_mode =
-				    argos_config.adaptive_modulation ? KineisModulation::VLDA4 : resolve_non_adaptive_modulation();
-				return m_sched.schedule_legacy(argos_config, now);
-			}
-			// Only DUTY_CYCLE and LEGACY know how to do without the GNSS. Any
-			// other mode landing here — PASS_PREDICTION in practice — has NO
-			// scheduling branch and exits disabled. It used to be a bare
-			// `return`: no trace, mute beacon, and nothing to diagnose it with
-			// in the field. The incompatibility is reported at startup in
-			// service_init(); we say it again here so the log states WHY
-			// no transmission is scheduled any more.
-			DEBUG_ERROR("ArgosTxService: mode %d avec GNSS_EN=0 — aucun ordonnancement possible, "
-			            "TX desactive (configuration incompatible)",
-			            static_cast<int>(argos_config.mode));
-			if (status_led) status_led->flash(RGBLedColor::RED, 200);
-			return Service::SCHEDULE_DISABLED;
-		} else if (!service_is_time_known()) {
-			DEBUG_INFO("ArgosTxService: RTC time not known yet — TX disabled until first time fix");
-			return Service::SCHEDULE_DISABLED;
-		}
-		// 2026-08 — THE FIRST-MESSAGE LOCK HAS BEEN REMOVED.
-		//
-		// It held back EVERY transmission, presence heartbeat included, as
-		// long as no valid GPS fix had landed since power-on. A beacon that
-		// restarted without ever getting a fix back — broken receiver,
-		// blocked sky — therefore vanished for good from the screens:
-		// neither position nor sign of life. That is precisely what would
-		// have happened to the field tag of 2026-08-22 if a WDT or an OTA
-		// had occurred during the three days of GNSS outage.
-		//
-		// The original rationale (v3 parity: "time known" implied "the GNSS
-		// set the time") does not hold: in Doppler, LEGACY or DUTY_CYCLE the
-		// beacon transmits at its period and it is the ground segment that
-		// rebuilds the position from the reception instants — its clock does
-		// not enter the computation. Only pass prediction needs a correct
-		// time and position, and it has its own guard in
-		// ArgosTxScheduler::schedule_prepass.
-		//
-		// RSPB was already exempt from this lock, for exactly that reason.
-		//
-		// What does stay conditional, on the other hand, is the time-sync
-		// burst: it CARRIES the time, so transmitting it on a clock the GNSS
-		// has not corrected would amount to broadcasting a wrong date.
-		if (m_is_first_tx && argos_config.time_sync_burst_en && m_gps_fix_corrected_clock) {
-			// Provisional modulation, like LEGACY/DUTY_CYCLE further down:
-			// adaptive -> LDA2 (process_time_sync_burst switches back to LDK
-			// depending on size), non-adaptive -> master RCONF. Before 2026-06-25
-			// it was LDA2 forced unconditionally (cf. user point).
-			m_scheduled_mode =
-			    argos_config.adaptive_modulation ? KineisModulation::LDA2 : resolve_non_adaptive_modulation();
-			m_scheduled_task = [this]() { process_time_sync_burst(); };
-			m_sched.schedule_at(now);
-			return 0;
-		}
-		if (m_depth_pile_manager.eligible() == 0) {
-			DEBUG_INFO("ArgosTxService: depth pile has no eligible entries (NTRY exhausted or empty) — TX disabled "
-			           "until next GPS entry");
-			return Service::SCHEDULE_DISABLED;
-		}
-		if (argos_config.mode == BaseArgosMode::DUTY_CYCLE) {
-			// Non-adaptive: honor the master RCONF's actual modulation
-			// (decoded from AT+RCONF=? at init on KIM2; LDA2 on SMD).
-			// Adaptive: default to LDA2; process_*_burst will switch to
-			// LDK if the payload fits (96/128-bit packets).
-			m_scheduled_mode =
-			    argos_config.adaptive_modulation ? KineisModulation::LDA2 : resolve_non_adaptive_modulation();
-#ifdef BOARD_RSPB
-			if (argos_config.adaptive_modulation && argos_config.sensor_tx_enable) {
-				unsigned int pkt_fmt = configuration_store->read_param<unsigned int>(ParamID::RSPB_PACKET_FORMAT);
-				if (pkt_fmt == 1) m_scheduled_mode = KineisModulation::LDK;
-			}
-#endif
-			if (argos_config.sensor_tx_enable) {
-				m_scheduled_task = [this]() { process_sensor_burst(); };
-			} else {
-				m_scheduled_task = [this]() { process_gnss_burst(); };
-			}
-			return report_duty_cycle_schedule(m_sched.schedule_duty_cycle(argos_config, now), argos_config);
-		}
-		if (argos_config.mode == BaseArgosMode::LEGACY) {
-			m_scheduled_mode =
-			    argos_config.adaptive_modulation ? KineisModulation::LDA2 : resolve_non_adaptive_modulation();
-#ifdef BOARD_RSPB
-			if (argos_config.adaptive_modulation && argos_config.sensor_tx_enable) {
-				unsigned int pkt_fmt = configuration_store->read_param<unsigned int>(ParamID::RSPB_PACKET_FORMAT);
-				if (pkt_fmt == 1) m_scheduled_mode = KineisModulation::LDK;
-			}
-#endif
-			if (argos_config.sensor_tx_enable) {
-				m_scheduled_task = [this]() { process_sensor_burst(); };
-			} else {
-				m_scheduled_task = [this]() { process_gnss_burst(); };
-			}
-			return m_sched.schedule_legacy(argos_config, now);
-		}
-		if (argos_config.mode == BaseArgosMode::PASS_PREDICTION) {
-			m_scheduled_mode =
-			    argos_config.adaptive_modulation ? KineisModulation::LDA2 : resolve_non_adaptive_modulation();
-			if (argos_config.sensor_tx_enable) {
-				m_scheduled_task = [this]() { process_sensor_burst(); };
-			} else {
-				m_scheduled_task = [this]() { process_gnss_burst(); };
-			}
-			// AOP unusable (missing or expired) -> fall back to PERIODIC.
-			// We used to return SCHEDULE_DISABLED: the beacon stayed mute
-			// until the next GPS entry, with nothing to signal it. Staying
-			// silent is the worse of the two evils; better to transmit
-			// blind than not at all.
-			unsigned int age_s = 0;
-			AopEtat etat = aop_etat(argos_config, now, age_s);
-			if (etat != AopEtat::UTILISABLE) {
-				DEBUG_WARN("ArgosTxService: prepass impossible — %s (age=%u s, limite=%u j) — repli periodique",
-				           aop_etat_texte(etat), age_s, argos_config.aop_max_age_days);
-				refresh_prepass_status(argos_config, now, 0);
-				return m_sched.schedule_legacy(argos_config, now);
-			}
-			BasePassPredict &pass_predict = configuration_store->read_pass_predict();
-			// m_scheduled_mode is resolved just above and is no longer
-			// touched by the scheduler.
-			unsigned int schedule = m_sched.schedule_prepass(argos_config, pass_predict, now);
-			if (schedule == ArgosTxScheduler::INVALID_SCHEDULE) {
-				DEBUG_WARN("ArgosTxService: aucun passage calculable — repli periodique");
-				refresh_prepass_status(argos_config, now, 0);
-				return m_sched.schedule_legacy(argos_config, now);
-			}
-			// Safeguard: a window too far away must not block transmissions
-			// for hours. Beyond SAT_PREPASS_MAX_WAIT_S we transmit in
-			// periodic mode (0 = no safeguard).
-			static constexpr unsigned int MS_PER_S = 1000;
-			if (argos_config.prepass_max_wait_s && schedule > argos_config.prepass_max_wait_s * MS_PER_S) {
-				DEBUG_INFO("ArgosTxService: prochaine fenetre dans %u s > attente max %u s — repli periodique",
-				           schedule / MS_PER_S, argos_config.prepass_max_wait_s);
-				refresh_prepass_status(argos_config, now, now + schedule / MS_PER_S);
-				return m_sched.schedule_legacy(argos_config, now);
-			}
-			refresh_prepass_status(argos_config, now, now + schedule / MS_PER_S);
-			return schedule;
-		}
+		// Promote branch fell through: continue to Phase 2 below.
 	}
 
+	// Phase 2: GNSS fix available — switch to normal GNSS TX with tx_interval_s
+	if (m_has_gnss_fix_since_surfacing) {
+		if (!service_is_time_known()) {
+			DEBUG_TRACE("ArgosTxService::SURFACING_BURST: GNSS phase but RTC not set");
+			return Service::SCHEDULE_DISABLED;
+		}
+		if (m_depth_pile_manager.eligible() == 0) {
+			DEBUG_TRACE("ArgosTxService::SURFACING_BURST: GNSS phase but no eligible entries");
+			m_is_surfacing_burst = false;
+			m_awaiting_surfacing = true;
+			m_has_gnss_fix_since_surfacing = false;
+			m_first_gnss_tx_sent = false;
+			return Service::SCHEDULE_DISABLED;
+		}
+
+		if (argos_config.sensor_tx_enable) {
+			m_scheduled_task = [this]() { process_sensor_burst(); };
+		} else {
+			m_scheduled_task = [this]() { process_gnss_burst(); };
+		}
+
+		// First GNSS TX is immediate after fix, then use tx_interval_s
+		// Note: m_first_gnss_tx_sent is set in service_initiate(), not here,
+		// because scheduling can be called while a TX is still in progress.
+		if (!m_first_gnss_tx_sent) {
+			DEBUG_INFO("ArgosTxService::SURFACING_BURST: GNSS TX #1 (immediate after fix)");
+			// Spacing guard (2026-05): if a Doppler TX just completed
+			// seconds ago and the GPS fix arrived right after, firing
+			// the first GNSS TX immediately would put 2 TX back-to-back
+			// (TCXO drift + CLS rate-limit risk). Defer to at least
+			// surfacing_burst_init_s after the previous TX.
+			unsigned int delay_ms = apply_spacing_guard(0, argos_config.surfacing_burst_init_s, now);
+			if (delay_ms == 0) m_sched.schedule_at(now);
+			return delay_ms;
+		}
+
+		// Demoted to TRACE: per Phase-2 ping. The "GNSS TX #1" INFO at burst
+		// promotion already marks the entry; per-ping interval is verbose.
+		DEBUG_TRACE("ArgosTxService::SURFACING_BURST: GNSS TX in %u s", argos_config.tx_interval_s);
+		return m_sched.schedule_legacy(argos_config, now);
+	}
+
+	// Burst ended — wait for next surfacing event
+	if (m_awaiting_surfacing) {
+		return Service::SCHEDULE_DISABLED;
+	}
+
+	// Not yet surfaced (boot): send Doppler at legacy rate
+	m_scheduled_task = [this]() { process_doppler_burst(); };
+	return m_sched.schedule_legacy(argos_config, now);
 	return Service::SCHEDULE_DISABLED;
 }
+
+/// @brief GNSS_EN=0: only DUTY_CYCLE and LEGACY can schedule without a position.
+/// Split out of service_next_schedule_in_ms(), which tested argos_config.mode
+/// nine times in 489 lines. The gates it runs first -- cooldown, rate limit,
+/// prepass, critical battery, certification -- are NOT repeated here.
+unsigned int ArgosTxService::schedule_without_gnss(ArgosConfig &argos_config, std::time_t now) {
+	// BaseGnssStrategy::REUSE_LAST (Plan 1 follow-up): no GPS power-on
+	// but the TX uses the most recent cached fix from the depth pile
+	// (peek without consume, age-checked vs GNSS_REUSE_FIX_MAX_AGE_S).
+	// If no usable cached entry, process_gnss_burst_from_cached()
+	// internally falls back to a Doppler-only TX so the cycle still
+	// happens. For FRESH and OFF, the existing process_doppler_burst
+	// path is preserved exactly (no behavior change).
+	if (argos_config.gnss_strategy == BaseGnssStrategy::REUSE_LAST) {
+		m_scheduled_task = [this]() { process_gnss_burst_from_cached(); };
+	} else if (should_promote_doppler_to_gnss(60)) {
+		// FastLoc priority (2026-05): a fresh FastLoc / FIX in the
+		// pile is more useful than a position-less Doppler. Use
+		// process_gnss_burst — it auto-selects the FastLoc packet
+		// builder for FASTLOC entries (argos_tx_service.cpp ~1020).
+		DEBUG_INFO("ArgosTxService: fresh FastLoc/FIX in pile — promoting Doppler slot to GNSS TX");
+		m_scheduled_task = [this]() { process_gnss_burst(); };
+	} else {
+		m_scheduled_task = [this]() { process_doppler_burst(); };
+	}
+	if (argos_config.mode == BaseArgosMode::DUTY_CYCLE) {
+		m_scheduled_mode =
+		    argos_config.adaptive_modulation ? KineisModulation::VLDA4 : resolve_non_adaptive_modulation();
+		return report_duty_cycle_schedule(m_sched.schedule_duty_cycle(argos_config, now), argos_config);
+	}
+	if (argos_config.mode == BaseArgosMode::LEGACY) {
+		m_scheduled_mode =
+		    argos_config.adaptive_modulation ? KineisModulation::VLDA4 : resolve_non_adaptive_modulation();
+		return m_sched.schedule_legacy(argos_config, now);
+	}
+	// Only DUTY_CYCLE and LEGACY know how to do without the GNSS. Any
+	// other mode landing here — PASS_PREDICTION in practice — has NO
+	// scheduling branch and exits disabled. It used to be a bare
+	// `return`: no trace, mute beacon, and nothing to diagnose it with
+	// in the field. The incompatibility is reported at startup in
+	// service_init(); we say it again here so the log states WHY
+	// no transmission is scheduled any more.
+	DEBUG_ERROR("ArgosTxService: mode %d avec GNSS_EN=0 — aucun ordonnancement possible, "
+	            "TX desactive (configuration incompatible)",
+	            static_cast<int>(argos_config.mode));
+	if (status_led) status_led->flash(RGBLedColor::RED, 200);
+	return Service::SCHEDULE_DISABLED;
+	return Service::SCHEDULE_DISABLED;
+}
+
+/// @brief GNSS_EN=1: time-sync burst, then DUTY_CYCLE / LEGACY / PASS_PREDICTION.
+/// Split out of service_next_schedule_in_ms(), which tested argos_config.mode
+/// nine times in 489 lines. The gates it runs first -- cooldown, rate limit,
+/// prepass, critical battery, certification -- are NOT repeated here.
+unsigned int ArgosTxService::schedule_with_gnss(ArgosConfig &argos_config, std::time_t now) {
+	// 2026-08 — THE FIRST-MESSAGE LOCK HAS BEEN REMOVED.
+	//
+	// It held back EVERY transmission, presence heartbeat included, as
+	// long as no valid GPS fix had landed since power-on. A beacon that
+	// restarted without ever getting a fix back — broken receiver,
+	// blocked sky — therefore vanished for good from the screens:
+	// neither position nor sign of life. That is precisely what would
+	// have happened to the field tag of 2026-08-22 if a WDT or an OTA
+	// had occurred during the three days of GNSS outage.
+	//
+	// The original rationale (v3 parity: "time known" implied "the GNSS
+	// set the time") does not hold: in Doppler, LEGACY or DUTY_CYCLE the
+	// beacon transmits at its period and it is the ground segment that
+	// rebuilds the position from the reception instants — its clock does
+	// not enter the computation. Only pass prediction needs a correct
+	// time and position, and it has its own guard in
+	// ArgosTxScheduler::schedule_prepass.
+	//
+	// RSPB was already exempt from this lock, for exactly that reason.
+	//
+	// What does stay conditional, on the other hand, is the time-sync
+	// burst: it CARRIES the time, so transmitting it on a clock the GNSS
+	// has not corrected would amount to broadcasting a wrong date.
+	if (m_is_first_tx && argos_config.time_sync_burst_en && m_gps_fix_corrected_clock) {
+		// Provisional modulation, like LEGACY/DUTY_CYCLE further down:
+		// adaptive -> LDA2 (process_time_sync_burst switches back to LDK
+		// depending on size), non-adaptive -> master RCONF. Before 2026-06-25
+		// it was LDA2 forced unconditionally (cf. user point).
+		m_scheduled_mode =
+		    argos_config.adaptive_modulation ? KineisModulation::LDA2 : resolve_non_adaptive_modulation();
+		m_scheduled_task = [this]() { process_time_sync_burst(); };
+		m_sched.schedule_at(now);
+		return 0;
+	}
+	if (m_depth_pile_manager.eligible() == 0) {
+		DEBUG_INFO("ArgosTxService: depth pile has no eligible entries (NTRY exhausted or empty) — TX disabled "
+		           "until next GPS entry");
+		return Service::SCHEDULE_DISABLED;
+	}
+	if (argos_config.mode == BaseArgosMode::DUTY_CYCLE) {
+		// Non-adaptive: honor the master RCONF's actual modulation
+		// (decoded from AT+RCONF=? at init on KIM2; LDA2 on SMD).
+		// Adaptive: default to LDA2; process_*_burst will switch to
+		// LDK if the payload fits (96/128-bit packets).
+		m_scheduled_mode =
+		    argos_config.adaptive_modulation ? KineisModulation::LDA2 : resolve_non_adaptive_modulation();
+#ifdef BOARD_RSPB
+		if (argos_config.adaptive_modulation && argos_config.sensor_tx_enable) {
+			unsigned int pkt_fmt = configuration_store->read_param<unsigned int>(ParamID::RSPB_PACKET_FORMAT);
+			if (pkt_fmt == 1) m_scheduled_mode = KineisModulation::LDK;
+		}
+#endif
+		if (argos_config.sensor_tx_enable) {
+			m_scheduled_task = [this]() { process_sensor_burst(); };
+		} else {
+			m_scheduled_task = [this]() { process_gnss_burst(); };
+		}
+		return report_duty_cycle_schedule(m_sched.schedule_duty_cycle(argos_config, now), argos_config);
+	}
+	if (argos_config.mode == BaseArgosMode::LEGACY) {
+		m_scheduled_mode =
+		    argos_config.adaptive_modulation ? KineisModulation::LDA2 : resolve_non_adaptive_modulation();
+#ifdef BOARD_RSPB
+		if (argos_config.adaptive_modulation && argos_config.sensor_tx_enable) {
+			unsigned int pkt_fmt = configuration_store->read_param<unsigned int>(ParamID::RSPB_PACKET_FORMAT);
+			if (pkt_fmt == 1) m_scheduled_mode = KineisModulation::LDK;
+		}
+#endif
+		if (argos_config.sensor_tx_enable) {
+			m_scheduled_task = [this]() { process_sensor_burst(); };
+		} else {
+			m_scheduled_task = [this]() { process_gnss_burst(); };
+		}
+		return m_sched.schedule_legacy(argos_config, now);
+	}
+	if (argos_config.mode == BaseArgosMode::PASS_PREDICTION) {
+		m_scheduled_mode =
+		    argos_config.adaptive_modulation ? KineisModulation::LDA2 : resolve_non_adaptive_modulation();
+		if (argos_config.sensor_tx_enable) {
+			m_scheduled_task = [this]() { process_sensor_burst(); };
+		} else {
+			m_scheduled_task = [this]() { process_gnss_burst(); };
+		}
+		// AOP unusable (missing or expired) -> fall back to PERIODIC.
+		// We used to return SCHEDULE_DISABLED: the beacon stayed mute
+		// until the next GPS entry, with nothing to signal it. Staying
+		// silent is the worse of the two evils; better to transmit
+		// blind than not at all.
+		unsigned int age_s = 0;
+		AopEtat etat = aop_etat(argos_config, now, age_s);
+		if (etat != AopEtat::UTILISABLE) {
+			DEBUG_WARN("ArgosTxService: prepass impossible — %s (age=%u s, limite=%u j) — repli periodique",
+			           aop_etat_texte(etat), age_s, argos_config.aop_max_age_days);
+			refresh_prepass_status(argos_config, now, 0);
+			return m_sched.schedule_legacy(argos_config, now);
+		}
+		BasePassPredict &pass_predict = configuration_store->read_pass_predict();
+		// m_scheduled_mode is resolved just above and is no longer
+		// touched by the scheduler.
+		unsigned int schedule = m_sched.schedule_prepass(argos_config, pass_predict, now);
+		if (schedule == ArgosTxScheduler::INVALID_SCHEDULE) {
+			DEBUG_WARN("ArgosTxService: aucun passage calculable — repli periodique");
+			refresh_prepass_status(argos_config, now, 0);
+			return m_sched.schedule_legacy(argos_config, now);
+		}
+		// Safeguard: a window too far away must not block transmissions
+		// for hours. Beyond SAT_PREPASS_MAX_WAIT_S we transmit in
+		// periodic mode (0 = no safeguard).
+		static constexpr unsigned int MS_PER_S = 1000;
+		if (argos_config.prepass_max_wait_s && schedule > argos_config.prepass_max_wait_s * MS_PER_S) {
+			DEBUG_INFO("ArgosTxService: prochaine fenetre dans %u s > attente max %u s — repli periodique",
+			           schedule / MS_PER_S, argos_config.prepass_max_wait_s);
+			refresh_prepass_status(argos_config, now, now + schedule / MS_PER_S);
+			return m_sched.schedule_legacy(argos_config, now);
+		}
+		refresh_prepass_status(argos_config, now, now + schedule / MS_PER_S);
+		return schedule;
+	}
+	return Service::SCHEDULE_DISABLED;
+}
+
 
 /// @brief Execute scheduled TX — run the prepared burst task (cert/gnss/sensor/doppler).
 /// Called by ServiceManager when the scheduled time arrives.

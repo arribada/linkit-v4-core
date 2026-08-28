@@ -41,6 +41,18 @@ protected:
 	void service_term() override;
 	bool service_is_enabled() override;
 	unsigned int service_next_schedule_in_ms() override;
+
+	/// @name Per-mode scheduling
+	/// One method per ARGOS_MODE branch. service_next_schedule_in_ms() runs the
+	/// gates that apply to every mode -- cooldown, rate limit, prepass, critical
+	/// battery, certification -- and then dispatches here exactly once. These do
+	/// NOT re-run those gates.
+	/// @{
+	unsigned int schedule_doppler(ArgosConfig &argos_config, std::time_t now);
+	unsigned int schedule_surfacing_burst(ArgosConfig &argos_config, std::time_t now);
+	unsigned int schedule_without_gnss(ArgosConfig &argos_config, std::time_t now);
+	unsigned int schedule_with_gnss(ArgosConfig &argos_config, std::time_t now);
+	/// @}
 	void service_initiate() override;
 	bool service_cancel() override;
 	unsigned int service_next_timeout() override;
