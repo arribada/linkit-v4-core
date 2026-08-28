@@ -1,0 +1,15 @@
+# Revisions that moved whitespace only. `git blame` skips them.
+#
+# Enable it once, locally:
+#     git config blame.ignoreRevsFile .git-blame-ignore-revs
+# GitHub's blame view honours this file automatically, with no setup.
+#
+# Rule for adding a line here: the commit must be provably formatting-only.
+# For both entries below that proof is the firmware itself -- .text, .data,
+# .bss and every symbol name and size identical before and after.
+
+# Line endings: the M10Q driver was half CRLF, half LF -- in the same file
+1a2093ae77acd44563cb382e23620be11027cbc3
+
+# Style: run clang-format over the first-party tree
+fe242cd0e3d2ca72303c2585d5c3ae6d9b7fa9f0
