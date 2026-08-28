@@ -550,6 +550,7 @@ target_sources(${TARGET_NAME} PRIVATE
     ${CORE_DIR}/sm/ledsm.cpp
     ${CORE_DIR}/sm/buzzm.cpp
     ${CORE_DIR}/services/service.cpp
+    ${CORE_DIR}/services/service_cooldown.cpp
     ${CORE_DIR}/services/gps_service.cpp
     ${CORE_DIR}/services/argos_tx_service.cpp
     ${CORE_DIR}/services/argos_packet_builder.cpp
