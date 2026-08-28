@@ -323,7 +323,26 @@ std::string DTEHandler::DUMPM_REQ(int error_code, std::vector<BaseType> &arg_lis
 
 	unsigned int address = std::get<unsigned int>(arg_list[0]);
 	unsigned int length = std::get<unsigned int>(arg_list[1]);
-	BaseRawData raw = { .ptr = memory_access->get_physical_address(address, length), .length = length, .str = "" };
+
+	// get_physical_address() THROWS on anything outside RAM, and that guard is
+	// deliberate -- it is what stops DUMPM being used to read arbitrary memory.
+	// But the dispatch below handle_dte_message() is not inside a try block:
+	// the exception escaped, the response was never built, and the DTE port
+	// simply went SILENT on a well-formed command. Measured on the bench
+	// 2026-08-28: every flash address (0x0..0xFFFFF), everything past the
+	// 256 KB of RAM and the peripheral window answered nothing at all, while
+	// 0x20000000 answered normally.
+	//
+	// Silence is the worst possible answer here. An operator diagnosing a tag
+	// cannot tell a refused address from a dead port, and the port is not dead
+	// -- the next command works. Refuse explicitly instead.
+	void *ptr = nullptr;
+	try {
+		ptr = memory_access->get_physical_address(address, length);
+	} catch (...) {
+		return DTEEncoder::encode(DTECommand::DUMPM_RESP, (int)DTEError::VALUE_OUT_OF_RANGE);
+	}
+	BaseRawData raw = { .ptr = ptr, .length = length, .str = "" };
 
 	return DTEEncoder::encode(DTECommand::DUMPM_RESP, error_code, raw);
 }

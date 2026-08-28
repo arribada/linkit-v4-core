@@ -3580,37 +3580,34 @@ def _swsst(b, timeout=10.0, essais=4):
 def _sws_actif(b, secondes=30):
     """Met le detecteur EN SERVICE, le laisse mesurer, puis interroge la sonde.
 
-    Deux contraintes OPPOSEES se rencontrent ici, et les ignorer donne une
-    reponse plausible mais vide de sens:
-
+    Deux contraintes OPPOSEES se rencontrent ici:
       - les trames DTE ne repondent QU EN MODE CONFIGURATION (vague 17);
-      - les services ne tournent QU EN DEHORS — ils sont arretes a l entree en
-        configuration et redemarres a la sortie, et c est Service::start() qui
+      - les services ne tournent QU EN DEHORS — arretes a l entree en
+        configuration, redemarres a la sortie, et c est Service::start() qui
         appelle service_init() (service.cpp:585).
+    Ecrire UNP01=1 en restant en configuration ne demarre donc RIEN. Il faut
+    sortir, laisser mesurer, et revenir pour lire.
 
-    Ecrire UNP01=1 en restant en configuration ne demarre donc RIEN: $SWSST rend
-    adc_brut=0 et contraste=0 tout en annoncant une calibration valide (les
-    lignes de base viennent du .noinit), parce que m_contrast_x10 n est
-    renseigne que par update_dynamic_threshold(), au fil de l echantillonnage
-    (sws_analog_calibration.cpp:352). Mesure du 2026-08-27: SWS-04 est passe sur
-    des valeurs persistees sans qu une seule mesure ait ete prise.
+    CE QUI PROUVE QU UNE MESURE A EU LIEU: `temps_etat_s`, PAS l ADC.
+    Tout le bloc de statut est ecrit d un coup en fin de passe
+    d echantillonnage (sws_analog_detection.cpp:827), temps_etat_s compris. Un
+    compteur qui avance prouve donc qu une passe a tourne.
 
-    Il faut donc sortir, laisser mesurer, et revenir pour lire.
+    A l inverse, adc_brut=0 sur une electrode SECHE est une lecture NORMALE: le
+    circuit RC ne se charge pas sans eau pour ponter les electrodes. Une
+    premiere version exigeait un ADC non nul et declarait le cas non concluant
+    cinq fois de suite, sur trois versions de firmware — en prenant une mesure
+    correcte pour une mesure absente. Deux "corrections" par reprises n y ont
+    rien change, et pour cause.
     """
     b.write_params({'UNDERWATER_EN': 1})
-    # Plusieurs cycles plutot qu une attente fixe. En passe complete la carte
-    # est plus chargee qu en rejeu isole et 30 s ne suffisent pas toujours pour
-    # qu une mesure tombe: le cas se declarait alors non concluant sur un
-    # detecteur parfaitement sain. Mesure du 2026-08-28, deux passes completes
-    # de suite. On sort, on laisse mesurer, on rentre lire, et on recommence
-    # tant qu aucun echantillon n est arrive.
     st = None
     for _ in range(3):
         b.exit_config()
         time.sleep(secondes)
         b.enter_config()
         st = _swsst(b)
-        if st and (st['adc_brut'] or st['adc_filtre']):
+        if st and st['temps_etat_s'] > 0:
             return st
     return st
 
@@ -3632,14 +3629,14 @@ def c_sws_etat_coherent(r, case):
         return r.record(case, 'ERROR', '$SWSST sans reponse (ENABLE_SWS_ANALOG absent ?)')
     trace = ', '.join(f'{k}={v}' for k, v in st.items())
     defauts = []
-    if not st['adc_brut'] and not st['adc_filtre']:
+    if not st['temps_etat_s']:
         try:
             b.write_params({'UNDERWATER_EN': 0})
         except Exception:
             pass
         return r.record(case, 'ERROR',
-                        'le detecteur n a pris aucune mesure (adc=0) — cas non concluant',
-                        trace)
+                        'le compteur de temps dans l etat n avance pas: aucune passe '
+                        'd echantillonnage n a tourne — cas non concluant', trace)
     if st['immerge']:
         defauts.append('la carte se declare IMMERGEE alors qu elle est a l air')
     if not st['calibre']:
@@ -3660,8 +3657,9 @@ def c_sws_etat_coherent(r, case):
     if defauts:
         return r.record(case, 'FAIL', '; '.join(defauts), trace)
     r.record(case, 'PASS',
-             f"a sec: hors de l eau, calibre, air={st['air']} < seuil={st['seuil']} "
-             f"< eau={st['eau']}", trace)
+             f"a sec apres {st['temps_etat_s']} s d echantillonnage: hors de l eau, calibre, "
+             f"air={st['air']} < seuil={st['seuil']} < eau={st['eau']}, adc={st['adc_brut']}",
+             trace)
 
 def c_sws_hysteresis_appliquee(r, case):
     """UNP22 atteint reellement le service au redemarrage.
@@ -4428,6 +4426,26 @@ CASES_V21 = [
 #  duty-cycle vide.
 # =====================================================================
 
+def _en_config(b):
+    """Garantit le mode configuration avant d envoyer une trame DTE.
+
+    Invariant paye trois fois: les commandes DTE ne repondent QU EN MODE
+    CONFIGURATION (ConfigurationState::process_usb_data). baseline() y laisse la
+    carte, alors un cas qui n en sort pas fonctionne par heritage — et casse des
+    qu un cas precedent en est sorti. C est ainsi que GNSSI, GNSSBR, DUMPM et
+    ERASE se sont declares muets, alors que le diagnostic du 2026-08-28 les a
+    vus repondre en DEUX SECONDES chacun, le pont GNSS transportant meme tout le
+    flot NMEA du M10Q.
+
+    enter_config() est idempotent cote banc (%CFG rend "already-config"), donc
+    l appeler sans condition ne coute rien.
+    """
+    try:
+        b.enter_config()
+        return True
+    except Exception:
+        return False
+
 def _statr(b, cles, timeout=10.0, essais=3):
     """STATR sur une liste de cles -> {cle: valeur}. Mode configuration requis."""
     for _ in range(essais):
@@ -4909,6 +4927,8 @@ def c_gnss_info(r, case):
     tarder.
     """
     b = r.b
+    if not _en_config(b):
+        return r.record(case, 'ERROR', 'mode configuration inaccessible')
     m = b.dte('GNSSI', '', timeout=30.0)
     ligne = (m.string if m and hasattr(m, 'string') else '') or ''
     if not m:
@@ -4929,6 +4949,8 @@ def c_gnss_almanach(r, case):
     acquisition repart de zero.
     """
     b = r.b
+    if not _en_config(b):
+        return r.record(case, 'ERROR', 'mode configuration inaccessible')
     m = b.dte('GNSSA', '', timeout=30.0)
     ligne = (m.string if m and hasattr(m, 'string') else '') or ''
     if not m:
@@ -4987,7 +5009,12 @@ def c_dumpm_memoire(r, case):
     le plus difficile a diagnostiquer sur le terrain.
     """
     b = r.b
-    m = b.dte('DUMPM', '0,16', timeout=15.0)
+    if not _en_config(b):
+        return r.record(case, 'ERROR', 'mode configuration inaccessible')
+    # 0x20000000 = debut de la RAM: la seule fenetre que DUMPM accepte.
+    # Une adresse hors RAM doit etre REFUSEE, pas ignoree — c est le defaut
+    # corrige le 2026-08-28, ou le port se taisait sur une commande bien formee.
+    m = b.dte('DUMPM', '20000000,10', timeout=15.0)
     ligne = (m.string if m and hasattr(m, 'string') else '') or ''
     if not m:
         return r.record(case, 'FAIL',
@@ -5005,6 +5032,8 @@ def c_erase_journal(r, case):
     A JOUER EN DERNIER: les autres cas lisent le journal systeme.
     """
     b = r.b
+    if not _en_config(b):
+        return r.record(case, 'ERROR', 'mode configuration inaccessible')
     m = b.dte('ERASE', '99', timeout=15.0)
     if not m:
         return r.record(case, 'ERROR', 'ERASE sans reponse sur type inconnu')
@@ -5061,9 +5090,14 @@ def c_pont_gnss(r, case):
         b.enter_config()
         b.write_params({'GNSS_EN': 1, 'GNSS_DEEP_IDLE_AFTER_OFF_S': 0})
         b.exit_config()
+        time.sleep(6)
+        # RETOUR en configuration: $GNSSBR est une trame DTE, et le DTE ne
+        # repond qu en configuration. La version precedente l envoyait apres la
+        # sortie, donc la carte ne la lisait jamais — et le cas concluait a un
+        # pont refuse alors qu il n avait simplement pas ete demande.
+        b.enter_config()
     except Exception as e:
         return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
-    time.sleep(6)
 
     lines, err = r.raw("$GNSSBR#001;1\r", wait=4.0)
     if err:

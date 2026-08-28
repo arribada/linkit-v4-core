@@ -339,6 +339,33 @@ TEST(DTEHandler, DUMPM_REQ) {
 	             resp.c_str());
 }
 
+TEST(DTEHandler, DUMPM_REQ_OutOfRangeAddressIsRefusedNotIgnored)
+{
+	/*
+	 * DUMPM must ANSWER an address it will not read.
+	 *
+	 * NrfMemoryAccess::get_physical_address() throws ILLEGAL_MEMORY_ADDRESS for
+	 * anything outside RAM, and that guard is the point -- it is what stops
+	 * DUMPM being used to read arbitrary memory. But the command dispatch is
+	 * not inside a try block, so the exception escaped and the DTE port went
+	 * SILENT on a well-formed command. Measured on the bench 2026-08-28: every
+	 * flash address, everything past the 256 KB of RAM, and the peripheral
+	 * window all answered nothing at all.
+	 *
+	 * Silence is the worst possible answer. An operator diagnosing a tag cannot
+	 * tell a refused address from a dead port -- and the port is not dead, the
+	 * next command works.
+	 */
+	// The fake refuses past its 1 MB window, the same way NrfMemoryAccess
+	// refuses outside RAM: what is pinned here is the HANDLER's reaction to a
+	// refusal, not the boundary itself.
+	std::string resp;
+	std::string req = "$DUMPM#009;100000,10\r";
+	CHECK_TRUE(DTEAction::NONE == dte_handler->handle_dte_message(req, resp));
+	CHECK_TRUE(resp.size() > 0);
+	STRCMP_EQUAL("$N;DUMPM#001;7\r", resp.c_str());
+}
+
 TEST(DTEHandler, PASPW_REQ_KineisAllcastAop) {
 	/*
 	 * Real capture, not a synthetic frame: CLS retrieve-kineis-aop
