@@ -1206,3 +1206,111 @@ TEST(GPSService, ServiceInitiateThrowRecoversInsteadOfGoingInert) {
 	increment_time_s(60);
 	mock().checkExpectations();
 }
+
+// --- The two GNSS watchdogs must not reset a working beacon -----------------
+// Both exist to recover a receiver that has gone silent in a way the hardware
+// watchdog cannot see -- the scheduler still runs and keeps kicking it while
+// the service is dead. Neither exists to reset a deployment that is working,
+// and a beacon with no GPS is not a broken beacon: Argos Doppler positions are
+// computed satellite-side and need no fix at all.
+//
+// Time is jumped rather than stepped here: the group's increment_time_ms walks
+// one millisecond at a time, which cannot reach 24 h, let alone 7 days.
+
+static void jump_to(FakeTimer *t, FakeRTC *r, std::time_t epoch_start, uint64_t seconds) {
+	t->set_counter(seconds * 1000ULL);
+	r->settime(epoch_start + (std::time_t)seconds);
+}
+
+TEST(GPSService, HealthWatchdogDoesNotResetWhenGnssIsDeliberatelyOff) {
+	fake_config_store->write_param(ParamID::GNSS_EN, (bool)false);
+	fake_config_store->write_param(ParamID::UNDERWATER_EN, (bool)false);
+
+	const std::time_t t0 = 1652105502;
+	fake_rtc->settime(t0);
+	fake_timer->start();
+
+	// The whole point: no reset. A tag configured without GPS produces no GPS
+	// event for the length of its deployment.
+	mock().expectNoCall("reset");
+	mock().ignoreOtherCalls();
+
+	GPSService s(*mock_m10q, fake_log);
+	s.start();
+
+	jump_to(fake_timer, fake_rtc, t0, 25 * 3600);
+	system_scheduler->run();
+	mock().checkExpectations();
+}
+
+TEST(GPSService, HealthWatchdogDoesNotResetABeaconThatIsStillTransmitting) {
+	fake_config_store->write_param(ParamID::GNSS_EN, (bool)true);
+	fake_config_store->write_param(ParamID::UNDERWATER_EN, (bool)false);
+
+	const std::time_t t0 = 1652105502;
+	fake_rtc->settime(t0);
+	fake_timer->start();
+
+	mock().expectNoCall("reset");
+	mock().ignoreOtherCalls();
+
+	GPSService s(*mock_m10q, fake_log);
+	s.start();
+
+	// An Argos transmission an hour ago: the radio, the scheduler and the power
+	// path are all demonstrably alive, so whatever ails the receiver is confined
+	// to the GNSS side and does not justify resetting the device.
+	jump_to(fake_timer, fake_rtc, t0, 25 * 3600);
+	fake_config_store->write_param(ParamID::LAST_TX, (unsigned int)(t0 + 24 * 3600));
+	system_scheduler->run();
+	mock().checkExpectations();
+}
+
+TEST(GPSService, HealthWatchdogStillResetsWhenNothingIsWorking) {
+	fake_config_store->write_param(ParamID::GNSS_EN, (bool)true);
+	fake_config_store->write_param(ParamID::UNDERWATER_EN, (bool)false);
+	fake_config_store->write_param(ParamID::LAST_TX, (unsigned int)0);  // never transmitted
+
+	const std::time_t t0 = 1652105502;
+	fake_rtc->settime(t0);
+	fake_timer->start();
+
+	// No GPS event and no transmission: the net still does its job.
+	mock().expectOneCall("reset").withParameter("dfu_mode", false);
+	mock().ignoreOtherCalls();
+
+	GPSService s(*mock_m10q, fake_log);
+	s.start();
+
+	jump_to(fake_timer, fake_rtc, t0, 25 * 3600);
+	system_scheduler->run();
+	mock().checkExpectations();
+}
+
+TEST(GPSService, NoPvtWatchdogDoesNotResetACloudLocateOnlyTag) {
+	fake_config_store->write_param(ParamID::GNSS_EN, (bool)true);
+	fake_config_store->write_param(ParamID::UNDERWATER_EN, (bool)false);
+	// The raw measurement IS the product here, resolved cloud-side. A real PVT
+	// is never produced, by design.
+	fake_config_store->write_param(ParamID::GNSS_CLOUDLOCATE_ONLY, (bool)true);
+	fake_config_store->write_param(ParamID::LAST_TX, (unsigned int)0);
+
+	const std::time_t t0 = 1652105502;
+	fake_rtc->settime(t0);
+	fake_timer->start();
+
+	mock().expectNoCall("reset");
+	mock().ignoreOtherCalls();
+
+	GPSService s(*mock_m10q, fake_log);
+	s.start();
+
+	// Past the 7-day no-PVT deadline. The health watchdog would fire first at
+	// 24 h, so give it a transmission to keep it quiet and leave this test
+	// about the no-PVT net alone.
+	fake_config_store->write_param(ParamID::LAST_TX, (unsigned int)(t0 + 1));
+	jump_to(fake_timer, fake_rtc, t0, 8ULL * 24 * 3600);
+	fake_config_store->write_param(ParamID::LAST_TX, (unsigned int)(t0 + 8 * 24 * 3600 - 60));
+	system_scheduler->run();
+	mock().checkExpectations();
+}

@@ -185,6 +185,17 @@ private:
 	// Re-armed by every GPS event (PVT, degraded, CloudLocate, NO_FIX).
 	// Threshold long (24h) to avoid false positives during legit long dives
 	// or zone-exclusion windows where GNSS is disabled.
+	/// @brief Is the beacon demonstrably still doing its job?
+	/// @param within_s  how recent an Argos/LoRa transmission has to be.
+	///
+	/// A GNSS watchdog exists to recover a receiver that has gone silent. It does
+	/// not exist to reset a deployment that is working: a beacon with no GPS is
+	/// not a broken beacon -- Doppler positions are computed satellite-side and
+	/// need no fix at all -- so a tag still transmitting is useful whatever the
+	/// receiver is doing. LAST_TX, written by both TX services on every
+	/// successful transmission, is the evidence.
+	bool beacon_is_transmitting(unsigned int within_s) const;
+
 	Scheduler::TaskHandle m_health_wdt_task;
 	static constexpr unsigned int HEALTH_WDT_HOURS = 24;
 
