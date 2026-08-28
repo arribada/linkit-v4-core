@@ -10,6 +10,7 @@
 #include "gps.hpp"
 #include "messages.hpp"
 #include "timeutils.hpp"
+#include "exponential_backoff.hpp"
 #include "binascii.hpp"
 #include "debug.hpp"
 #include "moored_mode_service.hpp"
@@ -1151,16 +1152,27 @@ void LoRaTxService::react(KineisEventDeviceError const &) {
 			            m_consecutive_device_errors, DEVICE_ERROR_PROBE_PERIOD_S);
 			service_complete(nullptr, nullptr, false);  // no reschedule
 		} else {
-			// Clamp the SHIFT, not just the result. The cap below runs after the
-			// shift, so a large exponent would already have overflowed unsigned
-			// int and produced a small backoff — the opposite of the intent.
-			// Previously unreachable because the counter stopped at
-			// DEVICE_ERROR_MAX_CONSECUTIVE; with LORA_TX_ERROR_SUSPEND_S=0 it
-			// keeps climbing, so the shift has to be bounded explicitly.
-			unsigned int shift = m_consecutive_device_errors - 1;
-			if (shift > 16) shift = 16;  // 60 s << 16 is already far past the cap
-			unsigned int backoff_ms = DEVICE_ERROR_BACKOFF_BASE_MS << shift;
-			if (backoff_ms > DEVICE_ERROR_BACKOFF_MAX_MS) backoff_ms = DEVICE_ERROR_BACKOFF_MAX_MS;
+			// Exponential backoff: 1 min, 2 min, 4 min... saturating at
+			// DEVICE_ERROR_BACKOFF_MAX_MS (10 min).
+			//
+			// Doubling with a cap-bounded loop rather than `BASE_MS << (n - 1)`:
+			// the shift overflows unsigned int long before the cap below can act
+			// on it, and an overflowed backoff wraps to a SMALL value -- with this
+			// 60 s base it returns exactly 0 from the 28th consecutive error, i.e.
+			// retry immediately, on a beacon that has just failed twenty-eight
+			// times in a row. The exact inversion of what a backoff is for.
+			//
+			// Unlike ArgosTxService, this is not a latent problem here: the
+			// suspension above is conditional on DEVICE_ERROR_PROBE_PERIOD_S, so
+			// with LORA_TX_ERROR_SUSPEND_S=0 the counter climbs without bound and
+			// this branch keeps being taken. The shift was already reachable.
+			//
+			// The loop produces the identical sequence (verified against the
+			// shift for every n it can represent), so nothing is shortened; it
+			// simply cannot wrap, and it needs no magic bound tied to the
+			// current value of BASE_MS.
+			unsigned int backoff_ms = Backoff::doubling_capped(
+			    DEVICE_ERROR_BACKOFF_BASE_MS, DEVICE_ERROR_BACKOFF_MAX_MS, m_consecutive_device_errors);
 			DEBUG_WARN("LoRaTxService: backoff %u ms before next TX attempt", backoff_ms);
 			m_sched.set_earliest_schedule(service_current_time() + backoff_ms / 1000);
 			service_complete();

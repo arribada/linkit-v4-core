@@ -11,6 +11,7 @@
 #include "gps.hpp"
 #include "messages.hpp"
 #include "timeutils.hpp"
+#include "exponential_backoff.hpp"
 #include "binascii.hpp"
 #include "debug.hpp"
 #include "pmu.hpp"
@@ -2516,9 +2517,28 @@ void ArgosTxService::react(KineisEventDeviceError const &) {
 			            m_consecutive_device_errors);
 			service_complete(nullptr, nullptr, false);  // no reschedule
 		} else {
-			// Apply exponential backoff: 1min, 2min, 4min... capped at 10min
-			unsigned int backoff_ms = DEVICE_ERROR_BACKOFF_BASE_MS << (m_consecutive_device_errors - 1);
-			if (backoff_ms > DEVICE_ERROR_BACKOFF_MAX_MS) backoff_ms = DEVICE_ERROR_BACKOFF_MAX_MS;
+			// Exponential backoff: 1 min, 2 min, 4 min... saturating at
+			// DEVICE_ERROR_BACKOFF_MAX_MS (10 min).
+			//
+			// Doubling with a cap-bounded loop rather than `BASE_MS << (n - 1)`:
+			// the shift overflows unsigned int long before the cap below can act
+			// on it, and an overflowed backoff wraps to a SMALL value -- with this
+			// 60 s base it returns exactly 0 from the 28th consecutive error, i.e.
+			// retry immediately, on a beacon that has just failed twenty-eight
+			// times in a row. The exact inversion of what a backoff is for.
+			//
+			// This is safe today only by an invariant that lives thirteen lines
+			// above: the branch is unreachable unless the counter is below
+			// DEVICE_ERROR_MAX_CONSECUTIVE (3), so the shift never exceeded 2.
+			// Give this service a probe period the way LoRaTxService has one and
+			// the counter climbs without bound -- and nothing here would say so.
+			//
+			// The loop produces the identical sequence (verified against the
+			// shift for every n it can represent), so nothing is shortened; it
+			// simply cannot wrap, and it needs no magic bound tied to the
+			// current value of BASE_MS.
+			unsigned int backoff_ms = Backoff::doubling_capped(
+			    DEVICE_ERROR_BACKOFF_BASE_MS, DEVICE_ERROR_BACKOFF_MAX_MS, m_consecutive_device_errors);
 			DEBUG_WARN("ArgosTxService: backoff %u ms before next TX attempt", backoff_ms);
 			m_sched.set_earliest_schedule(service_current_time() + backoff_ms / 1000);
 			service_complete();

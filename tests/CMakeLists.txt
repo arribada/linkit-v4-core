@@ -282,6 +282,7 @@ target_sources(${PROJECT_NAME} PRIVATE
     "src/kim2_modulation_test.cpp"
     "src/lora_packet_builder_test.cpp"
     "src/packet_field_encoding_test.cpp"
+    "src/exponential_backoff_test.cpp"
     "src/dive_mode_test.cpp"
     "src/m8_test.cpp"
     "src/binascii_test.cpp"
