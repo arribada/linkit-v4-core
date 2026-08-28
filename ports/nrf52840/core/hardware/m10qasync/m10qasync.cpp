@@ -1871,6 +1871,29 @@ void M10QAsyncReceiver::state_configure_enter() {
 	m_unrecoverable_error = false;
 }
 
+// m_step is a plain step counter shared by five state machines (configure,
+// startreceive, stopreceive, enterbackup, fetchdatabase). Inside each of them
+// 0..N is just "step N of this sequence" and needs no name.
+//
+// state_configure is the exception: it runs three sequences in one counter, and
+// the two non-contiguous families are unreadable as bare numbers. They are named
+// here. The 100+ and 200+ bases are deliberate -- `m_step >= FAST_PATH_BASE` is
+// how the generic SUCCESS branch tells a fast-path step from a normal one.
+namespace ConfigStep {
+// Fast path, taken when the BBR survived and no cold start was requested.
+static constexpr unsigned int FAST_PATH_BASE = 100;
+static constexpr unsigned int FAST_VALIDATE_BAUD = 100;  ///< re-validate at the baud the M10Q actually answered on
+static constexpr unsigned int FAST_BBR_VALIDATED = 101;  ///< BBR good, jump to the assistance data
+static constexpr unsigned int FAST_REAPPLY_CONSTELLATIONS = 102;  ///< the one per-session setting the fast path skips
+static constexpr unsigned int FAST_DONE = 103;                    ///< rejoin the normal sequence
+
+// BBR configuration erase, on a cold start. Has its own steps because it waits
+// for an ACK; SUCCESS lands on ERASE_ACKED, which returns to NORMAL_AFTER_ERASE.
+static constexpr unsigned int ERASE_BBR = 200;
+static constexpr unsigned int ERASE_ACKED = 201;
+static constexpr unsigned int NORMAL_AFTER_ERASE = 5;
+}  // namespace ConfigStep
+
 void M10QAsyncReceiver::state_configure() {
 	while (true) {
 		if (m_op_state == OpState::IDLE) {
@@ -1892,7 +1915,7 @@ void M10QAsyncReceiver::state_configure() {
 			// necessaire (BBR retenue, donc potentiellement perimee ou corrompue).
 			if (m_bbr_retained && m_gnss_info_valid && !m_nav_settings.cold_start && m_step == 0) {
 				DEBUG_INFO("M10QAsyncReceiver: BBR retenue (M10Q a %u baud) — fast path config", m_synced_baud);
-				m_step = 100;  // Fast path: validate BBR
+				m_step = ConfigStep::FAST_VALIDATE_BAUD;  // Fast path: validate BBR
 				m_op_state = OpState::IDLE;
 				continue;
 			}
@@ -1903,12 +1926,12 @@ void M10QAsyncReceiver::state_configure() {
 			// Fast path step 100: on revalide au baud auquel le M10Q a REELLEMENT
 			// repondu (et non a une valeur en dur), de sorte qu'un echec ne laisse
 			// jamais l'UART sur un debit que le recepteur n'ecoute pas.
-			if (m_step == 100) {
+			if (m_step == ConfigStep::FAST_VALIDATE_BAUD) {
 				sync_baud_rate(m_synced_baud);
 				break;
 			}
 			// Fast path step 101: BBR validated, skip to assistance data
-			if (m_step == 101) {
+			if (m_step == ConfigStep::FAST_BBR_VALIDATED) {
 				// GNSS LOW #7 audit fix: BBR validation succeeded = the
 				// M10Q is alive AND came up at MAX_BAUDRATE (warm wake).
 				// This is the earliest reliable proof of wake-from-deep-idle
@@ -1940,7 +1963,7 @@ void M10QAsyncReceiver::state_configure() {
 				if (m_nav_settings.constellation_mask != m_applied_constellation_mask) {
 					DEBUG_INFO("M10QAsyncReceiver: fast path — masque constellations 0x%02x -> 0x%02x, reapplication",
 					           m_applied_constellation_mask, m_nav_settings.constellation_mask);
-					m_step = 102;
+					m_step = ConfigStep::FAST_REAPPLY_CONSTELLATIONS;
 				} else {
 					m_step = 7;
 				}
@@ -1949,25 +1972,25 @@ void M10QAsyncReceiver::state_configure() {
 			}
 			// Etape 200: effacement de la couche de config BBR, avec ACK attendu.
 			// SUCCESS amene a 201 (branche generique) qui revient au step 5.
-			if (m_step == 200) {
+			if (m_step == ConfigStep::ERASE_BBR) {
 				clear_config();
 				break;
 			}
-			if (m_step == 201) {
+			if (m_step == ConfigStep::ERASE_ACKED) {
 				m_bbr_config_cleared = true;
 				DEBUG_INFO("M10QAsyncReceiver: effacement config BBR ACQUITTE par le recepteur");
 				VAL_GNSS("clear_bbr_config_acked");
-				m_step = 5;
+				m_step = ConfigStep::NORMAL_AFTER_ERASE;
 				m_op_state = OpState::IDLE;
 				continue;
 			}
 			// Fast path step 102: rattrapage du seul reglage saute qui varie par
 			// session. SUCCESS amene a 103 (branche generique), traitee ci-dessous.
-			if (m_step == 102) {
+			if (m_step == ConfigStep::FAST_REAPPLY_CONSTELLATIONS) {
 				setup_gnss_channel_sharing();
 				break;
 			}
-			if (m_step == 103) {
+			if (m_step == ConfigStep::FAST_DONE) {
 				m_step = 7;
 				m_op_state = OpState::IDLE;
 				continue;
@@ -2005,7 +2028,7 @@ void M10QAsyncReceiver::state_configure() {
 				// verrouillee (debit exotique, cle corrompue). L'effacement passe
 				// par l'etape 200 (dediee, avec attente d'ACK) et revient ici.
 				if (m_nav_settings.cold_start && !m_bbr_config_cleared) {
-					m_step = 200;
+					m_step = ConfigStep::ERASE_BBR;
 					m_op_state = OpState::IDLE;
 					continue;
 				}
@@ -2069,8 +2092,10 @@ void M10QAsyncReceiver::state_configure() {
 			// Memoriser ce que le recepteur a reellement accepte: c'est ce que la
 			// couche BBR contient desormais, et donc ce que le fast-path peut se
 			// permettre de ne pas reecrire.
-			if (m_step == 1 || m_step == 100) m_synced_baud = MAX_BAUDRATE;  // le port vient d'etre valide a MAX
-			if (m_step == 2 || m_step == 102) m_applied_constellation_mask = m_nav_settings.constellation_mask;
+			if (m_step == 1 || m_step == ConfigStep::FAST_VALIDATE_BAUD)
+				m_synced_baud = MAX_BAUDRATE;  // le port vient d'etre valide a MAX
+			if (m_step == 2 || m_step == ConfigStep::FAST_REAPPLY_CONSTELLATIONS)
+				m_applied_constellation_mask = m_nav_settings.constellation_mask;
 			m_step++;
 			m_retries = DEFAULT_RETRIES;
 			m_op_state = OpState::IDLE;
@@ -2089,7 +2114,7 @@ void M10QAsyncReceiver::state_configure() {
 			// sur une carte sans pile. Le commentaire d'origine affirmait que le
 			// baud retombait a 9600 : c'etait faux, cette selection n'existe que
 			// dans state_enterbackup.
-			if (m_step == 200 || m_step == 201) {
+			if (m_step == ConfigStep::ERASE_BBR || m_step == ConfigStep::ERASE_ACKED) {
 				// Pas d'ACK: soit le recepteur tourne un firmware ou CFG-CFG
 				// n'existe plus (supprime du protocole 34.20 / SPG 5.20, remplace
 				// par UBX-CFG-OTP), soit il a refuse la commande. On poursuit le
@@ -2103,12 +2128,12 @@ void M10QAsyncReceiver::state_configure() {
 				            "Le cold start continue, mais la couche de config BBR n'est PAS effacee");
 				VAL_GNSS("clear_bbr_config_unsupported");
 				m_bbr_config_cleared = true;  // ne pas boucler
-				m_step = 5;
+				m_step = ConfigStep::NORMAL_AFTER_ERASE;
 				m_retries = DEFAULT_RETRIES;
 				m_op_state = OpState::IDLE;
 				continue;
 			}
-			if (m_step >= 100) {
+			if (m_step >= ConfigStep::FAST_PATH_BASE) {
 				constexpr unsigned int FASTPATH_MAX_ATTEMPTS = 3;
 				if (++m_fastpath_attempts >= FASTPATH_MAX_ATTEMPTS) {
 					DEBUG_WARN(
