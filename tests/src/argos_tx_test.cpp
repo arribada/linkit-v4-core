@@ -168,6 +168,21 @@ TEST_GROUP(ArgosTxService) {
 		e.event_originator_unique_id = 0x12345678;
 		ServiceManager::notify_peer_event(e);
 	}
+
+	// Plainest possible Argos configuration: LEGACY, a fix in the pile, no
+	// jitter, no time-sync burst, no low-battery gating -- so that a schedule
+	// that moves says something about the code under test and nothing else.
+	// Used by the device-error tests at the end of this file.
+	void configure_plain_legacy(unsigned int tr_nom_s = 10) {
+		fake_config_store->write_param(ParamID::ARGOS_MODE, BaseArgosMode::LEGACY);
+		fake_config_store->write_param(ParamID::ARGOS_DEPTH_PILE, BaseDepthPile::DEPTH_PILE_1);
+		fake_config_store->write_param(ParamID::ARGOS_HEXID, (unsigned int)0x01234567U);
+		fake_config_store->write_param(ParamID::GNSS_EN, true);
+		fake_config_store->write_param(ParamID::LB_EN, false);
+		fake_config_store->write_param(ParamID::TR_NOM, tr_nom_s);
+		fake_config_store->write_param(ParamID::ARGOS_TX_JITTER_EN, false);
+		fake_config_store->write_param(ParamID::ARGOS_TIME_SYNC_BURST_EN, false);
+	}
 };
 
 TEST(ArgosTxService, DepthPileFillsAndEmpties) {
@@ -3602,14 +3617,7 @@ TEST(ArgosTxService, HauledModeLowBatteryWins) {
 // The self-recovering regime. One error, then no GPS session, no surface
 // event and no reboot: the beacon must come back on its own.
 TEST(ArgosTxService, DeviceErrorBelowThresholdReschedulesWithoutAnyExternalEvent) {
-	fake_config_store->write_param(ParamID::ARGOS_MODE, BaseArgosMode::LEGACY);
-	fake_config_store->write_param(ParamID::ARGOS_DEPTH_PILE, BaseDepthPile::DEPTH_PILE_1);
-	fake_config_store->write_param(ParamID::ARGOS_HEXID, (unsigned int)0x01234567U);
-	fake_config_store->write_param(ParamID::GNSS_EN, true);
-	fake_config_store->write_param(ParamID::LB_EN, false);
-	fake_config_store->write_param(ParamID::TR_NOM, (unsigned int)10);
-	fake_config_store->write_param(ParamID::ARGOS_TX_JITTER_EN, false);
-	fake_config_store->write_param(ParamID::ARGOS_TIME_SYNC_BURST_EN, false);
+	configure_plain_legacy();
 
 	ArgosTxService serv(*mock_kineis);
 	std::time_t t = 1652105502000;
@@ -3661,14 +3669,7 @@ TEST(ArgosTxService, DeviceErrorBelowThresholdReschedulesWithoutAnyExternalEvent
 // timeout without replacing it would turn this into a genuinely permanent
 // suspension. This test exists to make that interlock fail loudly.
 TEST(ArgosTxService, DeviceErrorAtThresholdKeepsWakingButNeverTransmits) {
-	fake_config_store->write_param(ParamID::ARGOS_MODE, BaseArgosMode::LEGACY);
-	fake_config_store->write_param(ParamID::ARGOS_DEPTH_PILE, BaseDepthPile::DEPTH_PILE_1);
-	fake_config_store->write_param(ParamID::ARGOS_HEXID, (unsigned int)0x01234567U);
-	fake_config_store->write_param(ParamID::GNSS_EN, true);
-	fake_config_store->write_param(ParamID::LB_EN, false);
-	fake_config_store->write_param(ParamID::TR_NOM, (unsigned int)10);
-	fake_config_store->write_param(ParamID::ARGOS_TX_JITTER_EN, false);
-	fake_config_store->write_param(ParamID::ARGOS_TIME_SYNC_BURST_EN, false);
+	configure_plain_legacy();
 
 	ArgosTxService serv(*mock_kineis);
 	std::time_t t = 1652105502000;
@@ -3721,14 +3722,7 @@ TEST(ArgosTxService, DeviceErrorAtThresholdKeepsWakingButNeverTransmits) {
 // actually resumes TX is the wake loop of the previous test finding the
 // counter cleared on its next pass.
 TEST(ArgosTxService, DeviceErrorSuspensionIsClearedByANewGpsSession) {
-	fake_config_store->write_param(ParamID::ARGOS_MODE, BaseArgosMode::LEGACY);
-	fake_config_store->write_param(ParamID::ARGOS_DEPTH_PILE, BaseDepthPile::DEPTH_PILE_1);
-	fake_config_store->write_param(ParamID::ARGOS_HEXID, (unsigned int)0x01234567U);
-	fake_config_store->write_param(ParamID::GNSS_EN, true);
-	fake_config_store->write_param(ParamID::LB_EN, false);
-	fake_config_store->write_param(ParamID::TR_NOM, (unsigned int)10);
-	fake_config_store->write_param(ParamID::ARGOS_TX_JITTER_EN, false);
-	fake_config_store->write_param(ParamID::ARGOS_TIME_SYNC_BURST_EN, false);
+	configure_plain_legacy();
 
 	ArgosTxService serv(*mock_kineis);
 	std::time_t t = 1652105502000;
@@ -3765,6 +3759,274 @@ TEST(ArgosTxService, DeviceErrorSuspensionIsClearedByANewGpsSession) {
 
 	// The beacon transmits again.
 	t += 60000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	system_scheduler->run();
+	mock().checkExpectations();
+}
+
+// --- Is the backoff triggered for the right reasons? ------------------------
+
+// The counter must not move for a refusal that is itself a recovery window.
+// SmdSat's 30-min autofallback cooldown rejects TX on purpose; counting those
+// rejections would spend the whole 3-strike budget in about three surface
+// events and suspend a beacon whose radio is fine. react() checks
+// cooldown_remaining_ms() BEFORE the increment for exactly this reason
+// (argos_tx_service.cpp, top of react(KineisEventDeviceError)).
+TEST(ArgosTxService, DeviceCooldownRejectionDoesNotBurnTheErrorBudget) {
+	configure_plain_legacy();
+
+	ArgosTxService serv(*mock_kineis);
+	std::time_t t = 1652105502000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+
+	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
+	serv.start();
+	inject_gps_location(true, 11.8768, -33.8232, t / 1000, true);
+
+	// Five minutes of cooldown left on the module.
+	mock_kineis->test_set_cooldown_remaining_ms(300000);
+
+	// Four rejections -- one more than DEVICE_ERROR_MAX_CONSECUTIVE, so a
+	// suspension would already have happened if these were being counted.
+	mock().expectNCalls(4 + 1, "send").onObject(mock_kineis).ignoreOtherParameters();
+	mock().expectNCalls(4, "stop_send").onObject(mock_kineis);
+
+	for (unsigned int i = 0; i < 4; i++) {
+		t += serv.get_last_schedule();
+		fake_rtc->settime(t / 1000);
+		fake_timer->set_counter(t);
+		system_scheduler->run();
+		mock_kineis->notify(KineisEventDeviceError({}));
+		// Rescheduled past the cooldown with the +1 s margin -- and NOT by the
+		// exponential backoff, which would read 60 s, then 120 s.
+		CHECK_EQUAL(301000U, serv.get_last_schedule());
+	}
+
+	// Cooldown lifts. The beacon must transmit, not sit in a suspension it
+	// never earned.
+	mock_kineis->test_set_cooldown_remaining_ms(0);
+	t += serv.get_last_schedule();
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	system_scheduler->run();
+	mock().checkExpectations();
+}
+
+// A successful TX must zero the count, not merely pause it: "consecutive" has
+// to mean consecutive. Without this, three failures spread across a deployment
+// -- with good transmissions in between -- would eventually suspend a healthy
+// beacon, because nothing else ages the counter down.
+TEST(ArgosTxService, SuccessfulTxClearsTheErrorCount) {
+	configure_plain_legacy();
+
+	ArgosTxService serv(*mock_kineis);
+	std::time_t t = 1652105502000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+
+	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
+	serv.start();
+	inject_gps_location(true, 11.8768, -33.8232, t / 1000, true);
+
+	mock().expectNCalls(3, "send").onObject(mock_kineis).ignoreOtherParameters();
+	mock().expectNCalls(2, "stop_send").onObject(mock_kineis);
+
+	// First failure: base backoff.
+	t += serv.get_last_schedule();
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	system_scheduler->run();
+	mock_kineis->notify(KineisEventDeviceError({}));
+	CHECK_EQUAL(60000U, serv.get_last_schedule());
+
+	// Then one that works.
+	t += serv.get_last_schedule();
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	system_scheduler->run();
+	mock_kineis->notify(KineisEventTxComplete({}));
+
+	// The next failure is a FIRST failure again: 60 s, not 120 s.
+	t += serv.get_last_schedule();
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	system_scheduler->run();
+	mock_kineis->notify(KineisEventDeviceError({}));
+	CHECK_EQUAL(60000U, serv.get_last_schedule());
+	mock().checkExpectations();
+}
+
+// What the backoff is measured against, pinned because it is easy to assume
+// wrong. DEVICE_ERROR_BACKOFF_BASE_MS is an absolute retry delay, not a
+// multiple of TR_NOM: ArgosTxScheduler::set_earliest_schedule is a floor
+// (schedule_periodic takes max(earliest, last TX anchor), argos_tx_scheduler.cpp
+// around the m_earliest_schedule block), so it can never pull a TX earlier than
+// the backoff -- but with a long nominal period the retry still lands well
+// before the next nominal slot. That is deliberate for a retry, and the
+// 3-strike suspension bounds it to two extra attempts; it is not a storm.
+TEST(ArgosTxService, BackoffIsAnAbsoluteRetryDelayNotAMultipleOfTrNom) {
+	configure_plain_legacy(3600);  // one hour between nominal transmissions
+
+	ArgosTxService serv(*mock_kineis);
+	std::time_t t = 1652105502000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+
+	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
+	serv.start();
+	inject_gps_location(true, 11.8768, -33.8232, t / 1000, true);
+
+	mock().expectNCalls(2, "send").onObject(mock_kineis).ignoreOtherParameters();
+	mock().expectNCalls(2, "stop_send").onObject(mock_kineis);
+
+	t += serv.get_last_schedule();
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	system_scheduler->run();
+	mock_kineis->notify(KineisEventDeviceError({}));
+	CHECK_EQUAL(60000U, serv.get_last_schedule());
+
+	t += serv.get_last_schedule();
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	system_scheduler->run();
+	mock_kineis->notify(KineisEventDeviceError({}));
+	CHECK_EQUAL(120000U, serv.get_last_schedule());
+	mock().checkExpectations();
+}
+
+// A TX that simply never answers -- no TxComplete, no DeviceError, the module
+// gone quiet -- is NOT a device error as far as this counter is concerned.
+// Service::on_service_timeout cancels and reschedules without touching it, so
+// there is no backoff on that path: the beacon retries at its nominal period
+// indefinitely. Whether that is the right policy is a separate question; this
+// test exists so the answer is visible rather than assumed.
+TEST(ArgosTxService, TxTimeoutCountsNoErrorAndArmsNoBackoff) {
+	configure_plain_legacy();
+
+	ArgosTxService serv(*mock_kineis);
+	std::time_t t = 1652105502000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+
+	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
+	serv.start();
+	inject_gps_location(true, 11.8768, -33.8232, t / 1000, true);
+
+	mock().expectNCalls(2, "send").onObject(mock_kineis).ignoreOtherParameters();
+	mock().expectNCalls(2, "stop_send").onObject(mock_kineis);
+
+	t += serv.get_last_schedule();
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	system_scheduler->run();
+
+	// Silence. service_next_timeout() is 30 s on this build; step past it.
+	t += 31000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	system_scheduler->run();
+
+	// No backoff was armed: the schedule is the nominal one, not 60 s.
+	CHECK_COMPARE(serv.get_last_schedule(), <, 60000U);
+
+	// And the count is still zero, so the next real error is a FIRST error.
+	t += serv.get_last_schedule();
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	system_scheduler->run();
+	mock_kineis->notify(KineisEventDeviceError({}));
+	CHECK_EQUAL(60000U, serv.get_last_schedule());
+	mock().checkExpectations();
+}
+
+// --- The remaining two ways out of a suspension -----------------------------
+
+// The turtle case. A diving tracker gets a second exit that a land tracker
+// does not: surfacing. The UW branch clears the counter, and the base class
+// reschedules through notify_underwater_state(false) ->
+// service_is_triggered_on_surfaced(). This is the one recovery that does not
+// depend on the wake loop, so it is the one that must keep working if that
+// loop is ever removed.
+TEST(ArgosTxService, SurfaceEventClearsTheSuspension) {
+	configure_plain_legacy();
+	fake_config_store->write_param(ParamID::DRY_TIME_BEFORE_TX, (unsigned int)0);
+
+	ArgosTxService serv(*mock_kineis);
+	std::time_t t = 1652105502000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+
+	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
+	serv.start();
+	inject_gps_location(true, 11.8768, -33.8232, t / 1000, true);
+
+	mock().expectNCalls(3 + 1, "send").onObject(mock_kineis).ignoreOtherParameters();
+	mock().expectNCalls(3 + 1, "stop_send").onObject(mock_kineis);
+	// Diving caches TCXO=0 for the next surfacing and cuts the module; the
+	// first TX after surfacing then skips the warmup, hence two zero writes.
+	mock().expectNCalls(2, "set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 0);
+	mock().expectOneCall("power_off_immediate").onObject(mock_kineis);
+
+	for (unsigned int i = 0; i < 3; i++) {
+		t += serv.get_last_schedule();
+		fake_rtc->settime(t / 1000);
+		fake_timer->set_counter(t);
+		system_scheduler->run();
+		mock_kineis->notify(KineisEventDeviceError({}));
+	}
+
+	// Down, then up.
+	notify_underwater_state(true);
+	t += 600000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	notify_underwater_state(false);
+
+	// Transmitting again.
+	t += 60000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	system_scheduler->run();
+	mock().checkExpectations();
+}
+
+// The last exit, and the only one that always exists on every board and every
+// configuration: a reboot. The counter is plain RAM, cleared by service_init.
+// It is also the exit the 2026-06-30 field case had to fall back on, which is
+// precisely why the other three matter.
+TEST(ArgosTxService, RebootClearsTheErrorCount) {
+	configure_plain_legacy();
+
+	ArgosTxService serv(*mock_kineis);
+	std::time_t t = 1652105502000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+
+	mock().expectNCalls(2, "set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
+	serv.start();
+	inject_gps_location(true, 11.8768, -33.8232, t / 1000, true);
+
+	mock().expectNCalls(3 + 1, "send").onObject(mock_kineis).ignoreOtherParameters();
+	mock().expectNCalls(3 + 1, "stop_send").onObject(mock_kineis);
+	// Stopping the service cuts the module, as a reboot would.
+	mock().expectOneCall("power_off_immediate").onObject(mock_kineis);
+
+	for (unsigned int i = 0; i < 3; i++) {
+		t += serv.get_last_schedule();
+		fake_rtc->settime(t / 1000);
+		fake_timer->set_counter(t);
+		system_scheduler->run();
+		mock_kineis->notify(KineisEventDeviceError({}));
+	}
+
+	serv.stop();
+	serv.start();
+	inject_gps_location(true, 11.8768, -33.8232, t / 1000, true);
+
+	t += serv.get_last_schedule();
 	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 	system_scheduler->run();

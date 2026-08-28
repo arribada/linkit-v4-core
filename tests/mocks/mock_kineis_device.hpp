@@ -55,10 +55,18 @@ public:
 	// switch_modulation() mock-call path.
 	void test_set_current_modulation(KineisModulation mode) { m_current_mod = mode; }
 
+	// Test helper: emulate the SmdSat autofallback cooldown window. It is what
+	// ArgosTxService::react uses to tell "module refused, try later" apart from
+	// a real fault -- a distinction with no coverage until now. Defaults to 0,
+	// i.e. the base-class behaviour, so existing tests are unaffected.
+	unsigned int cooldown_remaining_ms() const override { return m_cooldown_remaining_ms; }
+	void test_set_cooldown_remaining_ms(unsigned int ms) { m_cooldown_remaining_ms = ms; }
+
 	void set_lpm_mode(uint8_t lpm_bitmap) override {
 		(void)lpm_bitmap;  // LPM is SMD-specific, not verified in generic TX tests
 	}
 
 private:
 	KineisModulation m_current_mod = KineisModulation::LDA2;
+	unsigned int m_cooldown_remaining_ms = 0;
 };
