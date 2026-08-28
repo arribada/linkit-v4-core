@@ -279,6 +279,7 @@ target_sources(${PROJECT_NAME} PRIVATE
     "src/argos_rx_test.cpp"
     "src/kim2_modulation_test.cpp"
     "src/lora_packet_builder_test.cpp"
+    "src/packet_field_encoding_test.cpp"
     "src/dive_mode_test.cpp"
     "src/m8_test.cpp"
     "src/binascii_test.cpp"

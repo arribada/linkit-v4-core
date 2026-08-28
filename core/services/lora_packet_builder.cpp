@@ -5,6 +5,7 @@
 
 #include "lora_packet_builder.hpp"
 #include "bitpack.hpp"
+#include "packet_field_encoding.hpp"
 #include "binascii.hpp"
 #include "timeutils.hpp"
 #include "debug.hpp"
@@ -16,8 +17,7 @@
 ///         also the invalid-fix sentinel — decoder must use the `valid` flag
 ///         from the packet header to disambiguate.
 unsigned int LoRaPacketBuilder::convert_speed(double x) {
-	if (x < 0) return 0;
-	return std::min(127u, static_cast<unsigned int>((SECONDS_PER_HOUR * x) / (2 * MM_PER_KM)));
+	return PacketField::speed(x);
 }
 
 /// @brief Convert battery voltage (mV) to 7-bit encoding (20mV/unit, offset 2700mV).
@@ -39,29 +39,21 @@ unsigned int LoRaPacketBuilder::convert_speed(double x) {
 ///   - If `encoded == 127` → display "≥ 5.24 V"
 ///   - Otherwise → display 2700 + (encoded * 20) mV
 unsigned int LoRaPacketBuilder::convert_battery_voltage(unsigned int battery_voltage) {
-	return std::min(
-	    127u, static_cast<unsigned int>(std::max(static_cast<int>(battery_voltage) - static_cast<int>(REF_BATT_MV), 0))
-	              / MV_PER_UNIT);
+	return PacketField::battery_voltage(battery_voltage);
 }
 
 /// @brief Encode latitude as 21-bit unsigned (bit 20 = sign for negative).
 /// @param x  Latitude in degrees.
 /// @return 21-bit encoded latitude.
 unsigned int LoRaPacketBuilder::convert_latitude(double x) {
-	if (x >= 0)
-		return static_cast<unsigned int>(x * LON_LAT_RESOLUTION);
-	else
-		return static_cast<unsigned int>((x - 0.00005) * NEG_LON_LAT_RESOLUTION) | (1u << 20);
+	return PacketField::latitude(x);
 }
 
 /// @brief Encode longitude as 22-bit unsigned (bit 21 = sign for negative).
 /// @param x  Longitude in degrees.
 /// @return 22-bit encoded longitude.
 unsigned int LoRaPacketBuilder::convert_longitude(double x) {
-	if (x >= 0)
-		return static_cast<unsigned int>(x * LON_LAT_RESOLUTION);
-	else
-		return static_cast<unsigned int>((x - 0.00005) * NEG_LON_LAT_RESOLUTION) | (1u << 21);
+	return PacketField::longitude(x);
 }
 
 /// @brief Convert heading (degrees) to 8-bit encoding (~0.704 deg/unit).
@@ -70,17 +62,14 @@ unsigned int LoRaPacketBuilder::convert_longitude(double x) {
 ///         sentinel — valid headings are clamped to 254 to keep the encoding
 ///         unambiguous against the sentinel.
 unsigned int LoRaPacketBuilder::convert_heading(double x) {
-	if (x < 0) return 0;
-	return std::min(254u, static_cast<unsigned int>(x * DEGREES_PER_UNIT));
+	return PacketField::heading(x);
 }
 
 /// @brief Convert altitude (mm MSL) to 8-bit encoding (40m/unit, clamped 0-254).
 /// @param x  Altitude in mm above MSL.
 /// @return Encoded altitude (0-254, 255=invalid).
 unsigned int LoRaPacketBuilder::convert_altitude(double x) {
-	return static_cast<unsigned int>(
-	    std::min(static_cast<double>(MAX_ALTITUDE),
-		         std::max(static_cast<double>(MIN_ALTITUDE), x / (MM_PER_METER * METRES_PER_UNIT))));
+	return PacketField::altitude(x);
 }
 
 unsigned int LoRaPacketBuilder::max_gps_entries(unsigned int max_payload_bytes) {
