@@ -287,6 +287,21 @@ class Bench:
         self.expect(r"%OP OK", 3.0, from_idx=mk)
         return self.wait_state("OPERATIONAL", timeout)
 
+    def settle_console(self, timeout=20.0):
+        """Wait until the bench console answers a %PING within one second.
+
+        Drains any backlog of late replies left by a busy main loop (service
+        start-up after %OP). Without this the next command reads a stale answer
+        and every subsequent check is measuring the wrong thing.
+        """
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            mk = self.mark()
+            self._send("%PING\r\n")
+            if self.expect(r"%BENCH OK", 1.0, from_idx=mk):
+                return True
+        return False
+
     def inject_gps(self, lat, lon, hacc_mm=0, numsv=0, timeout=5.0):
         mk = self.mark()
         args = f"{lat} {lon}"
@@ -437,13 +452,25 @@ class Suite:
                    r.group(0) if r else "no response (check KIM2 UART)")
 
         # 7. Back to operational.
+        #
+        # Leaving config starts every service, and the KIM2 bring-up alone is
+        # several seconds of UART round-trips (RCONF read + validate). The bench
+        # console is polled from the same main loop, so its replies queue up
+        # behind that: a %STATE sent immediately after %OP routinely answers
+        # 2-5 s late. That is not a fault -- it is what a board doing real work
+        # looks like -- but a caller that does not wait for it desynchronises
+        # every following command, because the late reply is then read as the
+        # answer to the NEXT one. That is exactly what used to make check 8 fail
+        # while its own log line proved the injection had happened.
         ok = b.exit_config()
+        b.settle_console(20.0)
         self.check("exit config (%OP)", ok, f"state={b.get_state()}")
 
         # 8. Synthetic GPS fix injection -> post-fix pipeline.
+        # 20 s, not 5: the console can still be behind the service start-up here.
         mk = b.mark()
-        m = b.inject_gps(-21.0097, 55.2707)
-        logline = b.expect(r"bench_inject_fix: lat=-21", 5.0, from_idx=mk)
+        m = b.inject_gps(-21.0097, 55.2707, timeout=20.0)
+        logline = b.expect(r"bench_inject_fix: lat=-21", 20.0, from_idx=mk)
         self.check("GPS injection (%GPS)", m is not None and logline is not None,
                    "injected -21.0097,55.2707")
         # Assert on an INFO/WARN log (task_process_gnss_data itself is TRACE-level,

@@ -101,12 +101,33 @@ Every session is transcript-logged to `tests/bench/logs/<timestamp>.log`.
   — the suite reports this as "TX subsystem alive, TX gated" (correct, not a failure).
   To validate a real transmission, program KIM2 credentials first.
 
-## First live run (2026-07-03, board Argos ID 4189092)
+## Console latency after `%OP` — read this before adding a check
 
-10/10 checks green on a real KIM board: reed bypass, config R/W (`IDT06=3FEBA4`,
-model "LinkIt V4"), `PARMW/PARMR` round-trip, `%GPS` injection accepted as a PVT.
-Real M10Q present (`GNSS UID 8FAF580F2E`). Argos TX gated — this unit has no KIM2
-RCONF credentials.
+Leaving configuration mode starts every service, and the KIM2 bring-up alone is
+several seconds of UART round-trips (RCONF read + validate). The bench console is
+polled from that same main loop, so its replies queue behind the work: a `%STATE`
+sent immediately after `%OP` routinely answers **2 to 5 seconds late**.
+
+That is not a fault. What *is* a fault is not waiting for it: the late reply is
+then read as the answer to the NEXT command, and every following check measures
+the wrong thing. That is what made the suite report 8-9/10 for months — check 8
+failed while its own log line, two lines further down the transcript, proved the
+injection had happened.
+
+`Bench.settle_console()` drains that backlog (it pings until the console answers
+within a second). Call it after anything that makes the board busy, and give
+commands issued in that window a generous timeout. Do not lower them back.
+
+## Live runs
+
+- **2026-07-03**, board Argos ID 4189092 — 10/10 on a real KIM board: reed bypass,
+  config R/W (`IDT06=3FEBA4`, model "LinkIt V4"), `PARMW/PARMR` round-trip, `%GPS`
+  injection accepted as a PVT. Real M10Q present (`GNSS UID 8FAF580F2E`). Argos TX
+  gated — this unit has no KIM2 RCONF credentials.
+- **2026-08-28**, same board — 10/10, three consecutive runs, after fixing the
+  console-latency desynchronisation described above. The same firmware built from
+  `main` scored 8-9/10 on five runs before the harness fix, so the defect was in
+  the harness, not the firmware.
 
 ---
 
