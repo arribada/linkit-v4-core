@@ -162,15 +162,15 @@ private:
 	/// @brief Why are the AOP unusable? Three clearly distinct causes:
 	/// merging them into a single message makes field diagnosis misleading
 	/// ("age=0 s ... expired" means nothing).
-	enum class AopEtat { UTILISABLE, AUCUN_ENREGISTREMENT, RTC_NON_REGLEE, DATE_ABSENTE, PERIME };
+	enum class AopStatus { USABLE, NO_RECORD, RTC_UNSET, NO_DATE, EXPIRED };
 
 	/// @brief Are the AOP usable? (present, dated, not expired)
 	/// @param[out] age_s AOP age in seconds (0 if unknown)
 	/// Without valid AOP no window can be computed: the caller must then
 	/// fall back to periodic transmission rather than staying silent.
-	AopEtat aop_etat(const ArgosConfig &config, std::time_t now, unsigned int &age_s);
+	AopStatus aop_status(const ArgosConfig &config, std::time_t now, unsigned int &age_s);
 	bool aop_is_usable(const ArgosConfig &config, std::time_t now, unsigned int &age_s);
-	static const char *aop_etat_texte(AopEtat e);
+	static const char *aop_status_text(AopStatus e);
 
 	/// @brief Updates the status parameters readable by STATR.
 	void refresh_prepass_status(const ArgosConfig &config, std::time_t now, std::time_t next_pass_epoch);

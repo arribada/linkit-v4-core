@@ -2410,7 +2410,7 @@ bool M10QAsyncReceiver::load_dbd_from_flash() {
 			uint32_t age_s = now_t - save_time;
 			const uint32_t max_age = m_bbr_retained ? DBD_MAX_AGE_BBR_S : DBD_MAX_AGE_NO_BBR_S;
 			if (age_s > max_age) {
-				DEBUG_INFO("M10QAsyncReceiver::load_dbd_from_flash: perime (%u s > %u s, BBR %s)", age_s, max_age,
+				DEBUG_INFO("M10QAsyncReceiver::load_dbd_from_flash: expired (%u s > %u s, BBR %s)", age_s, max_age,
 				           m_bbr_retained ? "retenue" : "perdue");
 				return false;
 			}

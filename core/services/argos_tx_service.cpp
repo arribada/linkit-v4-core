@@ -265,10 +265,10 @@ unsigned int ArgosTxService::service_next_schedule_in_ms() {
 	    && argos_config.mode != BaseArgosMode::OFF) {
 		unsigned int age_s = 0;
 		std::time_t aos = 0;
-		AopEtat etat = aop_etat(argos_config, now, age_s);
-		if (etat != AopEtat::UTILISABLE) {
+		AopStatus etat = aop_status(argos_config, now, age_s);
+		if (etat != AopStatus::USABLE) {
 			DEBUG_WARN("ArgosTxService: prepass requested but %s (age=%u s) — falling back to periodic TX",
-			           aop_etat_texte(etat), age_s);
+			           aop_status_text(etat), age_s);
 		} else {
 			BasePassPredict &pp = configuration_store->read_pass_predict();
 			aos = m_sched.next_pass_epoch(argos_config, pp, now);
@@ -695,10 +695,10 @@ unsigned int ArgosTxService::schedule_with_gnss(ArgosConfig &argos_config, std::
 		// silent is the worse of the two evils; better to transmit
 		// blind than not at all.
 		unsigned int age_s = 0;
-		AopEtat etat = aop_etat(argos_config, now, age_s);
-		if (etat != AopEtat::UTILISABLE) {
-			DEBUG_WARN("ArgosTxService: prepass impossible — %s (age=%u s, limite=%u j) — repli periodique",
-			           aop_etat_texte(etat), age_s, argos_config.aop_max_age_days);
+		AopStatus etat = aop_status(argos_config, now, age_s);
+		if (etat != AopStatus::USABLE) {
+			DEBUG_WARN("ArgosTxService: prepass impossible — %s (age=%u s, limit=%u d) — falling back to periodic TX",
+			           aop_status_text(etat), age_s, argos_config.aop_max_age_days);
 			refresh_prepass_status(argos_config, now, 0);
 			return m_sched.schedule_legacy(argos_config, now);
 		}
@@ -2560,26 +2560,26 @@ unsigned int ArgosTxService::apply_spacing_guard(unsigned int proposed_delay_ms,
 }
 
 
-const char *ArgosTxService::aop_etat_texte(AopEtat e) {
+const char *ArgosTxService::aop_status_text(AopStatus e) {
 	switch (e) {
-	case AopEtat::AUCUN_ENREGISTREMENT: return "aucun enregistrement AOP (jamais provisionne)";
-	case AopEtat::RTC_NON_REGLEE: return "RTC non reglee (pas d'heure fiable)";
-	case AopEtat::DATE_ABSENTE: return "date de bulletin absente ou posterieure a l'heure courante";
-	case AopEtat::PERIME: return "bulletin perime";
-	case AopEtat::UTILISABLE: return "utilisable";
-	default: return "etat inconnu";
+	case AopStatus::NO_RECORD: return "no AOP record (never provisioned)";
+	case AopStatus::RTC_UNSET: return "RTC not set (no reliable time)";
+	case AopStatus::NO_DATE: return "bulletin date missing or later than the current time";
+	case AopStatus::EXPIRED: return "bulletin expired";
+	case AopStatus::USABLE: return "usable";
+	default: return "unknown status";
 	}
 }
 
 bool ArgosTxService::aop_is_usable(const ArgosConfig &config, std::time_t now, unsigned int &age_s) {
-	return aop_etat(config, now, age_s) == AopEtat::UTILISABLE;
+	return aop_status(config, now, age_s) == AopStatus::USABLE;
 }
 
 /// @brief Are the AOP usable (present, dated, not expired)?
-ArgosTxService::AopEtat ArgosTxService::aop_etat(const ArgosConfig &config, std::time_t now, unsigned int &age_s) {
+ArgosTxService::AopStatus ArgosTxService::aop_status(const ArgosConfig &config, std::time_t now, unsigned int &age_s) {
 	age_s = 0;
 	BasePassPredict &pp = configuration_store->read_pass_predict();
-	if (pp.num_records == 0) return AopEtat::AUCUN_ENREGISTREMENT;
+	if (pp.num_records == 0) return AopStatus::NO_RECORD;
 	// last_aop_update = ARGOS_AOP_DATE, set when a PASPW is received.
 	// Its factory value is old (Oct. 2021): a beacon that was never provisioned
 	// is therefore considered expired as soon as the age limit is enabled, and
@@ -2587,14 +2587,14 @@ ArgosTxService::AopEtat ArgosTxService::aop_etat(const ArgosConfig &config, std:
 	// Without a reliable time no window can be computed — and above all the AOP
 	// age is meaningless. A distinct cause because the remedy is one too: set
 	// the RTC ($RTCW or a GNSS fix), not re-upload the AOP.
-	if (!service_is_time_known()) return AopEtat::RTC_NON_REGLEE;
-	if (config.last_aop_update <= 0 || now <= config.last_aop_update) return AopEtat::DATE_ABSENTE;
+	if (!service_is_time_known()) return AopStatus::RTC_UNSET;
+	if (config.last_aop_update <= 0 || now <= config.last_aop_update) return AopStatus::NO_DATE;
 	std::time_t age = now - config.last_aop_update;
 	age_s = static_cast<unsigned int>(age);
-	if (config.aop_max_age_days == 0) return AopEtat::UTILISABLE;  // 0 = no expiry
+	if (config.aop_max_age_days == 0) return AopStatus::USABLE;  // 0 = no expiry
 	static constexpr std::time_t SECS_PER_DAY = 24 * 60 * 60;
-	return (age < static_cast<std::time_t>(config.aop_max_age_days) * SECS_PER_DAY) ? AopEtat::UTILISABLE
-	                                                                                : AopEtat::PERIME;
+	return (age < static_cast<std::time_t>(config.aop_max_age_days) * SECS_PER_DAY) ? AopStatus::USABLE
+	                                                                                : AopStatus::EXPIRED;
 }
 
 /// @brief Update the statuses readable through STATR (PPT01..PPT04).

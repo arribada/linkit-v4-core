@@ -954,7 +954,7 @@ bool M10QAsyncReceiver::start_bridge(PassthroughCallback rx_callback) {
 	m_bridge_active = true;
 
 	DEBUG_INFO("M10QAsyncReceiver: bridge mode ACTIVE (%u baud, %s)", bridge_baud,
-	           was_idle ? "recepteur redemarre" : "recepteur deja configure");
+	           was_idle ? "receiver restarted" : "receiver already configured");
 	return true;
 }
 
