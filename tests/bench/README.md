@@ -86,6 +86,44 @@ Every session is transcript-logged to `tests/bench/logs/<timestamp>.log`.
 8. synthetic GPS fix injection (`%GPS`) → logging pipeline
 9. Argos/TX activity after fix *(soft check — regex tuned against the first real capture)*
 
+## Argos TX backoff / suspension suite (`argos_backoff_bench.py --run`)
+
+Separate script, separate run. `kim_bench.py --run` stays the regression
+baseline (10/10) and is unchanged; this one is the on-board counterpart to the
+device-error tests in `tests/src/argos_tx_test.cpp`. Flash first with a short
+deadline, or the probe check waits an hour:
+
+```bash
+ARGOS_TX_ERROR_SUSPEND_S=120 ./scripts/build_linkitv4_kim.sh --bench
+./tests/bench/flash.sh
+python3 tests/bench/kim_bench.py --run            # baseline, expect 10/10
+python3 tests/bench/argos_backoff_bench.py --run  # then this
+```
+
+What it checks, in order: the console answers and the board is operational ·
+`%SCHED` reports an `ARGOSTX` schedule · no suspension is armed at boot · a
+`%GPS` injection lifts the first-fix TX gate · the backoff ladder reads 60 s
+then 120 s · the third strike arms the deadline the firmware was built with ·
+**the suspension does not spin** · the service is parked rather than
+rescheduling at zero delay · exactly one probe fires when the deadline passes ·
+a GPS session clears the suspension, and clears the earliest-TX floor with it ·
+a surface event (`%DIVE`/`%SURFACE`) clears it too · the scheduler queue has not
+leaked.
+
+The spin check is the one worth the trip. Until the probe deadline landed, the
+suspension completed without a reschedule, which left the safety-net timeout
+armed; it fired, rescheduled at zero delay, hit the guard in `service_initiate`
+and rearmed itself, so the board woke, logged and skipped once per
+`service_next_timeout` forever — an LFS commit every pass, and no transmission.
+Nothing in a host test would have made that visible as a *cost*.
+
+**The interesting half only runs if TX actually fails.** On a board with valid
+KIM2 credentials the transmissions succeed, there is no error ladder, and those
+checks report `SKIP` rather than `FAIL` — that is the correct outcome, not a
+gap in the script. To exercise the ladder deliberately, run against a board
+whose KIM2 credentials are absent or whose module is disconnected: the TX is
+then attempted and refused, which is the fault this machinery exists for.
+
 ## Notes / limits
 
 - Bench builds are **debug** (logs on, `DEBUG_NO_WATCHDOG`): not for power-draw testing.
