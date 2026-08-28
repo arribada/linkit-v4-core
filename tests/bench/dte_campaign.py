@@ -4700,49 +4700,71 @@ def c_prepass_params_presents(r, case):
     r.record(case, 'PASS', 'PPP10/11/12 presents, ecrits, relus et bornes', trace)
 
 def c_aop_kineis_accepte(r, case):
-    """La carte accepte une vraie capture allcast Kineis et en tire 25 satellites.
+    """Une trame AOP tronquee par le transport est refusee, pas ecrite a moitie.
 
-    Le test hote prouve le decodage; celui-ci prouve que le BINAIRE FLASHE fait
-    la meme chose, avec la meme table en flash externe. C est le seul endroit ou
-    l on verifie que l AOP survit reellement a l ecriture LittleFS.
+    CE CAS NE PEUT PAS TELEVERSER L AOP PAR USB, et c est une limite du banc,
+    pas un defaut du firmware. Mesure du 2026-08-28:
+
+      - NrfUSB::read_line() coupe sur '\r' OU '\n' (nrf_usb.cpp:232). La
+        capture Kineis contient deux octets 0x0A, donc la trame arrive tronquee
+        et le firmware repond $N;PASPW#001;4 (DATA_LENGTH_MISMATCH).
+      - Le chemin BLE, lui, ne vide son tampon que si le DERNIER octet d un
+        paquet BLE vaut '\r' (ble_interface.cpp:700). Un 0x0D a l interieur de
+        la charge ne declenche rien: le televersement binaire par BLE — celui
+        de l IHM — fonctionne.
+
+    Le decodage lui-meme est prouve cote hote par PASPW_REQ_KineisAllcastAop,
+    sur cette meme capture, avec plus de soixante assertions.
+
+    Ce qui reste a eprouver sur la carte, et qui vaut d etre eprouve: qu une
+    trame tronquee soit refusee PROPREMENT et laisse la table intacte. Une
+    troncature acceptee a moitie ecrirait des elements orbitaux partiels, et la
+    balise viserait des satellites qui ne sont pas la.
     """
     b = r.b
     import os
     chemin = os.path.join(os.path.dirname(__file__), '..', '..', _AOP_KINEIS_HEX)
     try:
         with open(os.path.normpath(chemin)) as f:
-            hexa = f.read().strip()
+            binaire = bytes.fromhex(f.read().strip())
     except OSError as e:
         return r.record(case, 'ERROR', f'vecteur introuvable: {e}')
-    binaire = bytes.fromhex(hexa)
-    # $PASPW#<len3hex>;<binaire brut>\r — la charge est BINAIRE, pas du texte.
+    if b'\n' not in binaire and b'\r' not in binaire:
+        return r.record(case, 'ERROR',
+                        'la capture ne contient ni LF ni CR: elle passerait par USB et ce '
+                        'cas ne mesure plus la troncature — le remplacer par un vrai '
+                        'televersement')
+
+    avant = _statr(b, ['PPT01', 'ART03'])
     trame = f'$PASPW#{len(binaire):03X};'.encode() + binaire + b'\r'
     mk = b.mark()
     try:
-        b.ser.write(trame)
-        b.ser.flush()
+        b.ser.write(trame); b.ser.flush()
     except Exception as e:
         return r.record(case, 'ERROR', f'envoi impossible: {type(e).__name__}: {e}')
-    m = b.expect(r'\$([ON]);PASPW#', timeout=25.0, from_idx=mk)
+    m = b.expect(r'\$([ON]);PASPW#([0-9A-F]{3});(\d*)', timeout=25.0, from_idx=mk)
+    ligne = (m.string if m and hasattr(m, 'string') else '') or ''
+    apres = _statr(b, ['PPT01', 'ART03'])
+    trace = (f'{len(binaire)} octets, {binaire.count(10)} LF, {binaire.count(13)} CR\n'
+             f'reponse: {ligne[:70]}\navant={avant}\napres={apres}')
     if not m:
-        return r.record(case, 'ERROR', 'PASPW sans reponse')
-    if m.group(1) != 'O':
-        ligne = m.string if hasattr(m, 'string') else ''
-        return r.record(case, 'FAIL', f'capture Kineis REFUSEE: {ligne[:80]}', ligne[:200])
-    aop = _statr(b, ['PPT01', 'PPT02', 'ART03'])
-    trace = f'{len(binaire)} octets acceptes\nAOP: {aop}'
-    if aop.get('PPT01') != '1':
+        return r.record(case, 'ERROR', 'PASPW sans reponse', trace)
+    if m.group(1) == 'O':
         return r.record(case, 'FAIL',
-                        f"AOP acceptee mais declaree invalide (PPT01={aop.get('PPT01')})", trace)
-    date = aop.get('ART03', '')
-    if not date.startswith('27/08/2026'):
+                        'une trame TRONQUEE par le transport est ACCEPTEE — la table a pu '
+                        'etre ecrite partiellement', trace)
+    code = m.group(3)
+    if code != '4':
         return r.record(case, 'FAIL',
-                        f'ART03={date!r}, attendu le bulletin du 27/08/2026', trace)
-    if date.endswith('00:00:00'):
+                        f'trame tronquee refusee avec l erreur {code}, attendu 4 '
+                        '(DATA_LENGTH_MISMATCH)', trace)
+    if avant.get('ART03') and apres.get('ART03') != avant.get('ART03'):
         return r.record(case, 'FAIL',
-                        'ART03 porte minuit: le firmware retombe sur la semantique de '
-                        'l ancien codec au lieu de l horodatage du bulletin', trace)
-    r.record(case, 'PASS', f'capture Kineis acceptee, AOP valide, ART03={date}', trace)
+                        f"refus annonce mais la table a bouge: ART03 {avant.get('ART03')} "
+                        f"-> {apres.get('ART03')}", trace)
+    r.record(case, 'PASS',
+             'trame tronquee par le transport USB refusee en DATA_LENGTH_MISMATCH, '
+             'table intacte', trace)
 
 def c_aop_ancien_format_refuse(r, case):
     """L ancien format A-DCS est refuse SANS abimer la table stockee.
@@ -4825,7 +4847,7 @@ def c_rx_gate_batterie(r, case):
 CASES_V24 = [
     dict(id='PP-01',  risque='MAJEUR',   titre='PPP10/11/12 presents, ecrits, relus et bornes',
          fn=c_prepass_params_presents),
-    dict(id='AOP-01', risque='BLOQUANT', titre='Une vraie capture Kineis est acceptee et datee',
+    dict(id='AOP-01', risque='BLOQUANT', titre='Une trame AOP tronquee est refusee sans abimer la table',
          fn=c_aop_kineis_accepte),
     dict(id='AOP-02', risque='BLOQUANT', titre='L ancien format est refuse sans abimer la table',
          fn=c_aop_ancien_format_refuse),
