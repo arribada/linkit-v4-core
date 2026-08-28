@@ -1240,7 +1240,7 @@ void KIM2Device::state_transmit_enter() {
 		if (!adaptive) {
 			DEBUG_ERROR(
 			    "KIM2Device::state_transmit_enter: non-adaptive — service requested mode %u but module is configured "
-				"for mode %u — aborting TX (next cycle will rebuild at correct mode via get_current_modulation())",
+			    "for mode %u — aborting TX (next cycle will rebuild at correct mode via get_current_modulation())",
 			    static_cast<unsigned int>(m_tx_mode), static_cast<unsigned int>(m_current_rconf_mode));
 			m_tx_buffer.clear();
 			KIM2_STATE_CHANGE(transmit, error);

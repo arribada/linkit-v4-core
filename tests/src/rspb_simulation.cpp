@@ -828,7 +828,7 @@ static void write_html(const SimResult &R, const std::vector<DayS> &days) {
 	html << "  <h2>Per-day summary</h2>\n  <div class=\"tablewrap\"><table>\n";
 	html << "    <thead><tr><th>Day</th><th>Model</th><th>Act</th><th>Temp &deg;C</th><th>Moved m</th>"
 	        "<th>No-fix</th><th>Wakes</th><th>Conf %</th><th>Days</th><th>State</th><th>Modulo</th><th>Batt "
-			"%</th></tr></thead>\n    <tbody>\n";
+	        "%</th></tr></thead>\n    <tbody>\n";
 	for (const auto &d : days) {
 		const char *rowcls = d.end_status == 2 ? "confirmed" : (!d.alive_model ? "dead" : "");
 		const char *bcls = d.end_status == 2 ? "b-conf" : d.end_status == 1 ? "b-susp" : "b-alive";

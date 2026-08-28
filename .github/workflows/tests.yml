@@ -70,6 +70,43 @@ jobs:
           if-no-files-found: error
 
   # ---------------------------------------------------------------------------
+  # Formatting, on the lines a pull request touches -- never on the whole tree.
+  # A file that nobody edits can never turn the build red; the day someone does
+  # edit it, bringing it in line is free.
+  #
+  # The version is pinned on purpose: two clang-format majors do not agree, and
+  # apt ships 14 while this is 23.1.0. Use the same pip package locally:
+  #     pip3 install --user clang-format==23.1.0
+  # ---------------------------------------------------------------------------
+  format:
+    name: Format (changed files only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install clang-format
+        run: pip3 install --quiet clang-format==23.1.0
+
+      - name: clang-format the diff
+        run: |
+          git fetch origin ${{ github.base_ref }} --depth=1
+          CHANGED=$(git diff --name-only --diff-filter=ACM                       origin/${{ github.base_ref }}...HEAD                     | grep -E '\.(c|h|cpp|hpp)$'                     | grep -vE '^(libraries/|ports/nrf52840/(drivers|bsp|bootloader)/)'                     | grep -vE '(bma400\.[ch]$|bma400_defs\.h$|stc311x_|Generic_I2C\.|heap_4\.c$|tinyfsm\.hpp$|base64\.hpp$)'                     || true)
+          if [ -z "$CHANGED" ]; then echo "No first-party C/C++ changed."; exit 0; fi
+          echo "$CHANGED"
+          FAIL=0
+          for f in $CHANGED; do clang-format --dry-run -Werror "$f" || FAIL=1; done
+          if [ $FAIL -ne 0 ]; then
+            echo ""
+            echo "Fix with:  clang-format -i $CHANGED"
+            exit 1
+          fi
+
+  # ---------------------------------------------------------------------------
   # Static consistency checks. Both run in seconds, need nothing but python3,
   # and are green on main today -- they exist to keep it that way.
   # ---------------------------------------------------------------------------
