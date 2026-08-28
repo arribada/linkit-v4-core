@@ -200,6 +200,10 @@ public:
 	};
 
 	static void start_guided_calibration();
+
+	/// @brief Advance the guided-calibration state machine by one sample.
+	/// Driven from detector_state(), defined in sws_analog_calibration.cpp.
+	void tick_guided_calibration(uint16_t raw_value);
 	static void cancel_guided_calibration();
 	static bool is_guided_calibration_running();
 	static CalibResult get_guided_calibration_result();

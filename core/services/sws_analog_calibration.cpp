@@ -9,6 +9,10 @@
 #include "debug.hpp"
 #include "pmu.hpp"
 #include "gpio.hpp"
+#include "rgb_led.hpp"
+
+// LED feedback for the guided calibration walk-through (GREEN=air, BLUE=water).
+extern RGBLed *status_led;
 
 // CRC16 provided by sws_analog_constants.hpp
 
@@ -459,3 +463,205 @@ void SWSAnalogService::adjust_sample_delay() {
 }
 
 // should_recalibrate() is in sws_analog_detection.cpp (called by detector_state)
+
+// ═══════════════════════════════════════════════════════
+//  GUIDED CALIBRATION STATE MACHINE
+// ═══════════════════════════════════════════════════════
+
+/// @brief Advance the guided-calibration state machine by one sample.
+///
+/// Called once per detector tick from SWSAnalogService::detector_state(), which
+/// is where a fresh ADC reading is available. It used to be the last 183 lines
+/// of that 1014-line function; the detection logic and the calibration walk-through
+/// have nothing in common beyond needing the same sample.
+///
+/// Does nothing while m_calib_phase is IDLE. The timeout counter, however, runs
+/// for every phase except IDLE and DONE -- that is what rescues a calibration
+/// the operator walked away from.
+///
+/// @param raw_value  the ADC sample for this tick
+void SWSAnalogService::tick_guided_calibration(uint16_t raw_value) {
+	if (m_calib_phase != CalibPhase::IDLE && m_calib_phase != CalibPhase::DONE) {
+		m_calib_timeout_ticks++;
+		if (m_calib_timeout_ticks >= GUIDED_CALIB_TIMEOUT_TICKS) {
+			DEBUG_WARN("SWSAnalog: Guided calibration TIMEOUT after %u ticks — cancelling", m_calib_timeout_ticks);
+			cancel_guided_calibration();
+			if (m_calib_notify) {
+				CalibResult r = { 0, 0, 0 };  // status 0 = timeout
+				m_calib_notify(r);
+			}
+		}
+	}
+	if (m_calib_phase != CalibPhase::IDLE) {
+		switch (m_calib_phase) {
+		case CalibPhase::AIR_WAITING:
+			// Waiting for stable readings in air before sampling.
+			// Use UINT16_MAX as "no prior sample" sentinel (outside valid
+			// 14-bit ADC range 0..16383) — the previous `prev > 0` proxy
+			// mis-classified a legitimate raw=0 reading (disconnected
+			// electrode, uncharged cap) as "no prior sample" and the
+			// stable_count could never advance → stuck until the 5 min
+			// GUIDED_CALIB_TIMEOUT_TICKS fired.
+			if (m_calib_prev_value != UINT16_MAX) {
+				uint16_t delta = (raw_value > m_calib_prev_value) ? (raw_value - m_calib_prev_value)
+				                                                  : (m_calib_prev_value - raw_value);
+				if (delta < CALIB_STABILITY_TOLERANCE) {
+					m_calib_stable_count++;
+				} else {
+					m_calib_stable_count = 0;
+				}
+			}
+			m_calib_prev_value = raw_value;
+			if (m_calib_stable_count >= CALIB_STABILITY_THRESHOLD) {
+				m_calib_phase = CalibPhase::AIR_SAMPLING;
+				m_calib_sum = 0;
+				m_calib_count = 0;
+				if (status_led) status_led->flash(RGBLedColor::GREEN, 150);
+				DEBUG_INFO("SWSAnalog: Guided calib — sampling AIR");
+			}
+			break;
+
+		case CalibPhase::AIR_SAMPLING:
+			m_calib_sum += raw_value;
+			m_calib_count++;
+			if (m_calib_count >= CALIB_NUM_SAMPLES) {
+				m_calib_air_result = (uint16_t)(m_calib_sum / m_calib_count);
+				if (status_led) status_led->set(RGBLedColor::GREEN);
+				DEBUG_INFO("SWSAnalog: Guided calib — AIR=%u — now place in WATER", m_calib_air_result);
+				// EC-4: Non-blocking pause — transition via state machine tick
+				m_calib_phase = CalibPhase::AIR_DONE_PAUSE;
+				m_calib_stable_count = 0;
+				m_calib_prev_value = UINT16_MAX;  // sentinel: no prior sample yet
+			}
+			break;
+
+		case CalibPhase::AIR_DONE_PAUSE:
+			// EC-4: 1 tick pause (1s via service_next_schedule_in_ms) replaces PMU::delay_ms(1000)
+			m_calib_phase = CalibPhase::WATER_WAITING;
+			if (status_led) status_led->flash(RGBLedColor::BLUE, 500);
+			break;
+
+		case CalibPhase::WATER_WAITING:
+			// Wait for readings significantly above air baseline.
+			// Same UINT16_MAX sentinel pattern as AIR_WAITING — needed here
+			// even though water raw is typically >0, because the phase
+			// entry resets prev to UINT16_MAX and the first sample must
+			// not be misclassified.
+			if (raw_value > m_calib_air_result * 2) {
+				if (m_calib_prev_value != UINT16_MAX) {
+					uint16_t delta = (raw_value > m_calib_prev_value) ? (raw_value - m_calib_prev_value)
+					                                                  : (m_calib_prev_value - raw_value);
+					if (delta < CALIB_STABILITY_TOLERANCE) {
+						m_calib_stable_count++;
+					} else {
+						m_calib_stable_count = 0;
+					}
+				}
+			} else {
+				m_calib_stable_count = 0;
+			}
+			m_calib_prev_value = raw_value;
+			if (m_calib_stable_count >= CALIB_STABILITY_THRESHOLD) {
+				m_calib_phase = CalibPhase::WATER_SAMPLING;
+				m_calib_sum = 0;
+				m_calib_count = 0;
+				if (status_led) status_led->flash(RGBLedColor::BLUE, 150);
+				DEBUG_INFO("SWSAnalog: Guided calib — sampling WATER");
+			}
+			break;
+
+		case CalibPhase::WATER_SAMPLING:
+			m_calib_sum += raw_value;
+			m_calib_count++;
+			if (m_calib_count >= CALIB_NUM_SAMPLES) {
+				m_calib_water_result = (uint16_t)(m_calib_sum / m_calib_count);
+				DEBUG_INFO("SWSAnalog: Guided calib — WATER=%u", m_calib_water_result);
+
+				// Validate: water must be significantly above air
+				bool success = (m_calib_water_result > m_calib_air_result * 2);
+				m_calib_water_success = success;
+				if (success) {
+					// Save to SWS.CAL (batch writes, single flash serialize)
+					m_manual_calib.write(CAL_OFFSET_HINT_WATER, (double)m_calib_water_result);
+					m_manual_calib.write(CAL_OFFSET_HINT_AIR, (double)m_calib_air_result);
+					m_manual_calib.save(true);
+
+					// Apply immediately
+					m_calib.threshold_air = m_calib_air_result;
+					m_calib.threshold_water = m_calib_water_result;
+					update_dynamic_threshold();
+					m_calib.is_calibrated = true;
+					m_calib.last_calibration_time = PMU::get_timestamp_ms() / 1000;
+					m_calib.crc = crc16_compute((const uint8_t *)&m_calib,
+					                            offsetof(SWSAnalogService::CalibrationData, crc), nullptr);
+					save_calibration_to_flash();
+					DEBUG_INFO(
+					    "SWSAnalog: Guided calib SUCCESS — air=%u water=%u thresh=%u (waiting resurface for ACK)",
+					    m_calib_air_result, m_calib_water_result, m_calib.threshold_current);
+				} else {
+					DEBUG_WARN("SWSAnalog: Guided calib FAILED — water=%u not >> air=%u (waiting resurface for ACK)",
+					           m_calib_water_result, m_calib_air_result);
+				}
+
+				// Defer the WHITE/RED result flash + GUI notify until the tag is
+				// back in air: BLE is blocked by water, so firing the notify
+				// here would silently drop the ACK and the GUI would never see
+				// the calibration outcome. Hold BLUE solid as "phase done,
+				// remove from water" cue. Global GUIDED_CALIB_TIMEOUT_TICKS
+				// (5 min) still applies via cancel_guided_calibration if the
+				// operator never resurfaces.
+				if (status_led) status_led->set(RGBLedColor::BLUE);
+				m_calib_phase = CalibPhase::WAIT_RESURFACE_FOR_ACK;
+				m_calib_count = 0;
+			}
+			break;
+
+		case CalibPhase::WAIT_RESURFACE_FOR_ACK:
+			// Wait for raw to drop back below half of the water reading — at
+			// that point the tag is clearly out of water and BLE is back up,
+			// so the GUI notify will actually reach the host.
+			// Failure case: m_calib_water_result might be 0 if validation
+			// failed because both readings were near-zero; fall back to a
+			// small absolute threshold to avoid stuck-forever.
+			{
+				uint16_t resurface_thresh = m_calib_water_result > 0 ? (uint16_t)(m_calib_water_result / 2) : 1000;
+				if (raw_value < resurface_thresh) {
+					if (status_led) {
+						status_led->flash(m_calib_water_success ? RGBLedColor::WHITE : RGBLedColor::RED, 200);
+					}
+					if (m_calib_notify) {
+						CalibResult r = { (uint8_t)(m_calib_water_success ? 1 : 2), m_calib_air_result,
+						                  m_calib_water_result };
+						m_calib_notify(r);
+					}
+					DEBUG_INFO("SWSAnalog: Guided calib — resurfaced (raw=%u<%u), ACK sent", raw_value,
+					           resurface_thresh);
+					m_calib_phase = CalibPhase::COMPLETION_PAUSE;
+					m_calib_count = 0;  // reused as tick counter for COMPLETION_PAUSE
+				}
+			}
+			break;
+
+		case CalibPhase::COMPLETION_PAUSE:
+			// Non-blocking 3s pause keeps the WHITE (success) or RED (fail)
+			// flash visible long enough for a bench operator to read it.
+			// Then hand the LED back to whatever set up the callback — the
+			// DTE handler dispatches the proper ledsm event there
+			// (SetLEDConfigConnected for SWSCAL), so the LED returns to
+			// its pre-calibration state instead of staying frozen on the
+			// success/failure flash or going off.
+			m_calib_count++;
+			if (m_calib_count >= 3) {
+				m_calib_phase = CalibPhase::DONE;
+				m_test_mode = false;
+				if (s_instance) s_instance->stop();
+				if (m_on_test_stop) m_on_test_stop();
+			}
+			break;
+
+		case CalibPhase::IDLE:
+		case CalibPhase::DONE:
+		default: break;
+		}
+	}
+}
