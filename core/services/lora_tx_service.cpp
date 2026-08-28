@@ -561,7 +561,7 @@ void LoRaTxService::notify_peer_event(ServiceEvent &e) {
 	// can't reschedule synchronously — we'd corrupt the FSM. Instead we set
 	// `m_cloudlocate_ready_pending` and let `react(KineisEventTxComplete)`
 	// trigger the immediate reschedule when the current TX finishes. This
-	// guarantees "dans la foulée" semantics even when raw arrives mid-TX.
+	// guarantees the "immediately after" semantics even when raw arrives mid-TX.
 	if (e.event_source == ServiceIdentifier::GNSS_SENSOR && e.event_type == ServiceEventType::GNSS_CLOUDLOCATE_READY) {
 		if (!m_is_surfacing_burst || m_has_gnss_fix_since_surfacing) {
 			DEBUG_TRACE("LoRaTxService::notify_peer_event: GNSS_CLOUDLOCATE_READY but not in burst phase 1");
@@ -1032,7 +1032,7 @@ void LoRaTxService::react(KineisEventTxComplete const &) {
 		// Edge case: GNSS_CLOUDLOCATE_READY arrived during the TX we just
 		// completed. service_complete() already scheduled the next TX at the
 		// normal burst interval (e.g. +5 s). Override that — fire the next
-		// TX immediately so the CloudLocate goes out "dans la foulée" as the
+		// TX immediately so the CloudLocate goes out right away, as the
 		// user expects, instead of waiting for the normal timer tick.
 		DEBUG_INFO("LoRaTxService: consuming pending CloudLocate-ready trigger — rescheduling immediate");
 		m_cloudlocate_ready_pending = false;

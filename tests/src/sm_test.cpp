@@ -357,7 +357,7 @@ TEST(Sm, ConfirmBlinkNotInterruptedByTransientLed) {
 	// fast-blinks (BLUE=enter-config, period 50 ms) awaiting the operator's 2nd
 	// gesture. That prompt must survive transient/background LED events firing in
 	// the same window — the boot white (config triggered right at startup was
-	// interrupted by "le blanc du startup"), a GNSS session/​end flash, an Argos
+	// interrupted by the startup white), a GNSS session/​end flash, an Argos
 	// TX, etc. Before the fix any of these stomped the confirm blink and the
 	// operator lost the visual cue mid-gesture.
 	mock().disable();

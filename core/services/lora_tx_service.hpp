@@ -83,7 +83,7 @@ private:
 	/// (would corrupt the in-flight TX state machine). Instead we set this
 	/// flag and check it in `react(KineisEventTxComplete)` — if set, we
 	/// trigger the immediate reschedule there so the *next* TX is the
-	/// "dans la foulée" CloudLocate the user expects, instead of waiting
+	/// immediate CloudLocate the user expects, instead of waiting
 	/// for the normal burst timer (init_s+step_s) to fire.
 	bool m_cloudlocate_ready_pending = false;
 

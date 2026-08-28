@@ -1856,21 +1856,21 @@ TEST(SWSAnalogFlash, DownwardAdapt_BlockedByHighContrast) {
 }
 
 // ============================================================================
-// QA TEST SUITE — Scénarios de déploiement terrain
-// Tests de validation système end-to-end pour le SWS analog service
+// QA TEST SUITE — field deployment scenarios
+// End-to-end system validation for the SWS analog service
 // ============================================================================
 
 /**
- * QA-1: Scénario déploiement tortue complet (CRITIQUE)
+ * QA-1: full turtle deployment scenario (CRITICAL)
  *
- * Simule la séquence exacte d'un déploiement réel :
- *   1. Boot en air (ADC ~150) → calibration auto → vérifier water estimé
- *   2. Immersion progressive (ADC monte de 150 à 5000 sur plusieurs samples)
- *   3. Vérifier transition underwater détectée en < 5 samples
- *   4. Vérifier convergence water baseline (doit s'approcher de 5000)
- *   5. Premier retour surface (ADC chute à 150) → vérifier L-override trigger
- *   6. Re-immersion rapide (10s surface) → vérifier lockout + détection correcte
- *   7. 10 cycles complets → vérifier stabilité des baselines
+ * Simulates the exact sequence of a real deployment:
+ *   1. Boot in air (ADC ~150) -> auto calibration -> check the estimated water
+ *   2. Progressive immersion (ADC rises from 150 to 5000 over several samples)
+ *   3. Check the underwater transition is detected in < 5 samples
+ *   4. Check the water baseline converges (must approach 5000)
+ *   5. First return to surface (ADC drops to 150) -> check the L-override triggers
+ *   6. Fast re-immersion (10 s at surface) -> check lockout + correct detection
+ *   7. 10 full cycles -> check the baselines stay stable
  */
 TEST(SWSAnalogFlash, QA1_TurtleDeploymentFullSequence) {
 	SWSAnalogService s;
@@ -1899,11 +1899,11 @@ TEST(SWSAnalogFlash, QA1_TurtleDeploymentFullSequence) {
 	auto status_boot = SWSAnalogService::get_status();
 	CHECK_TEXT(status_boot.is_calibrated, "QA1: Calibration doit être valide après boot");
 	CHECK_TEXT(status_boot.threshold_air > 0, "QA1: Air baseline doit être > 0");
-	// Water estimé = air × 3 (heuristique quand pas de peak connu)
-	CHECK_TEXT(status_boot.threshold_water > status_boot.threshold_air, "QA1: Water estimé doit être > air");
+	// Estimated water = air x 3 (the heuristic when no peak is known)
+	CHECK_TEXT(status_boot.threshold_water > status_boot.threshold_air, "QA1: estimated water must be > air");
 
-	// 2. Immersion progressive (simule descente lente dans l'eau)
-	//    ADC monte progressivement de 150 à 12000 (14-bit: salt water ~10000-15000)
+	// 2. Progressive immersion (simulates a slow descent into the water)
+	//    ADC climbs steadily from 150 to 12000 (14-bit: salt water ~10000-15000)
 	uint16_t immersion_ramp[] = { 500, 1500, 3000, 5000, 7000, 9000, 11000, 12000, 12000, 12000 };
 	unsigned int samples_to_underwater = 0;
 	bool detected_underwater = false;
@@ -1957,8 +1957,8 @@ TEST(SWSAnalogFlash, QA1_TurtleDeploymentFullSequence) {
 	auto status_surf = SWSAnalogService::get_status();
 	CHECK_TEXT(status_surf.surface_level >= 1, "QA1: Detection doit être par L-override (level >= 1)");
 
-	// 6. Re-immersion rapide après lockout
-	//    Attendre que le lockout expire (default 30s ou min_surface_time)
+	// 6. Fast re-immersion after the lockout
+	//    Wait for the lockout to expire (default 30 s, or min_surface_time)
 	//    With UW_MIN_SURFACE_TIME=3, lockout = 3s for test speed
 	fake_timer->increment_counter(4 * 1000);
 	for (int i = 0; i < 3; i++)
@@ -2005,26 +2005,25 @@ TEST(SWSAnalogFlash, QA1_TurtleDeploymentFullSequence) {
 	// Vérifier stabilité des baselines après 10 cycles
 	auto status_final = SWSAnalogService::get_status();
 	CHECK_TRUE_TEXT(status_final.is_calibrated, "QA1: Calibration doit rester valide après 10 cycles");
-	// Air baseline ne doit pas dériver significativement de ~150
-	CHECK_TEXT(status_final.threshold_air < 1000,
-	           "QA1: Air baseline ne doit pas dériver excessivement après 10 cycles");
-	// Water baseline doit rester dans la plage raisonnable (14-bit ADC)
+	// The air baseline must not drift significantly from ~150
+	CHECK_TEXT(status_final.threshold_air < 1000, "QA1: air baseline must not drift excessively after 10 cycles");
+	// The water baseline must stay in a reasonable range (14-bit ADC)
 	CHECK_TEXT(status_final.threshold_water > 5000, "QA1: Water baseline doit rester > 5000 après 10 cycles");
 
 	s.stop();
 }
 
 /**
- * QA-2: Lockout L-override avec config par défaut (UW_MIN_SURFACE_TIME = 0)
+ * QA-2: L-override lockout with the default config (UW_MIN_SURFACE_TIME = 0)
  *
- * Quand UW_MIN_SURFACE_TIME=0, le code utilise SURFACE_LOCKOUT_DURATION_SEC (30s)
- * comme fallback. Vérifie que :
- *   - Le lockout s'applique quand même (bloque à 5s < 30s)
- *   - Les lectures underwater pendant le lockout sont bloquées
+ * When UW_MIN_SURFACE_TIME=0 the code falls back to SURFACE_LOCKOUT_DURATION_SEC
+ * (30 s). Checks that:
+ *   - the lockout still applies (blocks at 5 s < 30 s)
+ *   - underwater readings during the lockout are blocked
  *
- * Note: on ne teste pas l'expiration complète du lockout 30s (trop lent pour CI).
- * Le test SurfaceLockout_PreventsReEntry (Test 21) couvre l'expiration avec lockout=3s.
- * Ce test vérifie spécifiquement le fallback UW_MIN_SURFACE_TIME=0 → 30s default.
+ * Note: the full 30 s lockout expiry is not tested (too slow for CI).
+ * SurfaceLockout_PreventsReEntry (test 21) covers expiry with lockout=3 s.
+ * This test specifically checks the UW_MIN_SURFACE_TIME=0 -> 30 s fallback.
  */
 /**
  * QA-2: Lockout config — UW_MIN_SURFACE_TIME=0 means NO post-L-override lockout.
@@ -2080,12 +2079,12 @@ TEST(SWSAnalogFlash, QA2_LockoutDefaultConfig) {
 }
 
 /**
- * QA-3: Spike ADC et observed peak protection
+ * QA-3: ADC spike and observed-peak protection
  *
- * Le filtre anti-spike (EC-3) doit :
- *   - Rejeter un spike isolé > 150% du peak courant
- *   - Conserver le peak à une valeur saine
- *   - Le système doit rester fonctionnel après le spike
+ * The anti-spike filter (EC-3) must:
+ *   - reject an isolated spike above 150 % of the current peak
+ *   - keep the peak at a sane value
+ *   - leave the system working after the spike
  */
 /**
  * QA-3A: First-water-contact peak growth (B4 fix).
@@ -2197,13 +2196,12 @@ TEST(SWSAnalogFlash, QA3B_SpikeRejectionWithEstablishedPeak) {
 }
 
 /**
- * QA-4: Convergence rapide premier contact eau (EC-1)
+ * QA-4: fast convergence on first water contact (EC-1)
  *
- * Vérifie que la fast convergence (alpha=0.50 pour les 5 premiers samples
- * quand peak==0) permet au water baseline de converger rapidement.
- * Anciennement avec alpha=0.19, ~50 échantillons étaient nécessaires.
- * Maintenant, en < 10 échantillons la baseline doit atteindre > 4000
- * pour un ADC de 5000.
+ * Checks that the fast convergence (alpha=0.50 for the first 5 samples while
+ * peak==0) lets the water baseline converge quickly. With the old alpha=0.19 it
+ * took ~50 samples. Now, in fewer than 10 samples the baseline must reach > 4000
+ * for an ADC of 5000.
  */
 /**
  * QA-4: Fast convergence on first water contact (B5/B7/cap conditional fix).
@@ -2249,14 +2247,14 @@ TEST(SWSAnalogFlash, QA4_FastConvergenceFirstWaterContact) {
 }
 
 /**
- * QA-5: Splash/vague en surface
+ * QA-5: splash / wave at the surface
  *
- * En surface, des lectures élevées (splash/vague) ne doivent pas :
- *   - Faire sauter le water baseline immédiatement
- *   - Provoquer un faux passage en underwater
+ * At the surface, high readings (a splash or a wave) must not:
+ *   - move the water baseline immediately
+ *   - cause a false transition to underwater
  *
- * La continuous coherence (EC-5) nécessite 3 samples consécutifs > water×2
- * ET m_time_in_current_state > 2s. Un splash court ne doit pas trigger.
+ * The continuous coherence check (EC-5) needs 3 consecutive samples above
+ * water x 2 AND m_time_in_current_state > 2 s. A short splash must not trigger.
  */
 /**
  * QA-5: Splash/vague en surface
@@ -2328,19 +2326,19 @@ TEST(SWSAnalogFlash, QA5_SplashWaveOnSurface) {
 }
 
 /**
- * QA-6: Biofouling progressif long terme (100 cycles)
+ * QA-6: progressive long-term biofouling (100 cycles)
  *
- * Simule un déploiement d'un an avec dégradation progressive :
- *   - Contrast décroissant : 60x → 12x → 4x → 1.7x
- *   - Vérifie que les L-overrides continuent de fonctionner
- *   - Vérifie que les thresholds s'adaptent
- *   - Vérifie que le safety timeout escalation fonctionne si besoin
+ * Simulates a year-long deployment with progressive degradation:
+ *   - falling contrast: 60x -> 12x -> 4x -> 1.7x
+ *   - checks the L-overrides keep working
+ *   - checks the thresholds adapt
+ *   - checks the safety-timeout escalation works if needed
  *
  * Boot in water (ADC=12000 > WATER_DETECT_HEURISTIC=7000) to establish
  * proper peak and baselines before starting biofouling cycles.
  * 14-bit ADC: salt water ~10000-15000, air ~200-3000 (biofouling raises air).
  *
- * Note: test allégé (20 cycles par stage, pas 100) pour ne pas bloquer CI.
+ * Note: trimmed down (20 cycles per stage, not 100) so as not to stall CI.
  */
 TEST(SWSAnalogFlash, QA6_BiofoulingProgressiveLongTerm) {
 	SWSAnalogService s;
@@ -2425,39 +2423,38 @@ TEST(SWSAnalogFlash, QA6_BiofoulingProgressiveLongTerm) {
 		}
 	}
 
-	// Vérifier que la majorité des détections ont fonctionné. Threshold 75% :
-	// les transitions entre stages avec sauts brutaux (water 12000→5000 en 5
-	// cycles) ne laissent pas le temps au water_baseline EMA (alpha=0.19) de
-	// s'adapter complètement. Stage 4 (heavy biofouling, water=5000 alors que
-	// baseline est à 8000+) ne déclenche pas toujours le dive — comportement
-	// accepté car en prod le biofouling est progressif sur des semaines, pas
-	// par sauts d'un cycle à l'autre. 75% = 15/20 cycles couvrent stages 1-3.
+	// Check that most detections worked. 75 % threshold: the stage transitions
+	// are abrupt (water 12000->5000 in 5 cycles) and do not give the water_baseline
+	// EMA (alpha=0.19) time to adapt fully. Stage 4 (heavy biofouling, water=5000
+	// while the baseline is at 8000+) does not always trigger the dive -- accepted,
+	// because in production biofouling is progressive over weeks, not in
+	// cycle-to-cycle jumps. 75 % = 15/20 cycles covers stages 1-3.
 	unsigned int total_cycles = 5 + 5 + 5 + 5;  // 20 cycles
 	CHECK_TEXT(total_underwater_detected >= total_cycles * 75 / 100,
 	           "QA6: >= 75% des immersions doivent être détectées (stages 1-3)");
 	CHECK_TEXT(total_surface_detected >= total_cycles * 75 / 100,
 	           "QA6: >= 75% des retours surface doivent être détectés");
 
-	// Vérifier que les thresholds se sont adaptés
+	// Check that the thresholds adapted
 	auto status_final = SWSAnalogService::get_status();
-	CHECK_TRUE_TEXT(status_final.is_calibrated, "QA6: Calibration doit rester valide après biofouling long terme");
-	// Air baseline doit avoir augmenté par rapport au 200 initial (biofouling raises air)
+	CHECK_TRUE_TEXT(status_final.is_calibrated, "QA6: calibration must stay valid after long-term biofouling");
+	// The air baseline must have risen from the initial 200 (biofouling raises air)
 	CHECK_TEXT(status_final.threshold_air > 200, "QA6: Air baseline doit s'être adapté à la hausse (biofouling)");
 
 	s.stop();
 }
 
 /**
- * QA-7: Calibration guidée non-bloquante (EC-4)
+ * QA-7: non-blocking guided calibration (EC-4)
  *
- * Vérifie que la calibration guidée :
- *   - N'utilise aucun PMU::delay_ms bloquant (tout passe par le state machine)
- *   - Chaque tick de detector_state() pendant la calibration prend < 100ms
- *   - Les transitions entre phases utilisent des ticks, pas des delays
+ * Checks that the guided calibration:
+ *   - uses no blocking PMU::delay_ms (everything goes through the state machine)
+ *   - takes < 100 ms per detector_state() tick during calibration
+ *   - moves between phases on ticks, not on delays
  *
- * Note: on ne peut pas mesurer le temps réel de detector_state() dans le
- * test host (pas de hardware), mais on peut vérifier que le state machine
- * progresse correctement tick par tick sans blocage.
+ * Note: the real duration of detector_state() cannot be measured in a host test
+ * (no hardware), but the state machine can be checked to progress correctly tick
+ * by tick without blocking.
  */
 TEST(SWSAnalogFlash, QA7_GuidedCalibrationNonBlocking) {
 	SWSAnalogService s;

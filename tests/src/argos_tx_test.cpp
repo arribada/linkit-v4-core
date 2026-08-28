@@ -2507,7 +2507,7 @@ TEST(ArgosTxService, PassPredictHonoursConfiguredModulation) {
 
 	inject_gps_location(1, 11.8768, -33.8232, t / 1000);
 
-	// LDK et non LDA2: c'est tout l'objet de la regression.
+	// LDK and not LDA2: that is the whole point of the regression.
 	mock()
 	    .expectOneCall("send")
 	    .onObject(mock_kineis)

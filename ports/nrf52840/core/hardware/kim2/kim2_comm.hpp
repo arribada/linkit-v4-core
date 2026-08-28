@@ -176,7 +176,7 @@ public:
 	bool m_hdlr_seen = false;
 	void set_blind_active(bool active) { m_blind_active = active; }
 	std::string m_rconf_info;  ///< Last +RCONF=? response payload (diag)
-	/// @brief Version annoncee par la derniere banniere +FW= recue.
+	/// @brief Version announced by the last +FW= banner received.
 	std::string m_module_banner;
 
 	/// @param libuarte_async_instance  BSP UART instance index (default 1).

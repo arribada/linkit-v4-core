@@ -51,11 +51,11 @@ void GPIOPins::initialise() {
 #if (defined(ARGOS_SMD) && (ARGOS_SMD == 1)) || (defined(LORA_RAK3172) && (LORA_RAK3172 == 1))
 	release_to_highz(SAT_RESET);  // Disconnect (ext pull-up, SMD off)
 #else
-	// KIM2: pas de tirage externe sur nRESET-SAT (le net ne va qu'a USR_NRST, au
-	// connecteur de debug J15 et a notre P0.31 en drain ouvert). Relacher la
-	// broche ici la laisserait FLOTTER sur un module eteint. On la garde tenue
-	// BASSE — reset asserte, module inerte — et c'est le driver qui la relachera
-	// vers le tirage interne une fois le module alimente.
+	// KIM2: there is no external pull on nRESET-SAT (the net only reaches USR_NRST,
+	// the J15 debug connector and our open-drain P0.31). Releasing the pin here
+	// would leave it FLOATING on a powered-down module. It is held LOW instead --
+	// reset asserted, module inert -- and it is the driver that releases it to the
+	// internal pull once the module is powered.
 #endif
 #ifdef SMD_VPA_PIN
 	// Drive VPA LOW at boot to prevent floating regulator enable

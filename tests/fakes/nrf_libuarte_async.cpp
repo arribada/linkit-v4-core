@@ -5,8 +5,8 @@
 static nrf_libuarte_async_evt_handler_t m_evt_callback;
 static void *m_context;
 /* Etat RX expose aux tests: `handle_error()` arrete le RX et seul un
- * redemarrage explicite le relance — invariant verifie par le test de
- * regression FramingErrorDuringConfigureRestartsRx. */
+ * an explicit restart brings it back -- the invariant checked by the
+ * FramingErrorDuringConfigureRestartsRx regression test. */
 bool m_is_rx_enabled = false;
 
 ret_code_t nrf_libuarte_async_init(const nrf_libuarte_async_t *const p_libuarte,

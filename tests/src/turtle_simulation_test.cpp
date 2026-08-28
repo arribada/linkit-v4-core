@@ -1,14 +1,14 @@
 /**
  * @file turtle_simulation_test.cpp
- * @brief Simulation complète du comportement d'une tortue marine sur longue durée
+ * @brief Full simulation of a sea turtle's behaviour over a long period
  *
- * Ce test simule le comportement réaliste d'un tracker sur tortue marine:
- * - Plongées aléatoires avec durées variables (10s à 2h)
- * - Remontées en surface avec durées variables (30s à 30min)
- * - Variation de la salinité affectant le capteur SWS
- * - Capteurs: température, pression, pH, luminosité, accéléromètre
- * - GPS Time-To-Fix variable selon conditions
- * - Transmissions Argos en surface
+ * Simulates the realistic behaviour of a tracker on a sea turtle:
+ * - random dives of variable duration (10 s to 2 h)
+ * - surface intervals of variable duration (30 s to 30 min)
+ * - salinity variation affecting the SWS sensor
+ * - sensors: temperature, pressure, pH, light, accelerometer
+ * - GPS time-to-fix varying with conditions
+ * - Argos transmissions at the surface
  */
 
 #include "CppUTest/TestHarness.h"
@@ -395,7 +395,7 @@ TEST_GROUP(TurtleSimulation) {
 		if (salinity < results.min_salinity) results.min_salinity = salinity;
 		if (salinity > results.max_salinity) results.max_salinity = salinity;
 
-		// Transmission Argos toutes les ~90 secondes en surface avec fix GPS
+		// An Argos transmission roughly every 90 s at the surface with a GPS fix
 		if (turtle.is_at_surface() && gps.has_fix && rand() % 90 == 0) {
 			results.argos_tx_count++;
 		}

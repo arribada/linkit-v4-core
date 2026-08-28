@@ -1,6 +1,6 @@
 /**
  * @file turtle_main.cpp
- * @brief Point d'entrée pour la simulation tortue avec génération de rapport HTML
+ * @brief Entry point for the turtle simulation, producing an HTML report
  */
 
 #include "filesystem.hpp"

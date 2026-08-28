@@ -1,17 +1,18 @@
 /**
  * @file turtle_simulation_1year.cpp
- * @brief Simulation scientifique complète du comportement d'une tortue marine sur 1 an
+ * @brief Full scientific simulation of a sea turtle's behaviour over one year
  *
- * Simulation réaliste d'un tracker Linkit V4 déployé sur tortue marine (Caretta caretta)
- * Génère des données scientifiques avec timeline détaillée et statistiques complètes.
+ * A realistic simulation of a LinkIt V4 tracker deployed on a sea turtle
+ * (Caretta caretta). Produces scientific data with a detailed timeline and full
+ * statistics.
  *
- * Caractéristiques simulées:
- * - Comportement de plongée basé sur données biologiques réelles
- * - Variation saisonnière (température, comportement migratoire)
- * - Capteurs: température, pression, pH, salinité, luminosité
- * - GPS avec TTF variable selon conditions
- * - Transmissions Argos avec pass predict
- * - Détection surface/eau (SWS) avec impact salinité
+ * What is simulated:
+ * - dive behaviour based on real biological data
+ * - seasonal variation (temperature, migratory behaviour)
+ * - sensors: temperature, pressure, pH, salinity, light
+ * - GPS with a time-to-fix that varies with conditions
+ * - Argos transmissions with pass prediction
+ * - surface/water detection (SWS) with the effect of salinity
  *
  * @author Linkit V4 Test Framework
  * @date 2024
@@ -246,7 +247,7 @@ public:
 
 		// Comportement migratoire saisonnier
 		if (current_season == Season::AUTUMN && !is_migrating) {
-			// Migration vers zones d'alimentation (nord)
+			// Migration to the feeding grounds (north)
 			is_migrating = true;
 			migration_target.latitude = position.latitude + 15.0;
 			migration_target.longitude = position.longitude - 5.0;
@@ -373,7 +374,7 @@ public:
 			current_dive_depth_sum += position.depth_m;
 			current_dive_samples++;
 
-			// Déplacement horizontal sous l'eau
+			// Horizontal movement underwater
 			if (state == BehaviorState::TRANSIT_HORIZONTAL) {
 				update_horizontal_position(elapsed_seconds * 0.3);
 			}
@@ -517,7 +518,7 @@ public:
 	}
 
 	double get_ph(double depth) {
-		// pH diminue légèrement avec la profondeur (augmentation CO2)
+		// pH falls slightly with depth (rising CO2)
 		double base_ph = 8.1;
 		double depth_effect = -depth * 0.001;
 		return base_ph + depth_effect + ((double)rand() / RAND_MAX - 0.5) * 0.05;
@@ -911,7 +912,7 @@ TEST_GROUP(TurtleSimulation1Year) {
 
 				last_fix_time = total_time;
 
-				// === ARGOS GPS TX dès qu'un fix est obtenu (1 fois par session surface) ===
+				// === Argos GPS TX as soon as a fix lands (once per surface session) ===
 				if (!gps_tx_sent_this_surface) {
 					ArgosTransmission tx;
 					tx.timestamp = total_time;
@@ -930,7 +931,7 @@ TEST_GROUP(TurtleSimulation1Year) {
 			}
 		}
 
-		// === ARGOS TX régulières avec compteur incrémental (toutes les 90s en surface) ===
+		// === Regular Argos TX with an incrementing counter (every 90 s at surface) ===
 		if (turtle.is_at_surface() && (total_time - last_regular_tx_time >= REGULAR_TX_INTERVAL)) {
 			ArgosTransmission tx;
 			tx.timestamp = total_time;
@@ -1090,7 +1091,7 @@ TEST(TurtleSimulation1Year, FullYearSimulation) {
 		simulate_timestep(total_time, TIME_STEP);
 		total_time += TIME_STEP;
 
-		// Progress (tous les 30 jours)
+		// Progress (every 30 days)
 		if (total_time % (30 * 86400) == 0) {
 			uint32_t month = total_time / (30 * 86400);
 			printf("Simulation mois %u/12... Plongées: %u, GPS: %u\n", month, results.total_dives,

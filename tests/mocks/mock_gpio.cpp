@@ -51,9 +51,9 @@ bool GPIOPins::get_sensors_pwr_state() {
 	return m_sensors_pwr_refcount > 0;
 }
 
-// Verrou "UART GNSS en service" (2026-08): pas de mock().actualCall ici, il
-// serait pose/retire a chaque init/deinit d'UBXComms et ferait echouer tous les
-// tests existants qui ne l'attendent pas. Simple etat lisible par les tests.
+// The "GNSS UART in service" interlock (2026-08): no mock().actualCall here, it
+// would be taken and released on every UBXComms init/deinit and would fail every
+// existing test that does not expect it. Just state the tests can read.
 void GPIOPins::set_gnss_uart_active(bool active) {
 	m_gnss_uart_active = active;
 }

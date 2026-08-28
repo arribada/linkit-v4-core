@@ -216,28 +216,29 @@ TEST(M8, FailedToSyncCommsError) {
 	expect_power_on();
 	m.power_on(settings);
 	mock().expectOneCall("GPSEventError");
-	// R4 (2026-08) : sur erreur irrecuperable le driver coupe desormais le rail
-	// lui-meme (check_for_power_off) au lieu d'attendre un power_off() du client —
-	// un abonne peut tres bien ignorer l'evenement (session deja terminee, PWRON
-	// GNSS qui n'abonne personne) et la FSM restait figee rail allume.
-	// L'attente doit donc etre declaree AVANT l'avance de temps qui declenche l'erreur.
+	// R4 (2026-08): on an unrecoverable error the driver now cuts the rail itself
+	// (check_for_power_off) instead of waiting for a power_off() from the client --
+	// a subscriber may perfectly well ignore the event (session already over, a
+	// PWRON GNSS that subscribes nobody) and the FSM stayed frozen with the rail on.
+	// The expectation must therefore be declared BEFORE the time advance that
+	// triggers the error.
 	expect_power_off();
-	// 4 debits sondes: 6 essais sur le premier + 2 sur chacun des trois autres,
-	// a 500 ms => 6000 ms pile. Marge pour ne pas dependre de la phase du tick.
+	// 4 rates probed: 6 attempts on the first + 2 on each of the other three, at
+	// 500 ms => exactly 6000 ms. Margin so the test does not depend on tick phase.
 	increment_time_ms(7000);
 	increment_time_ms();
 }
 
-// Regression 2026-08 — "M10QAsyncReceiver: failed to sync comms" definitif.
+// Regression 2026-08 — a permanent "M10QAsyncReceiver: failed to sync comms".
 //
-// setup_uart_port() ecrit CFG-UART1-BAUDRATE=460800 en couches BBR|RAM. Sur une
-// carte dont la pile / le supercap V_BCKP tient la BBR pendant la fenetre ou le
-// rail est coupe, le M10Q ne repart donc PAS aux defauts usine : il revient a
-// 460800, et il est totalement muet a 9600 (NMEA desactive, messages nav en
-// couche RAM donc eteints). Le driver ne sondait que 9600 : chaque session
-// mourait sur GPSEventError, et state_configure -- seul endroit qui renegocie le
-// port et seul endroit qui envoie le CFG-RST capable d'effacer la BBR -- etait
-// derriere ce sync. Aucun filet de securite ne rattrapait ce cas.
+// setup_uart_port() writes CFG-UART1-BAUDRATE=460800 into the BBR|RAM layers. On
+// a board whose V_BCKP cell or supercap holds the BBR across the window where the
+// rail is off, the M10Q therefore does NOT come back to factory defaults: it
+// returns at 460800, and it is completely mute at 9600 (NMEA disabled, nav
+// messages in the RAM layer and so switched off). The driver only probed 9600:
+// every session died on GPSEventError, and state_configure -- the only place that
+// renegotiates the port and the only place that sends the CFG-RST able to erase
+// the BBR -- sat behind that sync. No safety net caught this case.
 TEST(M8, BootSyncFallsBackToSecondBaudWhenBbrRetained) {
 	M10QAsyncReceiver m;
 	TestGNSSListener listener(m);
@@ -257,15 +258,15 @@ TEST(M8, BootSyncFallsBackToSecondBaudWhenBbrRetained) {
 	// Premiere sonde: 9600 (defaut usine), le recepteur reste muet.
 	CHECK_EQUAL(NRF_UARTE_BAUDRATE_9600, g_fake_last_baudrate);
 
-	// 6 x 500 ms de timeouts sans reponse -> le driver doit passer au baud suivant
-	// au lieu d'abandonner la session. Marge au-dela des 3000 ms exacts: le
-	// moment ou tombe le 6e timeout depend de la phase du tick du scheduler.
+	// 6 x 500 ms of unanswered timeouts -> the driver must move to the next baud
+	// rather than abandon the session. Margin beyond the exact 3000 ms: when the
+	// 6th timeout lands depends on the scheduler tick phase.
 	increment_time_ms(3500);
 	CHECK_EQUAL(NRF_UARTE_BAUDRATE_460800, g_fake_last_baudrate);
 
-	// Le M10Q repond a 460800 (NACK sur le CFG-MSG invalide de la sonde) : la
-	// session doit continuer. Aucun GPSEventError n'est attendu -- le mock fait
-	// echouer le test s'il en arrive un.
+	// The M10Q answers at 460800 (a NACK on the probe's invalid CFG-MSG): the
+	// session must continue. No GPSEventError is expected -- the mock fails the
+	// test if one arrives.
 	ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
 	increment_time_ms(100);
 
@@ -274,8 +275,8 @@ TEST(M8, BootSyncFallsBackToSecondBaudWhenBbrRetained) {
 	increment_time_ms();
 }
 
-// Le baud qui a repondu est memorise: la session suivante le sonde en premier,
-// donc une carte a BBR retenue ne paie les sondes perdues qu'une fois par boot.
+// The rate that answered is remembered: the next session probes it first, so a
+// board with a retained BBR only pays for the wasted probes once per boot.
 TEST(M8, BootSyncCachesWorkingBaudForNextSession) {
 	M10QAsyncReceiver m;
 	TestGNSSListener listener(m);
@@ -301,9 +302,9 @@ TEST(M8, BootSyncCachesWorkingBaudForNextSession) {
 	expect_power_off();
 	increment_time_ms();
 
-	// Session 2: la premiere sonde doit maintenant partir directement a 460800.
-	// Sentinelle: sans elle le CHECK ci-dessous passerait "a vide" si aucune
-	// sonde n'etait emise du tout (la variable garderait la valeur de la session 1).
+	// Session 2: the first probe must now go straight out at 460800.
+	// Sentinel: without it the CHECK below would pass vacuously if no probe were
+	// sent at all (the variable would keep session 1's value).
 	g_fake_last_baudrate = NRF_UARTE_BAUDRATE_1000000;
 	expect_power_on();
 	m.power_on(settings);
@@ -335,20 +336,21 @@ TEST(M8, FailedToChangeBaudRate) {
 	increment_time_ms();
 	ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
 	mock().expectOneCall("GPSEventError");
-	// R4 (2026-08) : sur erreur irrecuperable le driver coupe desormais le rail
-	// lui-meme (check_for_power_off) au lieu d'attendre un power_off() du client —
-	// un abonne peut tres bien ignorer l'evenement (session deja terminee, PWRON
-	// GNSS qui n'abonne personne) et la FSM restait figee rail allume.
-	// L'attente doit donc etre declaree AVANT l'avance de temps qui declenche l'erreur.
+	// R4 (2026-08): on an unrecoverable error the driver now cuts the rail itself
+	// (check_for_power_off) instead of waiting for a power_off() from the client --
+	// a subscriber may perfectly well ignore the event (session already over, a
+	// PWRON GNSS that subscribes nobody) and the FSM stayed frozen with the rail on.
+	// The expectation must therefore be declared BEFORE the time advance that
+	// triggers the error.
 	expect_power_off();
 	increment_time_ms(3000);
 	increment_time_ms();
 }
 
-// Regression: a l'abandon du fast-path BBR, l'UART doit revenir sur le debit
-// auquel le recepteur repond REELLEMENT. Sans cela setup_uart_port() repartait
-// a 460800 vers un M10Q qui ecoutait a 9600 et la session mourait — une session
-// sur deux sur une carte sans pile de sauvegarde.
+// Regression: when the BBR fast path is abandoned, the UART must return to the
+// rate the receiver ACTUALLY answers on. Without that, setup_uart_port() went out
+// at 460800 to an M10Q listening at 9600 and the session died -- one session in
+// two on a board with no backup cell.
 TEST(M8, FastPathGiveUpRestoresSyncedBaud) {
 	M10QAsyncReceiver m;
 	TestGNSSListener listener(m);
@@ -362,22 +364,22 @@ TEST(M8, FastPathGiveUpRestoresSyncedBaud) {
 	settings.hdop_filter_en = false;
 	settings.max_nav_samples = 30;
 
-	// --- Session 1: configure complete jusqu'a SEC-UNIQID, ce qui arme
-	// m_gnss_info_valid (prerequis du fast-path).
+	// --- Session 1: a full configure through to SEC-UNIQID, which arms
+	// m_gnss_info_valid (a precondition of the fast path).
 	expect_power_on();
 	m.power_on(settings);
 	increment_time_ms();
 	ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);  // sync 9600
 	increment_time_ms();
 	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_PRT);  // step 0
-	// Le step 0 est "fire and forget": il repose une tache a +1000 ms avant que
-	// le step 1 n'emette la sonde. Attendre moins laisse l'injection suivante
-	// tomber dans le vide (le filtre d'attente n'est pas encore arme).
+	// Step 0 is fire-and-forget: it posts a task at +1000 ms before step 1 sends
+	// the probe. Waiting less lets the next injection fall into the void (the
+	// expectation filter is not armed yet).
 	increment_time_ms(1100);
 	ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);  // step 1: sync MAX
 	increment_time_ms();
-	// A partir d'ici le recepteur est passe a 460800: le driver doit l'avoir
-	// enregistre, sinon un bridge ouvert dans le meme cycle parlerait a 9600.
+	// From here the receiver has moved to 460800: the driver must have recorded
+	// that, or a bridge opened in the same cycle would talk at 9600.
 	CHECK_EQUAL(NRF_UARTE_BAUDRATE_460800, g_fake_last_baudrate);
 
 	m.power_off();
@@ -441,11 +443,12 @@ TEST(M8, FailedToReceivePVT) {
 
 	// Receive
 	mock().expectOneCall("GPSEventError");
-	// R4 (2026-08) : sur erreur irrecuperable le driver coupe desormais le rail
-	// lui-meme (check_for_power_off) au lieu d'attendre un power_off() du client —
-	// un abonne peut tres bien ignorer l'evenement (session deja terminee, PWRON
-	// GNSS qui n'abonne personne) et la FSM restait figee rail allume.
-	// L'attente doit donc etre declaree AVANT l'avance de temps qui declenche l'erreur.
+	// R4 (2026-08): on an unrecoverable error the driver now cuts the rail itself
+	// (check_for_power_off) instead of waiting for a power_off() from the client --
+	// a subscriber may perfectly well ignore the event (session already over, a
+	// PWRON GNSS that subscribes nobody) and the FSM stayed frozen with the rail on.
+	// The expectation must therefore be declared BEFORE the time advance that
+	// triggers the error.
 	expect_power_off();
 	increment_time_ms(5000);
 	increment_time_ms();
@@ -986,11 +989,12 @@ TEST(M8, FailedToStartReceive) {
 	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_GNSS);
 	increment_time_ms();
 	mock().expectOneCall("GPSEventError");
-	// R4 (2026-08) : sur erreur irrecuperable le driver coupe desormais le rail
-	// lui-meme (check_for_power_off) au lieu d'attendre un power_off() du client —
-	// un abonne peut tres bien ignorer l'evenement (session deja terminee, PWRON
-	// GNSS qui n'abonne personne) et la FSM restait figee rail allume.
-	// L'attente doit donc etre declaree AVANT l'avance de temps qui declenche l'erreur.
+	// R4 (2026-08): on an unrecoverable error the driver now cuts the rail itself
+	// (check_for_power_off) instead of waiting for a power_off() from the client --
+	// a subscriber may perfectly well ignore the event (session already over, a
+	// PWRON GNSS that subscribes nobody) and the FSM stayed frozen with the rail on.
+	// The expectation must therefore be declared BEFORE the time advance that
+	// triggers the error.
 	expect_power_off();
 	increment_time_ms(1000);
 	increment_time_ms(1000);
@@ -1059,11 +1063,12 @@ TEST(M8, UartCommsErrorDuringReceive) {
 	increment_time_ms();
 	inject_error(0x01);
 	mock().expectOneCall("GPSEventError");
-	// R4 (2026-08) : sur erreur irrecuperable le driver coupe desormais le rail
-	// lui-meme (check_for_power_off) au lieu d'attendre un power_off() du client —
-	// un abonne peut tres bien ignorer l'evenement (session deja terminee, PWRON
-	// GNSS qui n'abonne personne) et la FSM restait figee rail allume.
-	// L'attente doit donc etre declaree AVANT l'avance de temps qui declenche l'erreur.
+	// R4 (2026-08): on an unrecoverable error the driver now cuts the rail itself
+	// (check_for_power_off) instead of waiting for a power_off() from the client --
+	// a subscriber may perfectly well ignore the event (session already over, a
+	// PWRON GNSS that subscribes nobody) and the FSM stayed frozen with the rail on.
+	// The expectation must therefore be declared BEFORE the time advance that
+	// triggers the error.
 	expect_power_off();
 	increment_time_ms();
 	inject_error(0x01);
@@ -1101,26 +1106,27 @@ TEST(M8, UartCommsErrorDuringConfig) {
 	increment_time_ms();
 	inject_error(0x01);
 	mock().expectOneCall("GPSEventError");
-	// R4 (2026-08) : sur erreur irrecuperable le driver coupe desormais le rail
-	// lui-meme (check_for_power_off) au lieu d'attendre un power_off() du client —
-	// un abonne peut tres bien ignorer l'evenement (session deja terminee, PWRON
-	// GNSS qui n'abonne personne) et la FSM restait figee rail allume.
-	// L'attente doit donc etre declaree AVANT l'avance de temps qui declenche l'erreur.
+	// R4 (2026-08): on an unrecoverable error the driver now cuts the rail itself
+	// (check_for_power_off) instead of waiting for a power_off() from the client --
+	// a subscriber may perfectly well ignore the event (session already over, a
+	// PWRON GNSS that subscribes nobody) and the FSM stayed frozen with the rail on.
+	// The expectation must therefore be declared BEFORE the time advance that
+	// triggers the error.
 	expect_power_off();
 	increment_time_ms();
 	increment_time_ms();
 }
 
-// Regression R1 (2026-08) — le RX libuarte restait mort apres une erreur toleree.
+// Regression R1 (2026-08) — the libuarte RX stayed dead after a tolerated error.
 //
-// handle_error() (ubx_comms.cpp) ARRETE le RX pour ne pas boucler sur l'erreur.
-// Le seul endroit qui le relancait etait set_baudrate(). La branche qui TOLERE
-// les erreurs de framing du boot (sous MAX_FRAMING_ERRORS_BOOT) n'en faisait
-// aucun: l'UART restait sourd, plus un octet ne pouvait remonter — donc le
-// seuil de 10 etait structurellement inatteignable — et dans state_configure
-// au-dela du step 1 la suite n'etait qu'une cascade de TIMEOUT (jamais ERROR),
-// donc la branche de recuperation qui rappelle set_baudrate n'etait jamais
-// prise. La premiere erreur de framing en cours de configure tuait la session.
+// handle_error() (ubx_comms.cpp) STOPS the RX so as not to loop on the error. The
+// only place that restarted it was set_baudrate(). The branch that TOLERATES boot
+// framing errors (below MAX_FRAMING_ERRORS_BOOT) did neither: the UART stayed
+// deaf, not another byte could come back -- so the threshold of 10 was
+// structurally unreachable -- and in state_configure past step 1 everything that
+// followed was a cascade of TIMEOUTs (never ERROR), so the recovery branch that
+// calls set_baudrate again was never taken. The first framing error during
+// configure killed the session.
 TEST(M8, FramingErrorDuringConfigureRestartsRx) {
 	M10QAsyncReceiver m;
 	TestGNSSListener listener(m);
@@ -1139,25 +1145,25 @@ TEST(M8, FramingErrorDuringConfigureRestartsRx) {
 	increment_time_ms();
 	ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
 	increment_time_ms();
-	// Entree dans configure: step 0 (VALSET port UART) puis attente de 1 s.
+	// Entering configure: step 0 (UART port VALSET) then a 1 s wait.
 	ubx_ack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_PRT);
 	increment_time_ms(500);
 	increment_time_ms();
 	CHECK_TRUE(m_is_rx_enabled);
 
-	// Erreur de framing 0x04 = transition NMEA->UBX, toleree pendant le boot.
+	// Framing error 0x04 = the NMEA->UBX transition, tolerated during boot.
 	inject_error(0x04);
-	// handle_error a coupe le RX — on le verifie explicitement, sinon le test
-	// passerait meme si l'erreur n'avait jamais ete delivree.
+	// handle_error stopped the RX -- checked explicitly, or the test would pass
+	// even if the error had never been delivered.
 	CHECK_FALSE(m_is_rx_enabled);
 	increment_time_ms();
 	// ...
-	// ... et la reprise doit avoir ete postee au scheduler (elle ne peut pas
-	// s'executer en contexte ISR).
+	// ...and the restart must have been posted to the scheduler (it cannot run in
+	// ISR context).
 	increment_time_ms(10);
 	CHECK_TRUE(m_is_rx_enabled);
 
-	// Le recepteur peut donc de nouveau etre entendu: la session continue.
+	// The receiver can therefore be heard again: the session continues.
 	ubx_nack(UBX::MessageClass::MSG_CLASS_CFG, UBX::CFG::ID_MSG);
 	increment_time_ms(100);
 
