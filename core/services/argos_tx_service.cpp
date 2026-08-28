@@ -304,6 +304,36 @@ unsigned int ArgosTxService::service_next_schedule_in_ms() {
 		}
 	}
 
+	// Certification TX. This is a bench/lab mode: the operator sets a fixed
+	// payload and modulation and the beacon repeats it, so it deliberately
+	// bypasses the ARGOS_MODE dispatch below -- CERT_TX_ENABLE is what makes
+	// service_is_enabled() return true even when ARGOS_MODE is OFF, and
+	// get_gnss_configuration() turns GNSS off while it is set.
+	//
+	// It still sits AFTER the critical-battery and rate-limit gates above: a
+	// certification run must not be the thing that flattens a cell.
+	if (argos_config.cert_tx_enable) {
+		m_scheduled_mode = (KineisModulation)argos_config.cert_tx_modulation;
+		m_scheduled_task = [this]() { process_certification_burst(); };
+
+		// First TX fires immediately so the operator sees something at once;
+		// afterwards, one every CERT_TX_REPETITION seconds.
+		unsigned int period_s = m_is_first_tx ? 0 : argos_config.cert_tx_repetition;
+		m_sched.schedule_at(now + (std::time_t)period_s);
+
+		// Same bound as the rate limiter above, for the same reason: CTP04
+		// accepts up to 0xFFFFFFFF, and any value over 4294967 s (~49.7 days)
+		// wraps in `* 1000` and turns a very long wait into a near-immediate
+		// one. SCHEDULE_DISABLED is 0xFFFFFFFF and must stay reachable only as
+		// the "nothing planned" sentinel.
+		constexpr unsigned int MAX_CERT_PERIOD_MS = 0xFFFFFFFEu;
+		unsigned int period_ms = (period_s > MAX_CERT_PERIOD_MS / 1000u) ? MAX_CERT_PERIOD_MS : period_s * 1000u;
+		DEBUG_INFO("ArgosTxService: certification TX in %u ms (mode=%s, payload=%u chars)", period_ms,
+		           argos_modulation_to_string(argos_config.cert_tx_modulation),
+		           (unsigned)argos_config.cert_tx_payload.size());
+		return period_ms;
+	}
+
 	if (argos_config.mode == BaseArgosMode::OFF) {
 		return Service::SCHEDULE_DISABLED;
 	} else if (argos_config.mode == BaseArgosMode::DOPPLER) {
@@ -1247,8 +1277,18 @@ void ArgosTxService::process_certification_burst() {
 	DEBUG_TRACE("ArgosTxService::process_certification_burst: mode=%s data=%s sz=%u",
 	            argos_modulation_to_string(argos_config.cert_tx_modulation), Binascii::hexlify(packet).c_str(),
 	            size_bits);
+	// Every other burst programmes the module before transmitting; this one did
+	// not, so a certification frame could go out under whatever RCONF the last
+	// ordinary TX happened to leave loaded.
+	KineisModulation cert_mode = (KineisModulation)argos_config.cert_tx_modulation;
+	if (!ensure_modulation(cert_mode)) {
+		DEBUG_ERROR("ArgosTxService::process_certification_burst: no valid RCONF for %s - TX aborted",
+		            argos_modulation_to_string(argos_config.cert_tx_modulation));
+		service_complete(nullptr, nullptr, true);
+		return;
+	}
 	m_last_val_tx_type = "cert";
-	m_kineis.send((KineisModulation)argos_config.cert_tx_modulation, packet, size_bits);
+	m_kineis.send(cert_mode, packet, size_bits);
 }
 
 /// @brief Send immediate time sync burst using most recent GPS fix.

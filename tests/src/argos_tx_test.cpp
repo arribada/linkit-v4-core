@@ -478,6 +478,166 @@ TEST(ArgosTxService, BuildLongGNSSPacketUniformKeepsLegacyLayout) {
 //
 // This test now asserts the opposite of its ancestor: the 0xFF heartbeat MUST
 // go out even if no fix ever lands.
+// === Certification TX =======================================================
+// CERT_TX_ENABLE is a bench mode: a fixed payload repeated on a fixed period.
+// Its scheduling branch had been commented out since 747a70a7 (2025-07), so the
+// flag switched the service on and silenced GNSS while nothing ever scheduled a
+// certification burst. These tests pin the restored behaviour.
+
+// The branch sits before the ARGOS_MODE dispatch on purpose: certification runs
+// with ARGOS_MODE=OFF, which is precisely the case that used to return
+// SCHEDULE_DISABLED and do nothing at all.
+TEST(ArgosTxService, CertificationTxFiresWithArgosModeOff) {
+	fake_config_store->write_param(ParamID::ARGOS_MODE, BaseArgosMode::OFF);
+	fake_config_store->write_param(ParamID::CERT_TX_ENABLE, true);
+	fake_config_store->write_param(ParamID::CERT_TX_PAYLOAD, std::string("AABBCCDD"));
+	fake_config_store->write_param(ParamID::CERT_TX_MODULATION, BaseArgosModulation::A2);
+	fake_config_store->write_param(ParamID::CERT_TX_REPETITION, (unsigned int)60);
+	fake_config_store->write_param(ParamID::LB_EN, false);
+
+	ArgosTxService serv(*mock_kineis);
+	std::time_t t = 1652105502000;  // ms
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+
+	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
+	serv.start();
+
+	// First TX is immediate so the operator sees something at once
+	CHECK_EQUAL(0U, serv.get_last_schedule());
+
+	// 4 payload bytes <= SHORT_PACKET_BYTES, so a 96-bit short packet
+	mock()
+	    .expectOneCall("send")
+	    .onObject(mock_kineis)
+	    .withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2)
+	    .withUnsignedIntParameter("size_bits", 96);
+	system_scheduler->run();
+	mock_kineis->notify(KineisEventTxComplete({}));
+	mock().checkExpectations();
+}
+
+// After the first burst the period is CERT_TX_REPETITION seconds. The original
+// code passed milliseconds to ArgosTxScheduler::schedule_at(), which takes a
+// time_t in SECONDS -- it would have armed the next burst 1000x too late.
+TEST(ArgosTxService, CertificationTxRepeatsAtConfiguredPeriod) {
+	fake_config_store->write_param(ParamID::ARGOS_MODE, BaseArgosMode::OFF);
+	fake_config_store->write_param(ParamID::CERT_TX_ENABLE, true);
+	fake_config_store->write_param(ParamID::CERT_TX_PAYLOAD, std::string("AABBCCDD"));
+	fake_config_store->write_param(ParamID::CERT_TX_MODULATION, BaseArgosModulation::A2);
+	fake_config_store->write_param(ParamID::CERT_TX_REPETITION, (unsigned int)60);
+	fake_config_store->write_param(ParamID::LB_EN, false);
+
+	ArgosTxService serv(*mock_kineis);
+	std::time_t t = 1652105502000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+
+	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
+	serv.start();
+
+	mock()
+	    .expectOneCall("send")
+	    .onObject(mock_kineis)
+	    .withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2)
+	    .withUnsignedIntParameter("size_bits", 96);
+	system_scheduler->run();
+	mock_kineis->notify(KineisEventTxComplete({}));
+
+	// 60 s, in milliseconds -- not 60 000 s
+	CHECK_EQUAL(60000U, serv.get_last_schedule());
+	mock().checkExpectations();
+}
+
+// CTP04 accepts up to 0xFFFFFFFF. `repetition * 1000` overflows unsigned int
+// above 4 294 967 s, which would turn a 49-day period into a near-immediate
+// retransmit -- the exact inversion of the setting. Same clamp as the rate
+// limiter uses a few lines above in service_next_schedule_in_ms.
+TEST(ArgosTxService, CertificationTxPeriodDoesNotWrap) {
+	fake_config_store->write_param(ParamID::ARGOS_MODE, BaseArgosMode::OFF);
+	fake_config_store->write_param(ParamID::CERT_TX_ENABLE, true);
+	fake_config_store->write_param(ParamID::CERT_TX_PAYLOAD, std::string("AABBCCDD"));
+	fake_config_store->write_param(ParamID::CERT_TX_MODULATION, BaseArgosModulation::A2);
+	fake_config_store->write_param(ParamID::CERT_TX_REPETITION, (unsigned int)0xFFFFFFFFU);
+	fake_config_store->write_param(ParamID::LB_EN, false);
+
+	ArgosTxService serv(*mock_kineis);
+	std::time_t t = 1652105502000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+
+	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
+	serv.start();
+
+	mock()
+	    .expectOneCall("send")
+	    .onObject(mock_kineis)
+	    .withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2)
+	    .withUnsignedIntParameter("size_bits", 96);
+	system_scheduler->run();
+	mock_kineis->notify(KineisEventTxComplete({}));
+
+	// Clamped, and emphatically not a near-immediate retransmit
+	CHECK_EQUAL(0xFFFFFFFEU, serv.get_last_schedule());
+	mock().checkExpectations();
+}
+
+// Every other burst programmes the module before transmitting; this one did not,
+// so a certification frame could go out under whatever RCONF the previous
+// ordinary TX had left loaded.
+TEST(ArgosTxService, CertificationTxProgramsTheRequestedModulation) {
+	fake_config_store->write_param(ParamID::ARGOS_MODE, BaseArgosMode::OFF);
+	fake_config_store->write_param(ParamID::CERT_TX_ENABLE, true);
+	fake_config_store->write_param(ParamID::CERT_TX_PAYLOAD, std::string("AABBCCDD"));
+	fake_config_store->write_param(ParamID::CERT_TX_MODULATION, BaseArgosModulation::LDK);
+	fake_config_store->write_param(ParamID::CERT_TX_REPETITION, (unsigned int)60);
+	fake_config_store->write_param(ParamID::LB_EN, false);
+	fake_config_store->write_param(ParamID::ARGOS_RADIOCONF_LDK, std::string("03921FB104B92859209B18ABD009DE96"));
+
+	ArgosTxService serv(*mock_kineis);
+	std::time_t t = 1652105502000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+
+	// The mock starts on LDA2, so a switch to LDK must actually be programmed
+	mock_kineis->test_set_current_modulation(KineisModulation::LDA2);
+
+	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
+	serv.start();
+
+	mock()
+	    .expectOneCall("switch_modulation")
+	    .onObject(mock_kineis)
+	    .withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDK)
+	    .withStringParameter("rconf", "03921FB104B92859209B18ABD009DE96");
+	mock()
+	    .expectOneCall("send")
+	    .onObject(mock_kineis)
+	    .withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDK)
+	    .withUnsignedIntParameter("size_bits", 96);
+	system_scheduler->run();
+	mock_kineis->notify(KineisEventTxComplete({}));
+	mock().checkExpectations();
+}
+
+// Regression guard for the restored branch: with CERT_TX_ENABLE off (the
+// factory default), ARGOS_MODE=OFF must still disable the service outright.
+TEST(ArgosTxService, CertificationDisabledLeavesArgosModeOffDisabled) {
+	fake_config_store->write_param(ParamID::ARGOS_MODE, BaseArgosMode::OFF);
+	fake_config_store->write_param(ParamID::CERT_TX_ENABLE, false);
+	fake_config_store->write_param(ParamID::LB_EN, false);
+
+	ArgosTxService serv(*mock_kineis);
+	std::time_t t = 1652105502000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+
+	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
+	serv.start();
+	CHECK_EQUAL(Service::SCHEDULE_DISABLED, serv.get_last_schedule());
+	mock().checkExpectations();
+}
+
 TEST(ArgosTxService, LegacyNoFixHeartbeatSentWithoutAnyFix) {
 	fake_config_store->write_param(ParamID::ARGOS_MODE, BaseArgosMode::LEGACY);
 	fake_config_store->write_param(ParamID::ARGOS_DEPTH_PILE, BaseDepthPile::DEPTH_PILE_1);
