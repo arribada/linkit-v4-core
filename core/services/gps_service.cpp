@@ -144,7 +144,26 @@ void GPSService::set_deep_idle_inhibit_first_session(bool inhibit) {
 /// See the declaration for why this gates both GNSS watchdogs.
 bool GPSService::beacon_is_transmitting(unsigned int within_s) const {
 	if (!rtc || !rtc->is_set()) return false;
-	std::time_t last_tx = (std::time_t)configuration_store->read_param<unsigned int>(ParamID::LAST_TX);
+	std::time_t last_tx = 0;
+	try {
+		// std::time_t, not unsigned int: that is the alternative LAST_TX holds
+		// (config_store.hpp declares it static_cast<std::time_t>(0U), and both TX
+		// services write a std::time_t). read_param is std::get<T> behind a
+		// catch-all that rethrows CONFIG_STORE_CORRUPTED, so asking for the wrong
+		// alternative throws every time -- and these watchdog lambdas are posted
+		// straight to the scheduler, outside Service::run_scheduled_task's
+		// barrier, so it would reach the main loop and land in ErrorState. Spell
+		// it std::time_t and not long long: it is long long on the target and
+		// long on the host build.
+		last_tx = configuration_store->read_param<std::time_t>(ParamID::LAST_TX);
+	} catch (...) {
+		// The evidence is unreadable. Report "working" rather than "silent":
+		// resetting a beacon because a parameter read failed is exactly the
+		// failure this gate exists to prevent, and an unreadable config store is
+		// not something a GNSS watchdog should be adjudicating.
+		DEBUG_ERROR("GPSService: LAST_TX unreadable — assuming the beacon works, no reset");
+		return true;
+	}
 	if (last_tx <= 0) return false;
 	std::time_t now = rtc->gettime();
 	if (now < last_tx) return false;  // clock moved backwards; prove nothing
@@ -158,50 +177,62 @@ void GPSService::arm_health_wdt() {
 	system_scheduler->cancel_task(m_health_wdt_task);
 	m_health_wdt_task = system_scheduler->post_task_prio(
 	    [this]() {
-		    constexpr unsigned int WINDOW_S = HEALTH_WDT_HOURS * 3600u;
+		    // Everything below runs inside a try. This task is posted straight to
+		    // the scheduler, not through Service::run_scheduled_task, so it has no
+		    // exception barrier of its own: any throw in here reaches the main
+		    // loop and becomes an ErrorState reset, attributed to a corrupt config
+		    // store rather than to GNSS. A safety net must not be able to do that.
+		    try {
+			    constexpr unsigned int WINDOW_S = HEALTH_WDT_HOURS * 3600u;
 
-		    // A tag with GNSS deliberately off produces no GPS event, ever. That
-		    // is a configuration, not a fault, and resetting it every 24 h for
-		    // the length of the deployment would be this net breaking a working
-		    // beacon. Log at INFO -- an operator reading a recovered SYS log must
-		    // not find an ERROR here and go looking for a receiver problem.
-		    GNSSConfig gnss_config;
-		    configuration_store->get_gnss_configuration(gnss_config);
-		    if (!gnss_config.enable) {
-			    DEBUG_INFO("GPS Health WDT: no GPS event in %u h, and GNSS_EN=0 — expected, not a fault. No reset; "
-				           "re-arming. Clears by itself if GNSS is re-enabled.",
-				           HEALTH_WDT_HOURS);
+			    // A tag with GNSS deliberately off produces no GPS event, ever. That
+			    // is a configuration, not a fault, and resetting it every 24 h for
+			    // the length of the deployment would be this net breaking a working
+			    // beacon. Log at INFO -- an operator reading a recovered SYS log must
+			    // not find an ERROR here and go looking for a receiver problem.
+			    GNSSConfig gnss_config;
+			    configuration_store->get_gnss_configuration(gnss_config);
+			    if (!gnss_config.enable) {
+				    DEBUG_INFO("GPS Health WDT: no GPS event in %u h, and GNSS_EN=0 — expected, not a fault. No reset; "
+					           "re-arming. Clears by itself if GNSS is re-enabled.",
+					           HEALTH_WDT_HOURS);
+				    arm_health_wdt();
+				    return;
+			    }
+
+			    // The receiver is silent but the beacon is transmitting: whatever is
+			    // wrong is confined to the GNSS side, and a device reset is the wrong
+			    // tool for it -- it costs the RAM state, a flash write and a forced
+			    // cold GNSS path, to fix something a cold start addresses directly.
+			    // Escalate on the GNSS only, and let the net re-arm: if the beacon
+			    // stops transmitting too, the next firing takes the reset branch.
+			    if (beacon_is_transmitting(WINDOW_S)) {
+				    DEBUG_WARN(
+				        "GPS Health WDT: no GPS event in %u h, but the beacon transmitted within that window — it "
+				        "is working. No reset; forcing a COLD START on the next acquisition and re-arming.",
+				        HEALTH_WDT_HOURS);
+				    m_force_cold_start = true;
+				    arm_health_wdt();
+				    return;
+			    }
+
+			    DEBUG_ERROR("GPS Health WDT: no GPS event and no transmission in %u h — nothing is working, soft reset",
+				            HEALTH_WDT_HOURS);
+			    // 2026-06: snapshot the (free-running, crystal-accurate) RTC to flash
+			    // right before the soft reset so the post-reset restore from
+			    // LAST_KNOWN_RTC does NOT jump time backward by up to the 30-min
+			    // periodic-flush gap. A backward RTC makes injected MGA-INI-TIME wrong
+			    // and breaks AssistNow — a reset loop would march time backward and
+			    // never recover. Persisting here bounds the loss to ~0.
+			    if (rtc && rtc->is_set() && rtc->gettime() > 0)
+				    configuration_store->write_param(ParamID::LAST_KNOWN_RTC,
+					                                 static_cast<unsigned int>(rtc->gettime()));
+			    PMU::save_stack(PMULogType::WDT);
+			    PMU::reset(false);
+		    } catch (...) {
+			    DEBUG_ERROR("GPS Health WDT: exception while deciding — no reset, re-arming");
 			    arm_health_wdt();
-			    return;
 		    }
-
-		    // The receiver is silent but the beacon is transmitting: whatever is
-		    // wrong is confined to the GNSS side, and a device reset is the wrong
-		    // tool for it -- it costs the RAM state, a flash write and a forced
-		    // cold GNSS path, to fix something a cold start addresses directly.
-		    // Escalate on the GNSS only, and let the net re-arm: if the beacon
-		    // stops transmitting too, the next firing takes the reset branch.
-		    if (beacon_is_transmitting(WINDOW_S)) {
-			    DEBUG_WARN("GPS Health WDT: no GPS event in %u h, but the beacon transmitted within that window — it "
-				           "is working. No reset; forcing a COLD START on the next acquisition and re-arming.",
-				           HEALTH_WDT_HOURS);
-			    m_force_cold_start = true;
-			    arm_health_wdt();
-			    return;
-		    }
-
-		    DEBUG_ERROR("GPS Health WDT: no GPS event and no transmission in %u h — nothing is working, soft reset",
-			            HEALTH_WDT_HOURS);
-		    // 2026-06: snapshot the (free-running, crystal-accurate) RTC to flash
-		    // right before the soft reset so the post-reset restore from
-		    // LAST_KNOWN_RTC does NOT jump time backward by up to the 30-min
-		    // periodic-flush gap. A backward RTC makes injected MGA-INI-TIME wrong
-		    // and breaks AssistNow — a reset loop would march time backward and
-		    // never recover. Persisting here bounds the loss to ~0.
-		    if (rtc && rtc->is_set() && rtc->gettime() > 0)
-			    configuration_store->write_param(ParamID::LAST_KNOWN_RTC, static_cast<unsigned int>(rtc->gettime()));
-		    PMU::save_stack(PMULogType::WDT);
-		    PMU::reset(false);
 	    },
 	    "GPSHealthWDT", Scheduler::DEFAULT_PRIORITY, (uint64_t)HEALTH_WDT_HOURS * 3600ULL * (uint64_t)MS_PER_SEC);
 }
@@ -214,40 +245,48 @@ void GPSService::arm_no_pvt_wdt() {
 	system_scheduler->cancel_task(m_no_pvt_wdt_task);
 	m_no_pvt_wdt_task = system_scheduler->post_task_prio(
 	    [this]() {
-		    constexpr unsigned int WINDOW_S = NO_PVT_WDT_DAYS * 24u * 3600u;
+		    // Same barrier as the health watchdog above, for the same reason.
+		    try {
+			    constexpr unsigned int WINDOW_S = NO_PVT_WDT_DAYS * 24u * 3600u;
 
-		    // A CloudLocate-only deployment never produces a real PVT: the raw
-		    // measurement IS the product, resolved cloud-side. Counting that as a
-		    // failure and resetting weekly would break exactly the deployment the
-		    // mode was added for.
-		    if (configuration_store->read_param<bool>(ParamID::GNSS_CLOUDLOCATE_ONLY)) {
-			    DEBUG_INFO("GPS No-PVT WDT: no real PVT in %u days, and GNSS_CLOUDLOCATE_ONLY=1 — expected, not a "
-				           "fault. No reset; re-arming.",
-				           NO_PVT_WDT_DAYS);
+			    // A CloudLocate-only deployment never produces a real PVT: the raw
+			    // measurement IS the product, resolved cloud-side. Counting that as a
+			    // failure and resetting weekly would break exactly the deployment the
+			    // mode was added for.
+			    if (configuration_store->read_param<bool>(ParamID::GNSS_CLOUDLOCATE_ONLY)) {
+				    DEBUG_INFO("GPS No-PVT WDT: no real PVT in %u days, and GNSS_CLOUDLOCATE_ONLY=1 — expected, not a "
+					           "fault. No reset; re-arming.",
+					           NO_PVT_WDT_DAYS);
+				    arm_no_pvt_wdt();
+				    return;
+			    }
+
+			    // Same rule as the health watchdog: do not reset a beacon that is
+			    // demonstrably useful. A missing PVT with transmissions still going
+			    // out is a GNSS-side problem, and a reset does not fix a filter that
+			    // is rejecting every fix -- a cold start might.
+			    if (beacon_is_transmitting(WINDOW_S)) {
+				    DEBUG_WARN(
+				        "GPS No-PVT WDT: no real PVT in %u days, but the beacon is still transmitting. No reset; "
+				        "forcing a COLD START on the next acquisition and re-arming.",
+				        NO_PVT_WDT_DAYS);
+				    m_force_cold_start = true;
+				    arm_no_pvt_wdt();
+				    return;
+			    }
+
+			    DEBUG_ERROR("GPS No-PVT WDT: no real PVT and no transmission in %u days — soft reset", NO_PVT_WDT_DAYS);
+			    // 2026-06: persist the accurate RTC before reset (see Health WDT) so the
+			    // restore doesn't rewind time and poison AssistNow after the reset.
+			    if (rtc && rtc->is_set() && rtc->gettime() > 0)
+				    configuration_store->write_param(ParamID::LAST_KNOWN_RTC,
+					                                 static_cast<unsigned int>(rtc->gettime()));
+			    PMU::save_stack(PMULogType::WDT);
+			    PMU::reset(false);
+		    } catch (...) {
+			    DEBUG_ERROR("GPS No-PVT WDT: exception while deciding — no reset, re-arming");
 			    arm_no_pvt_wdt();
-			    return;
 		    }
-
-		    // Same rule as the health watchdog: do not reset a beacon that is
-		    // demonstrably useful. A missing PVT with transmissions still going
-		    // out is a GNSS-side problem, and a reset does not fix a filter that
-		    // is rejecting every fix -- a cold start might.
-		    if (beacon_is_transmitting(WINDOW_S)) {
-			    DEBUG_WARN("GPS No-PVT WDT: no real PVT in %u days, but the beacon is still transmitting. No reset; "
-				           "forcing a COLD START on the next acquisition and re-arming.",
-				           NO_PVT_WDT_DAYS);
-			    m_force_cold_start = true;
-			    arm_no_pvt_wdt();
-			    return;
-		    }
-
-		    DEBUG_ERROR("GPS No-PVT WDT: no real PVT and no transmission in %u days — soft reset", NO_PVT_WDT_DAYS);
-		    // 2026-06: persist the accurate RTC before reset (see Health WDT) so the
-		    // restore doesn't rewind time and poison AssistNow after the reset.
-		    if (rtc && rtc->is_set() && rtc->gettime() > 0)
-			    configuration_store->write_param(ParamID::LAST_KNOWN_RTC, static_cast<unsigned int>(rtc->gettime()));
-		    PMU::save_stack(PMULogType::WDT);
-		    PMU::reset(false);
 	    },
 	    "GPSNoPvtWDT", Scheduler::DEFAULT_PRIORITY, (uint64_t)NO_PVT_WDT_DAYS * 24ULL * 3600ULL * (uint64_t)MS_PER_SEC);
 }

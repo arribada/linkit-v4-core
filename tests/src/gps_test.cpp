@@ -1261,7 +1261,7 @@ TEST(GPSService, HealthWatchdogDoesNotResetABeaconThatIsStillTransmitting) {
 	// path are all demonstrably alive, so whatever ails the receiver is confined
 	// to the GNSS side and does not justify resetting the device.
 	jump_to(fake_timer, fake_rtc, t0, 25 * 3600);
-	fake_config_store->write_param(ParamID::LAST_TX, (unsigned int)(t0 + 24 * 3600));
+	fake_config_store->write_param(ParamID::LAST_TX, (std::time_t)(t0 + 24 * 3600));
 	system_scheduler->run();
 	mock().checkExpectations();
 }
@@ -1269,7 +1269,7 @@ TEST(GPSService, HealthWatchdogDoesNotResetABeaconThatIsStillTransmitting) {
 TEST(GPSService, HealthWatchdogStillResetsWhenNothingIsWorking) {
 	fake_config_store->write_param(ParamID::GNSS_EN, (bool)true);
 	fake_config_store->write_param(ParamID::UNDERWATER_EN, (bool)false);
-	fake_config_store->write_param(ParamID::LAST_TX, (unsigned int)0);  // never transmitted
+	fake_config_store->write_param(ParamID::LAST_TX, (std::time_t)0);  // never transmitted
 
 	const std::time_t t0 = 1652105502;
 	fake_rtc->settime(t0);
@@ -1293,7 +1293,7 @@ TEST(GPSService, NoPvtWatchdogDoesNotResetACloudLocateOnlyTag) {
 	// The raw measurement IS the product here, resolved cloud-side. A real PVT
 	// is never produced, by design.
 	fake_config_store->write_param(ParamID::GNSS_CLOUDLOCATE_ONLY, (bool)true);
-	fake_config_store->write_param(ParamID::LAST_TX, (unsigned int)0);
+	fake_config_store->write_param(ParamID::LAST_TX, (std::time_t)0);
 
 	const std::time_t t0 = 1652105502;
 	fake_rtc->settime(t0);
@@ -1308,9 +1308,9 @@ TEST(GPSService, NoPvtWatchdogDoesNotResetACloudLocateOnlyTag) {
 	// Past the 7-day no-PVT deadline. The health watchdog would fire first at
 	// 24 h, so give it a transmission to keep it quiet and leave this test
 	// about the no-PVT net alone.
-	fake_config_store->write_param(ParamID::LAST_TX, (unsigned int)(t0 + 1));
+	fake_config_store->write_param(ParamID::LAST_TX, (std::time_t)(t0 + 1));
 	jump_to(fake_timer, fake_rtc, t0, 8ULL * 24 * 3600);
-	fake_config_store->write_param(ParamID::LAST_TX, (unsigned int)(t0 + 8 * 24 * 3600 - 60));
+	fake_config_store->write_param(ParamID::LAST_TX, (std::time_t)(t0 + 8 * 24 * 3600 - 60));
 	system_scheduler->run();
 	mock().checkExpectations();
 }
