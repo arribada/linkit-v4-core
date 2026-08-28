@@ -35,7 +35,17 @@ The setup script installs all required tools (ARM GCC 10.3, nrfutil, nrfjprog, C
 ./scripts/setup_environment.sh --auto   # auto-install everything
 ```
 
-This generates `build_config.sh` with detected tool paths and configures VSCode tasks.
+This generates `build_config.sh` with the detected tool paths, and patches
+`.vscode/tasks.json`, `.vscode/settings.json` and the SDK `Makefile.posix` to match.
+
+> **Working in VSCode?** `.vscode/settings.json` is committed and shared, so the three
+> `C_Cpp_Runner.*Path` keys it carries are whatever the last committer had — they will
+> almost certainly be wrong on your machine. `setup_environment.sh` rewrites them for
+> you; there is nothing to edit by hand. Those three lines are the only
+> machine-dependent ones in the file, so **please do not commit yours back**.
+>
+> Indentation and line endings come from `.editorconfig` — install the
+> *EditorConfig for VS Code* extension so your editor honours it.
 
 ### 2. Build
 
@@ -76,15 +86,6 @@ nrfjprog -f nrf52 --program ports/nrf52840/drivers/nRF5_SDK_17.0.2/components/so
 nrfjprog -f nrf52 --program ports/nrf52840/build/<BUILD_DIR>/<TARGET>.hex --sectorerase
 nrfjprog -f nrf52 --reset
 ```
-
-### Build Documentation (Doxygen, optional)
-
-```bash
-cd docs && doxygen Doxyfile
-# Open: docs/doxygen_output/html/index.html
-```
-
-Requires [Doxygen](https://www.doxygen.nl/) installed. The generated documentation includes all source code API reference and the wiki pages (boards, DTE commands, parameters, architecture).
 
 ### 4. Unit Tests
 

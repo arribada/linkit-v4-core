@@ -375,6 +375,29 @@ else
 fi
 
 # =============================================================================
+# Step 4b: Update .vscode/settings.json compiler paths
+# =============================================================================
+# settings.json is committed and shared, so the three C_Cpp_Runner paths it
+# carries are whatever the last committer had. They are the only three
+# machine-dependent keys in the file; everything else is portable.
+echo ""
+echo -e "${BLUE}Step 4b: Updating .vscode/settings.json compiler paths${NC}"
+
+SETTINGS_FILE="$PROJECT_ROOT/.vscode/settings.json"
+if [ -f "$SETTINGS_FILE" ] && [ -n "$ARM_TOOLCHAIN_PATH" ]; then
+    cp "$SETTINGS_FILE" "$SETTINGS_FILE.backup"
+    sed -i \
+        -e "s|\"C_Cpp_Runner.cCompilerPath\": \"[^\"]*\"|\"C_Cpp_Runner.cCompilerPath\": \"$ARM_TOOLCHAIN_PATH/arm-none-eabi-gcc\"|" \
+        -e "s|\"C_Cpp_Runner.cppCompilerPath\": \"[^\"]*\"|\"C_Cpp_Runner.cppCompilerPath\": \"$ARM_TOOLCHAIN_PATH/arm-none-eabi-g++\"|" \
+        -e "s|\"C_Cpp_Runner.debuggerPath\": \"[^\"]*\"|\"C_Cpp_Runner.debuggerPath\": \"$ARM_TOOLCHAIN_PATH/arm-none-eabi-gdb\"|" \
+        "$SETTINGS_FILE"
+    echo -e "${GREEN}  Updated: .vscode/settings.json -> $ARM_TOOLCHAIN_PATH${NC}"
+    echo -e "${YELLOW}  These three lines are yours alone: please do not commit them back.${NC}"
+else
+    echo -e "${YELLOW}  Skipping (settings.json not found or ARM path not set)${NC}"
+fi
+
+# =============================================================================
 # Step 5: Update SDK Makefile.posix
 # =============================================================================
 echo ""
@@ -453,6 +476,7 @@ echo ""
 echo "Configuration files updated:"
 echo "  - build_config.sh"
 echo "  - .vscode/tasks.json"
+echo "  - .vscode/settings.json  (compiler paths only -- do not commit them back)"
 echo "  - ports/.../Makefile.posix"
 echo ""
 echo "To build:  ./scripts/build_linkitv4_kim.sh  or  ./scripts/build_rspb.sh"
