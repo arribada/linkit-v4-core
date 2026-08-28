@@ -34,7 +34,6 @@ extern MortalityService *mortality_service;
 #endif
 
 
-/// @brief Construct Argos TX service with a KineisDevice backend (SMD/KIM2/LoRa).
 /// @brief Report a duty-cycle schedule that came back unusable, then pass it on.
 ///
 /// ArgosTxScheduler::INVALID_SCHEDULE is numerically SCHEDULE_DISABLED, so
@@ -2448,8 +2447,10 @@ void ArgosTxService::react(KineisEventDeviceError const&) {
 }
 
 // === BaseGnssStrategy::REUSE_LAST plumbing =================================
-// Helpers landed ahead of the HAULED / sequencer consumers so the wiring is
-// reviewable and unit-testable in isolation. Currently unused at runtime.
+// Kept together and free of member state so they stay unit-testable in
+// isolation. All of them are on the live scheduling path -- the note that used
+// to say "currently unused at runtime" was written before the consumers landed
+// and has been wrong since.
 
 unsigned int ArgosTxService::compute_gps_log_age_seconds(const GPSLogEntry &entry, std::time_t now) {
 	// LogHeader year=0 is the cold-boot / unset RTC sentinel — never trust it.

@@ -376,8 +376,8 @@ const BaseMap param_map[] = {
 	// — the read-modify-write round trip must not jam the DTE channel just
 	// because that slot is now 1.
 	//
-	// The "only accept 0 on PARMW" policy is enforced in dte_handler.cpp:117
-	// (PARMW_REQ), which rejects the slot cleanly via rejected_keys without
+	// The "only accept 0 on PARMW" policy is enforced in DTEHandler::PARMW_REQ,
+	// which rejects the slot cleanly via rejected_keys without
 	// throwing — non-zero writes are logged + reported, every other slot in
 	// the batch still applies.
 	//

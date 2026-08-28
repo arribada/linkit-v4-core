@@ -2864,27 +2864,29 @@ void M10QAsyncReceiver::soft_reset() {
 void M10QAsyncReceiver::setup_uart_port() {
     DEBUG_TRACE("M10QAsyncReceiver::setup_uart_port: Configuring UART1 with VALSET ->");
 
-    // Set up each parameter value with its defined size
-    CFG::UART1::BAUDRATE.set_value(MAX_BAUDRATE);                          // 9600 as 4 bytes
-    CFG::UART1::STOPBITS.set_value(CFG::UART1::StopBits::ONE);  // 1 byte for 1 stop bit
-    CFG::UART1::DATABITS.set_value(CFG::UART1::DataBits::EIGHT); // 1 byte for 8 data bits
-    CFG::UART1::PARITY.set_value(CFG::UART1::Parity::NONE);     // 1 byte for no parity
-    CFG::UART1::ENABLED.set_value(1);                              // 1 byte for enabled flag
+    // 8N1 at MAX_BAUDRATE (460800). The receiver keeps this in BBR, which is why
+    // state_poweron has to probe every rate in BOOT_BAUD_TABLE rather than
+    // assume the 9600 of a factory-fresh part.
+    CFG::UART1::BAUDRATE.set_value(MAX_BAUDRATE);
+    CFG::UART1::STOPBITS.set_value(CFG::UART1::StopBits::ONE);
+    CFG::UART1::DATABITS.set_value(CFG::UART1::DataBits::EIGHT);
+    CFG::UART1::PARITY.set_value(CFG::UART1::Parity::NONE);
+    CFG::UART1::ENABLED.set_value(1);
 
-    // Set protocol flags for UBX input and output
-    CFG::UART1::INPROT_UBX.set_value(1);                                  // Enable UBX protocol as input (1 byte)
-    CFG::UART1::OUTPROT_UBX.set_value(1);                                 // Enable UBX protocol as output (1 byte)
+    // UBX in and out, NMEA off in both directions: the parser only speaks UBX,
+    // and NMEA sentences would just burn UART time and current.
+    CFG::UART1::INPROT_UBX.set_value(1);
+    CFG::UART1::OUTPROT_UBX.set_value(1);
+    CFG::UART1::INPROT_NMEA.set_value(0);
+    CFG::UART1::OUTPROT_NMEA.set_value(0);
 
-    // Clear protocol flags for NMEA input and output
-    CFG::UART1::INPROT_NMEA.set_value(0);                                  // Enable UBX protocol as input (1 byte)
-    CFG::UART1::OUTPROT_NMEA.set_value(0);                                 // Enable UBX protocol as output (1 byte)
-                                                                           
-    // TX Ready configurations
-    CFG::UART1::TXREADY_ENABLED.set_value(0);                             // Disable TX ready (1 byte)
-    CFG::UART1::TXREADY_POLARITY.set_value(0);                            // Set TX ready polarity to high-active (1 byte)
-    CFG::UART1::TXREADY_PIN.set_value(0);                                 // Set TX ready pin (e.g., pin number 0) (1 byte)
-    CFG::UART1::TXREADY_THRESHOLD.set_value(0);                         // Set TX ready threshold to 2000 bytes (250 * 8 bytes) (2 bytes)
-    CFG::UART1::TXREADY_INTERFACE.set_value(0);                           // Link TX ready to UART1 (1 byte)
+    // TX-ready line unused: we read the UART continuously, so there is no pin to
+    // assert and no threshold to reach. All five values are therefore 0.
+    CFG::UART1::TXREADY_ENABLED.set_value(0);
+    CFG::UART1::TXREADY_POLARITY.set_value(0);
+    CFG::UART1::TXREADY_PIN.set_value(0);
+    CFG::UART1::TXREADY_THRESHOLD.set_value(0);
+    CFG::UART1::TXREADY_INTERFACE.set_value(0);
 
     // Collect all parameters in a vector
     std::vector<UBX::CFG::UBXParameter> uart1_config = {
