@@ -1,0 +1,94 @@
+# ============================================================================
+# linkit-v4-core -- where our code stops and vendor begins
+# ============================================================================
+# 12 693 files are tracked in this repository. 11 147 of them are the Nordic
+# nRF5 SDK and 1 109 are third-party libraries: 96.6 % of what you clone is
+# code we do not own and never edit.
+#
+# This file changes NOTHING about what is committed, what is cloned, or what
+# is compiled. It only tells GitHub (via linguist) and git's diff machinery
+# which files are ours. A fresh clone still builds exactly as before.
+#
+# DO NOT ADD `* text=auto`. The Nordic SDK ships CRLF; a repo-wide rule would
+# renormalise 5.4 M lines of vendor code in a single commit.
+# ----------------------------------------------------------------------------
+
+# ----------------------------------------------------------------------------
+# First-party sources -- normalise to LF.
+# Every path listed here is code we wrote. Vendor is NEVER listed: see the
+# `-text` rules further down, which freeze its bytes exactly as they are.
+# ----------------------------------------------------------------------------
+core/**                          text=auto eol=lf
+ports/linux/**                   text=auto eol=lf
+ports/nrf52840/core/**           text=auto eol=lf
+ports/nrf52840/main.cpp          text=auto eol=lf
+ports/nrf52840/CMakeLists.txt    text=auto eol=lf
+tests/src/**                     text=auto eol=lf
+tests/fakes/**                   text=auto eol=lf
+tests/mocks/**                   text=auto eol=lf
+tests/CMakeLists.txt             text=auto eol=lf
+scripts/*.sh                     text=auto eol=lf
+scripts/*.py                     text=auto eol=lf
+.github/**                       text=auto eol=lf
+*.md                             text=auto eol=lf
+
+# --- Nicer diffs on our own C++ (function name in the @@ hunk header) -------
+*.cpp diff=cpp
+*.hpp diff=cpp
+*.c   diff=cpp
+*.h   diff=cpp
+
+# ----------------------------------------------------------------------------
+# Vendor -- Nordic nRF5 SDK 17.0.2 (11 147 files, 88 % of the repository)
+#
+#   linguist-vendored : drops it from the GitHub language bar, from GitHub
+#                       code search, and collapses it by default in PR diffs.
+#   -text             : freezes the bytes as they are. Vendor keeps its CRLF;
+#                       git will never renormalise it behind our back.
+# ----------------------------------------------------------------------------
+ports/nrf52840/drivers/nRF5_SDK_17.0.2/** linguist-vendored -text
+
+# --- Vendor -- third-party libraries (1 109 files) --------------------------
+# etl, littlefs, inplace_function, CmBacktrace, CLS PREPASS v3.4 / v4.0
+libraries/** linguist-vendored -text
+
+# ----------------------------------------------------------------------------
+# SDK-generated or Nordic-templated files that live in our own tree.
+# Not ours to format, not ours to audit.
+# ----------------------------------------------------------------------------
+ports/nrf52840/bsp/*/sdk_config.h                          linguist-generated -text
+ports/nrf52840/bootloader/**                               linguist-vendored  -text
+ports/nrf52840/gcc_nrf52840.ld                             linguist-vendored  -text
+ports/nrf52840/gcc_startup_nrf52840.S                      linguist-vendored  -text
+ports/nrf52840/core/memmang/heap_4.c                       linguist-vendored  -text
+
+# ----------------------------------------------------------------------------
+# Vendor drop-ins sitting next to our own code.
+# The C++ wrappers beside them (bma400.cpp, stc3117_gasgauge.cpp) ARE ours and
+# are deliberately NOT listed here -- only the untouched vendor C is marked.
+# ----------------------------------------------------------------------------
+ports/nrf52840/core/hardware/bma400/bma400.c               linguist-vendored
+ports/nrf52840/core/hardware/bma400/bma400.h               linguist-vendored
+ports/nrf52840/core/hardware/bma400/bma400_defs.h          linguist-vendored
+ports/nrf52840/core/hardware/stc3117/stc311x_gasgauge.c    linguist-vendored
+ports/nrf52840/core/hardware/stc3117/stc311x_gasgauge.h    linguist-vendored
+ports/nrf52840/core/hardware/stc3117/stc311x_BatteryInfo.h linguist-vendored
+ports/nrf52840/core/hardware/stc3117/Generic_I2C.c         linguist-vendored
+ports/nrf52840/core/hardware/stc3117/Generic_I2C.h         linguist-vendored
+core/sm/tinyfsm.hpp                                        linguist-vendored
+core/protocol/base64.hpp                                   linguist-vendored
+
+# ----------------------------------------------------------------------------
+# Device config templates: read byte-for-byte by PyLinkit. Freeze them.
+# ----------------------------------------------------------------------------
+template_conf/*.cfg -text
+
+# --- Binary: never diff, never count ----------------------------------------
+*.hex binary
+*.bin binary
+*.elf binary
+*.map binary
+*.exe binary
+*.png binary
+*.pdf binary
+*.zip binary

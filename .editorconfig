@@ -1,0 +1,71 @@
+# EditorConfig -- https://editorconfig.org
+#
+# This governs what your editor does WHILE YOU TYPE. It does not reformat
+# anything on its own and it is not read by the build.
+#
+# VSCode needs the "EditorConfig for VS Code" extension. CLion, vim and
+# Sublime read it natively.
+#
+# The values are measured from the code that is already here, not chosen:
+# 34 102 tab-indented lines against 11 502 space-indented ones (first-party
+# code, 2026-08). Line length p99 = 118 columns.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.{c,h,cpp,hpp}]
+indent_style = tab
+indent_size = 4
+tab_width = 4
+max_line_length = 120
+
+[*.{md,yml,yaml,json}]
+indent_style = space
+indent_size = 2
+trim_trailing_whitespace = false   # markdown uses two trailing spaces as a line break
+
+[*.{sh,py}]
+indent_style = space
+indent_size = 4
+
+[{CMakeLists.txt,*.cmake}]
+indent_style = space
+indent_size = 4
+
+# ----------------------------------------------------------------------------
+# Vendor -- opening one of these files must never rewrite it.
+# `unset` tells the editor to leave the file exactly as it found it.
+# ----------------------------------------------------------------------------
+[ports/nrf52840/drivers/nRF5_SDK_17.0.2/**]
+indent_style = unset
+indent_size = unset
+tab_width = unset
+end_of_line = unset
+charset = unset
+trim_trailing_whitespace = false
+insert_final_newline = false
+
+[libraries/**]
+indent_style = unset
+indent_size = unset
+tab_width = unset
+end_of_line = unset
+charset = unset
+trim_trailing_whitespace = false
+insert_final_newline = false
+
+[ports/nrf52840/{bsp,bootloader}/**]
+indent_style = unset
+indent_size = unset
+end_of_line = unset
+trim_trailing_whitespace = false
+insert_final_newline = false
+
+[template_conf/*.cfg]
+end_of_line = unset
+trim_trailing_whitespace = false
+insert_final_newline = false

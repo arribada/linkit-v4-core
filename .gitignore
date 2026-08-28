@@ -17,7 +17,6 @@ ports/nrf52840/LinkIt_CORE_board.hex
 ports/nrf52840/LinkIt_CORE_board.elf
 ports/nrf52840/LinkIt_CORE_board.bin
 ports/nrf52840/LinkIt_CORE_board_dfu.zip
-.vscode/settings.json
 ports/nrf52840/bootloader/secure_bootloader/linkitv4_v1.0/armgcc/_build/*
 ports/nrf52840/bootloader/secure_bootloader/rspbtracker_v1.0/armgcc/_build/*
 ports/nrf52840/build/*
@@ -27,7 +26,9 @@ build/*
 .devcontainer/*
 tests/reports/*
 ports/nrf52840/build*/*
-ports/nrf52840/bsp/rspbtracker_v1.0/*.hex# Build artifacts
+ports/nrf52840/bsp/rspbtracker_v1.0/*.hex
+
+# Build artifacts
 build_tests/*
 tests/build_tests/*
 
@@ -47,3 +48,15 @@ libraries/prepass/previpass-PREPASS_V4.0/*.cbp
 libraries/prepass/previpass-PREPASS_V4.0/*.depend
 libraries/prepass/previpass-PREPASS_V4.0/*.layout
 libraries/prepass/previpass-PREPASS_V4.0/.project
+
+# Report artefacts also land at the repo root when tests are run from there
+/trackertests_report.html
+/trackertests_report.html.log
+/log.log
+
+# Python bytecode (tests/bench tooling)
+__pycache__/
+*.pyc
+
+# Backups written by scripts/setup_environment.sh
+.vscode/*.backup
