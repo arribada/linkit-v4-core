@@ -239,6 +239,33 @@ bool ServiceManager::is_in_cooldown(std::time_t now) {
 unsigned int ServiceManager::get_cooldown_remaining_s(std::time_t now) {
 	unsigned int interval = configuration_store->read_param<unsigned int>(ParamID::MIN_SURFACE_CYCLE_INTERVAL_S);
 	if (interval == 0) return 0;
+
+	// The cooldown measures the gap between two successive DIVES, and both of
+	// its ends need the underwater sensor: it is armed on a dive
+	// (set_cycle_complete, called from the TX services' UW branch) and released
+	// by restarting the SWS so it re-emits a surface event
+	// (exit_cooldown_sleep). Without underwater detection the mechanism has no
+	// meaning -- nothing can arm it, and nothing could release it.
+	//
+	// Saying so here rather than leaving it implicit, because the state SURVIVES
+	// a reboot in .noinit RAM. A tag that ran with the sensor, took a cooldown,
+	// was then reconfigured to UNDERWATER_EN=0 and rebooted would come back with
+	// that cooldown still stored: the services would gate themselves on it and
+	// the release path, which only ever looks for a UW_SENSOR service, would
+	// find nothing to restart. Reporting "no cooldown" is both the truthful
+	// answer for this configuration and what keeps the beacon transmitting.
+	if (!configuration_store->read_param<bool>(ParamID::UNDERWATER_EN)) {
+		static bool s_reported = false;
+		if (!s_reported) {
+			s_reported = true;
+			DEBUG_WARN("ServiceManager: MIN_SURFACE_CYCLE_INTERVAL_S=%u is set but UNDERWATER_EN=0. The surface-cycle "
+			           "cooldown only applies between two dives and needs the underwater sensor at both ends, so it "
+			           "is ignored here. No effect on transmission.",
+			           interval);
+		}
+		return 0;
+	}
+
 	if (m_last_successful_cycle_time == 0) return 0;
 	if (now < m_last_successful_cycle_time) return 0;  // RTC went backward — treat as cooldown expired
 	// `now == m_last_successful_cycle_time` falls through with elapsed=0,

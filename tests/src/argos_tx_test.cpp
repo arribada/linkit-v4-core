@@ -3040,6 +3040,11 @@ TEST(ArgosTxService, IsInCooldownTrueWhenSetAndCheckedSameTick) {
 	// (changing to `<`) ensures set_cycle_complete(now) followed by
 	// is_in_cooldown(now) in the same tick reports the cooldown as active.
 	fake_config_store->write_param(ParamID::MIN_SURFACE_CYCLE_INTERVAL_S, 1800U);
+	// The cooldown measures the gap between two successive dives, so it only
+	// exists with the underwater sensor -- both its arming (a dive) and its
+	// release (the SWS re-emitting a surface event) come from there. The
+	// parameter defaults to false, so a cooldown test has to say so.
+	fake_config_store->write_param(ParamID::UNDERWATER_EN, (bool)true);
 
 	std::time_t t = 1752000000;
 	fake_rtc->settime(t);
@@ -4639,4 +4644,37 @@ TEST(ArgosTxService, GpsFixDuringAnInFlightTxLeavesItsSafetyTimeoutArmed) {
 	fake_timer->set_counter(t);
 	system_scheduler->run();
 	mock().checkExpectations();
+}
+
+// The surface-cycle cooldown measures the gap between two successive DIVES, and
+// both of its ends need the underwater sensor: it is armed on a dive
+// (set_cycle_complete, from the TX services' UW branch) and released by
+// restarting the SWS so it re-emits a surface event (exit_cooldown_sleep, which
+// only ever looks for a UW_SENSOR service). Without the sensor the mechanism has
+// no meaning.
+//
+// It has to say so rather than leave the state ambiguous, because the cooldown
+// SURVIVES A REBOOT in .noinit RAM: a tag that ran with the sensor, took a
+// cooldown, was reconfigured to UNDERWATER_EN=0 and rebooted would come back
+// with it still stored, gate the TX service on it, and have nothing able to
+// release it -- a beacon silent for the rest of the deployment.
+TEST(ArgosTxService, CooldownIsIgnoredWithoutTheUnderwaterSensor) {
+	fake_config_store->write_param(ParamID::MIN_SURFACE_CYCLE_INTERVAL_S, 1800U);
+	fake_config_store->write_param(ParamID::UNDERWATER_EN, (bool)false);
+
+	std::time_t t = 1752000000;
+	fake_rtc->settime(t);
+
+	// Even with a cycle explicitly marked complete -- which is what a reboot
+	// restoring the state from .noinit RAM looks like to everything downstream.
+	ServiceManager::set_cycle_complete(t);
+
+	CHECK_FALSE(ServiceManager::is_in_cooldown(t));
+	CHECK_EQUAL(0U, ServiceManager::get_cooldown_remaining_s(t));
+
+	// And with the sensor present the same state is honoured, so the guard is
+	// about the configuration and not about disabling the mechanism.
+	fake_config_store->write_param(ParamID::UNDERWATER_EN, (bool)true);
+	CHECK_TRUE(ServiceManager::is_in_cooldown(t));
+	CHECK_EQUAL(1800U, ServiceManager::get_cooldown_remaining_s(t));
 }
