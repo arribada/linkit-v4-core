@@ -72,7 +72,7 @@
 //    Use case: heavy biofouling, very slow drying, noisy signal
 //
 //  Level 4 - ABSOLUTE (variable)
-//    filtered < water_baseline × 92% → surface
+//    filtered < water_baseline × 85% → surface   (L4_DROP_PERCENT = 15)
 //    Use case: moderate biofouling, well-calibrated baselines
 //
 //  Level 5 - SAFETY NET (>10s underwater)
