@@ -196,6 +196,12 @@ private:
 	/// successful transmission, is the evidence.
 	bool beacon_is_transmitting(unsigned int within_s) const;
 
+	/// @brief Has a watchdog already forced a cold start since the last GPS event?
+	/// Bounds the escalation: a cold start wipes the receiver's backup RAM, and
+	/// repeating that every 24 h is the documented cause of fixes dying after a
+	/// couple of days. One attempt, then wait for evidence it helped.
+	bool m_wdt_cold_start_tried = false;
+
 	Scheduler::TaskHandle m_health_wdt_task;
 	static constexpr unsigned int HEALTH_WDT_HOURS = 24;
 

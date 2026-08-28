@@ -77,6 +77,7 @@ void GPSService::service_init() {
 	// Safety-net 3.2: reset stuck-recovery state on init (idempotent across
 	// service restart cycles — Service framework calls init/term in pairs).
 	m_consecutive_dead_sessions = 0;
+	m_wdt_cold_start_tried = false;
 	m_stuck_recovery_in_flight = false;
 	m_stuck_recovery_arm_task = {};
 	m_stuck_recovery_done_task = {};
@@ -207,11 +208,26 @@ void GPSService::arm_health_wdt() {
 			    // Escalate on the GNSS only, and let the net re-arm: if the beacon
 			    // stops transmitting too, the next firing takes the reset branch.
 			    if (beacon_is_transmitting(WINDOW_S)) {
-				    DEBUG_WARN(
-				        "GPS Health WDT: no GPS event in %u h, but the beacon transmitted within that window — it "
-				        "is working. No reset; forcing a COLD START on the next acquisition and re-arming.",
-				        HEALTH_WDT_HOURS);
-				    m_force_cold_start = true;
+				    // ONE cold start, not one per firing. A cold start wipes the
+				    // receiver's backup RAM -- ephemeris, almanac, position, time --
+				    // and repeating that every 24 h is the documented cause of fixes
+				    // dying after a couple of days on this platform: it destroys the
+				    // AssistNow-Autonomous state the receiver needs to recover. Try
+				    // it once, then wait for evidence it helped. The flag clears on
+				    // any GPS event, alongside the dead-session counter.
+				    if (!m_wdt_cold_start_tried) {
+					    m_wdt_cold_start_tried = true;
+					    m_force_cold_start = true;
+					    DEBUG_WARN("GPS Health WDT: no GPS event in %u h, but the beacon transmitted within that "
+						           "window — it is working. No reset; forcing ONE cold start on the next "
+						           "acquisition and re-arming.",
+						           HEALTH_WDT_HOURS);
+				    } else {
+					    DEBUG_WARN("GPS Health WDT: no GPS event in %u h, beacon still transmitting, and a cold "
+						           "start has already been tried since the last GPS event — no reset and no "
+						           "further action; re-arming. Clears on any GPS event.",
+						           HEALTH_WDT_HOURS);
+				    }
 				    arm_health_wdt();
 				    return;
 			    }
@@ -249,14 +265,40 @@ void GPSService::arm_no_pvt_wdt() {
 		    try {
 			    constexpr unsigned int WINDOW_S = NO_PVT_WDT_DAYS * 24u * 3600u;
 
-			    // A CloudLocate-only deployment never produces a real PVT: the raw
-			    // measurement IS the product, resolved cloud-side. Counting that as a
-			    // failure and resetting weekly would break exactly the deployment the
-			    // mode was added for.
-			    if (configuration_store->read_param<bool>(ParamID::GNSS_CLOUDLOCATE_ONLY)) {
-				    DEBUG_INFO("GPS No-PVT WDT: no real PVT in %u days, and GNSS_CLOUDLOCATE_ONLY=1 — expected, not a "
+			    // A tag with GNSS off produces no real PVT by design, exactly as it
+			    // produces no GPS event. The health watchdog got this gate and this
+			    // one did not, which was an oversight rather than a decision.
+			    // get_gnss_configuration is the right call: it already folds in the
+			    // low-battery override, HAULED_GNSS_STRAT=OFF, the MOORED narrowing
+			    // and certification forcing GNSS off.
+			    GNSSConfig gnss_config;
+			    configuration_store->get_gnss_configuration(gnss_config);
+			    if (!gnss_config.enable) {
+				    DEBUG_INFO("GPS No-PVT WDT: no real PVT in %u days, and GNSS is disabled — expected, not a "
 					           "fault. No reset; re-arming.",
 					           NO_PVT_WDT_DAYS);
+				    arm_no_pvt_wdt();
+				    return;
+			    }
+
+			    // A CloudLocate deployment never produces a real PVT: the raw
+			    // measurement IS the product, resolved cloud-side.
+			    //
+			    // Test the MODE, not GNSS_CLOUDLOCATE_ONLY. That parameter is a
+			    // session-termination optimisation -- stop at the first raw
+			    // measurement instead of waiting for the PVT -- while what declares
+			    // a CloudLocate deployment is GNSS_FASTLOC_MODE, which is what every
+			    // other site in this file tests. Gating on the optimisation alone
+			    // left an ordinary CloudLocate tag, one that simply waits for the
+			    // PVT before falling back, unexempted and on its way to a reset.
+			    const bool cloudlocate_mode = configuration_store->read_param<unsigned int>(ParamID::GNSS_FASTLOC_MODE)
+			                                  == (unsigned int)BaseFastlocMode::CLOUDLOCATE;
+			    const bool cloudlocate_only = configuration_store->read_param<bool>(ParamID::GNSS_CLOUDLOCATE_ONLY);
+			    if (cloudlocate_mode || cloudlocate_only) {
+				    DEBUG_INFO("GPS No-PVT WDT: no real PVT in %u days, but this is a CloudLocate deployment "
+					           "(FASTLOC_MODE=CLOUDLOCATE:%u CLOUDLOCATE_ONLY:%u) — expected, not a fault. No reset; "
+					           "re-arming.",
+					           NO_PVT_WDT_DAYS, (unsigned int)cloudlocate_mode, (unsigned int)cloudlocate_only);
 				    arm_no_pvt_wdt();
 				    return;
 			    }
@@ -266,11 +308,20 @@ void GPSService::arm_no_pvt_wdt() {
 			    // out is a GNSS-side problem, and a reset does not fix a filter that
 			    // is rejecting every fix -- a cold start might.
 			    if (beacon_is_transmitting(WINDOW_S)) {
-				    DEBUG_WARN(
-				        "GPS No-PVT WDT: no real PVT in %u days, but the beacon is still transmitting. No reset; "
-				        "forcing a COLD START on the next acquisition and re-arming.",
-				        NO_PVT_WDT_DAYS);
-				    m_force_cold_start = true;
+				    // Bounded the same way as the health watchdog, for the same
+				    // reason: repeated backup-RAM wipes make the next fix harder.
+				    if (!m_wdt_cold_start_tried) {
+					    m_wdt_cold_start_tried = true;
+					    m_force_cold_start = true;
+					    DEBUG_WARN("GPS No-PVT WDT: no real PVT in %u days, but the beacon is still transmitting. "
+						           "No reset; forcing ONE cold start on the next acquisition and re-arming.",
+						           NO_PVT_WDT_DAYS);
+				    } else {
+					    DEBUG_WARN("GPS No-PVT WDT: no real PVT in %u days, beacon still transmitting, and a cold "
+						           "start has already been tried since the last GPS event — no reset and no "
+						           "further action; re-arming.",
+						           NO_PVT_WDT_DAYS);
+				    }
 				    arm_no_pvt_wdt();
 				    return;
 			    }
@@ -453,6 +504,7 @@ void GPSService::service_term() {
 	system_scheduler->cancel_task(m_stuck_recovery_done_task);
 	m_stuck_recovery_in_flight = false;
 	m_consecutive_dead_sessions = 0;
+	m_wdt_cold_start_tried = false;
 	// Safety-nets 3.5 + 3.6: cancel the health/no-PVT watchdogs on teardown.
 	// Service framework re-creates the service from scratch on next init, so
 	// dangling reset timers would fire after the rebuild — wrong behavior.
@@ -1087,7 +1139,8 @@ GPSLogEntry GPSService::invalid_log_entry() {
 					        VAL_GNSS("dispatch=stuck_recovery_done");
 					        DEBUG_INFO("GPSService: stuck recovery — rail-down complete, rescheduling");
 					        m_stuck_recovery_in_flight = false;
-					        m_consecutive_dead_sessions = 0;  // fresh chance after recovery
+					        m_consecutive_dead_sessions = 0;
+					        m_wdt_cold_start_tried = false;  // fresh chance after recovery
 					        service_reschedule(false);
 				        },
 				        "GPSStuckRecoveryDone", Scheduler::DEFAULT_PRIORITY, 30 * MS_PER_SEC);
@@ -1469,6 +1522,7 @@ void GPSService::gnss_data_callback(GNSSData data) {
 	m_is_first_fix_found = true;
 	// Safety-net 3.2: M10Q produced a PVT → reset stuck-recovery state.
 	m_consecutive_dead_sessions = 0;
+	m_wdt_cold_start_tried = false;
 	m_stuck_recovery_in_flight = false;
 	system_scheduler->cancel_task(m_stuck_recovery_arm_task);
 	system_scheduler->cancel_task(m_stuck_recovery_done_task);
@@ -1600,6 +1654,7 @@ void GPSService::gnss_degraded_callback(GNSSData data) {
 	// Don't set m_is_first_fix_found — degraded fix should not change cold start behavior
 	// Safety-net 3.2: M10Q produced a degraded PVT → reset stuck-recovery state.
 	m_consecutive_dead_sessions = 0;
+	m_wdt_cold_start_tried = false;
 	m_stuck_recovery_in_flight = false;
 	system_scheduler->cancel_task(m_stuck_recovery_arm_task);
 	system_scheduler->cancel_task(m_stuck_recovery_done_task);
@@ -1616,6 +1671,7 @@ void GPSService::gnss_cloudlocate_callback(GNSSRawMeasurement data) {
 	// Don't set m_is_first_fix_found — CloudLocate does not provide on-device position
 	// Safety-net 3.2: M10Q produced a raw measurement → reset stuck-recovery state.
 	m_consecutive_dead_sessions = 0;
+	m_wdt_cold_start_tried = false;
 	m_stuck_recovery_in_flight = false;
 	system_scheduler->cancel_task(m_stuck_recovery_arm_task);
 	system_scheduler->cancel_task(m_stuck_recovery_done_task);

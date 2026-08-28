@@ -1373,3 +1373,61 @@ TEST(GPSService, GenuineNoFixSessionStillEscalatesToAColdStart) {
 	increment_time_s(120);
 	CHECK_TRUE(mock_m10q->last_nav_settings().cold_start);
 }
+
+// The no-PVT watchdog got the CloudLocate exemption but not the "GNSS
+// deliberately off" one that its sibling has. A tag with GNSS off produces no
+// real PVT by design just as surely as it produces no GPS event, so the
+// asymmetry was an oversight, not a decision.
+TEST(GPSService, NoPvtWatchdogDoesNotResetWhenGnssIsDeliberatelyOff) {
+	fake_config_store->write_param(ParamID::GNSS_EN, (bool)false);
+	fake_config_store->write_param(ParamID::UNDERWATER_EN, (bool)false);
+	fake_config_store->write_param(ParamID::LAST_TX, (std::time_t)0);
+
+	const std::time_t t0 = 1652105502;
+	fake_rtc->settime(t0);
+	fake_timer->start();
+
+	mock().expectNoCall("reset");
+	mock().ignoreOtherCalls();
+
+	GPSService s(*mock_m10q, fake_log);
+	s.start();
+
+	jump_to(fake_timer, fake_rtc, t0, 8ULL * 24 * 3600);
+	system_scheduler->run();
+	mock().checkExpectations();
+}
+
+// And the exemption has to test the MODE. GNSS_CLOUDLOCATE_ONLY is a
+// session-termination optimisation -- stop at the first raw measurement rather
+// than wait for the PVT -- while GNSS_FASTLOC_MODE is what declares a
+// CloudLocate deployment, and is what every other site in the service tests.
+// A CloudLocate tag left at the default GNSS_CLOUDLOCATE_ONLY=0 is a perfectly
+// ordinary configuration: it just waits for the PVT before falling back. Gating
+// on the optimisation alone sent it to the reset.
+TEST(GPSService, NoPvtWatchdogExemptsACloudLocateModeTagWithoutTheOnlyFlag) {
+	fake_config_store->write_param(ParamID::GNSS_EN, (bool)true);
+	fake_config_store->write_param(ParamID::UNDERWATER_EN, (bool)false);
+	fake_config_store->write_param(ParamID::GNSS_FASTLOC_MODE, (unsigned int)BaseFastlocMode::CLOUDLOCATE);
+	fake_config_store->write_param(ParamID::GNSS_CLOUDLOCATE_ONLY, (bool)false);  // the default
+	fake_config_store->write_param(ParamID::LAST_TX, (std::time_t)0);             // never transmitted either
+
+	const std::time_t t0 = 1652105502;
+	fake_rtc->settime(t0);
+	fake_timer->start();
+
+	// The health watchdog fires first at 24 h and, with no transmission to show,
+	// legitimately resets. Give it one so this test is about the no-PVT net.
+	fake_config_store->write_param(ParamID::LAST_TX, (std::time_t)(t0 + 1));
+
+	mock().expectNoCall("reset");
+	mock().ignoreOtherCalls();
+
+	GPSService s(*mock_m10q, fake_log);
+	s.start();
+
+	jump_to(fake_timer, fake_rtc, t0, 8ULL * 24 * 3600);
+	fake_config_store->write_param(ParamID::LAST_TX, (std::time_t)(t0 + 8 * 24 * 3600 - 60));
+	system_scheduler->run();
+	mock().checkExpectations();
+}
