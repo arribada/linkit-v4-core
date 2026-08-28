@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include "config_store.hpp"
 
 class FakeConfigurationStore : public ConfigurationStore {
@@ -15,7 +16,7 @@ public:
 		m_is_battery_level_low = false;
 	}
 	BasePassPredict m_pass_predict;
-	void init() { m_params = default_params; }
+	void init() { std::copy(std::begin(default_params), std::end(default_params), m_params.begin()); }
 	bool is_valid() { return true; }
 	bool is_zone_valid() { return true; }
 	void factory_reset() {}

@@ -6,6 +6,7 @@
 #pragma once
 
 #include <cstring>
+#include <algorithm>
 #include "config_store.hpp"
 #include "filesystem.hpp"
 #include "debug.hpp"
@@ -295,17 +296,17 @@ protected:
 				DEBUG_WARN("deserialize_config: unable to deserialize param %s - resetting...",
 				           param_map[i].name.c_str());
 				// Reset parameter to factory default
-				m_params.at(i) = default_params.at(i);
+				m_params.at(i) = default_params[i];
 				m_requires_serialization = true;
 				continue;
 			}
 
 			// Check variant index (type) matches default parameters
-			if (m_params.at(i).index() != default_params.at(i).index()) {
+			if (m_params.at(i).index() != default_params[i].index()) {
 				DEBUG_WARN("deserialize_config: param %s variant index mismatch expected %u but got %u - resetting...",
-				           param_map[i].name.c_str(), default_params.at(i).index(), m_params.at(i).index());
+				           param_map[i].name.c_str(), default_params[i].index(), m_params.at(i).index());
 				// Reset parameter to factory default
-				m_params.at(i) = default_params.at(i);
+				m_params.at(i) = default_params[i];
 				m_requires_serialization = true;
 				continue;
 			}
@@ -331,11 +332,11 @@ protected:
 			if (!param_map[i].is_implemented) continue;
 
 			// Check variant index (type) matches default parameter
-			if (m_params.at(i).index() != default_params.at(i).index()) {
+			if (m_params.at(i).index() != default_params[i].index()) {
 				DEBUG_WARN("serialize_config: param %s variant index mismatch expected %u but got %u - resetting...",
-				           param_map[i].name.c_str(), default_params.at(i).index(), m_params.at(i).index());
+				           param_map[i].name.c_str(), default_params[i].index(), m_params.at(i).index());
 				// Reset parameter to back to factory default
-				m_params.at(i) = default_params.at(i);
+				m_params.at(i) = default_params[i];
 			}
 
 			if (!serialize_config_entry(f, i)) {
@@ -421,12 +422,12 @@ private:
 
 		for (unsigned int i = 0; i <= (unsigned int)ParamID::ARGOS_HEXID; i++) {
 			// Check variant index (type) matches default parameter
-			if (m_params.at(i).index() != default_params.at(i).index()) {
+			if (m_params.at(i).index() != default_params[i].index()) {
 				DEBUG_TRACE(
 				    "serialize_config: protected param %u variant index mismatch expected %u but got %u - repairing", i,
-				    default_params.at(i).index(), m_params.at(i).index());
+				    default_params[i].index(), m_params.at(i).index());
 				// Reset parameter to back to factory default
-				m_params.at(i) = default_params.at(i);
+				m_params.at(i) = default_params[i];
 			}
 
 			if (!serialize_config_entry(f, i)) {
@@ -455,7 +456,7 @@ public:
 		m_is_config_valid = false;
 
 		// Copy default params so we have an initial working set
-		m_params = default_params;
+		std::copy(std::begin(default_params), std::end(default_params), m_params.begin());
 
 		// Keep flash powered during entire init sequence to avoid per-I/O power cycling
 		m_filesystem.power_up();

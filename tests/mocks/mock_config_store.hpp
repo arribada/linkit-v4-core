@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include "config_store.hpp"
 
 class MockConfigurationStore : public ConfigurationStore {
@@ -16,7 +17,7 @@ public:
 	void set_is_valid(bool state) { m_is_valid = state; }
 
 	void init() {
-		m_params = default_params;
+		std::copy(std::begin(default_params), std::end(default_params), m_params.begin());
 		mock().actualCall("init").onObject(this);
 	}
 	bool is_valid() { return m_is_valid; }

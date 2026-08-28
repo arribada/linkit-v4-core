@@ -49,7 +49,7 @@ params = [m.group(1)
           if (m := re.match(r'\s*\{\s*"([^"]*)"', l))]
 
 defaults = [m.group(1)
-            for l in braced_block("core/configuration/config_store.hpp", "default_params {")
+            for l in braced_block("core/configuration/config_store.hpp", "default_params[] =")
             if (m := re.match(r"\s*/\*\s*(?:\[\d+\]\s*)?([A-Za-z_]\w*)", l))]
 
 print(f"ParamID={len(enum)}  param_map={len(params)}  default_params={len(defaults)}")

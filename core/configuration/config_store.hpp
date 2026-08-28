@@ -173,7 +173,7 @@ protected:
 	static inline const unsigned int m_config_version_code_aop = 0x1c07e800 | 0x03;
 	// one line per ParamID slot; the alignment IS the index map
 	// clang-format off
-	static inline const std::array<BaseType,MAX_CONFIG_ITEMS> default_params { {
+	static inline const BaseType default_params[] = {
 		/* ARGOS_DECID */ 0U,
 		/* ARGOS_HEXID */ 0U,
 		/* DEVICE_MODEL */ DEVICE_MODEL_NAME,
@@ -445,8 +445,22 @@ protected:
 		/* [263] PP_MIN_CULMINATION */ 0U,         // TX: keep every pass the elevation filter accepted (previous hardcoded value)
 		/* [264] PP_RX_MIN_CULMINATION */ 20U,     // RX: a downlink needs a good pass — a grazing one wastes the whole window (previous hardcoded value)
 		/* [265] PP_POSITION_MARGIN_KM */ 0U,      // no position uncertainty by default
-	}};
+	};
 	// clang-format on
+
+	// The one guard the compiler can give us on this table. default_params used to
+	// be a std::array<BaseType, MAX_CONFIG_ITEMS>: an aggregate initialiser with one
+	// entry missing compiled WITHOUT A WORD, the absent slot became BaseType{} ==
+	// std::string(""), and config_store_fs.hpp then factory-reset that parameter on
+	// every boot -- silently, on a sealed beacon. Letting the compiler count the
+	// initialisers turns that into a build failure.
+	//
+	// This holds in EVERY build configuration: __PARAM_SIZE is a fixed literal, and
+	// neither this table nor param_map[] carries a #if. The optional sensors are
+	// omitted from the ParamID enum only, and every remaining member keeps an
+	// explicit index, so disabling one shifts nothing.
+	static_assert(sizeof(default_params) / sizeof(default_params[0]) == MAX_CONFIG_ITEMS,
+	              "default_params must have exactly one entry per ParamID slot");
 	// hand-aligned AOP record, one field per line
 	// clang-format off
 	static inline const BasePassPredict default_prepass = {
