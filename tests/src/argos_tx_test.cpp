@@ -478,6 +478,113 @@ TEST(ArgosTxService, BuildLongGNSSPacketUniformKeepsLegacyLayout) {
 //
 // This test now asserts the opposite of its ancestor: the 0xFF heartbeat MUST
 // go out even if no fix ever lands.
+// === DUTY_CYCLE mode ========================================================
+// This mode had ZERO coverage in this file: 20 tests exercise LEGACY, 12
+// SURFACING_BURST, 6 PASS_PREDICTION, 2 DOPPLER, and none DUTY_CYCLE -- even
+// though it has two distinct scheduling branches (with and without GNSS) and
+// the most notorious configuration trap in the firmware.
+
+// GNSS branch: a fix in the pile, an hour mask that enables the current hour.
+// 1652056200 is 2022-05-09 00:30 UTC, i.e. hour 0.
+//
+// NOTE the mask convention, which is the reverse of the obvious one: ARP18 is
+// MSB-first, so bit 23 (0x800000) is hour 0 and bit 0 (0x000001) is hour 23 --
+// see ArgosTxScheduler::is_in_duty_cycle(). Writing 0x000001 to mean "hour 0"
+// enables 23:00 instead, and the beacon looks dead for a whole day.
+TEST(ArgosTxService, DutyCycleWithGnssSchedulesInsideEnabledHour) {
+	fake_config_store->write_param(ParamID::ARGOS_MODE, BaseArgosMode::DUTY_CYCLE);
+	fake_config_store->write_param(ParamID::DUTY_CYCLE, (unsigned int)0x800000);  // hour 0 only (MSB-first)
+	fake_config_store->write_param(ParamID::ARGOS_DEPTH_PILE, BaseDepthPile::DEPTH_PILE_1);
+	fake_config_store->write_param(ParamID::ARGOS_HEXID, (unsigned int)0x01234567U);
+	fake_config_store->write_param(ParamID::GNSS_EN, true);
+	fake_config_store->write_param(ParamID::LB_EN, false);
+	fake_config_store->write_param(ParamID::TR_NOM, (unsigned int)10);
+	fake_config_store->write_param(ParamID::ARGOS_TX_JITTER_EN, false);
+	fake_config_store->write_param(ParamID::ARGOS_TIME_SYNC_BURST_EN, false);
+
+	ArgosTxService serv(*mock_kineis);
+	std::time_t t = 1652056200000;  // ms, 00:30 UTC
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+
+	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
+	serv.start();
+
+	inject_gps_location(true, 11.8768, -33.8232, t / 1000, true);
+
+	// Inside an enabled hour the scheduler does not park the TX for 23 h
+	CHECK_COMPARE(serv.get_last_schedule(), <, 3600U * 1000U);
+
+	mock()
+	    .expectOneCall("send")
+	    .onObject(mock_kineis)
+	    .withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2)
+	    .ignoreOtherParameters();
+	t += serv.get_last_schedule();
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	system_scheduler->run();
+	mock_kineis->notify(KineisEventTxComplete({}));
+	mock().checkExpectations();
+}
+
+// Position-less branch: with GNSS_EN=0, DUTY_CYCLE is one of only two modes
+// that still know how to schedule (the other is LEGACY). It sends Doppler.
+TEST(ArgosTxService, DutyCycleWithoutGnssStillSchedules) {
+	fake_config_store->write_param(ParamID::ARGOS_MODE, BaseArgosMode::DUTY_CYCLE);
+	fake_config_store->write_param(ParamID::DUTY_CYCLE, (unsigned int)0x800000);  // hour 0 (MSB-first)
+	fake_config_store->write_param(ParamID::ARGOS_HEXID, (unsigned int)0x01234567U);
+	fake_config_store->write_param(ParamID::GNSS_EN, false);
+	fake_config_store->write_param(ParamID::LB_EN, false);
+	fake_config_store->write_param(ParamID::TR_NOM, (unsigned int)10);
+	fake_config_store->write_param(ParamID::ARGOS_TX_JITTER_EN, false);
+
+	ArgosTxService serv(*mock_kineis);
+	std::time_t t = 1652056200000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+
+	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
+	serv.start();
+
+	// No GPS fix is injected at all -- that is the point of this branch
+	CHECK_COMPARE(serv.get_last_schedule(), !=, Service::SCHEDULE_DISABLED);
+	CHECK_COMPARE(serv.get_last_schedule(), <, 3600U * 1000U);
+	mock().checkExpectations();
+}
+
+// The trap: ARP18 defaults to 0x000000, so selecting ARGOS_MODE=DUTY_CYCLE and
+// nothing else enables no hour at all and the beacon never transmits. Since
+// 2026-08 report_duty_cycle_schedule() says so in the log instead of going
+// silently dark -- but it does not override the mask, and this test pins that:
+// the schedule really is disabled, and it is the mask that does it.
+TEST(ArgosTxService, DutyCycleZeroMaskDisablesTxRatherThanTransmitting) {
+	fake_config_store->write_param(ParamID::ARGOS_MODE, BaseArgosMode::DUTY_CYCLE);
+	fake_config_store->write_param(ParamID::DUTY_CYCLE, (unsigned int)0x000000);  // factory default
+	fake_config_store->write_param(ParamID::ARGOS_DEPTH_PILE, BaseDepthPile::DEPTH_PILE_1);
+	fake_config_store->write_param(ParamID::ARGOS_HEXID, (unsigned int)0x01234567U);
+	fake_config_store->write_param(ParamID::GNSS_EN, true);
+	fake_config_store->write_param(ParamID::LB_EN, false);
+	fake_config_store->write_param(ParamID::TR_NOM, (unsigned int)10);
+	fake_config_store->write_param(ParamID::ARGOS_TX_JITTER_EN, false);
+	fake_config_store->write_param(ParamID::ARGOS_TIME_SYNC_BURST_EN, false);
+
+	ArgosTxService serv(*mock_kineis);
+	std::time_t t = 1652056200000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+
+	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
+	serv.start();
+
+	inject_gps_location(true, 11.8768, -33.8232, t / 1000, true);
+
+	// No hour enabled -> nothing scheduled. No send() is expected, and the mock
+	// would fail the test if one happened.
+	CHECK_EQUAL(Service::SCHEDULE_DISABLED, serv.get_last_schedule());
+	mock().checkExpectations();
+}
+
 // === Certification TX =======================================================
 // CERT_TX_ENABLE is a bench mode: a fixed payload repeated on a fixed period.
 // Its scheduling branch had been commented out since 747a70a7 (2025-07), so the
