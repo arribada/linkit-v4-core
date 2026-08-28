@@ -412,7 +412,44 @@ private:
 	FileSystem &m_filesystem;
 	bool m_requires_serialization;
 
-	/// @brief Serialize only protected params (DECID, HEXID) — used during factory_reset recovery.
+	/// @brief Parameters a factory_reset must NOT destroy.
+	///
+	/// The identifiers, and — added after the 2026-08 safety-net audit — the
+	/// provisioning secrets. factory_reset is a last-ditch recovery from a
+	/// corrupt config store, reached automatically after three boots that never
+	/// make it to Operational, with no operator involved. It used to preserve
+	/// DECID and HEXID only, so ARGOS_SECKEY and the RADIOCONFs came back as
+	/// std::string(""), and a beacon that cannot build a valid frame is not a
+	/// beacon. On a potted tag that is unrecoverable: the very path meant to
+	/// save the device was the one guaranteed to end it.
+	///
+	/// Keeping them is the safer side of the trade. If the corruption really is
+	/// in a credential, preserving it leaves a beacon that MIGHT transmit
+	/// instead of one that certainly cannot, and the variant-index repair below
+	/// still fixes a wrong type. Everything else — modes, periods, thresholds —
+	/// still returns to defaults, which is what the recovery is for.
+	/// The guards mirror base_types.hpp: these enumerators only exist on the
+	/// builds that own the corresponding radio.
+	static constexpr ParamID PROTECTED_PARAMS[] = {
+#if defined(ARGOS_SMD) && (ARGOS_SMD == 1)
+	    ParamID::ARGOS_SECKEY,
+#endif
+	    ParamID::ARGOS_RADIOCONF,
+	    ParamID::ARGOS_RADIOCONF_LDK,
+	    ParamID::ARGOS_RADIOCONF_LDA2,
+	    ParamID::ARGOS_RADIOCONF_VLDA4,
+#if defined(LORA_RAK3172) && (LORA_RAK3172 == 1)
+	    ParamID::LORA_DEVEUI,
+	    ParamID::LORA_APPEUI,
+	    ParamID::LORA_APPKEY,
+	    ParamID::LORA_DEVADDR,
+	    ParamID::LORA_APPSKEY,
+	    ParamID::LORA_NWKSKEY,
+#endif
+	};
+
+	/// @brief Serialize the identifiers and the provisioning secrets — used
+	/// during factory_reset recovery.
 	void serialize_protected_config() {
 		LFSFile f(&m_filesystem, "config.dat", LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC);
 
@@ -436,7 +473,23 @@ private:
 			}
 		}
 
-		DEBUG_TRACE("ConfigurationStoreLFS::serialize_protected_config: saved protected params to config.data");
+		// The credentials live far above ARGOS_HEXID in the table, so they need
+		// their own pass. serialize_config_entry writes the parameter's index
+		// alongside its value, so a sparse set deserialises correctly.
+		for (ParamID id : PROTECTED_PARAMS) {
+			const unsigned int i = (unsigned int)id;
+			if (m_params.at(i).index() != default_params[i].index()) {
+				DEBUG_WARN("serialize_protected_config: credential %u has the wrong type — resetting it", i);
+				m_params.at(i) = default_params[i];
+			}
+			if (!serialize_config_entry(f, i)) {
+				DEBUG_ERROR("serialize_protected_config: failed to serialize credential %u", i);
+				throw CONFIG_STORE_CORRUPTED;
+			}
+		}
+
+		DEBUG_INFO("ConfigurationStoreLFS::serialize_protected_config: identifiers and provisioning secrets kept "
+		           "across the factory reset");
 	}
 
 	/// @brief Persist all sensor calibration data to flash.

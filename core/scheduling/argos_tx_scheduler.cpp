@@ -77,6 +77,25 @@ void ArgosTxScheduler::schedule_periodic(unsigned int period_ms, bool jitter_en,
 	// schedule cleanly instead — callers already treat this exception as
 	// INVALID_SCHEDULE and re-arm on the next GPS entry. Zero effect on any
 	// valid period (>=30 s): the loop is never entered with period_ms==0.
+	// A mask of zero permits NO hour at all, so the 24 h search below finds
+	// nothing, throws, and the caller turns that into INVALID_SCHEDULE — which
+	// Service::reschedule treats as "post nothing". On a deployment with no GNSS
+	// and no underwater sensor there is then no event left to wake the service,
+	// so the beacon is mute from its first scheduling call until someone
+	// power-cycles it, and it looks exactly like a dead radio.
+	//
+	// Zero is also the factory default of ARGOS_DUTY_CYCLE, so selecting
+	// ARGOS_MODE=DUTY_CYCLE and forgetting the mask is a one-step mistake with
+	// no visible symptom. Treat it as "no restriction" and say so loudly: a
+	// beacon transmitting on its nominal period is a configuration to correct,
+	// a silent one on a potted tag is a lost deployment.
+	if (duty_cycle == 0) {
+		DEBUG_ERROR("ArgosTxScheduler::schedule_periodic: duty-cycle mask is 0 — no hour is permitted. Check "
+		            "ARGOS_DUTY_CYCLE (or LB_ARGOS_DUTY_CYCLE for the low-battery profile). Falling back to the "
+		            "nominal period so the beacon still transmits.");
+		duty_cycle = 0xFFFFFFu;  // all 24 hours
+	}
+
 	if (period_ms == 0) {
 		DEBUG_ERROR("ArgosTxScheduler::schedule_periodic: period_ms=0 (corrupt config?) — TX schedule aborted");
 		m_curr_schedule_abs.reset();

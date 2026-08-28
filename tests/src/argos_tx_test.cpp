@@ -601,11 +601,17 @@ TEST(ArgosTxService, DutyCycleWithoutGnssStillSchedules) {
 }
 
 // The trap: ARP18 defaults to 0x000000, so selecting ARGOS_MODE=DUTY_CYCLE and
-// nothing else enables no hour at all and the beacon never transmits. Since
-// 2026-08 report_duty_cycle_schedule() says so in the log instead of going
-// silently dark -- but it does not override the mask, and this test pins that:
-// the schedule really is disabled, and it is the mask that does it.
-TEST(ArgosTxService, DutyCycleZeroMaskDisablesTxRatherThanTransmitting) {
+// nothing else enables no hour at all.
+//
+// This test used to pin the opposite behaviour -- log it, but honour the mask
+// and schedule nothing. That was the wrong call and it is reversed here. A zero
+// mask is not a configuration, it is a one-step mistake with no visible symptom:
+// the beacon is mute from its first scheduling call, and on a deployment with
+// no GNSS and no underwater sensor there is no event left to wake the service,
+// so it stays mute until someone power-cycles it and looks exactly like a dead
+// radio. Transmitting on the nominal period is a configuration to correct; a
+// silent potted tag is a lost deployment.
+TEST(ArgosTxService, DutyCycleZeroMaskFallsBackToTheNominalPeriod) {
 	fake_config_store->write_param(ParamID::ARGOS_MODE, BaseArgosMode::DUTY_CYCLE);
 	fake_config_store->write_param(ParamID::DUTY_CYCLE, (unsigned int)0x000000);  // factory default
 	fake_config_store->write_param(ParamID::ARGOS_DEPTH_PILE, BaseDepthPile::DEPTH_PILE_1);
@@ -626,9 +632,14 @@ TEST(ArgosTxService, DutyCycleZeroMaskDisablesTxRatherThanTransmitting) {
 
 	inject_gps_location(true, 11.8768, -33.8232, t / 1000, true);
 
-	// No hour enabled -> nothing scheduled. No send() is expected, and the mock
-	// would fail the test if one happened.
-	CHECK_EQUAL(Service::SCHEDULE_DISABLED, serv.get_last_schedule());
+	// No hour enabled -> fall back to TR_NOM rather than going dark.
+	CHECK_COMPARE(serv.get_last_schedule(), !=, Service::SCHEDULE_DISABLED);
+
+	mock().expectOneCall("send").onObject(mock_kineis).ignoreOtherParameters();
+	t += serv.get_last_schedule();
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	system_scheduler->run();
 	mock().checkExpectations();
 }
 

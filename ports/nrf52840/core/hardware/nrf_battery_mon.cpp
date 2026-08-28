@@ -140,7 +140,38 @@ float NrfBatteryMonitor::sample_adc() {
 	nrfx_saadc_init(&BSP::ADC_Inits.config, nrfx_saadc_event_handler);
 	nrfx_saadc_channel_init(m_adc_channel, &BSP::ADC_Inits.channel_config[m_adc_channel]);
 
-	nrfx_saadc_sample_convert(m_adc_channel, &raw);
+	// Median of several conversions, not one.
+	//
+	// This is a high-impedance divider -- the BSP calls it that -- and a single
+	// conversion is enough for a noise spike or a transient sag (a TX current
+	// pulse, a rail switching) to read tens of millivolts low. That matters here
+	// more than anywhere else in the firmware: the critical-battery path latches
+	// on one sample and ends in OffState, so a single bad conversion could take
+	// a healthy beacon out of service for good. The median rejects an outlier
+	// outright, where a mean would still be dragged by it.
+	//
+	// Sampling inside the same init/uninit window is nearly free: the costs here
+	// are the peripheral init and the BAT_ADC_SETTLE_MS delay, both already
+	// paid above. Filtering the conversion rather than requiring several
+	// consecutive updates also keeps the response immediate -- update() is
+	// driven by the services, so "wait for three more" could mean hours on a
+	// battery that is genuinely collapsing.
+	constexpr unsigned int ADC_MEDIAN_SAMPLES = 5;
+	nrf_saadc_value_t samples[ADC_MEDIAN_SAMPLES] = {};
+	for (unsigned int i = 0; i < ADC_MEDIAN_SAMPLES; i++) {
+		nrfx_saadc_sample_convert(m_adc_channel, &samples[i]);
+	}
+	// Insertion sort: five elements, no <algorithm> pulled into a driver.
+	for (unsigned int i = 1; i < ADC_MEDIAN_SAMPLES; i++) {
+		nrf_saadc_value_t key = samples[i];
+		unsigned int j = i;
+		while (j > 0 && samples[j - 1] > key) {
+			samples[j] = samples[j - 1];
+			j--;
+		}
+		samples[j] = key;
+	}
+	raw = samples[ADC_MEDIAN_SAMPLES / 2];
 
 	nrfx_saadc_uninit();
 	nrf_peripheral_power_reset(NRF_SAADC_BASE_ADDR);  // Errata 241: prevent 400 µA idle leak

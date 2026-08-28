@@ -63,14 +63,13 @@ extern MortalityService *mortality_service;
 static unsigned int report_duty_cycle_schedule(unsigned int schedule, const ArgosConfig &cfg) {
 	if (schedule != ArgosTxScheduler::INVALID_SCHEDULE) return schedule;
 
-	if ((cfg.duty_cycle & 0xFFFFFF) == 0)
-		DEBUG_WARN("ArgosTxService: DUTY_CYCLE mask is 0x000000 — no hour is enabled, "
-		           "so no transmission can ever be scheduled (this is the factory default: "
-		           "set ARP18, or LBP05 in low-battery mode)");
-	else
-		DEBUG_WARN("ArgosTxService: no duty-cycle slot found within 24 h "
-		           "(mask=0x%06X, tx_interval=%u s) — no transmission scheduled",
-		           cfg.duty_cycle & 0xFFFFFF, cfg.tx_interval_s);
+	// A zero mask no longer reaches here: ArgosTxScheduler::schedule_periodic
+	// treats "no hour permitted" as no restriction and transmits on the nominal
+	// period instead, with its own DEBUG_ERROR naming the parameter. What is
+	// left is a non-zero mask whose enabled hours the period cannot land on.
+	DEBUG_WARN("ArgosTxService: no duty-cycle slot found within 24 h "
+	           "(mask=0x%06X, tx_interval=%u s) — no transmission scheduled",
+	           cfg.duty_cycle & 0xFFFFFF, cfg.tx_interval_s);
 	return schedule;
 }
 
@@ -591,8 +590,17 @@ unsigned int ArgosTxService::schedule_surfacing_burst(ArgosConfig &argos_config,
 		return m_sched.schedule_legacy(argos_config, now);
 	}
 
-	// Burst ended — wait for next surfacing event
+	// Burst ended — wait for the next surfacing event.
+	//
+	// This returns SCHEDULE_DISABLED, which means the service is left owning
+	// nothing at all. Only two things clear the flag: a dive→surface transition,
+	// or a NEW VALID GPS fix. A NO_FIX does not, so a tag that has stopped
+	// diving and is not getting fixes stays silent indefinitely -- and it used
+	// to do so without a single line in the log, not even at TRACE, which makes
+	// it indistinguishable from a dead radio on a recovered device. Say it.
 	if (m_awaiting_surfacing) {
+		DEBUG_INFO("ArgosTxService: burst finished — no TX scheduled until the next surfacing event or a new GPS "
+		           "fix. This is the SURFACING_BURST idle state, not a fault.");
 		return Service::SCHEDULE_DISABLED;
 	}
 
@@ -2516,10 +2524,26 @@ void ArgosTxService::react(KineisEventTxComplete const &) {
 
 	// Counters updated in RAM — flash persistence deferred to periodic flush / powerdown
 
-	// Check session TX limit (SHUTDOWN_NTIME_SAT / LB_SHUTDOWN_NTIME_SAT)
+	// Check session TX limit (SHUTDOWN_NTIME_SAT / LB_SHUTDOWN_NTIME_SAT).
+	//
+	// Read "session" precisely: m_session_tx_count is reset in service_init only
+	// -- at boot, or on re-entry into Operational -- and by nothing else. Not by
+	// a dive, not by a surfacing, not by the end of a GNSS session. On a board
+	// whose duty cycle reboots it (RSPB, where the TPL5111 cuts power and the
+	// MCU_DONE line ends each cycle) that is the intended meaning and the budget
+	// genuinely resets every cycle. On a board that stays powered, "session"
+	// means the whole deployment, and this becomes a lifetime cap: at TR_NOM=60 s
+	// a budget of 100 ends the beacon 100 minutes in.
+	//
+	// So it is logged at ERROR, with the count and the parameter that did it.
+	// This is a deliberate stop, not a fault -- but it is indistinguishable from
+	// a dead beacon afterwards, and the log is the only thing that can tell the
+	// two apart on a recovered device.
 	if (argos_config.shutdown_ntime_sat > 0 && m_session_tx_count >= argos_config.shutdown_ntime_sat) {
-		DEBUG_INFO("ArgosTxService: Session TX limit reached (%u/%u) | shutdown", m_session_tx_count,
-		           argos_config.shutdown_ntime_sat);
+		DEBUG_ERROR("ArgosTxService: session TX budget reached (%u/%u) — powering down ON PURPOSE. The counter "
+		            "resets at boot only, so on a board that is not power-cycled by its duty cycle this is a "
+		            "one-shot lifetime budget (SHUTDOWN_NTIME_SAT / LB_SHUTDOWN_NTIME_SAT).",
+		            m_session_tx_count, argos_config.shutdown_ntime_sat);
 		configuration_store->save_params();  // Flush before shutdown
 		PMU::powerdown();
 		return;
