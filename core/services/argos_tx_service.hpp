@@ -148,10 +148,6 @@ private:
 	// Doppler TX slot.
 	bool should_promote_doppler_to_gnss(unsigned int max_age_s);
 
-	/// @brief Is prepass gating active? Independent of the mode.
-	/// ARGOS_MODE=PASS_PREDICTION is still accepted and means LEGACY + prepass, so
-	/// as not to break beacons that are already configured (no migration).
-	static bool prepass_gating_active(const ArgosConfig& config);
 
 	/// @brief Why are the AOP unusable? Three clearly distinct causes:
 	/// merging them into a single message makes field diagnosis misleading

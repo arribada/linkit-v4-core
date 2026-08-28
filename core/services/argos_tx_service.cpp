@@ -171,14 +171,6 @@ void ArgosTxService::service_init() {
 	// to skip a TX cleanly when the fallback modulation can't hold the packet
 	// — better than KIM2's silent payload-too-long drop + 30 s service timeout.
 	refresh_modulation_availability();
-
-	// Set the idle timeout depending on the configuration settings
-	// i) In certification mode, keep powered on for 10 seconds in idle
-	// ii) In normal operation, keep powered on for 1 second in idle
-// 	if (argos_config.cert_tx_enable)
-// 		m_artic.set_idle_timeout(10000);
-// 	else
-// 		m_artic.set_idle_timeout(1000);
 }
 
 /// @brief Terminate: power off device immediately.
@@ -2488,14 +2480,6 @@ unsigned int ArgosTxService::apply_spacing_guard(unsigned int proposed_delay_ms,
 	return deferred_ms;
 }
 
-/// @brief Is prepass gating active? Independent of the Argos mode.
-bool ArgosTxService::prepass_gating_active(const ArgosConfig& config) {
-	// Two independent dimensions: the mode says WHAT/WHEN to transmit, the
-	// prepass says IF a satellite is listening. PASS_PREDICTION is kept as is
-	// and means "LEGACY + prepass" — beacons already configured that way keep
-	// their behaviour with no migration at all.
-	return config.prepass_en || config.mode == BaseArgosMode::PASS_PREDICTION;
-}
 
 const char *ArgosTxService::aop_etat_texte(AopEtat e) {
 	switch (e) {

@@ -1476,20 +1476,20 @@ int main()
 #ifndef VALIDATION_LOG_ENABLE
 #define VALIDATION_LOG_ENABLE 0
 #endif
-// #if VALIDATION_LOG_ENABLE
-// 	// Sleep-optim cumulative accounting. Reset on first VAL_SLEEP summary tick.
-// 	// `reduced_ms` = time spent with VSYS at 1.8 V (peripherals dark).
-// 	// `active_ms`  = time spent with VSYS at 3.3 V (running scheduler tasks).
-// 	// Ratio reduced/(reduced+active) is the effective sleep-optim duty cycle:
-// 	// > 0.9 in steady state on the bench (no surface activity).
-// 	static uint64_t s_val_reduced_total_ms = 0;
-// 	static uint64_t s_val_active_total_ms = 0;
-// 	static uint64_t s_val_last_enter_reduce_ms = 0;
-// 	static uint64_t s_val_last_exit_reduce_ms = 0;
-// 	static uint64_t s_val_last_summary_ms = 0;
-// 	static uint64_t s_val_summary_reduce_count = 0;
-// 	static constexpr uint64_t VAL_SLEEP_SUMMARY_PERIOD_MS = 60000;  // 1 min
-// #endif
+#if VALIDATION_LOG_ENABLE
+	// Sleep-optim cumulative accounting. Reset on first VAL_SLEEP summary tick.
+	// `reduced_ms` = time spent with VSYS at 1.8 V (peripherals dark).
+	// `active_ms`  = time spent with VSYS at 3.3 V (running scheduler tasks).
+	// Ratio reduced/(reduced+active) is the effective sleep-optim duty cycle:
+	// > 0.9 in steady state on the bench (no surface activity).
+	static uint64_t s_val_reduced_total_ms = 0;
+	static uint64_t s_val_active_total_ms = 0;
+	static uint64_t s_val_last_enter_reduce_ms = 0;
+	static uint64_t s_val_last_exit_reduce_ms = 0;
+	static uint64_t s_val_last_summary_ms = 0;
+	static uint64_t s_val_summary_reduce_count = 0;
+	static constexpr uint64_t VAL_SLEEP_SUMMARY_PERIOD_MS = 60000;  // 1 min
+#endif
 
 	// The scheduler should run forever.  Any run-time exceptions should be handled and passed to FSM.
 	while (true)
@@ -1508,16 +1508,16 @@ int main()
 					PMU::restore_power_rails();
 					power_rails_reduced = false;
 					// DEBUG_TRACE("IDLE_POWER_SAVE: exit (%llu ms remaining)", remaining);  // log removed: too verbose (pollutes even in Verbose)
-// #if VALIDATION_LOG_ENABLE
-// 					uint64_t now_ms = PMU::get_timestamp_ms();
-// 					uint64_t this_reduce_ms = (s_val_last_enter_reduce_ms > 0 &&
-// 					                           now_ms > s_val_last_enter_reduce_ms)
-// 					                          ? (now_ms - s_val_last_enter_reduce_ms) : 0;
-// 					s_val_reduced_total_ms += this_reduce_ms;
-// 					s_val_last_exit_reduce_ms = now_ms;
-// 					DEBUG_INFO("[VAL-SLEEP] exit_reduce reduced_ms=%llu remaining_ms=%llu",
-// 					           this_reduce_ms, remaining);
-// #endif
+#if VALIDATION_LOG_ENABLE
+					uint64_t now_ms = PMU::get_timestamp_ms();
+					uint64_t this_reduce_ms = (s_val_last_enter_reduce_ms > 0 &&
+					                           now_ms > s_val_last_enter_reduce_ms)
+					                          ? (now_ms - s_val_last_enter_reduce_ms) : 0;
+					s_val_reduced_total_ms += this_reduce_ms;
+					s_val_last_exit_reduce_ms = now_ms;
+					DEBUG_INFO("[VAL-SLEEP] exit_reduce reduced_ms=%llu remaining_ms=%llu",
+					           this_reduce_ms, remaining);
+#endif
 				}
 			}
 
@@ -1529,31 +1529,31 @@ int main()
 				// DEBUG_TRACE("IDLE_POWER_SAVE: enter (%llu ms idle)", idle_ms);  // log removed: too verbose (pollutes even in Verbose)
 				power_rails_reduced = true;
 				PMU::reduce_power_rails();
-// #if VALIDATION_LOG_ENABLE
-// 				uint64_t now_ms = PMU::get_timestamp_ms();
-// 				uint64_t this_active_ms = (s_val_last_exit_reduce_ms > 0 &&
-// 				                            now_ms > s_val_last_exit_reduce_ms)
-// 				                          ? (now_ms - s_val_last_exit_reduce_ms) : 0;
-// 				s_val_active_total_ms += this_active_ms;
-// 				s_val_last_enter_reduce_ms = now_ms;
-// 				s_val_summary_reduce_count++;
-// 				DEBUG_INFO("[VAL-SLEEP] enter_reduce idle_ms=%llu active_ms=%llu",
-// 				           idle_ms, this_active_ms);
-// 				// Periodic cumulative summary — emits ratio + total counts.
-// 				// Logs every minute regardless of activity, so a flat curve in
-// 				// the log timeline reveals a stuck-awake regression.
-// 				if (s_val_last_summary_ms == 0) s_val_last_summary_ms = now_ms;
-// 				if (now_ms - s_val_last_summary_ms >= VAL_SLEEP_SUMMARY_PERIOD_MS) {
-// 					uint64_t total = s_val_reduced_total_ms + s_val_active_total_ms;
-// 					unsigned int duty_pct = total > 0
-// 					                        ? (unsigned int)((s_val_reduced_total_ms * 100) / total)
-// 					                        : 0;
-// 					DEBUG_INFO("[VAL-SLEEP] summary reduced_ms=%llu active_ms=%llu duty=%u%% cycles=%llu",
-// 					           s_val_reduced_total_ms, s_val_active_total_ms, duty_pct,
-// 					           s_val_summary_reduce_count);
-// 					s_val_last_summary_ms = now_ms;
-// 				}
-// #endif
+#if VALIDATION_LOG_ENABLE
+				uint64_t now_ms = PMU::get_timestamp_ms();
+				uint64_t this_active_ms = (s_val_last_exit_reduce_ms > 0 &&
+				                            now_ms > s_val_last_exit_reduce_ms)
+				                          ? (now_ms - s_val_last_exit_reduce_ms) : 0;
+				s_val_active_total_ms += this_active_ms;
+				s_val_last_enter_reduce_ms = now_ms;
+				s_val_summary_reduce_count++;
+				DEBUG_INFO("[VAL-SLEEP] enter_reduce idle_ms=%llu active_ms=%llu",
+				           idle_ms, this_active_ms);
+				// Periodic cumulative summary — emits ratio + total counts.
+				// Logs every minute regardless of activity, so a flat curve in
+				// the log timeline reveals a stuck-awake regression.
+				if (s_val_last_summary_ms == 0) s_val_last_summary_ms = now_ms;
+				if (now_ms - s_val_last_summary_ms >= VAL_SLEEP_SUMMARY_PERIOD_MS) {
+					uint64_t total = s_val_reduced_total_ms + s_val_active_total_ms;
+					unsigned int duty_pct = total > 0
+					                        ? (unsigned int)((s_val_reduced_total_ms * 100) / total)
+					                        : 0;
+					DEBUG_INFO("[VAL-SLEEP] summary reduced_ms=%llu active_ms=%llu duty=%u%% cycles=%llu",
+					           s_val_reduced_total_ms, s_val_active_total_ms, duty_pct,
+					           s_val_summary_reduce_count);
+					s_val_last_summary_ms = now_ms;
+				}
+#endif
 			}
 
 			// Safety watchdog kick — reduces dependency on scheduled task
