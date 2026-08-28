@@ -127,6 +127,20 @@ class Runner:
         if glob.glob('/dev/ttyACM*') or glob.glob('/dev/ttyUSB*'):
             self.say('   lien retabli par simple rattachement')
             return True
+        # ATTENTION: `usbipd detach` peut laisser le peripherique NON PARTAGE,
+        # et le re-partager (`usbipd bind`) exige des droits ADMINISTRATEUR.
+        # Mesure du 2026-08-28: la sequence detach + bascule D+ a fait
+        # disparaitre le CDC de la vue Windows, et plus aucune commande
+        # accessible depuis WSL ne pouvait le ramener — le harnais s etait mis
+        # dans un etat dont il ne savait pas sortir, en pleine campagne de nuit.
+        #
+        # On verifie donc que le partage tient AVANT de detacher, et on renonce
+        # a la sequence lourde si ce n est pas le cas: mieux vaut echouer en
+        # laissant le banc utilisable que le rendre injoignable.
+        etat = ps(f'usbipd list')
+        if busid not in etat:
+            self.say('   busid absent de usbipd — banc injoignable, pas de detach')
+            return False
         ps(f'usbipd detach --busid {busid}')
         time.sleep(3)
         for v in ('0', '1'):
@@ -141,6 +155,12 @@ class Runner:
                 ps(f'usbipd attach --busid {busid} --wsl')
                 time.sleep(6)
                 return bool(glob.glob('/dev/ttyACM*') or glob.glob('/dev/ttyUSB*'))
+        # Le peripherique n est jamais repasse CM_PROB_NONE. S il a aussi quitte
+        # la liste usbipd, seul un debranchement PHYSIQUE le ramenera: on le dit
+        # plutot que de boucler.
+        if busid not in ps('usbipd list'):
+            self.say('   le peripherique a QUITTE la vue Windows — debranchement '
+                     'physique necessaire')
         return False
 
     def recover(self):
