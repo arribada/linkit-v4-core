@@ -413,7 +413,7 @@ TEST(ArgosTxService, BuildLongCertificationPacket) {
 	unsigned int size_bits;
 	// LONG_PACKET_BYTES is 24 (LDA2 frame); certification truncates to that size.
 	std::string x = ArgosPacketBuilder::build_certification_packet(
-	    "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", size_bits);
+	    "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", KineisModulation::LDA2, size_bits);
 	CHECK_EQUAL(ArgosPacketBuilder::LDA2_FRAME_BITS, size_bits);
 	CHECK_EQUAL(ArgosPacketBuilder::LDA2_FRAME_BYTES, x.size());
 	CHECK_EQUAL("\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF"s, x);
@@ -422,7 +422,8 @@ TEST(ArgosTxService, BuildLongCertificationPacket) {
 TEST(ArgosTxService, BuildShortCertificationPacket) {
 	unsigned int size_bits;
 	// SHORT_PACKET_BYTES = 12, so input must be ≤12 bytes (24 hex chars)
-	std::string x = ArgosPacketBuilder::build_certification_packet("FFFFFFFFFFFFFFFFFFFF", size_bits);  // 10 bytes
+	std::string x =
+	    ArgosPacketBuilder::build_certification_packet("FFFFFFFFFFFFFFFFFFFF", KineisModulation::LDA2, size_bits);
 	CHECK_EQUAL(96, size_bits);                                           // SHORT_PACKET_BITS = 96
 	CHECK_EQUAL("\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\x00\x00"s, x);  // Padded to 12 bytes
 }
@@ -2107,7 +2108,12 @@ TEST(ArgosTxService, SurfacingBurstDopplerMaxMsg) {
 }
 
 TEST(ArgosTxService, SurfacingBurstAdaptiveModulationPreSwitch) {
-	// Test that after TX complete in adaptive mode, pre-switch to VLDA4 happens
+	// Adaptive mode pre-switches the module for the next Doppler after each TX
+	// completes. The modulation it switches to is LDA2 rather than VLDA4 on this
+	// build: VLDA4 is not permitted on the KIM2 backend (the module gates it on
+	// a 27 dBm regulatory check and refuses to transmit it), and the host tests
+	// compile without ARGOS_SMD, i.e. under the KIM2 rule. The 24-bit Doppler
+	// frame is unaffected -- KIM2 stuffs it to the next 32-bit boundary on LDA2.
 	fake_config_store->write_param(ParamID::ARGOS_DEPTH_PILE, BaseDepthPile::DEPTH_PILE_1);
 	fake_config_store->write_param(ParamID::ARGOS_MODE, BaseArgosMode::SURFACING_BURST);
 	fake_config_store->write_param(ParamID::ARGOS_HEXID, 0x01234567U);
@@ -2122,12 +2128,18 @@ TEST(ArgosTxService, SurfacingBurstAdaptiveModulationPreSwitch) {
 	fake_config_store->write_param(ParamID::ARGOS_ADAPTIVE_MODULATION, (bool)true);
 	fake_config_store->write_param(ParamID::ARGOS_RADIOCONF_VLDA4, std::string("550b4bec21009c7a7b5bebaa937cdb41"));
 	fake_config_store->write_param(ParamID::ARGOS_RADIOCONF_LDK, std::string("03921fb104b92859209b18abd009de96"));
+	fake_config_store->write_param(ParamID::ARGOS_RADIOCONF_LDA2, std::string("a1b2c3d4e5f60718293a4b5c6d7e8f90"));
 
 	ArgosTxService serv(*mock_kineis);
 
 	std::time_t t = 1652105502000;
 	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
+
+	// Start the module on LDK so a switch is genuinely required -- the mock's
+	// default is LDA2, which is now the adaptive Doppler modulation on this
+	// backend, and ensure_modulation() short-circuits when they already match.
+	mock_kineis->test_set_current_modulation(KineisModulation::LDK);
 
 	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
 	serv.start();
@@ -2141,20 +2153,19 @@ TEST(ArgosTxService, SurfacingBurstAdaptiveModulationPreSwitch) {
 	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 
-	// Surface → Doppler VLDA4
+	// Surface → Doppler on the permitted adaptive modulation
 	notify_underwater_state(false);
 
-	// Fire Doppler TX (VLDA4 mode)
 	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 0);
 	mock()
 	    .expectOneCall("switch_modulation")
 	    .onObject(mock_kineis)
-	    .withUnsignedIntParameter("mode", (unsigned int)KineisModulation::VLDA4)
-	    .withStringParameter("rconf", "550b4bec21009c7a7b5bebaa937cdb41");
+	    .withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2)
+	    .withStringParameter("rconf", "a1b2c3d4e5f60718293a4b5c6d7e8f90");
 	mock()
 	    .expectOneCall("send")
 	    .onObject(mock_kineis)
-	    .withUnsignedIntParameter("mode", (unsigned int)KineisModulation::VLDA4)
+	    .withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2)
 	    .withUnsignedIntParameter("size_bits", 24);
 	system_scheduler->run();
 
@@ -2181,16 +2192,18 @@ TEST(ArgosTxService, SurfacingBurstAdaptiveModulationPreSwitch) {
 	fake_timer->set_counter(t);
 	system_scheduler->run();
 
-	// TX complete → should pre-switch back to VLDA4
+	// TX complete → pre-switch back to the adaptive Doppler modulation so the
+	// next surfacing's first ping skips the deferred-RCONF path. The module is
+	// on LDK after the GNSS packet, so a real switch is issued; the target is
+	// LDA2 rather than VLDA4 because VLDA4 is not permitted on this backend.
 	mock()
 	    .expectOneCall("switch_modulation")
 	    .onObject(mock_kineis)
-	    .withUnsignedIntParameter("mode", (unsigned int)KineisModulation::VLDA4)
-	    .withStringParameter("rconf", "550b4bec21009c7a7b5bebaa937cdb41");
+	    .withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2)
+	    .withStringParameter("rconf", "a1b2c3d4e5f60718293a4b5c6d7e8f90");
 	mock_kineis->notify(KineisEventTxComplete({}));
 
-	// Verify device is back to VLDA4
-	CHECK_EQUAL((unsigned int)KineisModulation::VLDA4, (unsigned int)mock_kineis->get_current_modulation());
+	CHECK_EQUAL((unsigned int)KineisModulation::LDA2, (unsigned int)mock_kineis->get_current_modulation());
 }
 
 TEST(ArgosTxService, DepthPileManagerSensorTimeout) {
@@ -4424,24 +4437,52 @@ TEST(ArgosTxService, CloudLocateReadyDoesNotBypassTheDeviceErrorHold) {
 	mock().checkExpectations();
 }
 
-// CERT_TX_PAYLOAD comes straight from an operator and, unlike every other
-// burst, the certification path checked nothing before handing it to the
-// module. VLDA4 carries three bytes; a four-byte payload is refused, that
-// refusal counts as a device error, and three of them suspend TX for an hour
-// -- on a configuration mistake that cannot fix itself. No fallback to a wider
-// modulation here: a certification frame sent on a modulation the operator did
-// not ask for is worthless.
-TEST(ArgosTxService, CertificationPayloadTooLongForVlda4IsRefusedNotTransmitted) {
+// CERT_TX_PAYLOAD is the one payload in the firmware that reaches the radio
+// straight from an operator, and the three modulations do not carry the same
+// frame. VLDA4 holds three bytes: a longer payload used to be handed over
+// whole, refused by the module, and that refusal counts as a device error --
+// three of them suspend TX for an hour, repeatedly, on a configuration mistake
+// that cannot fix itself. The frame is now built to the modulation instead.
+TEST(ArgosTxService, BuildCertificationPacketSizedToVlda4) {
+	unsigned int size_bits;
+	std::string x = ArgosPacketBuilder::build_certification_packet("AABBCCDD", KineisModulation::VLDA4, size_bits);
+	CHECK_EQUAL(ArgosPacketBuilder::DOPPLER_PACKET_BITS, size_bits);
+	CHECK_EQUAL(ArgosPacketBuilder::DOPPLER_PACKET_BYTES, x.size());
+	CHECK_EQUAL("\xAA\xBB\xCC"s, x);  // truncated, not refused
+}
+
+TEST(ArgosTxService, BuildCertificationPacketSizedToLdk) {
+	unsigned int size_bits;
+	// 20 bytes offered, LDK carries 12.
+	std::string x = ArgosPacketBuilder::build_certification_packet(
+	    "AABBCCDDEEFF00112233445566778899AABBCCDDEEFF", KineisModulation::LDK, size_bits);
+	CHECK_EQUAL(ArgosPacketBuilder::SHORT_PACKET_BITS, size_bits);
+	CHECK_EQUAL(ArgosPacketBuilder::SHORT_PACKET_BYTES, x.size());
+}
+
+// A short payload is still zero-padded up to the frame, so the module always
+// gets exactly the size it was told.
+TEST(ArgosTxService, BuildCertificationPacketPadsShortPayloadToVlda4Frame) {
+	unsigned int size_bits;
+	std::string x = ArgosPacketBuilder::build_certification_packet("AA", KineisModulation::VLDA4, size_bits);
+	CHECK_EQUAL(ArgosPacketBuilder::DOPPLER_PACKET_BITS, size_bits);
+	CHECK_EQUAL("\xAA\x00\x00"s, x);
+}
+
+// End to end, VLDA4 is refused on this backend rather than substituted. The
+// operational bursts silently fall back to LDA2 when a modulation is not
+// permitted, and should: getting the message out matters more than which
+// modulation carried it. Certification is the opposite -- a frame sent on a
+// modulation the operator did not ask for certifies nothing -- so it stops and
+// says so. No strike either way: this is a configuration error, not a fault.
+TEST(ArgosTxService, CertificationOnVlda4IsRefusedOnThisBackend) {
 	fake_config_store->write_param(ParamID::ARGOS_MODE, BaseArgosMode::OFF);
 	fake_config_store->write_param(ParamID::CERT_TX_ENABLE, true);
-	fake_config_store->write_param(ParamID::CERT_TX_PAYLOAD, std::string("AABBCCDD"));  // 4 bytes = 32 bits
+	fake_config_store->write_param(ParamID::CERT_TX_PAYLOAD, std::string("AABBCCDD"));
 	fake_config_store->write_param(ParamID::CERT_TX_MODULATION, BaseArgosModulation::A4);
 	fake_config_store->write_param(ParamID::CERT_TX_REPETITION, (unsigned int)60);
 	fake_config_store->write_param(ParamID::LB_EN, false);
 
-	// expectNoCall, not merely "no expectation": with ignoreOtherCalls() an
-	// attempted send would be silently swallowed and the test would pass for the
-	// wrong reason.
 	mock().expectNoCall("send");
 	mock().ignoreOtherCalls();
 
@@ -4449,7 +4490,37 @@ TEST(ArgosTxService, CertificationPayloadTooLongForVlda4IsRefusedNotTransmitted)
 	std::time_t t = 1652105502000;
 	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
-	mock_kineis->test_set_current_modulation(KineisModulation::VLDA4);
+
+	serv.start();
+	system_scheduler->run();
+	mock().checkExpectations();
+}
+
+// The size adaptation still governs the modulations that ARE permitted: an
+// over-long payload is truncated to the frame rather than handed over whole and
+// refused by the module.
+TEST(ArgosTxService, CertificationOnLdkTransmitsATruncatedFrame) {
+	fake_config_store->write_param(ParamID::ARGOS_MODE, BaseArgosMode::OFF);
+	fake_config_store->write_param(ParamID::CERT_TX_ENABLE, true);
+	// 20 bytes offered; LDK carries 12.
+	fake_config_store->write_param(ParamID::CERT_TX_PAYLOAD,
+	                               std::string("AABBCCDDEEFF00112233445566778899AABBCCDDEEFF"));
+	fake_config_store->write_param(ParamID::CERT_TX_MODULATION, BaseArgosModulation::LDK);
+	fake_config_store->write_param(ParamID::CERT_TX_REPETITION, (unsigned int)60);
+	fake_config_store->write_param(ParamID::LB_EN, false);
+
+	mock()
+	    .expectOneCall("send")
+	    .onObject(mock_kineis)
+	    .withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDK)
+	    .withUnsignedIntParameter("size_bits", ArgosPacketBuilder::SHORT_PACKET_BITS);
+	mock().ignoreOtherCalls();
+
+	ArgosTxService serv(*mock_kineis);
+	std::time_t t = 1652105502000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	mock_kineis->test_set_current_modulation(KineisModulation::LDK);
 
 	serv.start();
 	system_scheduler->run();

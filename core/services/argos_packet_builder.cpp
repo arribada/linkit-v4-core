@@ -407,23 +407,52 @@ KineisPacket ArgosPacketBuilder::build_gnss_packet(std::vector<GPSLogEntry *> &v
 	}
 }
 
-KineisPacket ArgosPacketBuilder::build_certification_packet(std::string cert_tx_payload, unsigned int &size_bits) {
+KineisPacket ArgosPacketBuilder::build_certification_packet(std::string cert_tx_payload, KineisModulation mode,
+                                                            unsigned int &size_bits) {
 	// Convert from ASCII hex to a real binary buffer
 	KineisPacket packet = Binascii::unhexlify(cert_tx_payload);
+	const size_t supplied_bytes = packet.size();
 
-	DEBUG_TRACE("ArgosPacketBuilder::build_certification_packet: TX payload size %u bytes", packet.size());
-
-	// Check the size to determine the packet #bits to send in payload
-	if (packet.size() > SHORT_PACKET_BYTES) {
-		DEBUG_TRACE("ArgosPacketBuilder::build_certification_packet: using long packet");
-		size_bits = LONG_PACKET_BITS;
-		packet.resize(LONG_PACKET_BYTES);
-	} else {
-		DEBUG_TRACE("ArgosPacketBuilder::build_certification_packet: using short packet");
+	// Size to the MODULATION, not to the payload. Every other burst in the
+	// firmware builds a frame it knows fits; this one takes CERT_TX_PAYLOAD
+	// straight from the operator, and a frame the modulation cannot carry is
+	// refused by the module -- a refusal that counts as a device error, three of
+	// which suspend TX for an hour, repeatedly, on a configuration mistake that
+	// will never fix itself. Truncation is the right answer here and only here:
+	// a certification frame is a test pattern, not data anyone decodes.
+	unsigned int frame_bytes;
+	switch (mode) {
+	case KineisModulation::VLDA4:
+		// Three bytes is the only frame VLDA4 carries.
+		frame_bytes = DOPPLER_PACKET_BYTES;
+		size_bits = DOPPLER_PACKET_BITS;
+		break;
+	case KineisModulation::LDK:
+		frame_bytes = SHORT_PACKET_BYTES;
 		size_bits = SHORT_PACKET_BITS;
-		packet.resize(SHORT_PACKET_BYTES);
+		break;
+	case KineisModulation::LDA2:
+	default:
+		// LDA2 carries both frames; pick the one the payload needs, as before.
+		if (supplied_bytes > SHORT_PACKET_BYTES) {
+			frame_bytes = LONG_PACKET_BYTES;
+			size_bits = LONG_PACKET_BITS;
+		} else {
+			frame_bytes = SHORT_PACKET_BYTES;
+			size_bits = SHORT_PACKET_BITS;
+		}
+		break;
 	}
 
+	if (supplied_bytes > frame_bytes) {
+		DEBUG_WARN("ArgosPacketBuilder::build_certification_packet: CERT_TX_PAYLOAD is %u bytes, truncated to %u for "
+		           "modulation %d",
+		           (unsigned int)supplied_bytes, frame_bytes, (int)mode);
+	}
+	// resize() truncates an over-long payload and zero-pads a short one.
+	packet.resize(frame_bytes);
+	DEBUG_TRACE("ArgosPacketBuilder::build_certification_packet: %u bytes supplied, %u-bit frame for modulation %d",
+	            (unsigned int)supplied_bytes, size_bits, (int)mode);
 	return packet;
 }
 

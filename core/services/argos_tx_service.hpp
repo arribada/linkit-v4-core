@@ -209,6 +209,12 @@ private:
 	// before init has run.
 	KineisModulation resolve_non_adaptive_modulation();
 
+	/// @brief Modulation the adaptive Doppler phase transmits on.
+	/// VLDA4 where the backend permits it, LDA2 where it does not (KIM2 gates
+	/// VLDA4 on a 27 dBm regulatory check and refuses to transmit it). Adaptive
+	/// mode selected VLDA4 unconditionally at six separate sites before this.
+	KineisModulation adaptive_doppler_modulation() const;
+
 	// @brief Bitmask of modulations whose per-mod RCONF is present (32-char hex)
 	// in the config store. Used by burst processors to skip a TX cleanly when
 	// the would-be fallback modulation can't hold the payload (instead of
@@ -219,6 +225,11 @@ private:
 	void refresh_modulation_availability();
 	bool is_modulation_provisioned(KineisModulation mode) const;
 	static bool size_fits_modulation(unsigned int payload_bits, KineisModulation mode);
+	/// @brief Can this modulation carry this frame, on this backend?
+	/// Size is not the only reason a modulation can be unusable -- KIM2 refuses
+	/// VLDA4 outright -- and folding both into one predicate lets the existing
+	/// size fallback, which reprograms the module, cover the permission case too.
+	static bool can_transmit_on(KineisModulation mode, unsigned int payload_bits);
 	KineisModulation m_last_preconfig_mod = KineisModulation::LDA2;
 	std::optional<KineisModulation> m_modulation_preconfig;
 

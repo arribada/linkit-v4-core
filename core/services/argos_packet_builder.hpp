@@ -159,8 +159,20 @@ public:
 	static KineisPacket build_gnss_packet(std::vector<GPSLogEntry *> &v, bool is_out_of_zone, bool is_low_battery,
 	                                      BaseDeltaTimeLoc delta_time_loc, unsigned int &size_bits);
 
-	/// @brief Build certification TX packet from hex payload string.
-	static KineisPacket build_certification_packet(std::string cert_tx_payload, unsigned int &size_bits);
+	/// @brief Build certification TX packet from a hex payload, sized to the
+	///        modulation it will be transmitted on.
+	/// @param cert_tx_payload  operator-supplied hex string (CERT_TX_PAYLOAD).
+	/// @param mode             modulation the frame will go out on.
+	/// @param[out] size_bits   frame size handed to the device.
+	///
+	/// The three modulations do not carry the same frame -- VLDA4 holds three
+	/// bytes, LDK twelve, LDA2 twelve or twenty-four -- and CERT_TX_PAYLOAD is
+	/// the one payload in the firmware that comes straight from an operator with
+	/// nothing between it and the radio. Sizing it here means an over-long
+	/// payload is truncated rather than refused by the module, because that
+	/// refusal counts as a device error and three of them suspend TX.
+	static KineisPacket build_certification_packet(std::string cert_tx_payload, KineisModulation mode,
+	                                               unsigned int &size_bits);
 
 	/// @brief Build Doppler packet (24 bits, no GPS).
 	static KineisPacket build_doppler_packet(unsigned int battery, bool is_low_battery, unsigned int &size_bits);
