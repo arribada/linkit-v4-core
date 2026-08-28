@@ -374,6 +374,15 @@ void GenTracker::periodic_config_flush() {
 	}
 }
 
+/// @brief Set BLE device name from DEVICE_MODEL + ARGOS_DECID config params.
+void GenTracker::set_ble_device_name() {
+	std::string device_model = configuration_store->read_param<std::string>(ParamID::DEVICE_MODEL);
+	unsigned int identifier = configuration_store->read_param<unsigned int>(ParamID::ARGOS_DECID);
+	std::string device_name = device_model + " " + std::to_string(identifier);
+	DEBUG_TRACE("GenTracker::set_ble_device_name: %s", device_name.c_str());
+	ble_service->set_device_name(device_name);
+}
+
 /// @brief Boot entry — init PMU, check reset cause, mount filesystem, load config.
 void BootState::entry() {
 	DEBUG_INFO("entry: BootState");
@@ -950,15 +959,6 @@ void ConfigurationState::exit() {
 		gps_device->power_off_immediate();
 	}
 	led_handle::dispatch<SetLEDOff>({});
-}
-
-/// @brief Set BLE device name from DEVICE_MODEL + ARGOS_DECID config params.
-void GenTracker::set_ble_device_name() {
-	std::string device_model = configuration_store->read_param<std::string>(ParamID::DEVICE_MODEL);
-	unsigned int identifier = configuration_store->read_param<unsigned int>(ParamID::ARGOS_DECID);
-	std::string device_name = device_model + " " + std::to_string(identifier);
-	DEBUG_TRACE("GenTracker::set_ble_device_name: %s", device_name.c_str());
-	ble_service->set_device_name(device_name);
 }
 
 /// @brief BLE event callback — handle connect/disconnect, DTE data, OTA transfers.
