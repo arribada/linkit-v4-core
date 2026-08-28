@@ -218,4 +218,28 @@ private:
 	static constexpr unsigned int DEVICE_ERROR_BACKOFF_BASE_MS = 60000;
 	static constexpr unsigned int DEVICE_ERROR_BACKOFF_MAX_MS = 600000;
 	unsigned int m_consecutive_device_errors = 0;
+
+	/// @brief How long TX stays suspended after DEVICE_ERROR_MAX_CONSECUTIVE
+	/// strikes, before one probe dispatch is allowed through.
+	///
+	/// This used to be "until something else happens": the suspension called
+	/// service_complete(no reschedule), which is also the only path that
+	/// cancels the safety-net timeout armed before service_initiate(). The
+	/// timeout therefore outlived the suspension, fired, rescheduled at zero
+	/// delay, hit the guard again and rearmed itself -- a wake/log/skip loop
+	/// once per timeout that transmitted nothing and wrote an LFS commit every
+	/// pass. Worse, that loop was what made the "recovers on the next GPS
+	/// session" promise true, so the defect was load-bearing.
+	///
+	/// A land tracker (RSPB) has no surfacing events, so before this the probe
+	/// did not exist and a transient module fault cost every transmission until
+	/// the next GPS log. LoRaTxService has had the deadline since its own field
+	/// outage; this is the same design, same default.
+	/// Build-time override: ARGOS_TX_ERROR_SUSPEND_S (ports/nrf52840/CMakeLists.txt).
+	/// 0 disables the suspension entirely, leaving only the capped backoff.
+#ifndef ARGOS_TX_ERROR_SUSPEND_S
+#define ARGOS_TX_ERROR_SUSPEND_S 3600
+#endif
+	static constexpr unsigned int DEVICE_ERROR_PROBE_PERIOD_S = ARGOS_TX_ERROR_SUSPEND_S;
+	std::time_t m_device_error_suspend_until = 0;
 };

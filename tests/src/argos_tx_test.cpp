@@ -26,6 +26,10 @@ extern RTC *rtc;
 extern BatteryMonitor *battery_monitor;
 
 
+// ArgosTxService::DEVICE_ERROR_BACKOFF_MAX_MS is private; mirror its value
+// here so the suspension test can assert "parked beyond any backoff".
+static constexpr unsigned int DEVICE_ERROR_BACKOFF_MAX_MS_FOR_TEST = 600000U;
+
 TEST_GROUP(ArgosTxService) {
 	FakeBatteryMonitor *fake_battery_monitor;
 	FakeConfigurationStore *fake_config_store;
@@ -3650,25 +3654,17 @@ TEST(ArgosTxService, DeviceErrorBelowThresholdReschedulesWithoutAnyExternalEvent
 	mock().checkExpectations();
 }
 
-// The suspending regime, pinned as it ACTUALLY behaves -- which is not what
-// the branch comment claims ("stop rescheduling to save battery").
+// The suspending regime. Three strikes and the service stops transmitting --
+// but it parks on a deadline rather than waiting for the world to poke it.
 //
-// service_complete(..., false) skips reschedule(), and reschedule() is the
-// only caller of deschedule() -- the one place that cancels the safety-net
-// timeout run_scheduled_task() armed before service_initiate(). So the
-// timeout survives the suspension, fires ~30 s later, runs service_cancel()
-// (hence the stop_send below) and calls reschedule() itself. That reschedules
-// at zero delay, service_initiate() hits its own identical guard, skips, and
-// completes without rescheduling again -- rearming the timeout.
-//
-// The result is a self-sustaining wake/log/skip loop, once per
-// service_next_timeout(), that never transmits and never stops. It does not
-// save battery: each pass emits a DEBUG_WARN, i.e. an LFS commit on the
-// device. Nothing here is fatal, and the beacon does recover (see the next
-// test) -- but the loop is load-bearing for that recovery, so cancelling the
-// timeout without replacing it would turn this into a genuinely permanent
-// suspension. This test exists to make that interlock fail loudly.
-TEST(ArgosTxService, DeviceErrorAtThresholdKeepsWakingButNeverTransmits) {
+// It did neither before: service_complete(..., false) skipped reschedule(),
+// which is the only path that cancels the safety-net timeout armed just before
+// service_initiate(). The timeout outlived the suspension, fired, rescheduled
+// at zero delay, hit the guard in service_initiate() and rearmed itself. The
+// beacon woke, logged and skipped once per timeout, forever, transmitting
+// nothing and writing an LFS commit each pass -- the opposite of the battery
+// saving it was meant to be.
+TEST(ArgosTxService, DeviceErrorAtThresholdSleepsOnTheProbeDeadline) {
 	configure_plain_legacy();
 
 	ArgosTxService serv(*mock_kineis);
@@ -3676,16 +3672,14 @@ TEST(ArgosTxService, DeviceErrorAtThresholdKeepsWakingButNeverTransmits) {
 	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 
-	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
+	// Three failures and nothing after them. Counting `send` strictly is the
+	// assertion; CppUTest still fails a surplus call to an expected function, so
+	// a fourth transmission cannot slip through unnoticed.
+	mock().expectNCalls(3, "send").onObject(mock_kineis).ignoreOtherParameters();
+	mock().ignoreOtherCalls();
+
 	serv.start();
 	inject_gps_location(true, 11.8768, -33.8232, t / 1000, true);
-
-	// Three failed attempts (one send + one stop_send each), then five
-	// wake-ups that must produce a stop_send but no send. All expectations are
-	// declared up front: CppUTest matches them in call order, and a `send`
-	// arriving in the second phase has none left to match, so it fails.
-	mock().expectNCalls(3, "send").onObject(mock_kineis).ignoreOtherParameters();
-	mock().expectNCalls(3 + 5, "stop_send").onObject(mock_kineis);
 
 	for (unsigned int i = 0; i < 3; i++) {
 		t += serv.get_last_schedule();
@@ -3695,32 +3689,108 @@ TEST(ArgosTxService, DeviceErrorAtThresholdKeepsWakingButNeverTransmits) {
 		mock_kineis->notify(KineisEventDeviceError({}));
 	}
 
-	// One stop_send per wake-up, from the safety-net timeout the suspension
-	// forgot to cancel.
-	for (unsigned int k = 0; k < 5; k++) {
-		t += 60000;
+	// Parked well beyond any backoff the ladder can produce -- and emphatically
+	// not at zero delay, which is what the spin looked like.
+	CHECK_COMPARE(serv.get_last_schedule(), >, DEVICE_ERROR_BACKOFF_MAX_MS_FOR_TEST);
+
+	// Ten wake-ups across half an hour, all inside the probe period.
+	for (unsigned int k = 0; k < 10; k++) {
+		t += 180000;
 		fake_rtc->settime(t / 1000);
 		fake_timer->set_counter(t);
 		system_scheduler->run();
-		// Zero delay: the service is being rescheduled as fast as the timeout
-		// lets it, not parked.
-		CHECK_EQUAL(0U, serv.get_last_schedule());
 	}
 	mock().checkExpectations();
 }
 
-// The recovery the suspension depends on. The branch comment names four ways
-// out: a new GPS session, a surface event, a successful TX, and a reboot. A
-// successful TX cannot happen while nothing transmits and a land tracker
-// never surfaces, so on an RSPB the GPS session is the only one left short of
-// a power-cycle. It is the fix written for the 2026-06-30 field case, where a
-// KIM2 brown-out cost 6.5 h of silence.
-//
-// It works -- but not by the route the code reads as taking. The guard meant
-// to restart it, `if (!service_is_scheduled()) service_reschedule()`, cannot
-// fire on this path: m_last_schedule is only reset by deschedule(). What
-// actually resumes TX is the wake loop of the previous test finding the
-// counter cleared on its next pass.
+// The deadline expires and exactly one dispatch goes out as a probe. This is
+// the exit that exists on every board and every configuration -- including a
+// land tracker with GNSS off, which has none of the other three.
+TEST(ArgosTxService, ProbeTransmitsOnceTheSuspensionElapses) {
+	configure_plain_legacy();
+
+	ArgosTxService serv(*mock_kineis);
+	std::time_t t = 1652105502000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+
+	mock().expectNCalls(3 + 1, "send").onObject(mock_kineis).ignoreOtherParameters();
+	mock().ignoreOtherCalls();
+
+	serv.start();
+	inject_gps_location(true, 11.8768, -33.8232, t / 1000, true);
+
+	for (unsigned int i = 0; i < 3; i++) {
+		t += serv.get_last_schedule();
+		fake_rtc->settime(t / 1000);
+		fake_timer->set_counter(t);
+		system_scheduler->run();
+		mock_kineis->notify(KineisEventDeviceError({}));
+	}
+
+	// Past ARGOS_TX_ERROR_SUSPEND_S (3600 s by default).
+	t += 3700000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	system_scheduler->run();
+
+	// The probe fails too, so the suspension re-arms instead of lifting: the
+	// wake-ups that follow must stay silent.
+	mock_kineis->notify(KineisEventDeviceError({}));
+	for (unsigned int k = 0; k < 5; k++) {
+		t += 180000;
+		fake_rtc->settime(t / 1000);
+		fake_timer->set_counter(t);
+		system_scheduler->run();
+	}
+	mock().checkExpectations();
+}
+
+// A probe that works clears the count outright, so the beacon returns to its
+// nominal cadence rather than creeping back up the backoff ladder.
+TEST(ArgosTxService, SuccessfulProbeClearsTheSuspensionCompletely) {
+	configure_plain_legacy();
+
+	ArgosTxService serv(*mock_kineis);
+	std::time_t t = 1652105502000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+
+	mock().expectNCalls(3 + 1 + 1, "send").onObject(mock_kineis).ignoreOtherParameters();
+	mock().ignoreOtherCalls();
+
+	serv.start();
+	inject_gps_location(true, 11.8768, -33.8232, t / 1000, true);
+
+	for (unsigned int i = 0; i < 3; i++) {
+		t += serv.get_last_schedule();
+		fake_rtc->settime(t / 1000);
+		fake_timer->set_counter(t);
+		system_scheduler->run();
+		mock_kineis->notify(KineisEventDeviceError({}));
+	}
+
+	t += 3700000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	system_scheduler->run();
+	mock_kineis->notify(KineisEventTxComplete({}));
+
+	// Nominal period, not another suspension and not a backoff.
+	CHECK_COMPARE(serv.get_last_schedule(), <, 60000U);
+
+	t += serv.get_last_schedule();
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	system_scheduler->run();
+	mock().checkExpectations();
+}
+
+// The exit written for the 2026-06-30 field case, where a KIM2 brown-out cost
+// 6.5 h of silence: a land tracker gets a fresh chance on its next GPS
+// session, without waiting out the probe period. Clearing the counter alone
+// would not do it -- the suspension leaves an earliest-TX floor an hour out
+// that has to be dropped with it.
 TEST(ArgosTxService, DeviceErrorSuspensionIsClearedByANewGpsSession) {
 	configure_plain_legacy();
 
@@ -3729,13 +3799,11 @@ TEST(ArgosTxService, DeviceErrorSuspensionIsClearedByANewGpsSession) {
 	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 
-	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
+	mock().expectNCalls(3 + 1, "send").onObject(mock_kineis).ignoreOtherParameters();
+	mock().ignoreOtherCalls();
+
 	serv.start();
 	inject_gps_location(true, 11.8768, -33.8232, t / 1000, true);
-
-	// Four sends in total: three that fail, then the one that proves recovery.
-	mock().expectNCalls(3 + 1, "send").onObject(mock_kineis).ignoreOtherParameters();
-	mock().expectNCalls(3 + 2, "stop_send").onObject(mock_kineis);
 
 	for (unsigned int i = 0; i < 3; i++) {
 		t += serv.get_last_schedule();
@@ -3745,20 +3813,16 @@ TEST(ArgosTxService, DeviceErrorSuspensionIsClearedByANewGpsSession) {
 		mock_kineis->notify(KineisEventDeviceError({}));
 	}
 
-	// One suspended wake-up, so the service is in the loop described above.
-	t += 60000;
-	fake_rtc->settime(t / 1000);
-	fake_timer->set_counter(t);
-	system_scheduler->run();
-
-	// A new GPS session lands, exactly as it would on the next fix.
+	// A minute later -- deep inside the probe period -- a fix lands.
 	t += 60000;
 	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 	inject_gps_location(true, 11.8768, -33.8232, t / 1000, true);
 
-	// The beacon transmits again.
-	t += 60000;
+	// Prompt, not an hour away.
+	CHECK_COMPARE(serv.get_last_schedule(), <, 60000U);
+
+	t += serv.get_last_schedule();
 	fake_rtc->settime(t / 1000);
 	fake_timer->set_counter(t);
 	system_scheduler->run();

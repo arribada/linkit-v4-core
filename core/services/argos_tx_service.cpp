@@ -158,6 +158,7 @@ void ArgosTxService::service_init() {
 	m_last_preconfig_mod = KineisModulation::LDA2;
 	m_modulation_preconfig.reset();
 	m_consecutive_device_errors = 0;
+	m_device_error_suspend_until = 0;
 	m_is_underwater = false;
 	m_prepared_doppler_packet.clear();
 	m_prepared_doppler_size_bits = 0;
@@ -740,11 +741,25 @@ void ArgosTxService::service_initiate() {
 	// generating while suspended. See the long note on that branch for why
 	// those wake-ups exist and why removing them is not a local change.
 	if (m_consecutive_device_errors >= DEVICE_ERROR_MAX_CONSECUTIVE) {
-		DEBUG_WARN("ArgosTxService::service_initiate: skipping TX — %u consecutive device errors, suspending until "
-		           "next session",
-		           m_consecutive_device_errors);
-		service_complete(nullptr, nullptr, false);  // complete without rescheduling
-		return;
+		std::time_t now = service_current_time();
+		if (DEVICE_ERROR_PROBE_PERIOD_S && now < m_device_error_suspend_until) {
+			DEBUG_WARN("ArgosTxService::service_initiate: skipping TX — %u consecutive device errors, "
+			           "suspended for another %llu s",
+			           m_consecutive_device_errors, (unsigned long long)(m_device_error_suspend_until - now));
+			// Reschedule rather than complete-without-reschedule. The latter
+			// leaves the safety-net timeout armed, and that timeout is what
+			// used to spin this guard once per service_next_timeout().
+			cancel_safety_timeout();
+			m_sched.set_earliest_schedule(m_device_error_suspend_until);
+			service_complete();
+			return;
+		}
+		// Deadline passed: step the counter back below the threshold so exactly
+		// one dispatch goes out as a probe. If it succeeds, react(TxComplete)
+		// clears the counter outright; if it fails, react() puts it back at MAX
+		// and arms a fresh deadline.
+		DEBUG_INFO("ArgosTxService::service_initiate: suspension elapsed — probing with one TX");
+		m_consecutive_device_errors = DEVICE_ERROR_MAX_CONSECUTIVE - 1;
 	}
 
 	// The device cannot transmit and receive at the same time. Firing a TX now
@@ -1002,6 +1017,16 @@ void ArgosTxService::notify_peer_event(ServiceEvent &e) {
 			DEBUG_INFO("ArgosTxService: clearing %u-error suspension on new GPS session — fresh TX opportunity",
 			           m_consecutive_device_errors);
 			m_consecutive_device_errors = 0;
+			m_device_error_suspend_until = 0;
+			// Clearing the counter is not enough on its own. A suspension parks
+			// the service on a probe deadline up to DEVICE_ERROR_PROBE_PERIOD_S
+			// out, and that floor outlives the counter: without dropping it and
+			// rescheduling here, the beacon would sit out the rest of the probe
+			// period with a fresh fix in hand. Scoped to the error case on
+			// purpose -- an unconditional reschedule on every GPS log would
+			// change the cadence of every mode.
+			m_sched.set_earliest_schedule(service_current_time());
+			service_reschedule();
 		}
 
 		// First-message gate: a real GPS position fix is what corrects the RTC,
@@ -1130,6 +1155,11 @@ void ArgosTxService::notify_peer_event(ServiceEvent &e) {
 				DEBUG_INFO("ArgosTxService: clearing %u-error suspension on surface event — fresh session",
 				           m_consecutive_device_errors);
 				m_consecutive_device_errors = 0;
+				m_device_error_suspend_until = 0;
+				// No reschedule needed here, unlike the GNSS branch: the
+				// earliest-TX floor is overwritten with dry_time_before_tx a
+				// few lines below, and Service::notify_underwater_state(false)
+				// reschedules us through service_is_triggered_on_surfaced().
 			}
 			ArgosConfig argos_config;
 			configuration_store->get_argos_configuration(argos_config);
@@ -2510,40 +2540,34 @@ void ArgosTxService::react(KineisEventDeviceError const &) {
 
 	if (service_cancel()) {
 		if (m_consecutive_device_errors >= DEVICE_ERROR_MAX_CONSECUTIVE) {
-			// Max errors reached: stop transmitting. The counter is cleared
-			// (and TX resumes) on a new GPS session (notify_peer_event GNSS
-			// branch), a surface event (UW branch), a successful TX, or a
-			// reboot (service_init). The GPS-session clear is what lets a land
-			// tracker recover from a transient fault without a power-cycle --
-			// the 2026-06-30 field case, where a KIM2 brown-out cost 6.5 h.
+			// Max errors reached: stop transmitting, but on a deadline rather
+			// than on the arrival of an outside event. Four things end it --
+			// the probe below, a new GPS session (notify_peer_event GNSS
+			// branch), a surface event (UW branch), or a reboot -- and only
+			// the first exists on a land tracker that has GNSS turned off.
+			// The 2026-06-30 field case, a KIM2 brown-out that cost 6.5 h of
+			// silence, is what the GPS-session clear was written for; the
+			// deadline is what covers the configurations it cannot reach.
 			//
-			// Read what this does NOT do, because the shape suggests it: it
-			// does not park the service. service_complete(..., false) skips
-			// reschedule(), and reschedule() is the only caller of
-			// deschedule() -- the one place that cancels the safety-net
-			// timeout armed by run_scheduled_task() just before us. That
-			// timeout therefore survives, fires service_next_timeout() later,
-			// runs service_cancel() and calls reschedule() itself, at zero
-			// delay; service_initiate() then hits its own copy of this guard,
-			// skips, and completes without rescheduling again -- rearming the
-			// timeout. So a suspended service wakes, logs and skips forever,
-			// roughly once per timeout, and each pass costs a DEBUG_WARN (an
-			// LFS commit on the device). It is not the battery saving the
-			// wording implies.
-			//
-			// That loop is also what makes the recovery above actually work:
-			// `if (!service_is_scheduled()) service_reschedule()` in the GNSS
-			// branch cannot fire here, because m_last_schedule is only reset
-			// by deschedule(). What resumes TX is the next loop pass finding
-			// the counter cleared. Cancelling the timeout to silence the loop
-			// would therefore make this suspension permanent on a land
-			// tracker. Replace it with an explicit probe deadline first, the
-			// way LoRaTxService does it (DEVICE_ERROR_PROBE_PERIOD_S).
-			// Pinned by ArgosTxService/DeviceErrorAtThresholdKeepsWaking...
-			// and .../DeviceErrorSuspensionIsClearedByANewGpsSession.
-			DEBUG_ERROR("ArgosTxService: %u consecutive device errors — suspending TX until next GPS session",
-			            m_consecutive_device_errors);
-			service_complete(nullptr, nullptr, false);  // no reschedule
+			// service_complete() WITH a reschedule, and an explicit
+			// cancel_safety_timeout(), are both load-bearing. Completing
+			// without a reschedule skips deschedule(), the only path that
+			// cancels the safety-net timeout armed just before
+			// service_initiate(); the timeout then outlived the suspension,
+			// fired, rescheduled at zero delay, hit the guard in
+			// service_initiate() and rearmed itself -- a wake/log/skip loop
+			// once per service_next_timeout() that transmitted nothing and
+			// cost an LFS commit per pass.
+			m_device_error_suspend_until = service_current_time() + (std::time_t)DEVICE_ERROR_PROBE_PERIOD_S;
+			DEBUG_ERROR("ArgosTxService: %u consecutive device errors — suspending TX for %u s, then one probe "
+			            "(a GPS session or a surface event clears it sooner)",
+			            m_consecutive_device_errors, DEVICE_ERROR_PROBE_PERIOD_S);
+			// Sleep on the deadline instead of completing without a reschedule:
+			// see the note on DEVICE_ERROR_PROBE_PERIOD_S for what the latter
+			// did to the safety-net timeout.
+			cancel_safety_timeout();
+			m_sched.set_earliest_schedule(m_device_error_suspend_until);
+			service_complete();
 		} else {
 			// Exponential backoff: 1 min, 2 min, 4 min... saturating at
 			// DEVICE_ERROR_BACKOFF_MAX_MS (10 min).

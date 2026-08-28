@@ -143,6 +143,16 @@ if(NOT DEFINED LORA_TX_ERROR_SUSPEND_S)
     set(LORA_TX_ERROR_SUSPEND_S 3600)
 endif()
 message(STATUS "LoRa TX error suspend: ${LORA_TX_ERROR_SUSPEND_S} s (0 = no suspension, backoff only)")
+
+# ARGOS_TX_ERROR_SUSPEND_S: the same knob for ArgosTxService, which gained the
+# probe deadline after its suspension turned out not to suspend — it completed
+# without a reschedule, which left the safety-net timeout armed and spun the
+# guard once per timeout forever. Same meaning and same default as the LoRa one
+# above: 0 leaves only the capped backoff, which is what a bench session wants.
+if(NOT DEFINED ARGOS_TX_ERROR_SUSPEND_S)
+    set(ARGOS_TX_ERROR_SUSPEND_S 3600)
+endif()
+message(STATUS "Argos TX error suspend: ${ARGOS_TX_ERROR_SUSPEND_S} s (0 = no suspension, backoff only)")
 #
 # LORA_POWER_OFF_UNDERWATER: when ON, the LoRa service cuts the module's power
 #   rail (SAT_PWR_EN → 0 V) on every dive event, going from ~1.7 µA (Stop2
@@ -766,6 +776,7 @@ target_compile_definitions(${TARGET_NAME} PRIVATE
     $<$<BOOL:${LORA_RAK3172_ENABLED}>:LORA_RAK3172=1>
     $<$<BOOL:${LORA_RAK3172_ENABLED}>:LORA_DCS_ENABLE=${LORA_DCS_ENABLE_VAL}>
     $<$<BOOL:${LORA_RAK3172_ENABLED}>:LORA_TX_ERROR_SUSPEND_S=${LORA_TX_ERROR_SUSPEND_S}>
+    ARGOS_TX_ERROR_SUSPEND_S=${ARGOS_TX_ERROR_SUSPEND_S}
     $<$<BOOL:${LORA_RAK3172_ENABLED}>:LORA_POWER_OFF_UNDERWATER=${LORA_POWER_OFF_UNDERWATER_VAL}>
     # Battery monitor type defines
     $<$<STREQUAL:${BATTERY_MONITOR_TYPE},ANALOG>:BATTERY_MONITOR_ANALOG>
