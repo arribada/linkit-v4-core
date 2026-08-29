@@ -100,14 +100,29 @@ unsigned int LoRaTxService::service_next_schedule_in_ms() {
 		return Service::SCHEDULE_DISABLED;
 	}
 
-	// Wait for GNSS time to be known before scheduling
-	if (argos_config.gnss_en && !service_is_time_known()) {
-		DEBUG_TRACE("LoRaTxService::service_next_schedule_in_ms: waiting for GNSS time");
-		return Service::SCHEDULE_DISABLED;
+	// The first-message lock is gone, as it went on the Argos side in 2026-08.
+	//
+	// It held back EVERY transmission -- presence heartbeat included -- for as
+	// long as no fix had set the clock. A tag whose receiver was broken or whose
+	// sky was blocked therefore vanished from the network entirely: no position,
+	// and no sign of life either. Losing the position is the receiver's fault;
+	// losing the beacon as well is ours.
+	//
+	// One nuance LoRa needs and Argos did not. Argos kept its time-sync burst
+	// conditional because that burst CARRIES the time; LoRa has no equivalent,
+	// so there is nothing to hold back on those grounds. What it does have is a
+	// depth pile whose entries carry the instant they were taken. So with the
+	// clock still unset, prefer the status heartbeat: build_status_packet is a
+	// 14-bit header -- packet type, flags, battery -- with no timestamp in it at
+	// all, and is therefore correct on any clock.
+	const bool clock_unset = argos_config.gnss_en && !service_is_time_known();
+	if (clock_unset) {
+		DEBUG_INFO("LoRaTxService: clock not set yet — sending the status heartbeat instead of holding TX back "
+		           "(depth-pile entries carry their own timestamps and are kept for later).");
 	}
 
 	// If depth pile has eligible entries, schedule GPS or sensor burst
-	if (m_depth_pile_manager.eligible()) {
+	if (!clock_unset && m_depth_pile_manager.eligible()) {
 		if (argos_config.sensor_tx_enable) {
 			m_scheduled_task = [this]() { process_sensor_burst(); };
 		} else {
