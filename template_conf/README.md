@@ -102,6 +102,17 @@ Regenerate the mirror after a PyLinkit change:
 python3 tools/gen_pylinkit_map.py /path/to/pylinkit-v4 > tools/pylinkit_map.py
 ```
 
+### Checking it automatically
+
+`tools/hooks/pre-commit` runs the checker whenever a commit touches
+`template_conf/`, `dte_params.cpp` or the mirror — the three things that can
+put a template out of step. Git does not version its own hooks, so install it
+once per clone:
+
+```bash
+cp tools/hooks/pre-commit .git/hooks/ && chmod +x .git/hooks/pre-commit
+```
+
 ## Two rules for whoever writes a new one
 
 1. **Run the checker.** This is not theoretical. The two files that used to

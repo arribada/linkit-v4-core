@@ -1,0 +1,35 @@
+#!/bin/bash
+# Pre-commit hook: build only, show last test results
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+BUILD_DIR="$REPO_ROOT/tests/build"
+TEST_REPORT="$BUILD_DIR/last_test_report.txt"
+
+echo "=== Pre-commit: Building tests ==="
+BUILD_OUTPUT=$(ninja -C "$BUILD_DIR" TrackerTests 2>&1)
+BUILD_RC=$?
+echo "$BUILD_OUTPUT" | tail -5
+if [ $BUILD_RC -ne 0 ]; then
+    echo "ERROR: Build failed. Commit aborted."
+    exit 1
+fi
+
+if [ -f "$TEST_REPORT" ]; then
+    echo "=== Last test run ==="
+    cat "$TEST_REPORT"
+else
+    echo "=== No test report found. Run: cd tests/build && ./TrackerTests ==="
+fi
+
+# Templates: they are pushed to sealed devices, and a drifted one is only
+# discovered in the field. Cheap enough to run every time; it needs no
+# hardware. PYLINKIT, when set, lets it use PyLinkit's own encoder.
+if git diff --cached --name-only | grep -qE '^(template_conf/|core/protocol/dte_params\.cpp|tools/pylinkit_map\.py)'; then
+    echo "=== Pre-commit: Checking deployment templates ==="
+    if ! python3 "$REPO_ROOT/tools/check_template_conf.py"; then
+        echo "ERROR: a template no longer matches the parameter table. Commit aborted."
+        exit 1
+    fi
+fi
+
+echo "=== Pre-commit: Build OK ==="
