@@ -6829,3 +6829,186 @@ def c_premier_message_apres_boot(r, case):
 CASES_V29.append(dict(id='MOD-06', risque='BLOQUANT',
                       titre='Le premier message apres demarrage est dimensionne juste',
                       fn=c_premier_message_apres_boot))
+
+
+# =====================================================================
+#  Vague 32 — BLIND, extinction, et les commandes DTE encore decouvertes
+# =====================================================================
+
+def c_blind_charge_dans_le_module(r, case):
+    """BLIND: le module recoit bien la config de rafale et l annonce.
+
+    BLIND confie la redondance au module: AT+KMAC=2 lui passe {retx_nb,
+    nb_parallel=1, retx_period_s, per_offset}, et il repete tout seul. Le
+    firmware ne voit alors qu un seul +TX, a la FIN de la rafale — c est
+    pourquoi le timeout de securite est allonge de retx_nb * retx_period_s.
+
+    Si AT+KMAC=2 est refuse le firmware retombe en BASIC et le DIT: la balise
+    emet toujours, mais une seule fois par cycle. Le silence serait pire.
+    """
+    b = r.b
+    N, P = 3, 60
+    try:
+        _config_mode(b, 2, GNSS_EN=0, TR_NOM=60, ARGOS_BLIND_EN=1,
+                     ARGOS_BLIND_RETX_NB=N, ARGOS_BLIND_RETX_PERIOD_S=P)
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    mk = b.mark()
+    vues = _compter_trace(b, [r'BLIND loaded', r'BLIND \(AT\+KMAC=2\) rejected',
+                              r'BLIND — TX window', r'TX SUCCESS'], 150, depuis=mk)
+    try:
+        b.enter_config(); b.write_params({'ARGOS_MODE': 0, 'ARGOS_BLIND_EN': 0}); b.exit_config()
+    except Exception:
+        pass
+    trace = '\n'.join(vues[:6])
+    charge = [l for l in vues if 'BLIND loaded' in l]
+    refus = [l for l in vues if 'rejected' in l]
+    if refus and not charge:
+        return r.record(case, 'SKIP',
+                        'le module refuse AT+KMAC=2 (BLIND non supporte par ce firmware '
+                        'KIM2) et le firmware retombe en BASIC en le disant — pas de '
+                        'silence, mais le mode ne peut pas etre valide ici', trace)
+    if not charge:
+        return r.record(case, 'ERROR', 'ni chargement ni refus BLIND observe en 2.5 min', trace)
+    # Les valeurs annoncees doivent etre CELLES qu on a posees.
+    import re as _re
+    m = _re.search(r'retx_nb=(\d+) period=(\d+)s', charge[0])
+    if not m:
+        return r.record(case, 'FAIL', f'trace BLIND illisible: {charge[0][-70:]}', trace)
+    if (int(m.group(1)), int(m.group(2))) != (N, P):
+        return r.record(case, 'FAIL',
+                        f'BLIND charge avec retx_nb={m.group(1)} period={m.group(2)} '
+                        f'au lieu de {N}/{P}', trace)
+    r.record(case, 'PASS', f'BLIND charge dans le module avec retx_nb={N} period={P}s', trace)
+
+
+def c_blind_exclu_de_la_salve(r, case):
+    """BLIND doit etre NEUTRALISE en SURFACING_BURST et en DOPPLER.
+
+    Ces modes font deja leur propre cascade de repetitions. Y ajouter une
+    rafale detenue par le module ferait emettre DEUX fois chaque message —
+    budget satellite double, et une balise qui parle par-dessus elle-meme.
+    get_argos_configuration() efface blind_en pour ces deux modes; le cas
+    verifie que le module ne recoit alors AUCUNE config de rafale.
+    """
+    b = r.b
+    try:
+        _config_mode(b, 5, GNSS_EN=0, TR_NOM=60, ARGOS_BLIND_EN=1,
+                     ARGOS_BLIND_RETX_NB=3, ARGOS_BLIND_RETX_PERIOD_S=60,
+                     UNDERWATER_EN=0)
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    mk = b.mark()
+    vues = _compter_trace(b, [r'BLIND loaded', r'BLIND — TX window', r'TX SUCCESS'],
+                          120, depuis=mk)
+    try:
+        b.enter_config(); b.write_params({'ARGOS_MODE': 0, 'ARGOS_BLIND_EN': 0}); b.exit_config()
+    except Exception:
+        pass
+    trace = '\n'.join(vues[:6])
+    if [l for l in vues if 'BLIND loaded' in l or 'BLIND — TX window' in l]:
+        return r.record(case, 'FAIL',
+                        'BLIND est charge alors que le mode est SURFACING_BURST: chaque '
+                        'message partirait deux fois', trace)
+    r.record(case, 'PASS',
+             'BLIND correctement neutralise en SURFACING_BURST (aucune rafale confiee '
+             'au module)', trace)
+
+
+def c_budget_session_ignore_sur_kim(r, case):
+    """SHUTDOWN_NTIME_SAT est accepte sur KIM2 mais n y eteint RIEN — et le dit.
+
+    Le parametre n a de sens que sur RSPB, ou le TPL5111 coupe l alimentation a
+    chaque cycle: "session" y vaut un cycle et le compteur repart au boot
+    suivant. Sur une carte qui reste alimentee, m_session_tx_count n est remis a
+    zero que dans service_init — le plafond deviendrait donc un plafond A VIE et
+    tuerait le deploiement (a TR_NOM=60 s, un budget de 100 tue la balise en
+    100 minutes).
+
+    Le firmware l ignore donc ici, et l annonce UNE fois. Ce cas verifie les
+    deux moitiés: l avertissement existe, ET l emission continue au-dela du
+    budget. Verifier seulement l avertissement laisserait passer une balise qui
+    se tait quand meme.
+    """
+    b = r.b
+    budget = 2
+    try:
+        _config_mode(b, 4, GNSS_EN=0, TR_NOM=30, SHUTDOWN_NTIME_SAT=budget,
+                     SURFACING_BURST_MAX_MSG=0)
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    mk = b.mark()
+    vues = _compter_trace(b, [r'TX SUCCESS', r'session TX budget reached'], 210, depuis=mk)
+    try:
+        b.enter_config(); b.write_params({'ARGOS_MODE': 0, 'SHUTDOWN_NTIME_SAT': 0}); b.exit_config()
+    except Exception:
+        pass
+    emissions = [l for l in vues if 'TX SUCCESS' in l]
+    avert = [l for l in vues if 'session TX budget reached' in l]
+    trace = f'{len(emissions)} emissions, {len(avert)} avertissement(s)\n' + '\n'.join(vues[:8])
+    if len(emissions) <= budget:
+        return r.record(case, 'ERROR',
+                        f'seulement {len(emissions)} emission(s) pour un budget de {budget}: '
+                        'le depassement n a pas ete atteint, cas non concluant', trace)
+    if not avert:
+        return r.record(case, 'FAIL',
+                        f'{len(emissions)} emissions au-dela du budget de {budget}, mais AUCUN '
+                        'avertissement: le parametre est ignore en silence', trace)
+    if len(avert) > 1:
+        return r.record(case, 'FAIL',
+                        f'{len(avert)} avertissements: le message doit etre emis UNE fois, '
+                        'pas a chaque cycle', trace)
+    r.record(case, 'PASS',
+             f'budget de {budget} depasse ({len(emissions)} emissions), ignore avec un seul '
+             'avertissement — la balise ne se tait pas', trace)
+
+
+def _cas_commande_simple(cmd, charge, motif, quoi):
+    """Une commande DTE doit REPONDRE — pas se taire — et etre lisible."""
+    def cas(r, case):
+        b = r.b
+        if not _en_config(b):
+            return r.record(case, 'ERROR', 'mode configuration inaccessible')
+        try:
+            m = b.dte(cmd, charge, timeout=20.0)
+        except Exception as e:
+            return r.record(case, 'ERROR', f'{cmd} impossible: {type(e).__name__}: {e}')
+        finally:
+            try:
+                b.exit_config()
+            except Exception:
+                pass
+        if not m:
+            return r.record(case, 'FAIL',
+                            f'{cmd} sans reponse: le port se tait sur une commande bien '
+                            f'formee, ce qu un operateur ne distingue pas d une carte morte')
+        ligne = (m.string if hasattr(m, 'string') else '') or ''
+        if motif and not re.search(motif, ligne):
+            return r.record(case, 'FAIL', f'{cmd} repond hors format: {ligne[:80]}', ligne[:200])
+        r.record(case, 'PASS', f'{cmd} ({quoi}) repond: {ligne[:70]}', ligne[:200])
+    return cas
+
+
+CASES_V32 = [
+    dict(id='BLIND-01', risque='MAJEUR',
+         titre='BLIND: la rafale est confiee au module avec les bonnes valeurs',
+         fn=c_blind_charge_dans_le_module),
+    dict(id='BLIND-02', risque='BLOQUANT',
+         titre='BLIND est neutralise en SURFACING_BURST (sinon double emission)',
+         fn=c_blind_exclu_de_la_salve),
+    dict(id='SHUT-01', risque='BLOQUANT',
+         titre='SHUTDOWN_NTIME_SAT est ignore sur KIM2, et le dit une fois',
+         fn=c_budget_session_ignore_sur_kim),
+    # Les quatre commandes DTE qui n etaient citees nulle part dans la campagne.
+    # On n en teste que la REPONSE: SWSCAL et SWSTST demandent une electrode
+    # qu on mouille a la main, GNSSBCKP immobilise le rail GNSS, et SMDDFU n a
+    # que son action VERSION de disponible hors SMD.
+    dict(id='CMD-40', risque='MAJEUR', titre='SWSTST repond (mode test du detecteur d eau)',
+         fn=_cas_commande_simple('SWSTST', '1', r'\$[ON];SWSTST', 'demarrage du mode test')),
+    dict(id='CMD-41', risque='MAJEUR', titre='SWSCAL repond (calibration guidee)',
+         fn=_cas_commande_simple('SWSCAL', '1', r'\$[ON];SWSCAL', 'annulation de calibration')),
+    dict(id='CMD-42', risque='MAJEUR', titre='GNSSBCKP repond (charge de la pile de sauvegarde)',
+         fn=_cas_commande_simple('GNSSBCKP', '0', r'\$[ON];GNSSBCKP', 'abandon, duree 0')),
+    dict(id='CMD-43', risque='MAJEUR', titre='SMDDFU VERSION repond sur un build KIM2',
+         fn=_cas_commande_simple('SMDDFU', '5', r'\$[ON];SMDDFU', 'action VERSION')),
+]
