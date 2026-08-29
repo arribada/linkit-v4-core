@@ -132,7 +132,18 @@ def to_wire(key, value, live=None, nom=None):
         try:
             return _num(live.encode(nom, value)), None
         except Exception as e:
-            return None, f"PyLinkit refuses {value!r}: {e}"
+            # A bare KeyError prints only the offending value, which tells the
+            # reader nothing about what WAS acceptable. Fill that in from the
+            # mirror's table for the same type.
+            detail = str(e) or type(e).__name__
+            coded = PL.CODED.get(typ)
+            if coded:
+                offert = sorted(v for v in coded[1] if v != -1)
+                unite = "minutes" if coded[0] == "minutes" else "one of"
+                detail = f"{detail} — takes {unite} {offert}"
+            elif typ in PL.TRANSFORMING:
+                detail = f"{detail} — takes {PL.TRANSFORMING[typ]}"
+            return None, f"PyLinkit refuses {value!r}: {detail}"
     if typ in PL.TRANSFORMING:
         # No table to check against offline, and guessing would be worse than
         # saying so: these codecs rewrite the value. Not a failure of the FILE
