@@ -182,7 +182,8 @@ void ArgosTxService::service_init() {
 			DEBUG_INFO("ArgosTxService: BLIND active — retx_nb=%u period=%u s%s", argos_config.blind_retx_nb,
 			           argos_config.blind_retx_period_s,
 			           argos_config.mode == BaseArgosMode::DOPPLER
-			               ? " (aligned on SURFACING_BURST_MAX_S, not ARGOS_BLIND_RETX_PERIOD_S)"
+			               ? " (aligned on SURFACING_BURST_MAX_S, not ARGOS_BLIND_RETX_PERIOD_S; the "
+			                 "Doppler sequence uses that same FIXED interval instead of ramping)"
 			               : "");
 		}
 	}
@@ -408,6 +409,31 @@ ScheduleDecision ArgosTxService::service_next_schedule() {
 /// Split out of service_next_schedule_in_ms(), which tested argos_config.mode
 /// nine times in 489 lines. The gates it runs first -- cooldown, rate limit,
 /// prepass, critical battery, certification -- are NOT repeated here.
+/// @brief Spacing before Doppler message @p msg_index (1-based) of a sequence.
+///
+/// Two shapes, and which one applies is decided by BLIND.
+///
+/// WITHOUT BLIND the sequence is PROGRESSIVE: surfacing_burst_init_s, then one
+/// surfacing_burst_step_s more each message, capped at surfacing_burst_max_s.
+/// Messages start close together — the animal has just surfaced and may dive
+/// again at any moment — and space out as the surfacing lasts.
+///
+/// WITH BLIND the spacing is FIXED at surfacing_burst_max_s for every message,
+/// including the first. The module repeats each message at a constant period
+/// and only reports the completing +TX at the end of its burst; a ramping nRF
+/// sequence would drift against that constant period, and the two would
+/// interleave differently at every message of the sequence. A fixed interval on
+/// both sides is what keeps them aligned — and it is the same value handed to
+/// the module (see ConfigurationStore::get_argos_configuration, which also
+/// refuses BLIND outright when that value is below the module's floor).
+unsigned int ArgosTxService::doppler_interval_s(const ArgosConfig &argos_config, unsigned int msg_index) {
+	if (argos_config.blind_en) return argos_config.surfacing_burst_max_s;
+	unsigned int interval_s =
+	    argos_config.surfacing_burst_init_s + (msg_index - 1) * argos_config.surfacing_burst_step_s;
+	if (interval_s > argos_config.surfacing_burst_max_s) interval_s = argos_config.surfacing_burst_max_s;
+	return interval_s;
+}
+
 ScheduleDecision ArgosTxService::schedule_doppler(ArgosConfig &argos_config, std::time_t now) {
 	// DOPPLER burst pattern (2026-05): sequence of up to
 	// SURFACING_BURST_MAX_MSG messages with progressive spacing
@@ -477,7 +503,7 @@ ScheduleDecision ArgosTxService::schedule_doppler(ArgosConfig &argos_config, std
 	// Within sequence. count == 0 = first msg, immediate (spacing-guarded).
 	if (m_doppler_seq_count == 0) {
 		DEBUG_TRACE("ArgosTxService::DOPPLER: msg #1 (immediate)");
-		unsigned int delay_ms = apply_spacing_guard(0, argos_config.surfacing_burst_init_s, now);
+		unsigned int delay_ms = apply_spacing_guard(0, doppler_interval_s(argos_config, 1), now);
 		if (delay_ms == 0) m_sched.schedule_at(now);
 		return ScheduleDecision::run(delay_ms, "doppler #1");
 	}
@@ -491,10 +517,9 @@ ScheduleDecision ArgosTxService::schedule_doppler(ArgosConfig &argos_config, std
 	// back. The strike counter still climbs and the suspension in
 	// service_initiate() still stops a wedged radio -- what is skipped is the
 	// spacing between messages of one sequence, which is the mode's own cadence.
-	unsigned int interval_s =
-	    argos_config.surfacing_burst_init_s + (m_doppler_seq_count - 1) * argos_config.surfacing_burst_step_s;
-	if (interval_s > argos_config.surfacing_burst_max_s) interval_s = argos_config.surfacing_burst_max_s;
-	DEBUG_TRACE("ArgosTxService::DOPPLER: msg #%u in %u s", m_doppler_seq_count + 1, interval_s);
+	unsigned int interval_s = doppler_interval_s(argos_config, m_doppler_seq_count + 1);
+	DEBUG_TRACE("ArgosTxService::DOPPLER: msg #%u in %u s%s", m_doppler_seq_count + 1, interval_s,
+	            argos_config.blind_en ? " (fixed, BLIND)" : "");
 	m_sched.schedule_at(now + (std::time_t)interval_s);
 	return ScheduleDecision::run(interval_s * 1000, "doppler sequence");
 }

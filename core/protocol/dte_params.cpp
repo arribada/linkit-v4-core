@@ -396,7 +396,11 @@ const BaseMap param_map[] = {
 	//
 	// Runtime flag `g_smdsat_use_safe_timings` is re-synced from this param at
 	// the next `SmdSat::send()` call (lazy sync).
-	{ "SMD_DEGRADED_MODE", "SMP00", BaseEncoding::UINT, 0U, 1U, {}, true, true },
+	// SMD ONLY. Nothing outside ports/.../smd_sat/ reads or writes it, and the
+	// SAFE timings it selects are SMD SPI timings — on a KIM2 build the value
+	// would be stored and consulted by no one. Not implemented elsewhere, so
+	// PARMR does not advertise it and PARMW refuses it there.
+	{ "SMD_DEGRADED_MODE", "SMP00", BaseEncoding::UINT, 0U, 1U, {}, (ARGOS_SMD == 1), true },
 	// [227] Cached SMD modulation (0=LDA2, 1=LDK, 2=VLDA4) — mirrors what's actually
 	// programmed in STM32WL flash. Written by SmdSat after the credentials-dirty path
 	// reads back the master RCONF. On boot, SmdSat loads this so the FIRST surface-burst

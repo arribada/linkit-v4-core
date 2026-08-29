@@ -4678,3 +4678,33 @@ TEST(ArgosTxService, CooldownIsIgnoredWithoutTheUnderwaterSensor) {
 	CHECK_TRUE(ServiceManager::is_in_cooldown(t));
 	CHECK_EQUAL(1800U, ServiceManager::get_cooldown_remaining_s(t));
 }
+
+TEST(ArgosTxService, DopplerSpacingIsFixedUnderBlind) {
+	/*
+	 * Without BLIND the Doppler sequence is progressive: it starts at
+	 * surfacing_burst_init_s and adds one step per message, capped at max_s.
+	 * The animal has just surfaced and may dive again at any moment, so the
+	 * first messages go out close together.
+	 *
+	 * With BLIND the module repeats each message at a CONSTANT period and only
+	 * reports the completing +TX at the end of its burst. A ramping nRF
+	 * sequence would drift against that constant period and interleave
+	 * differently at every message. Both sides use the same fixed interval --
+	 * surfacing_burst_max_s, which is also what is handed to the module.
+	 */
+	ArgosConfig cfg = {};
+	cfg.surfacing_burst_init_s = 5;
+	cfg.surfacing_burst_step_s = 10;
+	cfg.surfacing_burst_max_s = 90;
+
+	cfg.blind_en = false;
+	CHECK_EQUAL(5u, ArgosTxService::doppler_interval_s(cfg, 1));
+	CHECK_EQUAL(15u, ArgosTxService::doppler_interval_s(cfg, 2));
+	CHECK_EQUAL(25u, ArgosTxService::doppler_interval_s(cfg, 3));
+	/* capped */
+	CHECK_EQUAL(90u, ArgosTxService::doppler_interval_s(cfg, 20));
+
+	cfg.blind_en = true;
+	for (unsigned int i = 1; i <= 6; i++)
+		CHECK_EQUAL(90u, ArgosTxService::doppler_interval_s(cfg, i));
+}

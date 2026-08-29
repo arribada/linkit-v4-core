@@ -36,6 +36,12 @@ public:
 	std::string bench_dump_pile() { return m_depth_pile_manager.bench_dump_gps(); }
 #endif
 
+	/// @brief Spacing before Doppler message @p msg_index (1-based): progressive
+	/// normally, FIXED at surfacing_burst_max_s when BLIND owns the repetition.
+	/// Public because it is a pure function of the configuration and the rule it
+	/// encodes -- ramp versus fixed -- is worth asserting on directly.
+	static unsigned int doppler_interval_s(const ArgosConfig &argos_config, unsigned int msg_index);
+
 protected:
 	void service_init() override;
 	void service_term() override;

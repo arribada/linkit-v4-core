@@ -125,7 +125,9 @@ std::string DTEHandler::PARMW_REQ(int error_code, std::vector<ParamValue> &param
 
 	for (unsigned int i = 0; i < param_values.size(); i++) {
 		if (param_map[(int)param_values[i].param].is_writable) {
-			// SMP00 (SMD_DEGRADED_MODE): writable via DTE for manual clear
+			// SMP00 (SMD_DEGRADED_MODE): SMD-only, so the not-implemented check
+			// above already refuses it on any other build. What follows applies
+			// where the parameter DOES exist: writable via DTE for manual clear
 			// after a confirmed root-cause fix, but only value 0 is accepted.
 			// Value 1 (engage SAFE) must remain under the autofallback's
 			// exclusive control — the device is in the best position to
