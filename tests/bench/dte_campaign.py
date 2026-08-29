@@ -6312,6 +6312,70 @@ def _nom_cache(v):
     return {'0': 'LDA2', '1': 'LDK', '2': 'VLDA4'}.get(v, f'inconnu({v})')
 
 
+# =====================================================================
+#  Etat du module satellite — mesure UNE fois, sert a toute la passe
+# =====================================================================
+
+_RADIO_ETAT = None   # None = pas encore mesure; sinon (vivante: bool, raison: str)
+
+
+def radio_repond(b):
+    """Le module satellite repond-il ? Mesure une seule fois par passe.
+
+    SMDDFU action 5 (VERSION) est disponible sur TOUS les builds — SMD, KIM2 et
+    LoRa — et c est la facon la moins invasive de demander au module s il est
+    la. Il repond "$O;SMDDFU#...;<maj>,<min>,<rev>,<texte>", et le texte porte
+    "Failed to read version" quand le module ne repond pas.
+
+    POURQUOI CETTE MESURE EXISTE. Sur une carte dont la radio est muette, une
+    partie des cas ne peut pas conclure — non parce que le firmware faute, mais
+    parce que leur objet meme est une emission. Mesure du 2026-08-29: SURF-01
+    (sequence bornee par les emissions), RL-02 (quota du limiteur, alimente par
+    record_tx en fin d emission REUSSIE) et DUTY-02 (delai dependant de
+    LAST_TX, jamais rafraichi) sont tombes rouges tous les trois, avec trois
+    mecanismes differents et une seule cause. Un rouge qui n accuse rien coute
+    plus de temps qu il n en fait gagner.
+
+    Rend (vivante, raison). La raison est vide quand la radio repond.
+    """
+    global _RADIO_ETAT
+    if _RADIO_ETAT is not None:
+        return _RADIO_ETAT
+    try:
+        if not _en_config(b):
+            _RADIO_ETAT = (True, '')      # dans le doute, ne rien sauter
+            return _RADIO_ETAT
+        m = b.dte('SMDDFU', '5', timeout=40.0)
+        ligne = (m.string if m and hasattr(m, 'string') else '') or ''
+        try:
+            b.exit_config()
+        except Exception:
+            pass
+        if not m:
+            _RADIO_ETAT = (True, '')      # pas de reponse DTE: autre probleme, ne pas masquer
+        elif 'Failed' in ligne or 'failed' in ligne:
+            _RADIO_ETAT = (False, 'le module satellite ne repond pas (SMDDFU VERSION: '
+                                  '"Failed to read version")')
+        else:
+            _RADIO_ETAT = (True, '')
+    except Exception:
+        _RADIO_ETAT = (True, '')          # ne jamais transformer un incident en masquage
+    return _RADIO_ETAT
+
+
+def saute_si_radio_muette(r, case, quoi):
+    """Rend True et enregistre un SKIP motive si la radio ne repond pas.
+
+    A appeler au tout debut d un cas qui exige une emission. `quoi` dit ce que
+    le cas aurait eprouve, pour que le SKIP reste informatif.
+    """
+    vivante, raison = radio_repond(r.b)
+    if vivante:
+        return False
+    r.record(case, 'SKIP', f'{raison} — {quoi} ne peut pas etre eprouve sur cette carte')
+    return True
+
+
 def c_mode_long_multi(r, case):
     """Trois positions dans la pile: le format LONG doit etre choisi.
 
