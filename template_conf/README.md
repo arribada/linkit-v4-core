@@ -40,6 +40,12 @@ to the wrong spelling.
 | `ARGOS_DEPTH_PILE = 16` | `10` | the depth, not the code for it |
 | `GNSS_DELTATIME_ACQ = 10` | `1` | **minutes**, not the acquisition-period code |
 | `GNSS_DYN_MODEL = SEA` | `5` | names again |
+| `ARGOS_DUTY_CYCLE = FFFFFF` | `16777215` | read as **hexadecimal** |
+
+The duty cycle deserves its own line: PyLinkit encodes it with `int(value, 16)`,
+so `16777215` means `0x16777215` — 376926741, which the device refuses, leaving
+whatever mask was already in place. `FFFFFF` is all twenty-four hours;
+`000000` is a mute beacon.
 
 `GNSS_FASTLOC_MODE` and `GNSS_CLOUDLOCATE_FORMAT` are the exception: PyLinkit
 passes them through as plain integers, so they keep their numeric values.
@@ -73,6 +79,17 @@ refused by the device. The checker closes both gaps — it reads
 - keys that only exist behind a build flag (informational);
 - drift between `tools/pylinkit_map.py`, the firmware, and — when `PYLINKIT`
   points at a checkout — that installation of PyLinkit.
+
+Set `PYLINKIT` whenever you can:
+
+```bash
+PYLINKIT=/path/to/pylinkit-v4 python3 tools/check_template_conf.py
+```
+
+Several codecs *transform* the value rather than look it up, and only the real
+encoder can be trusted with those — the duty cycle above is exactly such a
+case. Without `PYLINKIT` the checker says which lines it could not verify
+instead of guessing at them.
 
 Regenerate the mirror after a PyLinkit change:
 

@@ -545,3 +545,16 @@ CODED = {
     'SENSORTXENABLEMODE': ('index', ['OFF', 'ONESHOT', 'MEAN', 'MEDIAN']),
     'ZONETYPE': ('index', [-1, 'CIRCLE']),
 }
+
+# Codecs that transform the value rather than look it up in a table.
+# type -> what the human value means
+TRANSFORMING = {
+    'ARGOSDUTYCYLE': 'hex string, e.g. FFFFFF for all 24 hours',
+    'ARGOSFREQ': 'MHz, scaled and offset',
+    'ARGOSPOWER': 'mW, mapped to an index',
+    'BASE64': 'binary',
+    'PINSAMPLEDELAYUS': 'microseconds, range-checked by PyLinkit',
+    'PRESSUREFULLSCALE': 'bar as a string',
+    'SAMPLINGPERIOD': 'seconds, range-checked by PyLinkit',
+    'UPPERCASETEXT': 'text, upper-cased',
+}

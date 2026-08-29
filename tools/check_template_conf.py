@@ -33,6 +33,32 @@ TABLE = os.path.join(ROOT, "core/protocol/dte_params.cpp")
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 import pylinkit_map as PL  # noqa: E402
 
+
+def load_live_encoder():
+    """PyLinkit's own encoder, when PYLINKIT points at a checkout.
+
+    Always preferred over the mirror: several codecs TRANSFORM the value
+    rather than look it up, and only the real one can be trusted with those.
+    ARGOSDUTYCYLE is the case that matters -- it takes a hex string, so
+    "16777215" silently means 0x16777215 and the device refuses it.
+    """
+    live = os.environ.get("PYLINKIT")
+    if not live:
+        return None
+    sys.path.insert(0, live)
+    try:
+        from pylinkit.protocol.dte_params import DTEParamMap
+    except Exception as e:
+        print(f"note: PYLINKIT={live} could not be imported ({e}); using the mirror")
+        return None
+    return DTEParamMap
+
+class _Unverifiable(str):
+    """Marker: this line needs the real encoder, it is not an error."""
+
+
+UNVERIFIABLE = _Unverifiable("needs PyLinkit's own encoder")
+
 ENTRY = re.compile(
     r'\{\s*"([A-Z0-9_]+)"\s*,\s*"([A-Z]{2,3}[0-9]{2})"\s*,\s*BaseEncoding::(\w+)\s*,'
     r'\s*(.+?)\s*,\s*(.+?)\s*,\s*\{(.*?)\}\s*,\s*(.+?)\s*,\s*(\w+)\s*\}',
@@ -96,12 +122,22 @@ def check_mirror(fw):
     return problems
 
 
-def to_wire(key, value):
+def to_wire(key, value, live=None, nom=None):
     """Turn a template's human value into the wire value, or explain why not.
 
     Returns (wire_value, error). Exactly one of the two is None.
     """
     typ = PL.TYPES.get(key)
+    if live is not None:
+        try:
+            return _num(live.encode(nom, value)), None
+        except Exception as e:
+            return None, f"PyLinkit refuses {value!r}: {e}"
+    if typ in PL.TRANSFORMING:
+        # No table to check against offline, and guessing would be worse than
+        # saying so: these codecs rewrite the value. Not a failure of the FILE
+        # -- a limit of this run, reported as such.
+        return None, UNVERIFIABLE
     coded = PL.CODED.get(typ)
     if coded is None:
         if typ == "BOOLEAN":
@@ -138,8 +174,9 @@ def to_wire(key, value):
     return None, f"{value!r} is not one of {offert}"
 
 
-def check(path, fw):
+def check(path, fw, live=None):
     problems, gated, seen, n = [], [], set(), 0
+    non_verifies = []
     par_nom = {n_: k for k, n_ in PL.NAMES.items()}
     fw_par_nom = {v["fw_name"]: k for k, v in fw.items()}
 
@@ -171,7 +208,10 @@ def check(path, fw):
         if info["gate"]:
             gated.append((nom, key, info["gate"]))
 
-        wire, err = to_wire(key, val)
+        wire, err = to_wire(key, val, live, nom)
+        if isinstance(err, _Unverifiable):
+            non_verifies.append((nom, key, PL.TRANSFORMING[PL.TYPES[key]]))
+            continue
         if err:
             problems.append(f"{lineno}: {nom} ({key}): {err}")
             continue
@@ -191,11 +231,12 @@ def check(path, fw):
         lo, hi = info["min"], info["max"]
         if lo is not None and hi is not None and hi > lo and not (lo <= wire <= hi):
             problems.append(f"{lineno}: {nom} ({key}): {val} outside [{lo}, {hi}]")
-    return n, problems, gated
+    return n, problems, gated, non_verifies
 
 
 def main():
     fw = load_firmware()
+    live = load_live_encoder()
     rc = 0
     drift = check_mirror(fw)
     if drift:
@@ -209,7 +250,7 @@ def main():
         print("no template to check")
         return rc
     for f in files:
-        n, problems, gated = check(f, fw)
+        n, problems, gated, non_verifies = check(f, fw, live)
         rel = os.path.relpath(f, ROOT)
         if problems:
             rc = 1
@@ -218,11 +259,18 @@ def main():
                 print(f"       {p}")
         else:
             print(f"ok   {rel}  ({n} keys)")
+        if non_verifies:
+            print(f"       note: {len(non_verifies)} line(s) NOT verified — set PYLINKIT "
+                  f"to a checkout so the real encoder can check them:")
+            for nom, key, quoi in non_verifies:
+                print(f"         {nom} ({key}) takes {quoi}")
         if gated:
             print(f"       note: {len(gated)} key(s) behind a build flag —")
             for nom, key, gate in gated:
                 print(f"         {nom} ({key}) requires {gate}")
-    print(f"\n{len(fw)} parameters in the firmware table, {len(PL.NAMES)} known to PyLinkit")
+    source = "PyLinkit's own encoder" if live else "the mirror in tools/pylinkit_map.py"
+    print(f"\n{len(fw)} parameters in the firmware table, {len(PL.NAMES)} known to "
+          f"PyLinkit; values checked with {source}")
     return rc
 
 

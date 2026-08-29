@@ -16,6 +16,22 @@ import sys
 # DTEProtocol::decode_acquisition_period in the firmware.
 AQPERIOD_MINUTES = [0, 10, 15, 30, 60, 120, 180, 240, 360, 720, 1440, 1, 2, 5, 20, 45]
 
+# Codecs whose encode() is not a table lookup. They transform the value, so a
+# checker that treats them as plain numbers reads the wrong thing entirely --
+# ARGOSDUTYCYLE takes a HEX STRING, so "16777215" encodes to 376926741 and the
+# device refuses it. Listed here so the offline path knows what it can and
+# cannot verify; the live encoder is always preferred when PYLINKIT is set.
+TRANSFORMING = {
+    "ARGOSDUTYCYLE": "hex string, e.g. FFFFFF for all 24 hours",
+    "ARGOSFREQ": "MHz, scaled and offset",
+    "ARGOSPOWER": "mW, mapped to an index",
+    "PRESSUREFULLSCALE": "bar as a string",
+    "PINSAMPLEDELAYUS": "microseconds, range-checked by PyLinkit",
+    "SAMPLINGPERIOD": "seconds, range-checked by PyLinkit",
+    "UPPERCASETEXT": "text, upper-cased",
+    "BASE64": "binary",
+}
+
 
 def main():
     if len(sys.argv) != 2:
@@ -65,6 +81,11 @@ def main():
     for t in sorted(coded):
         kind, vals = coded[t]
         out(f'    {t!r}: ({kind!r}, {vals!r}),\n')
+    out('}\n\n')
+    out('# Codecs that transform the value rather than look it up in a table.\n')
+    out('# type -> what the human value means\nTRANSFORMING = {\n')
+    for t in sorted(TRANSFORMING):
+        out(f'    {t!r}: {TRANSFORMING[t]!r},\n')
     out('}\n')
 
 
