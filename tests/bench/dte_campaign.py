@@ -5171,13 +5171,21 @@ def c_erase_journal(r, case):
     # porte les traces dont les autres cas se servent.
     _dumpd_silence(b)
     avant, _, _, _ = _dumpd(b, 1, plafond=4)
-    m2 = b.dte('ERASE', '2', timeout=25.0)
+    # 120 s, pas 25: truncate() est SYNCHRONE et efface un journal d 1 Mo secteur
+    # par secteur sur la QSPI. A 300 ms d effacement par secteur dans le pire cas
+    # (voir le defaut IS25 de 2026-08), l ordre de grandeur est la minute. Le
+    # port ne repond pas pendant ce temps: ce n est pas une panne, mais c est
+    # une propriete qu il faut mesurer plutot que supposer, donc on chronometre.
+    t0 = time.time()
+    m2 = b.dte('ERASE', '2', timeout=120.0)
+    duree = time.time() - t0
     ligne = (m2.string if m2 and hasattr(m2, 'string') else '') or ''
     if not m2:
-        return r.record(case, 'ERROR', 'ERASE sans reponse sur un type valide')
+        return r.record(case, 'ERROR',
+                        f'ERASE sans reponse sur un type valide apres {duree:.0f} s')
     if m2.group(1) != 'O':
         return r.record(case, 'FAIL', f'ERASE refuse un type valide: {ligne[:70]}', ligne[:200])
-    r.record(case, 'PASS', 'type inconnu refuse, effacement accepte',
+    r.record(case, 'PASS', f'type inconnu refuse, effacement accepte en {duree:.1f} s',
              f'journal GNSS avant: {avant[:6]}')
 
 def c_ordonnanceur_complet(r, case):
