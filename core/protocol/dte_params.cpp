@@ -83,7 +83,7 @@ const BaseMap param_map[] = {
 	{ "GNSS_FIX_MODE", "GNP10", BaseEncoding::GNSSFIXMODE, 0U, 0U, {1U, 2U, 3U}, true, true },
 	{ "GNSS_DYN_MODEL", "GNP11", BaseEncoding::GNSSDYNMODEL, 0U, 0U, {0U, 2U, 3U, 4U, 5U, 6U, 7U, 8U, 9U, 10U}, true, true },
 	{ "GNSS_HACCFILT_EN", "GNP20", BaseEncoding::BOOLEAN, 0, 0, {}, true, true },
-	{ "GNSS_HACCFILT_THR", "GNP21", BaseEncoding::UINT, 0U, 0U, {}, true, true },
+	{ "GNSS_HACCFILT_THR", "GNP21", BaseEncoding::UINT, 0U, 100000U, {}, true, true },
 	{ "GNSS_MIN_NUM_FIXES", "GNP22", BaseEncoding::UINT, 1U, 0xFFFFFFFFU, {}, true, true },
 	{ "GNSS_COLD_START_RETRY_PERIOD", "GNP23", BaseEncoding::UINT, 1U, 0xFFFFFFFFU, {}, true, true },
 	{ "ARGOS_TIME_SYNC_BURST_EN", "ARP30", BaseEncoding::BOOLEAN, 0, 0, {}, true, true },
@@ -95,7 +95,7 @@ const BaseMap param_map[] = {
 	{ "ARGOS_RX_COUNTER", "ART10", BaseEncoding::UINT, 0U, 0U, {}, true, false },
 	{ "ARGOS_RX_TIME", "ART11", BaseEncoding::UINT, 0U, 0U, {}, true, false },
 	{ "GNSS_ASSISTNOW_EN", "GNP24", BaseEncoding::BOOLEAN, 0, 0, {}, true, true },
-	{ "LB_GNSS_HACCFILT_THR", "LBP10", BaseEncoding::UINT, 0U, 0U, {}, true, true },
+	{ "LB_GNSS_HACCFILT_THR", "LBP10", BaseEncoding::UINT, 0U, 100000U, {}, true, true },
 	{ "LB_NTRY_PER_MESSAGE", "LBP11", BaseEncoding::UINT, 0U, 86400U, {}, true, true },
 
 	//////////////////////////
@@ -118,7 +118,7 @@ const BaseMap param_map[] = {
 	{ "ZONE_ARGOS_NTRY_PER_MESSAGE", "ZOP13", BaseEncoding::UINT, 0U, 86400U, {}, true, true },
 	{ "ZONE_GNSS_DELTA_ARG_LOC_ARGOS_SECONDS", "ZOP14", BaseEncoding::AQPERIOD, 0, 0, { 0U, 1U, 2U, 3U, 4U, 5U, 6U, 7U, 8U, 9U, 10U, 11U, 12U, 13U, 14U, 15U }, true, true },
 	{ "ZONE_GNSS_HDOPFILT_THR", "ZOP15", BaseEncoding::UINT, 2U, 15U, {}, true, true },
-	{ "ZONE_GNSS_HACCFILT_THR", "ZOP16", BaseEncoding::UINT, 0U, 0U, {}, true, true },
+	{ "ZONE_GNSS_HACCFILT_THR", "ZOP16", BaseEncoding::UINT, 0U, 100000U, {}, true, true },
 	{ "ZONE_GNSS_ACQ_TIMEOUT", "ZOP17", BaseEncoding::UINT, 10U, 600U, {}, true, true },
 	{ "ZONE_CENTER_LONGITUDE", "ZOP18", BaseEncoding::FLOAT, -180.0, 180.0, {}, true, true },
 	{ "ZONE_CENTER_LATITUDE", "ZOP19", BaseEncoding::FLOAT, -90.0, 90.0, {}, true, true },

@@ -1007,7 +1007,15 @@ void M10QAsyncReceiver::react(const UBXCommsEventNavReport &n) {
 				    break;
 			    }
 
-			    if (m_nav_settings.hacc_filter_en && (m_nav_settings.hacc_filter_threshold * 1000) < nav.pvt.hAcc) {
+			    // 64-bit on purpose. hacc_filter_threshold is an unsigned int of
+			    // METRES and the comparison needs millimetres, so `* 1000`
+			    // overflowed above 4294967 m: a threshold of 4294968 wrapped to
+			    // 704 mm effective, and the receiver then rejected every real fix
+			    // while the operator believed he had disabled the filter. Nothing
+			    // was logged -- the beacon simply stopped reporting positions.
+			    // Same class as the rate-limiter `* 1000` fixed in 2026-08.
+			    if (m_nav_settings.hacc_filter_en &&
+			        ((uint64_t)m_nav_settings.hacc_filter_threshold * 1000u) < nav.pvt.hAcc) {
 				    // Fix exists but fails hAcc filter — store as degraded if best so far
 				    if (!m_has_degraded_pvt || nav.pvt.hAcc < m_degraded_pvt.hAcc) {
 					    m_degraded_pvt = { .iTOW = nav.pvt.iTow,
