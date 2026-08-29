@@ -5321,6 +5321,22 @@ def c_satvf_borne(r, case):
     de laxisme qui se paie en credit satellite.
     """
     b = r.b
+    # SATVF verifie les credentials satellite: sans eux il refuse, a juste
+    # titre. Sur une carte non provisionnee le cas ne peut donc pas eprouver
+    # ses bornes — mesure du 2026-08-30, RADIOCONF et SECKEY vides (seuls
+    # DECID/HEXID avaient survecu a une remise a zero de config), et les deux
+    # arguments VALIDES etaient refuses en $N;...;5.
+    try:
+        if not _en_config(b):
+            return r.record(case, 'ERROR', 'mode configuration inaccessible')
+        _, creds = b.read_params(['ARGOS_RADIOCONF'], timeout=12.0)
+        if len((creds.get('IDP14') or '').strip()) != 32:
+            return r.record(case, 'SKIP',
+                            'carte non provisionnee (ARGOS_RADIOCONF vide): SATVF refuse tout '
+                            'argument, y compris les valides — bornes ineprouvables ici')
+    except Exception as e:
+        return r.record(case, 'ERROR', f'lecture des credentials impossible: {type(e).__name__}: {e}')
+
     defauts = []
     for val in ('0', '1'):
         m = b.dte('SATVF', val, timeout=25.0)
