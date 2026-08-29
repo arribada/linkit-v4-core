@@ -85,10 +85,20 @@ bool MortalityService::service_is_enabled() {
 #endif
 }
 
-/// @brief Schedule daily evaluation (24h period).
-/// @return 24 hours in ms.
+/// @brief This service never schedules itself.
+///
+/// It runs entirely off peer events (the accelerometer and the underwater
+/// detector feed it; see notify_peer_event), so there is nothing periodic to
+/// arm. That is a configuration, not a condition — hence Off and not a hold:
+/// nothing is being waited for, so nothing should come back to re-check.
+ScheduleDecision MortalityService::service_next_schedule() {
+	return ScheduleDecision::off("event-driven");
+}
+
+/// @brief Legacy entry point, superseded by service_next_schedule().
+/// Still required while the base declares it pure — deliberately, so that a new
+/// service implementing neither cannot compile and be silently off for ever.
 unsigned int MortalityService::service_next_schedule_in_ms() {
-	// Event-driven only — no periodic scheduling
 	return SCHEDULE_DISABLED;
 }
 
