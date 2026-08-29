@@ -60,6 +60,19 @@ extern MortalityService *mortality_service;
 /// setting a mask mutes the tag, and nothing said so. The behaviour is
 /// deliberately unchanged -- an explicit mask is the operator's decision -- but
 /// the log now names the reason.
+/// @brief Turn a scheduler's answer into a decision.
+///
+/// ArgosTxScheduler::INVALID_SCHEDULE and Service::SCHEDULE_DISABLED are the
+/// same number, so "I could not compute a slot" and "I am switched off" used to
+/// be the same answer -- and the service layer treated both as permanent. That
+/// is the path the zero duty-cycle mask took all the way to a beacon that never
+/// transmitted again. A failed computation is a reason to look again later, not
+/// a reason to stop, so it becomes a bounded hold.
+static ScheduleDecision from_scheduler(unsigned int ms, const char *ran_why, const char *failed_why) {
+	if (ms == ArgosTxScheduler::INVALID_SCHEDULE) return ScheduleDecision::hold_for_event(600, failed_why);
+	return ScheduleDecision::run(ms, ran_why);
+}
+
 static unsigned int report_duty_cycle_schedule(unsigned int schedule, const ArgosConfig &cfg) {
 	if (schedule != ArgosTxScheduler::INVALID_SCHEDULE) return schedule;
 
@@ -228,7 +241,14 @@ bool ArgosTxService::service_is_enabled() {
 
 /// @brief Compute next TX schedule based on mode (cert/legacy/duty/prepass/surfacing).
 /// @return Delay in ms until next TX, or SCHEDULE_DISABLED if TX is off.
+/// @brief Legacy entry point, superseded by service_next_schedule().
+/// Still required while the base declares it pure — deliberately, so that a new
+/// service implementing neither cannot compile and be silently off for ever.
 unsigned int ArgosTxService::service_next_schedule_in_ms() {
+	return SCHEDULE_DISABLED;
+}
+
+ScheduleDecision ArgosTxService::service_next_schedule() {
 	ArgosConfig argos_config;
 	configuration_store->get_argos_configuration(argos_config);
 	std::time_t now = service_current_time();
@@ -243,8 +263,8 @@ unsigned int ArgosTxService::service_next_schedule_in_ms() {
 	// any reset that lands mid-cooldown. SWS re-emits state when cooldown
 	// expires and rewakes us via notify_underwater_state.
 	if (ServiceManager::is_in_cooldown(now)) {
-		DEBUG_TRACE("ArgosTxService::service_next_schedule_in_ms: cooldown active — SCHEDULE_DISABLED");
-		return Service::SCHEDULE_DISABLED;
+		return ScheduleDecision::hold_until(
+		    (uint32_t)(now + (std::time_t)ServiceManager::get_cooldown_remaining_s(now)), "surface-cycle cooldown");
 	}
 
 	// Rolling-window rate limit (Plan 1 step 2). Applies to ALL TX cycles
@@ -265,7 +285,7 @@ unsigned int ArgosTxService::service_next_schedule_in_ms() {
 			constexpr unsigned int MAX_RESCHEDULE_MS = 0xFFFFFFFEu;
 			unsigned int reschedule_ms =
 			    (reschedule_s > MAX_RESCHEDULE_MS / 1000u) ? MAX_RESCHEDULE_MS : reschedule_s * 1000u;
-			return reschedule_ms;
+			return ScheduleDecision::run(reschedule_ms, "rate limited");
 		}
 	}
 
@@ -316,7 +336,7 @@ unsigned int ArgosTxService::service_next_schedule_in_ms() {
 			DEBUG_INFO("ArgosTxService: CRITICAL battery SOC %u%% < %u%% - shutdown", current_soc, critical_level);
 			configuration_store->save_params();
 			PMU::powerdown();
-			return Service::SCHEDULE_DISABLED;
+			return ScheduleDecision::off("battery critical — powering down");
 		}
 	}
 
@@ -347,16 +367,15 @@ unsigned int ArgosTxService::service_next_schedule_in_ms() {
 		DEBUG_INFO("ArgosTxService: certification TX in %u ms (mode=%s, payload=%u chars)", period_ms,
 		           argos_modulation_to_string(argos_config.cert_tx_modulation),
 		           (unsigned)argos_config.cert_tx_payload.size());
-		return period_ms;
+		return ScheduleDecision::run(period_ms, "certification burst");
 	}
 
-	if (argos_config.mode == BaseArgosMode::OFF) return Service::SCHEDULE_DISABLED;
+	if (argos_config.mode == BaseArgosMode::OFF) return ScheduleDecision::off("ARGOS_MODE=OFF");
 	if (argos_config.mode == BaseArgosMode::DOPPLER) return schedule_doppler(argos_config, now);
 	if (argos_config.mode == BaseArgosMode::SURFACING_BURST) return schedule_surfacing_burst(argos_config, now);
 	if (!argos_config.gnss_en) return schedule_without_gnss(argos_config, now);
 	if (!service_is_time_known()) {
-		DEBUG_INFO("ArgosTxService: RTC time not known yet — TX disabled until first time fix");
-		return Service::SCHEDULE_DISABLED;
+		return ScheduleDecision::hold_for_event(600, "waiting for a fix to set the clock");
 	}
 	return schedule_with_gnss(argos_config, now);
 }
@@ -365,7 +384,7 @@ unsigned int ArgosTxService::service_next_schedule_in_ms() {
 /// Split out of service_next_schedule_in_ms(), which tested argos_config.mode
 /// nine times in 489 lines. The gates it runs first -- cooldown, rate limit,
 /// prepass, critical battery, certification -- are NOT repeated here.
-unsigned int ArgosTxService::schedule_doppler(ArgosConfig &argos_config, std::time_t now) {
+ScheduleDecision ArgosTxService::schedule_doppler(ArgosConfig &argos_config, std::time_t now) {
 	// DOPPLER burst pattern (2026-05): sequence of up to
 	// SURFACING_BURST_MAX_MSG messages with progressive spacing
 	// (surfacing_burst_init_s + (n-1)*step_s, capped at max_s). Between
@@ -394,7 +413,7 @@ unsigned int ArgosTxService::schedule_doppler(ArgosConfig &argos_config, std::ti
 		unsigned int remaining_s = (unsigned int)(m_doppler_pause_until_rtc - now);
 		DEBUG_TRACE("ArgosTxService::DOPPLER: in pause, %u s remaining", remaining_s);
 		m_sched.schedule_at(m_doppler_pause_until_rtc);
-		return remaining_s * 1000;
+		return ScheduleDecision::run(remaining_s * 1000, "doppler inter-sequence pause");
 	}
 
 	// This mode skips the backoff ladder on purpose (see the note further down),
@@ -407,7 +426,7 @@ unsigned int ArgosTxService::schedule_doppler(ArgosConfig &argos_config, std::ti
 	if (m_consecutive_device_errors >= DEVICE_ERROR_MAX_CONSECUTIVE) {
 		bool held = false;
 		unsigned int delay_ms = apply_device_error_hold(0, now, held);
-		if (held) return delay_ms;
+		if (held) return ScheduleDecision::run(delay_ms, "device-error hold");
 	}
 	m_doppler_pause_until_rtc = 0;
 
@@ -424,7 +443,7 @@ unsigned int ArgosTxService::schedule_doppler(ArgosConfig &argos_config, std::ti
 		if (inter_s > 0) {
 			m_doppler_pause_until_rtc = now + (std::time_t)inter_s;
 			m_sched.schedule_at(m_doppler_pause_until_rtc);
-			return inter_s * 1000;
+			return ScheduleDecision::run(inter_s * 1000, "doppler sequence done — pausing");
 		}
 		// inter_s == 0: chain straight into next sequence — fall
 		// through to the count==0 path below (which spacing-guards
@@ -436,7 +455,7 @@ unsigned int ArgosTxService::schedule_doppler(ArgosConfig &argos_config, std::ti
 		DEBUG_TRACE("ArgosTxService::DOPPLER: msg #1 (immediate)");
 		unsigned int delay_ms = apply_spacing_guard(0, argos_config.surfacing_burst_init_s, now);
 		if (delay_ms == 0) m_sched.schedule_at(now);
-		return delay_ms;
+		return ScheduleDecision::run(delay_ms, "doppler #1");
 	}
 
 	// Subsequent msg: progressive interval capped at max_s.
@@ -453,7 +472,7 @@ unsigned int ArgosTxService::schedule_doppler(ArgosConfig &argos_config, std::ti
 	if (interval_s > argos_config.surfacing_burst_max_s) interval_s = argos_config.surfacing_burst_max_s;
 	DEBUG_TRACE("ArgosTxService::DOPPLER: msg #%u in %u s", m_doppler_seq_count + 1, interval_s);
 	m_sched.schedule_at(now + (std::time_t)interval_s);
-	return interval_s * 1000;
+	return ScheduleDecision::run(interval_s * 1000, "doppler sequence");
 }
 
 /// @brief SURFACING_BURST: Doppler phase, then GNSS phase once a fix lands.
@@ -477,16 +496,17 @@ unsigned int ArgosTxService::schedule_doppler(ArgosConfig &argos_config, std::ti
 /// still honoured; this is the slow heartbeat underneath it. And it costs
 /// nothing while the animal is actually diving, because
 /// notify_underwater_state(true) deschedules the service outright.
-unsigned int ArgosTxService::schedule_surfacing_heartbeat(ArgosConfig &argos_config, std::time_t now) {
+ScheduleDecision ArgosTxService::schedule_surfacing_heartbeat(ArgosConfig &argos_config, std::time_t now) {
 	DEBUG_INFO("ArgosTxService: burst finished, waiting for the next surfacing — presence heartbeat at the nominal "
 	           "period meanwhile (not a fault).");
 	m_scheduled_task = [this]() { process_doppler_burst(); };
 	m_scheduled_mode =
 	    argos_config.adaptive_modulation ? adaptive_doppler_modulation() : resolve_non_adaptive_modulation();
-	return m_sched.schedule_legacy(argos_config, now);
+	return from_scheduler(m_sched.schedule_legacy(argos_config, now), "surfacing heartbeat",
+	                      "surfacing heartbeat: no slot computable");
 }
 
-unsigned int ArgosTxService::schedule_surfacing_burst(ArgosConfig &argos_config, std::time_t now) {
+ScheduleDecision ArgosTxService::schedule_surfacing_burst(ArgosConfig &argos_config, std::time_t now) {
 	// 2026-05-25 modulation fix: SURFACING_BURST was unconditionally
 	// hardcoded to LDA2, ignoring both `argos_config.adaptive_modulation`
 	// and `resolve_non_adaptive_modulation()` (which returns the user's
@@ -546,7 +566,7 @@ unsigned int ArgosTxService::schedule_surfacing_burst(ArgosConfig &argos_config,
 				unsigned int delay_ms = apply_spacing_guard(0, argos_config.surfacing_burst_init_s, now);
 				delay_ms = apply_device_error_hold(delay_ms, now, held);
 				if (delay_ms == 0) m_sched.schedule_at(now);
-				return delay_ms;
+				return ScheduleDecision::run(delay_ms, "surfacing burst: doppler #1");
 			}
 
 			// Progressive interval: init + (count-1) * step, capped at max
@@ -563,7 +583,7 @@ unsigned int ArgosTxService::schedule_surfacing_burst(ArgosConfig &argos_config,
 			// anchor here when it did not. `held` says so explicitly rather than
 			// inferring it from the returned value.
 			if (!held) m_sched.schedule_at(now + interval_s);
-			return delay_ms;
+			return ScheduleDecision::run(delay_ms, "surfacing burst: doppler");
 		}
 		// Promote branch fell through: continue to Phase 2 below.
 	}
@@ -571,8 +591,7 @@ unsigned int ArgosTxService::schedule_surfacing_burst(ArgosConfig &argos_config,
 	// Phase 2: GNSS fix available — switch to normal GNSS TX with tx_interval_s
 	if (m_has_gnss_fix_since_surfacing) {
 		if (!service_is_time_known()) {
-			DEBUG_TRACE("ArgosTxService::SURFACING_BURST: GNSS phase but RTC not set");
-			return Service::SCHEDULE_DISABLED;
+			return ScheduleDecision::hold_for_event(600, "surfacing burst: GNSS phase but the clock is not set");
 		}
 		if (m_depth_pile_manager.eligible() == 0) {
 			DEBUG_TRACE("ArgosTxService::SURFACING_BURST: GNSS phase but no eligible entries");
@@ -607,13 +626,14 @@ unsigned int ArgosTxService::schedule_surfacing_burst(ArgosConfig &argos_config,
 			bool held = false;
 			delay_ms = apply_device_error_hold(delay_ms, now, held);
 			if (delay_ms == 0) m_sched.schedule_at(now);
-			return delay_ms;
+			return ScheduleDecision::run(delay_ms, "surfacing burst: first GNSS TX");
 		}
 
 		// Demoted to TRACE: per Phase-2 ping. The "GNSS TX #1" INFO at burst
 		// promotion already marks the entry; per-ping interval is verbose.
 		DEBUG_TRACE("ArgosTxService::SURFACING_BURST: GNSS TX in %u s", argos_config.tx_interval_s);
-		return m_sched.schedule_legacy(argos_config, now);
+		return from_scheduler(m_sched.schedule_legacy(argos_config, now), "surfacing burst: GNSS phase",
+		                      "surfacing burst: no slot computable");
 	}
 
 	// Burst ended — wait for the next surfacing event.
@@ -628,15 +648,15 @@ unsigned int ArgosTxService::schedule_surfacing_burst(ArgosConfig &argos_config,
 
 	// Not yet surfaced (boot): send Doppler at legacy rate
 	m_scheduled_task = [this]() { process_doppler_burst(); };
-	return m_sched.schedule_legacy(argos_config, now);
-	return Service::SCHEDULE_DISABLED;
+	return from_scheduler(m_sched.schedule_legacy(argos_config, now), "not surfaced yet — legacy-rate doppler",
+	                      "not surfaced yet: no slot computable");
 }
 
 /// @brief GNSS_EN=0: only DUTY_CYCLE and LEGACY can schedule without a position.
 /// Split out of service_next_schedule_in_ms(), which tested argos_config.mode
 /// nine times in 489 lines. The gates it runs first -- cooldown, rate limit,
 /// prepass, critical battery, certification -- are NOT repeated here.
-unsigned int ArgosTxService::schedule_without_gnss(ArgosConfig &argos_config, std::time_t now) {
+ScheduleDecision ArgosTxService::schedule_without_gnss(ArgosConfig &argos_config, std::time_t now) {
 	// BaseGnssStrategy::REUSE_LAST (Plan 1 follow-up): no GPS power-on
 	// but the TX uses the most recent cached fix from the depth pile
 	// (peek without consume, age-checked vs GNSS_REUSE_FIX_MAX_AGE_S).
@@ -659,12 +679,14 @@ unsigned int ArgosTxService::schedule_without_gnss(ArgosConfig &argos_config, st
 	if (argos_config.mode == BaseArgosMode::DUTY_CYCLE) {
 		m_scheduled_mode =
 		    argos_config.adaptive_modulation ? adaptive_doppler_modulation() : resolve_non_adaptive_modulation();
-		return report_duty_cycle_schedule(m_sched.schedule_duty_cycle(argos_config, now), argos_config);
+		return from_scheduler(report_duty_cycle_schedule(m_sched.schedule_duty_cycle(argos_config, now), argos_config),
+		                      "duty cycle", "duty cycle: no slot computable");
 	}
 	if (argos_config.mode == BaseArgosMode::LEGACY) {
 		m_scheduled_mode =
 		    argos_config.adaptive_modulation ? adaptive_doppler_modulation() : resolve_non_adaptive_modulation();
-		return m_sched.schedule_legacy(argos_config, now);
+		return from_scheduler(m_sched.schedule_legacy(argos_config, now), "legacy period",
+		                      "legacy: no slot computable");
 	}
 	// Only DUTY_CYCLE and LEGACY know how to do without the GNSS. Any
 	// other mode landing here — PASS_PREDICTION in practice — has NO
@@ -677,15 +699,14 @@ unsigned int ArgosTxService::schedule_without_gnss(ArgosConfig &argos_config, st
 	            "TX disabled (incompatible configuration)",
 	            static_cast<int>(argos_config.mode));
 	if (status_led) status_led->flash(RGBLedColor::RED, 200);
-	return Service::SCHEDULE_DISABLED;
-	return Service::SCHEDULE_DISABLED;
+	return ScheduleDecision::off("this mode requires GNSS_EN=1");
 }
 
 /// @brief GNSS_EN=1: time-sync burst, then DUTY_CYCLE / LEGACY / PASS_PREDICTION.
 /// Split out of service_next_schedule_in_ms(), which tested argos_config.mode
 /// nine times in 489 lines. The gates it runs first -- cooldown, rate limit,
 /// prepass, critical battery, certification -- are NOT repeated here.
-unsigned int ArgosTxService::schedule_with_gnss(ArgosConfig &argos_config, std::time_t now) {
+ScheduleDecision ArgosTxService::schedule_with_gnss(ArgosConfig &argos_config, std::time_t now) {
 	// 2026-08 — THE FIRST-MESSAGE LOCK HAS BEEN REMOVED.
 	//
 	// It held back EVERY transmission, presence heartbeat included, as
@@ -718,12 +739,15 @@ unsigned int ArgosTxService::schedule_with_gnss(ArgosConfig &argos_config, std::
 		    argos_config.adaptive_modulation ? KineisModulation::LDA2 : resolve_non_adaptive_modulation();
 		m_scheduled_task = [this]() { process_time_sync_burst(); };
 		m_sched.schedule_at(now);
-		return 0;
+		return ScheduleDecision::run(0, "time-sync burst");
 	}
 	if (m_depth_pile_manager.eligible() == 0) {
 		DEBUG_INFO("ArgosTxService: depth pile has no eligible entries (NTRY exhausted or empty) — TX disabled "
 		           "until next GPS entry");
-		return Service::SCHEDULE_DISABLED;
+		// The pile is RAM-only, so it is empty at every boot. Answering Off here
+		// is what deadlocked a tag whose only filler -- the GNSS service -- was
+		// itself waiting on a transmission that could then never happen.
+		return ScheduleDecision::hold_for_event(600, "depth pile empty");
 	}
 	if (argos_config.mode == BaseArgosMode::DUTY_CYCLE) {
 		// Non-adaptive: honor the master RCONF's actual modulation
@@ -743,7 +767,8 @@ unsigned int ArgosTxService::schedule_with_gnss(ArgosConfig &argos_config, std::
 		} else {
 			m_scheduled_task = [this]() { process_gnss_burst(); };
 		}
-		return report_duty_cycle_schedule(m_sched.schedule_duty_cycle(argos_config, now), argos_config);
+		return from_scheduler(report_duty_cycle_schedule(m_sched.schedule_duty_cycle(argos_config, now), argos_config),
+		                      "duty cycle", "duty cycle: no slot computable");
 	}
 	if (argos_config.mode == BaseArgosMode::LEGACY) {
 		m_scheduled_mode =
@@ -759,7 +784,8 @@ unsigned int ArgosTxService::schedule_with_gnss(ArgosConfig &argos_config, std::
 		} else {
 			m_scheduled_task = [this]() { process_gnss_burst(); };
 		}
-		return m_sched.schedule_legacy(argos_config, now);
+		return from_scheduler(m_sched.schedule_legacy(argos_config, now), "legacy period",
+		                      "legacy: no slot computable");
 	}
 	if (argos_config.mode == BaseArgosMode::PASS_PREDICTION) {
 		m_scheduled_mode =
@@ -780,7 +806,8 @@ unsigned int ArgosTxService::schedule_with_gnss(ArgosConfig &argos_config, std::
 			DEBUG_WARN("ArgosTxService: prepass impossible — %s (age=%u s, limit=%u d) — falling back to periodic TX",
 			           aop_status_text(etat), age_s, argos_config.aop_max_age_days);
 			refresh_prepass_status(argos_config, now, 0);
-			return m_sched.schedule_legacy(argos_config, now);
+			return from_scheduler(m_sched.schedule_legacy(argos_config, now), "prepass fallback: periodic",
+			                      "prepass fallback: no slot computable");
 		}
 		BasePassPredict &pass_predict = configuration_store->read_pass_predict();
 		// m_scheduled_mode is resolved just above and is no longer
@@ -789,7 +816,8 @@ unsigned int ArgosTxService::schedule_with_gnss(ArgosConfig &argos_config, std::
 		if (schedule == ArgosTxScheduler::INVALID_SCHEDULE) {
 			DEBUG_WARN("ArgosTxService: no pass is computable — falling back to periodic TX");
 			refresh_prepass_status(argos_config, now, 0);
-			return m_sched.schedule_legacy(argos_config, now);
+			return from_scheduler(m_sched.schedule_legacy(argos_config, now), "prepass fallback: periodic",
+			                      "prepass fallback: no slot computable");
 		}
 		// Safeguard: a window too far away must not block transmissions
 		// for hours. Beyond SAT_PREPASS_MAX_WAIT_S we transmit in
@@ -799,12 +827,13 @@ unsigned int ArgosTxService::schedule_with_gnss(ArgosConfig &argos_config, std::
 			DEBUG_INFO("ArgosTxService: next window in %u s > max wait %u s — falling back to periodic TX",
 			           schedule / MS_PER_S, argos_config.prepass_max_wait_s);
 			refresh_prepass_status(argos_config, now, now + schedule / MS_PER_S);
-			return m_sched.schedule_legacy(argos_config, now);
+			return from_scheduler(m_sched.schedule_legacy(argos_config, now), "prepass fallback: periodic",
+			                      "prepass fallback: no slot computable");
 		}
 		refresh_prepass_status(argos_config, now, now + schedule / MS_PER_S);
-		return schedule;
+		return ScheduleDecision::run(schedule, "aligned on the next satellite pass");
 	}
-	return Service::SCHEDULE_DISABLED;
+	return ScheduleDecision::off("unhandled ARGOS_MODE");
 }
 
 

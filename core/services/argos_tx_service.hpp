@@ -41,6 +41,7 @@ protected:
 	void service_term() override;
 	bool service_is_enabled() override;
 	unsigned int service_next_schedule_in_ms() override;
+	ScheduleDecision service_next_schedule() override;
 
 	/// @name Per-mode scheduling
 	/// One method per ARGOS_MODE branch. service_next_schedule_in_ms() runs the
@@ -48,15 +49,15 @@ protected:
 	/// battery, certification -- and then dispatches here exactly once. These do
 	/// NOT re-run those gates.
 	/// @{
-	unsigned int schedule_doppler(ArgosConfig &argos_config, std::time_t now);
-	unsigned int schedule_surfacing_burst(ArgosConfig &argos_config, std::time_t now);
+	ScheduleDecision schedule_doppler(ArgosConfig &argos_config, std::time_t now);
+	ScheduleDecision schedule_surfacing_burst(ArgosConfig &argos_config, std::time_t now);
 
 	/// @brief Presence heartbeat while a surfacing burst waits for the next dive,
 	/// instead of the SCHEDULE_DISABLED that used to silence the beacon for the
 	/// rest of the deployment. See the definition for the full reasoning.
-	unsigned int schedule_surfacing_heartbeat(ArgosConfig &argos_config, std::time_t now);
-	unsigned int schedule_without_gnss(ArgosConfig &argos_config, std::time_t now);
-	unsigned int schedule_with_gnss(ArgosConfig &argos_config, std::time_t now);
+	ScheduleDecision schedule_surfacing_heartbeat(ArgosConfig &argos_config, std::time_t now);
+	ScheduleDecision schedule_without_gnss(ArgosConfig &argos_config, std::time_t now);
+	ScheduleDecision schedule_with_gnss(ArgosConfig &argos_config, std::time_t now);
 	/// @}
 	void service_initiate() override;
 	bool service_cancel() override;
