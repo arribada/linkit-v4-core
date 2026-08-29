@@ -132,7 +132,10 @@ def arm(profil):
 # Un redemarrage volontaire (BootState) n est pas un incident; une remise a
 # zero par chien de garde en est un.
 RE_TX = re.compile(r'TX SUCCESS')
-RE_ERR = re.compile(r'\+ERROR=|TX FAIL|TX ABORT')
+# "TX ABORT" n existe pas dans le firmware: les abandons s ecrivent "aborting
+# fire" (limiteur, plafond Doppler) ou "TX aborted" (RCONF invalide). Chercher
+# une chaine absente donne zero erreur sur un essai qui en a compte plusieurs.
+RE_ERR = re.compile(r'\+ERROR=|TX FAIL|aborting fire|TX aborted')
 RE_BOOT = re.compile(r'entry: BootState')
 RE_WDT = re.compile(r'soft reset|Health WDT|WDT:')
 RE_BACKOFF = re.compile(r'backoff|suspension|device-error hold')
