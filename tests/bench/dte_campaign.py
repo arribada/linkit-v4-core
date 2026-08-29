@@ -2375,14 +2375,28 @@ def c_duty_masque_horaire(r, case):
         return r.record(case, 'FAIL', 'heure+2 autorisee: aucune planification du tout', trace)
     # 10h30 -> prochaine fenetre a 12h00 = ~5400 s. On tolere largement.
     attendu_ms = 5400 * 1000
-    if dedans[0] > 600000:
-        r.record(case, 'FAIL', f'heure courante autorisee mais emission repoussee de {dedans[0]} ms', trace)
+
+    # Ce que le contrat promet, c est que l instant planifie tombe DANS une
+    # heure autorisee — pas qu il tombe vite. L ancienne version exigeait moins
+    # de 10 minutes, ce qui est une hypothese de promptitude etrangere au
+    # mappage bit/heure que ce cas existe pour prouver: mesure du 2026-08-29,
+    # 26 minutes apres 10h30 font 10h56, soit toujours l heure 10, et le cas
+    # rougissait sur un firmware qui respectait exactement la consigne. Le
+    # delai depend de LAST_TX, que la contrainte de plus-tot-possible reporte,
+    # et LAST_TX ne se rafraichit pas sur une carte dont la radio ne repond pas.
+    heure_planifiee = ((base + dedans[0] // 1000) % 86400) // 3600
+    if heure_planifiee != heure:
+        r.record(case, 'FAIL',
+                 f'heure {heure} autorisee mais emission planifiee dans l heure '
+                 f'{heure_planifiee} (dans {dedans[0]} ms)', trace)
     elif not (0.5 * attendu_ms <= dehors[0] <= 1.6 * attendu_ms):
         r.record(case, 'FAIL',
                  f'heure+2: delai {dehors[0]} ms, attendu ~{attendu_ms} ms — mappage bit/heure suspect',
                  trace)
     else:
-        r.record(case, 'PASS', 'bit 23 = heure 0 UTC: mappage confirme sur deux heures', trace)
+        r.record(case, 'PASS',
+                 f'bit 23 = heure 0 UTC: mappage confirme sur deux heures (planifie dans '
+                 f'l heure {heure_planifiee}, puis a +90 min)', trace)
 
 def c_hauled_substitution(r, case):
     """Le mode hors-eau doit substituer HMP10/HMP11 et pas s engager trop tot.
