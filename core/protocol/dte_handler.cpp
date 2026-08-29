@@ -1787,6 +1787,30 @@ std::string DTEHandler::GNSSI_REQ(int error_code) {
 	}
 
 	m_gnssi_pending = true;
+	// Sans cette garde, GNSSI n a AUCUNE issue quand le recepteur ne rend pas
+	// son identite: le handler attend GPSEventDeviceInfoReady ou GPSEventError,
+	// et si le pilote reste en attente d une trame qui ne vient pas, ni l un ni
+	// l autre n arrive. Mesure du 2026-08-30 sur la carte SMD: le M10Q demarre
+	// bien ("boot sync at 9600 baud"), dialogue en UBX — et GNSSI reste sans
+	// reponse au bout de CINQ MINUTES. Or c est le controle d avant-pose: un
+	// operateur qui verifie une balise avant de la fixer sur un animal
+	// n obtenait rien, et ne pouvait pas distinguer un recepteur muet d une
+	// commande non supportee. Un diagnostic qui se tait quand l organe
+	// diagnostique va mal ne sert a rien.
+	DEBUG_INFO("DTEHandler::GNSSI_REQ: arming a %u ms deadline on the device-info wait",
+	           GNSSI_TIMEOUT_MS);
+	m_gnssi_timeout = system_scheduler->post_task_prio(
+	    [this]() {
+		    if (!m_gnssi_pending) return;
+		    m_gnssi_pending = false;
+		    DEBUG_WARN("DTEHandler: GNSSI timed out after %u ms — receiver gave no device info",
+		               GNSSI_TIMEOUT_MS);
+		    if (m_async_write)
+			    m_async_write(DTEEncoder::encode(DTECommand::GNSSI_RESP, (int)DTEError::INCORRECT_DATA));
+		    if (gps_device) gps_device->power_off();
+	    },
+	    "DTEHandlerGNSSITimeout", Scheduler::DEFAULT_PRIORITY, GNSSI_TIMEOUT_MS);
+
 	GNSSConfig gnss_config;
 	configuration_store->get_gnss_configuration(gnss_config);
 	GPSNavSettings nav = {
@@ -1804,6 +1828,7 @@ std::string DTEHandler::GNSSI_REQ(int error_code) {
 void DTEHandler::react(const GPSEventDeviceInfoReady &) {
 	if (!m_gnssi_pending) return;
 	m_gnssi_pending = false;
+	system_scheduler->cancel_task(m_gnssi_timeout);
 
 	DEBUG_INFO("DTEHandler::react: GPSEventDeviceInfoReady — sending GNSSI response");
 
@@ -1826,6 +1851,7 @@ void DTEHandler::react(const GPSEventDeviceInfoReady &) {
 void DTEHandler::react(const GPSEventError &) {
 	if (!m_gnssi_pending) return;
 	m_gnssi_pending = false;
+	system_scheduler->cancel_task(m_gnssi_timeout);
 
 	DEBUG_WARN("DTEHandler::react: GPSEventError — GNSSI failed");
 

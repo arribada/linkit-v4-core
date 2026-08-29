@@ -14,6 +14,7 @@
 #include "config_store.hpp"
 #include "memory_access.hpp"
 #include "timeutils.hpp"
+#include "scheduler.hpp"
 #include "calibration.hpp"
 #include "sensor.hpp"
 #include "battery.hpp"
@@ -129,6 +130,8 @@ private:
 	bool m_sattx_needs_restore = false;   ///< SATTX temporarily switched modulation
 	KineisModulation m_sattx_restore_modulation = KineisModulation::LDA2;
 	bool m_gnssi_pending = false;   ///< Waiting for GNSS device info (autonomous GNSSI)
+	Scheduler::TaskHandle m_gnssi_timeout;  ///< Deadline for that wait — see GNSSI_REQ
+	static constexpr unsigned int GNSSI_TIMEOUT_MS = 90000;  ///< Cold boot + version poll, generously
 	bool m_gps_subscribed = false;  ///< Subscribed to GPS events
 	std::function<void(const std::string &)> m_async_write;
 
