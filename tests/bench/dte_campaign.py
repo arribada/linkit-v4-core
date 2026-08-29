@@ -6082,8 +6082,20 @@ def c_mode_long_multi(r, case):
     budget satellite pour la meme information.
     """
     b = r.b
+    # Un LONG fait 192 bits et LDK n en porte que 128: sur un module dont la
+    # RCONF maitresse est LDK, process_gnss_burst PLAFONNE deliberement la
+    # recuperation a une position (argos_tx_service.cpp, "cap the burst to a
+    # single fix at retrieve time") pour ne pas remettre a KIM2 une charge qu il
+    # laisse tomber en silence. Trois paquets SHORT sont alors la BONNE reponse,
+    # et l affirmer defaut ferait accuser un firmware sain — mesure du
+    # 2026-08-29, mode=0 dans la trace.
+    #
+    # On demande donc la modulation adaptative, qui autorise le service a passer
+    # en LDA2 le temps de l emission. Si LDA2 n est pas provisionne dans le
+    # module, le cas ne peut pas conclure et le dit.
     try:
-        _config_mode(b, 2, ARGOS_DEPTH_PILE=4, NTRY_PER_MESSAGE=1, TR_NOM=60)
+        _config_mode(b, 2, ARGOS_DEPTH_PILE=4, NTRY_PER_MESSAGE=1, TR_NOM=60,
+                     ARGOS_ADAPTIVE_MODULATION=1)
     except Exception as e:
         return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
     mk = b.mark()
@@ -6101,9 +6113,24 @@ def c_mode_long_multi(r, case):
     if not paquets:
         return r.record(case, 'FAIL', 'aucun paquet construit avec 3 positions en pile', trace)
     if not longs:
+        # Distinguer "le firmware refuse d empiler" de "la modulation ne peut
+        # pas porter un LONG". Seul le premier est un defaut.
+        modul = None
+        try:
+            b.enter_config()
+            _, lus = b.read_params(['ARGOS_CACHED_MODULATION'])
+            modul = lus.get('SMP01')
+            b.exit_config()
+        except Exception:
+            pass
+        if modul == '0':
+            return r.record(case, 'SKIP',
+                            'module en LDK (128 bits): un LONG de 192 bits ne rentre pas et '
+                            'le firmware plafonne a une position par emission, ce qui est '
+                            'correct. Il faut une RCONF LDA2 pour conclure.', trace)
         return r.record(case, 'FAIL',
-                        'trois positions en pile mais AUCUN paquet LONG: chaque position '
-                        'coute une emission entiere', trace)
+                        f'trois positions en pile mais AUCUN paquet LONG (modulation={modul}): '
+                        'chaque position coute une emission entiere', trace)
     for _, bits in longs:
         if bits and bits != _BITS_ATTENDUS['LONG']:
             return r.record(case, 'FAIL',
