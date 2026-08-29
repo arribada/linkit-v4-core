@@ -6563,3 +6563,56 @@ CASES_V31 = [
          fn=_cas_template(nom))
     for i, nom in enumerate(TEMPLATES, 1)
 ]
+
+
+def c_modulations_provisionnees(r, case):
+    """Quelles modulations le module porte reellement — et ce que ca implique.
+
+    refresh_modulation_availability() ne considere une modulation disponible
+    que si sa RCONF fait exactement 32 caracteres. C est ce qui decide si un
+    paquet LONG (192 bits) peut partir: LDK n en porte que 128, et sur un
+    module LDK seul le firmware plafonne a une position par emission. La pile
+    de profondeur ne fait alors rien gagner, et un budget batterie calcule sur
+    "trois positions par emission" est faux d un facteur trois.
+
+    Ce cas ne juge pas: il constate, parce que la reponse change ce qu on peut
+    promettre a l operateur.
+    """
+    b = r.b
+    if not _en_config(b):
+        return r.record(case, 'ERROR', 'mode configuration inaccessible')
+    try:
+        _, lus = b.read_params(['ARGOS_RADIOCONF_LDK', 'ARGOS_RADIOCONF_LDA2',
+                                'ARGOS_RADIOCONF_VLDA4', 'ARGOS_CACHED_MODULATION',
+                                'ARGOS_ADAPTIVE_MODULATION'], timeout=12.0)
+        b.exit_config()
+    except Exception as e:
+        return r.record(case, 'ERROR', f'lecture impossible: {type(e).__name__}: {e}')
+
+    def porte(cle):
+        v = (lus.get(cle) or '').strip()
+        return len(v) == 32
+
+    ldk, lda2, vlda4 = porte('ARP51'), porte('ARP52'), porte('ARP53')
+    cache = lus.get('SMP01', '?')
+    adapt = lus.get('ARP54', '?')
+    noms = {'0': 'LDK', '1': 'LDA2', '2': 'VLDA4'}
+    trace = (f'LDK={ldk} LDA2={lda2} VLDA4={vlda4} '
+             f'modulation en cache={cache} ({noms.get(cache, "?")}) adaptative={adapt}')
+
+    if not (ldk or lda2 or vlda4):
+        return r.record(case, 'FAIL',
+                        'aucune RCONF de 32 caracteres: le module ne peut emettre dans '
+                        'aucune modulation', trace)
+    if lda2:
+        return r.record(case, 'PASS',
+                        'LDA2 provisionne: un paquet LONG de 192 bits peut partir, la pile '
+                        'de profondeur rapporte jusqu a 3 positions par emission', trace)
+    r.record(case, 'PASS',
+             'LDK seul: pas de paquet LONG possible, chaque position coute une emission '
+             'entiere. ARGOS_DEPTH_PILE > 1 ne fait rien gagner sur ce module.', trace)
+
+
+CASES_V31.append(dict(id='PROV-01', risque='MAJEUR',
+                      titre='Modulations reellement provisionnees dans le module',
+                      fn=c_modulations_provisionnees))
