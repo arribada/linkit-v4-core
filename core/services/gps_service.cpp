@@ -1755,9 +1755,9 @@ void GPSService::notify_peer_event(ServiceEvent &e) {
 					    [this]() {
 						    if (!m_defer_gnss_until_argos_first_tx) return;
 						    DEBUG_WARN("GPSService: no Argos TX within %u s of surfacing — lifting the GNSS deferral "
-						               "and acquiring. The gate is armed on the TX mode, not on the TX service "
-						               "having anything to send.",
-						               DEFER_GNSS_MAX_S);
+							           "and acquiring. The gate is armed on the TX mode, not on the TX service "
+							           "having anything to send.",
+							           DEFER_GNSS_MAX_S);
 						    m_defer_gnss_until_argos_first_tx = false;
 						    if (is_started()) service_reschedule(false);
 					    },
@@ -1793,7 +1793,6 @@ void GPSService::notify_peer_event(ServiceEvent &e) {
 #if defined(ARGOS_SMD) && (ARGOS_SMD == 1)
 			// Reset gate on submerge so a future surfacing re-arms cleanly.
 			m_defer_gnss_until_argos_first_tx = false;
-		system_scheduler->cancel_task(m_defer_gnss_timeout_task);
 			system_scheduler->cancel_task(m_defer_gnss_timeout_task);
 #endif
 		}
@@ -1805,6 +1804,7 @@ void GPSService::notify_peer_event(ServiceEvent &e) {
 	if (e.event_source == ServiceIdentifier::ARGOS_TX && e.event_type == ServiceEventType::SERVICE_INACTIVE
 	    && m_defer_gnss_until_argos_first_tx && !m_underwater) {
 		m_defer_gnss_until_argos_first_tx = false;
+		system_scheduler->cancel_task(m_defer_gnss_timeout_task);
 		DEBUG_INFO("GPSService: first Argos TX done — releasing GNSS gate, rescheduling now");
 		Service::notify_peer_event(e);  // let base process the event normally
 		bool immediate;
