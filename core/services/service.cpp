@@ -336,6 +336,18 @@ void Service::service_reschedule(bool immediate) {
 	reschedule(immediate);
 }
 
+/// @brief Default: speak for the services that have not migrated yet.
+///
+/// Every SCHEDULE_DISABLED becomes off("no-schedule"), which is exactly what
+/// reschedule() did with the sentinel before this type existed, and exactly the
+/// string the bench report already produces. Behaviour is unchanged until a
+/// service overrides this and starts saying what it actually means.
+ScheduleDecision Service::service_next_schedule() {
+	const unsigned int ms = service_next_schedule_in_ms();
+	if (ms == SCHEDULE_DISABLED) return ScheduleDecision::off("no-schedule");
+	return ScheduleDecision::run(ms, "scheduled");
+}
+
 bool Service::service_is_scheduled() {
 	return m_last_schedule != Service::SCHEDULE_DISABLED;
 }

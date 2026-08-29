@@ -13,6 +13,7 @@
 #endif
 
 #include "service_scheduler.hpp"
+#include "schedule_decision.hpp"
 #include "scheduler.hpp"
 #include "logger.hpp"
 #include "base_types.hpp"
@@ -171,6 +172,21 @@ protected:
 	/// @brief Check if service is active after initiate (for async services).
 	/// @return true if initiate starts an async operation (default: true).
 	virtual bool service_is_active_on_initiate() { return true; }
+
+	/// @brief What to do next, and why. See ScheduleDecision.
+	///
+	/// Declared last on purpose: it appends a vtable slot instead of renumbering
+	/// the existing ones.
+	///
+	/// The default wraps service_next_schedule_in_ms(), so no service has to
+	/// migrate for this to compile and behave exactly as before -- SCHEDULE_DISABLED
+	/// maps to off("no-schedule"), which is the literal the bench report and
+	/// tests/bench/dte_campaign.py already match on. Override this one instead of
+	/// the legacy virtual when a service migrates; the legacy one deliberately
+	/// stays PURE until the last service has moved, so that a new service
+	/// implementing neither cannot compile and be silently off for ever -- which
+	/// is the defect class this whole type exists to close.
+	virtual ScheduleDecision service_next_schedule();
 
 	// === Protected helpers for subclasses ===
 

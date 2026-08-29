@@ -284,6 +284,7 @@ target_sources(${PROJECT_NAME} PRIVATE
     "src/lora_tx_test.cpp"
     "src/packet_field_encoding_test.cpp"
     "src/exponential_backoff_test.cpp"
+    "src/schedule_decision_test.cpp"
     "src/dive_mode_test.cpp"
     "src/m8_test.cpp"
     "src/binascii_test.cpp"
