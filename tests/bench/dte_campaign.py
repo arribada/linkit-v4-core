@@ -309,6 +309,12 @@ class Runner:
                 if case.get('needs_baseline', True) and not self.baseline():
                     self.record(case, 'ERROR', 'impossible de poser la configuration de reference')
                     continue
+                if case.get('ciel') and saute_si_gnss_muet(
+                        self, case, 'le plein air'):
+                    continue
+                if case.get('radio') and saute_si_radio_muette(
+                        self, case, 'le dialogue avec le module'):
+                    continue
                 case['fn'](self, case)
             except Exception as e:
                 self.record(case, 'ERROR', f'exception {type(e).__name__}: {e}')
@@ -729,6 +735,8 @@ def c_pwron(r, case):
 def c_cmd_emettrices_refusees(r, case):
     """Les commandes qui EMETTENT sur d'autres variantes doivent etre refusees ici.
        C'est un point de securite: une acceptation silencieuse ferait transmettre."""
+    if saute_si_radio_muette(r, case, 'le dialogue avec le module'):
+        return
     defauts = []
     for frame, nom in [("$SATDP#000;\r", 'SATDP'), ("$COMCW#001;0\r", 'COMCW'),
                        ("$SATTX#001;0\r", 'SATTX')]:
@@ -780,6 +788,8 @@ def c_lecture_exhaustive(r, case):
 
 def c_pont_kim(r, case):
     """Pont serie vers le module: une fois ouvert il capte TOUT, la sortie est +++."""
+    if saute_si_radio_muette(r, case, 'le dialogue avec le module'):
+        return
     b = r.b
     # KIMBR n est compile que sur un build ni-SMD-ni-LoRa. Ailleurs son absence
     # est le comportement attendu, et le silence qu on obtient n est pas un
@@ -873,6 +883,8 @@ def c_aller_retour_complet(r, case):
     """Lire toute la configuration, puis reecrire CHAQUE parametre INSCRIPTIBLE
        avec sa propre valeur. Aucun ne doit etre refuse: sinon la validation
        rejette un etat que la balise porte legitimement."""
+    if saute_si_radio_muette(r, case, 'le dialogue avec le module'):
+        return
     m, err = r.raw_until("$PARMR#000;\r", r'\$O;PARMR#[0-9A-Fa-f]{3};(.*)', timeout=15)
     if err: return r.record(case, 'ERROR', err)
     if not m: return r.record(case, 'FAIL', 'PARMR global sans reponse')
@@ -1404,6 +1416,8 @@ def c_limiteur_fenetre_enorme(r, case):
     une attente tres longue en attente quasi immediate — l inverse exact de ce a
     quoi sert le limiteur.
     """
+    if saute_si_radio_muette(r, case, 'une emission reussie'):
+        return
     b = r.b
     try:
         b.enter_config()
@@ -1943,6 +1957,8 @@ def c_surface_limite_doppler(r, case):
     doit s arreter d elle-meme ET armer le refroidissement, sans quoi un animal
     qui reste en surface emet sans fin.
     """
+    if saute_si_radio_muette(r, case, 'le dialogue avec le module'):
+        return
     b = r.b
     try:
         # Ce cas n etait PAS idempotent: il arme lui-meme un refroidissement, et
@@ -2037,6 +2053,8 @@ def c_surface_refroidissement(r, case):
     tag dormant: le SWS etait desactive pendant le refroidissement et rien ne le
     rearmait.
     """
+    if saute_si_radio_muette(r, case, 'le dialogue avec le module'):
+        return
     b = r.b
     try:
         # Aucune emission n aboutit sur ce banc (pas de credentials KIM2), donc
@@ -2345,6 +2363,8 @@ def c_duty_masque_horaire(r, case):
     d emission negociees avec CLS. On l eprouve en posant la RTC sur une heure
     connue puis en n autorisant QUE cette heure, puis QUE l heure suivante.
     """
+    if saute_si_radio_muette(r, case, 'le dialogue avec le module'):
+        return
     b = r.b
     # 2026-01-01 10:30:00 UTC — bien au milieu de l heure 10, loin des bords.
     base = 1767263400
@@ -2488,6 +2508,8 @@ def c_limiteur_bloque(r, case):
     on verifie que la suivante est repoussee, avec un delai coherent avec la
     fenetre restante.
     """
+    if saute_si_radio_muette(r, case, 'une emission reussie'):
+        return
     b = r.b
     try:
         b.enter_config()
@@ -2834,6 +2856,8 @@ def c_pile_rotation(r, case):
     avait deja perdu du credit avant la seconde — a credits inegaux, aucun
     ecart n est concluant.
     """
+    if saute_si_radio_muette(r, case, 'une emission reussie'):
+        return
     b = r.b
     N = 2
     try:
@@ -3681,6 +3705,8 @@ def c_hauled_retour(r, case):
     un animal echoue ne doit pas relancer la cadence de mer. On verifie donc
     qu une immersion NE SUFFIT PAS, puis que la seconde declenche.
     """
+    if saute_si_radio_muette(r, case, 'le dialogue avec le module'):
+        return
     b = r.b
     try:
         b.enter_config()
@@ -4132,6 +4158,8 @@ def c_limiteur_fenetre_glissante(r, case):
     empechait toute emission. Le limiteur ne pouvait rien compter parce que rien
     ne partait.
     """
+    if saute_si_radio_muette(r, case, 'une emission reussie'):
+        return
     b = r.b
     try:
         b.enter_config()
@@ -5176,6 +5204,8 @@ def c_rx_gate_batterie(r, case):
 
     On observe l ordonnancement du service, seul temoin accessible au banc.
     """
+    if saute_si_radio_muette(r, case, 'le dialogue avec le module'):
+        return
     b = r.b
     # La reception Argos n existe que sur KIM2. SmdSat::start_receive et
     # stop_receive repondent "Not supported", et main() n instancie
@@ -5320,6 +5350,8 @@ def c_satvf_borne(r, case):
     declencherait un comportement non specifie sur un emetteur — c est le genre
     de laxisme qui se paie en credit satellite.
     """
+    if saute_si_radio_muette(r, case, 'le dialogue avec le module'):
+        return
     b = r.b
     # SATVF verifie les credentials satellite: sans eux il refuse, a juste
     # titre. Sur une carte non provisionnee le cas ne peut donc pas eprouver
@@ -5758,6 +5790,8 @@ def c_ciel_emission_reelle(r, case):
     antenne. Toute la campagne a valide des morceaux de cette chaine; ce cas est
     le seul qui la parcourt entiere avec une vraie position.
     """
+    if saute_si_radio_muette(r, case, 'une emission reussie'):
+        return
     b = r.b
     try:
         _config_ciel(b, ARGOS_MODE=2, TR_NOM=60, NTRY_PER_MESSAGE=1,
@@ -5841,6 +5875,14 @@ CASES_V26 = [
 ]
 
 
+# Les deux vagues de plein air exigent un recepteur GNSS qui repond. Sans lui
+# elles ne sont pas en echec: elles sont hors de portee de la carte. Le drapeau
+# est pose ici plutot que dans chaque dict pour qu aucun cas de ciel n y echappe
+# par oubli lors d un ajout.
+for _c in CASES_V26:
+    _c['ciel'] = True
+
+
 # =====================================================================
 #  Vague 27 — VALIDATION DEPLOIEMENT KIM2
 #
@@ -5882,6 +5924,8 @@ def c_doppler_seul_continu(r, case):
 
     On observe sur plusieurs cycles: il ne suffit pas qu elle emette une fois.
     """
+    if saute_si_radio_muette(r, case, 'une emission reussie'):
+        return
     b = r.b
     try:
         b.enter_config()
@@ -5927,6 +5971,8 @@ def c_duty_masque_valide(r, case):
     toute heure, brulant son quota satellite et sa batterie hors des fenetres
     voulues.
     """
+    if saute_si_radio_muette(r, case, 'une emission reussie'):
+        return
     b = r.b
     # L horloge de la CARTE est imposee, elle n a rien a voir avec celle de
     # l hote: is_in_duty_cycle() teste `duty & (0x800000 >> heure_RTC)`. Une
@@ -6039,6 +6085,8 @@ def c_batterie_transitoire_tx(r, case):
     profil basse consommation — voire s eteint — alors qu elle est saine. La
     mediane doit absorber le creux.
     """
+    if saute_si_radio_muette(r, case, 'une emission reussie'):
+        return
     b = r.b
     try:
         b.enter_config()
@@ -6079,6 +6127,8 @@ def c_reveil_apres_refroidissement(r, case):
     On arme un refroidissement court, on attend qu il expire, et on verifie que
     l emission reprend d elle-meme.
     """
+    if saute_si_radio_muette(r, case, 'une emission reussie'):
+        return
     b = r.b
     try:
         b.enter_config()
@@ -6321,6 +6371,8 @@ def _mode_emet(r, case, mode, nom, position=True, secondes=180, **extra):
 
 def c_mode_legacy(r, case):
     """LEGACY: emission periodique, format SHORT sur une position."""
+    if saute_si_radio_muette(r, case, 'une emission reussie'):
+        return
     _mode_emet(r, case, 2, 'LEGACY')
 
 def c_mode_duty(r, case):
@@ -6333,6 +6385,8 @@ def c_mode_doppler(r, case):
     C est le mode de repli quand le GNSS ne donne rien — il doit emettre
     justement quand il n y a pas de fix, sinon il ne sert a rien.
     """
+    if saute_si_radio_muette(r, case, 'une emission reussie'):
+        return
     _mode_emet(r, case, 4, 'DOPPLER', position=False, GNSS_EN=0)
 
 # ARGOS_CACHED_MODULATION (SMP01) suit la convention SmdArgosModulation:
@@ -6411,6 +6465,67 @@ def saute_si_radio_muette(r, case, quoi):
     return True
 
 
+_GNSS_ETAT = None    # None = pas encore mesure; sinon (vivant: bool, raison: str)
+
+
+def gnss_repond(b):
+    """Le recepteur GNSS repond-il ? Mesure une seule fois par passe.
+
+    GNSSI interroge l identite du recepteur par sa liaison serie, en allumant
+    le rail au passage. Un recepteur qui ne repond pas a GNSSI ne rendra pas de
+    position non plus — c est precisement ce que dit la docstring du cas
+    GNSS-I1, et c est ce qui en fait la bonne sonde.
+
+    POURQUOI CETTE MESURE EXISTE. Symetrique de radio_repond(). Mesure du
+    2026-08-30 sur la carte SMD d interieur: GNSS-I1 sans reponse en 30 s, puis
+    OUT-01 sans session, puis OUT-02 sans position de reference. Trois rouges,
+    une seule cause — le recepteur ne repond pas sur cette carte — et aucun des
+    trois n accuse le firmware. Les treize cas de plein air dependent tous d un
+    recepteur qui repond; sans lui ils ne sont pas en echec, ils sont hors de
+    portee de cette carte.
+
+    Prudence deliberee: tout doute rend (True, ''). Une sonde qui masque un
+    vrai defaut coute infiniment plus cher qu un rouge de trop.
+
+    Rend (vivant, raison). La raison est vide quand le recepteur repond.
+    """
+    global _GNSS_ETAT
+    if _GNSS_ETAT is not None:
+        return _GNSS_ETAT
+    try:
+        if not _en_config(b):
+            _GNSS_ETAT = (True, '')       # dans le doute, ne rien sauter
+            return _GNSS_ETAT
+        m = b.dte('GNSSI', '', timeout=35.0)
+        ligne = (m.string if m and hasattr(m, 'string') else '') or ''
+        try:
+            b.exit_config()
+        except Exception:
+            pass
+        if not m:
+            _GNSS_ETAT = (False, 'le recepteur GNSS ne repond pas (GNSSI muet en 35 s)')
+        elif m.group(1) != 'O':
+            _GNSS_ETAT = (False, 'le recepteur GNSS refuse GNSSI '
+                                 f'({ligne[:60]})')
+        else:
+            _GNSS_ETAT = (True, '')
+    except Exception:
+        _GNSS_ETAT = (True, '')           # ne jamais transformer un incident en masquage
+    return _GNSS_ETAT
+
+
+def saute_si_gnss_muet(r, case, quoi):
+    """Rend True et enregistre un SKIP motive si le recepteur ne repond pas.
+
+    `quoi` dit ce que le cas aurait eprouve, pour que le SKIP reste informatif.
+    """
+    vivant, raison = gnss_repond(r.b)
+    if vivant:
+        return False
+    r.record(case, 'SKIP', f'{raison} — {quoi} ne peut pas etre eprouve sur cette carte')
+    return True
+
+
 def c_mode_long_multi(r, case):
     """Trois positions dans la pile: le format LONG doit etre choisi.
 
@@ -6418,6 +6533,8 @@ def c_mode_long_multi(r, case):
     SHORT, chaque position couterait une emission entiere — trois fois le
     budget satellite pour la meme information.
     """
+    if saute_si_radio_muette(r, case, 'le dialogue avec le module'):
+        return
     b = r.b
     # Un LONG fait 192 bits et LDK n en porte que 128: sur un module dont la
     # RCONF maitresse est LDK, process_gnss_burst PLAFONNE deliberement la
@@ -6483,6 +6600,8 @@ def c_charge_sans_fix(r, case):
     tombe: une balise qui redemarrait sans jamais retrouver le ciel
     disparaissait des ecrans. Le heartbeat doit partir malgre tout.
     """
+    if saute_si_radio_muette(r, case, 'une emission reussie'):
+        return
     b = r.b
     try:
         _config_mode(b, 2, GNSS_EN=0)
@@ -6801,6 +6920,10 @@ CASES_V30 = [
 ]
 
 
+for _c in CASES_V30:
+    _c['ciel'] = True
+
+
 # =====================================================================
 #  Vague 31 — les templates de deploiement, poses sur la vraie carte
 # =====================================================================
@@ -7028,6 +7151,8 @@ def c_premier_message_apres_boot(r, case):
     pas les trois. Valider LDK, LDA2 et VLDA4 demanderait leurs RCONF
     respectives, qui sont des credentials.
     """
+    if saute_si_radio_muette(r, case, 'une emission reussie'):
+        return
     b = r.b
     try:
         b.enter_config()
@@ -7112,6 +7237,8 @@ def c_blind_charge_dans_le_module(r, case):
     Si AT+KMAC=2 est refuse le firmware retombe en BASIC et le DIT: la balise
     emet toujours, mais une seule fois par cycle. Le silence serait pire.
     """
+    if saute_si_radio_muette(r, case, 'le dialogue avec le module'):
+        return
     b = r.b
     N, P = 3, 60
     try:
@@ -7157,6 +7284,8 @@ def c_blind_exclu_de_la_salve(r, case):
     get_argos_configuration() efface blind_en pour ces deux modes; le cas
     verifie que le module ne recoit alors AUCUNE config de rafale.
     """
+    if saute_si_radio_muette(r, case, 'le dialogue avec le module'):
+        return
     b = r.b
     try:
         _config_mode(b, 5, GNSS_EN=0, TR_NOM=60, ARGOS_BLIND_EN=1,
@@ -7196,6 +7325,8 @@ def c_budget_session_ignore_sur_kim(r, case):
     budget. Verifier seulement l avertissement laisserait passer une balise qui
     se tait quand meme.
     """
+    if saute_si_radio_muette(r, case, 'une emission reussie'):
+        return
     b = r.b
     budget = 2
     try:
@@ -7255,6 +7386,61 @@ def _cas_commande_simple(cmd, charge, motif, quoi):
     return cas
 
 
+def c_budget_session_interdit_hors_rspb(r, case):
+    """SHUTDOWN_NTIME_SAT n existe QUE sur RSPB — la regle, pas sa consequence.
+
+    POURQUOI CE CAS EXISTE A COTE DE SHUT-01. SHUT-01 eprouve la CONSEQUENCE du
+    budget de session: il compte les emissions et verifie qu elles ne s arretent
+    pas. C est le bon test du comportement, mais il exige une radio vivante, donc
+    il ne conclut pas sur une carte au module muet. Or la regle demandee est plus
+    simple et plus forte que sa consequence: le parametre ne doit pas EXISTER
+    hors RSPB. Cela se verifie sans emettre un seul octet.
+
+    Ce que le firmware promet (core/protocol/dte_params.cpp): PWP05 et LBP14
+    portent HAS_BOARD_RSPB. Un parametre non implemente n est pas liste par
+    PARMR et doit etre refuse par PARMW. Si l un des deux passait, un operateur
+    pourrait poser sur une carte KIM2 un budget de session qu elle ignore — il
+    croirait la balise bornee alors qu elle emet sans limite.
+
+    Le cas s adapte a la carte: sur RSPB les deux parametres DOIVENT exister,
+    et un refus y serait tout aussi grave (le budget deviendrait impossible a
+    poser sur la seule carte qui l honore).
+    """
+    b = r.b
+    if not _en_config(b):
+        return r.record(case, 'ERROR', 'mode configuration inaccessible')
+    rspb = _est_rspb(b)
+    try:
+        _, lus = b.read_params(['SHUTDOWN_NTIME_SAT', 'LB_SHUTDOWN_NTIME_SAT'], timeout=12.0)
+    except Exception as e:
+        return r.record(case, 'ERROR', f'PARMR injoignable: {type(e).__name__}: {e}')
+    presents = [k for k in ('PWP05', 'LBP14') if k in lus]
+
+    m = b.write_params({'SHUTDOWN_NTIME_SAT': 5}, timeout=12.0, strict=False)
+    ligne = (m.string if m and hasattr(m, 'string') else '') or ''
+    ecriture_refusee = bool(m) and m.group(1) == 'N'
+    trace = f'PARMR presents={presents or "aucun"} | PARMW -> {ligne[:90]}'
+
+    if rspb:
+        if len(presents) == 2 and not ecriture_refusee:
+            return r.record(case, 'PASS',
+                            'carte RSPB: le budget de session existe et s ecrit', trace)
+        return r.record(case, 'FAIL',
+                        'carte RSPB: le budget de session devrait exister et s ecrire — '
+                        f'presents={presents}, ecriture refusee={ecriture_refusee}', trace)
+
+    if presents:
+        return r.record(case, 'FAIL',
+                        f'hors RSPB, PARMR expose encore {",".join(presents)} — '
+                        'un operateur croirait la balise bornee', trace)
+    if not ecriture_refusee:
+        return r.record(case, 'FAIL',
+                        'hors RSPB, PARMW ACCEPTE SHUTDOWN_NTIME_SAT: le budget est '
+                        'posable mais jamais honore', trace)
+    r.record(case, 'PASS',
+             'hors RSPB: absent de PARMR et refuse par PARMW, comme voulu', trace)
+
+
 CASES_V32 = [
     dict(id='BLIND-01', risque='MAJEUR',
          titre='BLIND: la rafale est confiee au module avec les bonnes valeurs',
@@ -7265,6 +7451,9 @@ CASES_V32 = [
     dict(id='SHUT-01', risque='BLOQUANT',
          titre='SHUTDOWN_NTIME_SAT est ignore sur KIM2, et le dit une fois',
          fn=c_budget_session_ignore_sur_kim),
+    dict(id='SHUT-02', risque='BLOQUANT',
+         titre='SHUTDOWN_NTIME_SAT n est pas posable hors RSPB (sans radio)',
+         fn=c_budget_session_interdit_hors_rspb),
     # Les quatre commandes DTE qui n etaient citees nulle part dans la campagne.
     # On n en teste que la REPONSE: SWSCAL et SWSTST demandent une electrode
     # qu on mouille a la main, GNSSBCKP immobilise le rail GNSS, et SMDDFU n a
@@ -7276,5 +7465,6 @@ CASES_V32 = [
     dict(id='CMD-42', risque='MAJEUR', titre='GNSSBCKP repond (charge de la pile de sauvegarde)',
          fn=_cas_commande_simple('GNSSBCKP', '0', r'\$[ON];GNSSBCKP', 'abandon, duree 0')),
     dict(id='CMD-43', risque='MAJEUR', titre='SMDDFU VERSION repond sur un build KIM2',
+         radio=True,
          fn=_cas_commande_simple('SMDDFU', '5', r'\$[ON];SMDDFU', 'action VERSION')),
 ]
