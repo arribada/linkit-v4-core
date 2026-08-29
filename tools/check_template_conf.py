@@ -1,128 +1,37 @@
 #!/usr/bin/env python3
-"""Validate a template_conf/*.cfg against the firmware parameter table.
+"""Validate a template_conf/*.cfg before it ever reaches a device.
 
-Checks, for every key in the file:
-  - the parameter exists in core/protocol/dte_params.cpp
-  - it is writable (a read-only parameter in a template is a silent no-op)
-  - the value is in the permitted set, when the parameter is a code table
-  - the value is within [min, max], for plain numeric parameters
+Config files here are pushed with `pylinkit_cli config push`, so they are
+written in PYLINKIT's space, not the firmware's:
 
-Run with no argument to check every file in template_conf/.
+  - PyLinkit's parameter NAMES. Thirty-one of them differ from the firmware's
+    name for the same key: ARGOS_DUTY_CYCLE, not DUTY_CYCLE; GNSS_ENABLE, not
+    GNSS_EN; GNSS_DELTATIME_ACQ, not DLOC_ARG_NOM.
+  - HUMAN values, which PyLinkit encodes to the wire codes itself:
+    `ARGOS_MODE = SURFACING_BURST` rather than 5, a depth rather than a depth-
+    pile code, and MINUTES rather than an acquisition-period code.
+
+PyLinkit checks neither the names' spelling against the firmware nor any
+numeric range: an unknown name is dropped and an out-of-range value is only
+refused by the device. This checker closes both gaps by reading
+core/protocol/dte_params.cpp for the keys and their limits, and
+tools/pylinkit_map.py for the names and the human-value tables.
+
+    python3 tools/check_template_conf.py                       # every template
+    python3 tools/check_template_conf.py template_conf/x.cfg   # just one
+
+Set PYLINKIT to a PyLinkit v4 checkout to also verify that the mirror in
+tools/pylinkit_map.py still matches that installation.
 """
-import re
-import sys
 import glob
 import os
+import re
+import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TABLE = os.path.join(ROOT, "core/protocol/dte_params.cpp")
-PROTOCOL = os.path.join(ROOT, "core/protocol/dte_protocol.hpp")
-TYPES = os.path.join(ROOT, "core/protocol/base_types.hpp")
-
-# Coded encodings whose permitted set in the parameter table is checked
-# AFTER decoding (every one of them calls DTEEncoder::validate) -- AQPERIOD
-# is the exception and runs no such check.
-VALIDATED_AFTER_DECODE = {
-    "LEDMODE", "ZONETYPE", "GNSSFIXMODE", "GNSSDYNMODEL", "ARGOSPOWER",
-    "ARGOSMODE", "DEPTHPILE", "MODULATION", "DEBUGMODE", "UWDETECTSOURCE",
-    "PRESSURESENSORFULLSCALE", "PRESSURESENSORLOGGINGMODE",
-}
-
-# Coded encodings whose accepted DTE inputs are enumerated by a decode_*
-# function rather than by the permitted set in the parameter table. LED_MODE
-# is the live example: its set is empty, yet decode_led_mode() accepts only
-# 0, 1 and 3 -- a template with LED_MODE=2 is rejected at push time.
-DECODERS = {
-    "LEDMODE": "decode_led_mode",
-    "ZONETYPE": "decode_zone_type",
-    "GNSSFIXMODE": "decode_gnss_fix_mode",
-    "GNSSDYNMODEL": "decode_gnss_dyn_model",
-    "ARGOSPOWER": "decode_power",
-    "ARGOSMODE": "decode_mode",
-    "DEPTHPILE": "decode_depth_pile",
-    "AQPERIOD": "decode_acquisition_period",
-    "MODULATION": "decode_argos_modulation",
-    "DEBUGMODE": "decode_debug_mode",
-    "SENSORENABLETXMODE": "decode_sensor_enable_tx_mode",
-    "UWDETECTSOURCE": "decode_underwater_detect_source",
-    "PRESSURESENSORFULLSCALE": "decode_pressure_sensor_full_scale",
-    "PRESSURESENSORLOGGINGMODE": "decode_pressure_sensor_logging_mode",
-}
-
-
-def load_enums():
-    """Numeric value of every enum constant in base_types.hpp."""
-    try:
-        src = open(TYPES).read()
-    except OSError:
-        return {}
-    out = {}
-    for body in re.findall(r'enum class \w+[^{]*\{(.*?)\}', src, re.S):
-        nxt = 0
-        for item in body.split(","):
-            item = re.sub(r'//.*', '', item).strip()
-            if not item:
-                continue
-            m = re.match(r'([A-Za-z_]\w*)\s*(?:=\s*(.+))?$', item)
-            if not m:
-                continue
-            name, val = m.groups()
-            if val is not None:
-                v = _num(val)
-                if v is None:
-                    continue
-                nxt = int(v)
-            out[name] = nxt
-            nxt += 1
-    return out
-
-
-def load_decoder_maps():
-    """Recover, per decode_* function, the input->decoded-value mapping.
-
-    The distinction matters: for DEPTHPILE the DTE input is a CODE
-    (1,2,3,4,8,9,10,11,12) while the parameter table's permitted set holds
-    the resulting VALUES (1,2,3,4,8,12,16,20,24). Writing ARGOS_DEPTH_PILE=16
-    in a config file is rejected -- the code for a 16-deep pile is 10.
-    """
-    enums = load_enums()
-    try:
-        src = open(PROTOCOL).read()
-    except OSError:
-        return {}
-    out = {}
-    for enc, fn in DECODERS.items():
-        m = re.search(r'\bdecode_\w+\b'.replace(r'\w+', fn[7:]) + r'\s*\(const std::string\s*&\s*\w+\s*\)\s*\{', src)
-        if not m:
-            continue
-        # Walk to the matching closing brace of the function body.
-        i, depth = m.end() - 1, 0
-        while i < len(src):
-            if src[i] == '{':
-                depth += 1
-            elif src[i] == '}':
-                depth -= 1
-                if depth == 0:
-                    break
-            i += 1
-        body = src[m.end():i]
-        mapping = {}
-        for inp, ret in re.findall(r'==\s*"([^"]+)"\s*\)\s*\{?\s*return\s+([^;]+);', body):
-            key = _num(inp)
-            if key is None:
-                continue
-            ret = ret.strip()
-            enum_name = ret.rsplit("::", 1)[-1].strip()
-            val = enums.get(enum_name)
-            if val is None:
-                val = _num(ret)
-            if val is None:
-                m2 = re.fullmatch(r'(\d+)\s*\*\s*(\d+)', ret)
-                val = int(m2.group(1)) * int(m2.group(2)) if m2 else None
-            mapping[key] = val
-        if mapping:
-            out[enc] = mapping
-    return out
+sys.path.insert(0, os.path.join(ROOT, "tools"))
+import pylinkit_map as PL  # noqa: E402
 
 ENTRY = re.compile(
     r'\{\s*"([A-Z0-9_]+)"\s*,\s*"([A-Z]{2,3}[0-9]{2})"\s*,\s*BaseEncoding::(\w+)\s*,'
@@ -131,111 +40,176 @@ ENTRY = re.compile(
 
 
 def _num(tok):
-    """Parse a C++ numeric literal from the table; None when not a plain number."""
-    tok = tok.strip().rstrip("U").rstrip("u")
-    tok = re.sub(r'^\(\s*(?:double|float|unsigned int|int|uint\d+_t)\s*\)\s*', '', tok).strip()
-    tok = tok.rstrip("U").rstrip("u")
-    try:
-        return int(tok, 0)
-    except ValueError:
-        pass
-    try:
-        return float(tok)
-    except ValueError:
-        return None
+    """Parse a C++ numeric literal; None when it is not a plain number."""
+    tok = re.sub(r'^\(\s*(?:double|float|unsigned int|int|uint\d+_t)\s*\)\s*', '',
+                 str(tok).strip()).strip()
+    tok = tok.rstrip("Uu")
+    for conv in (lambda t: int(t, 0), float):
+        try:
+            return conv(tok)
+        except ValueError:
+            pass
+    return None
 
 
-def load_params():
-    src = open(TABLE).read()
-    decoder_maps = load_decoder_maps()
+def load_firmware():
+    """key -> firmware limits for that parameter."""
     out = {}
-    for m in ENTRY.finditer(src):
-        name, key, enc, lo, hi, perm, _impl, writable = m.groups()
-        codes = [_num(t) for t in perm.split(",") if t.strip()]
-        out[name] = {
-            "decode": decoder_maps.get(enc),
-            "gate": None if _impl.strip() == "true" else _impl.strip(),
-            "key": key,
+    for m in ENTRY.finditer(open(TABLE).read()):
+        name, key, enc, lo, hi, perm, impl, writable = m.groups()
+        out[key] = {
+            "fw_name": name,
             "enc": enc,
             "min": _num(lo),
             "max": _num(hi),
-            "set": [c for c in codes if c is not None],
+            "set": [v for v in (_num(t) for t in perm.split(",") if t.strip()) if v is not None],
             "writable": writable.strip() == "true",
+            "gate": None if impl.strip() == "true" else impl.strip(),
         }
     return out
 
 
-def check(path, params):
+def check_mirror(fw):
+    """Report drift between the mirror, the firmware, and a live PyLinkit."""
     problems = []
-    gated = []
-    seen = set()
-    n = 0
+    for key in PL.NAMES:
+        if key not in fw:
+            problems.append(f"tools/pylinkit_map.py knows key {key}, the firmware does not")
+    for key in fw:
+        if key not in PL.NAMES:
+            problems.append(f"the firmware has key {key} ({fw[key]['fw_name']}), "
+                            f"PyLinkit does not — it cannot be pushed")
+    live = os.environ.get("PYLINKIT")
+    if live:
+        try:
+            src = open(os.path.join(live, "pylinkit/protocol/dte_params.py")).read()
+        except OSError as e:
+            problems.append(f"PYLINKIT={live} unreadable: {e}")
+            return problems
+        actuel = {k: n for n, k in re.findall(
+            r'\[\s*"([A-Z0-9_]+)"\s*,\s*"([A-Z]{2,3}[0-9]{2})"', src)}
+        for key, name in sorted(actuel.items()):
+            if PL.NAMES.get(key) != name:
+                problems.append(f"mirror is stale for {key}: PyLinkit says {name}, "
+                                f"mirror says {PL.NAMES.get(key)} — regenerate with "
+                                f"tools/gen_pylinkit_map.py")
+    return problems
+
+
+def to_wire(key, value):
+    """Turn a template's human value into the wire value, or explain why not.
+
+    Returns (wire_value, error). Exactly one of the two is None.
+    """
+    typ = PL.TYPES.get(key)
+    coded = PL.CODED.get(typ)
+    if coded is None:
+        if typ == "BOOLEAN":
+            n = _num(value)
+            if n not in (0, 1):
+                return None, f"boolean, got {value!r}"
+            return n, None
+        if typ in ("TEXT", "DATESTRING", "HEXADECIMAL"):
+            return None, None  # nothing numeric to check
+        n = _num(value)
+        if n is None:
+            return None, f"{value!r} is not numeric for a {typ} parameter"
+        return n, None
+
+    kind, table = coded
+    if kind == "minutes":
+        n = _num(value)
+        if n is None or int(n) not in table:
+            offert = sorted(v for v in table)
+            return None, (f"{value!r} is not an acquisition period. PyLinkit takes "
+                          f"MINUTES: {offert}")
+        return table.index(int(n)), None
+
+    # 'index': the wire code is the position in PyLinkit's table.
+    offert = [v for v in table if v != -1]
+    brut = _num(value)
+    for cand in (value, str(brut if brut is not None and brut == int(brut or 0) else value)):
+        try:
+            i = table.index(int(cand) if str(cand).lstrip("-").isdigit() else cand)
+        except (ValueError, TypeError):
+            continue
+        if table[i] != -1:
+            return i, None
+    return None, f"{value!r} is not one of {offert}"
+
+
+def check(path, fw):
+    problems, gated, seen, n = [], [], set(), 0
+    par_nom = {n_: k for k, n_ in PL.NAMES.items()}
+    fw_par_nom = {v["fw_name"]: k for k, v in fw.items()}
+
     for lineno, line in enumerate(open(path), 1):
         s = line.strip()
         if not s or s.startswith(("#", ";", "[")) or "=" not in s:
             continue
-        k, _, v = s.partition("=")
-        k, v = k.strip(), v.strip()
+        nom, _, val = s.partition("=")
+        nom, val = nom.strip(), val.strip()
         n += 1
-        if k in seen:
-            problems.append(f"{lineno}: {k}: duplicate key")
-        seen.add(k)
-        p = params.get(k)
-        if p is None:
-            problems.append(f"{lineno}: {k}: unknown parameter")
+        if nom in seen:
+            problems.append(f"{lineno}: {nom}: duplicate key")
+        seen.add(nom)
+
+        key = par_nom.get(nom)
+        if key is None:
+            autre = fw_par_nom.get(nom)
+            if autre:
+                problems.append(f"{lineno}: {nom}: that is the FIRMWARE name for {autre}; "
+                                f"PyLinkit calls it {PL.NAMES[autre]}")
+            else:
+                problems.append(f"{lineno}: {nom}: unknown parameter")
             continue
-        if p["gate"]:
-            gated.append((k, p["key"], p["gate"]))
-        if not p["writable"]:
-            problems.append(f"{lineno}: {k} ({p['key']}): read-only, cannot be set")
+
+        info = fw[key]
+        if not info["writable"]:
+            problems.append(f"{lineno}: {nom} ({key}): read-only, cannot be set")
             continue
-        if p["enc"] in ("TEXT", "DATESTRING", "HEXADECIMAL", "BASE64", "KEY_LIST", "AQPERIOD_LIST"):
+        if info["gate"]:
+            gated.append((nom, key, info["gate"]))
+
+        wire, err = to_wire(key, val)
+        if err:
+            problems.append(f"{lineno}: {nom} ({key}): {err}")
             continue
-        val = _num(v)
-        if val is None:
-            problems.append(f"{lineno}: {k}: '{v}' is not numeric for a {p['enc']} parameter")
+        if wire is None:
             continue
-        if p["enc"] == "BOOLEAN":
-            if val not in (0, 1):
-                problems.append(f"{lineno}: {k} ({p['key']}): boolean, got {v}")
+
+        if info["set"] and wire not in info["set"]:
+            lisible = PL.CODED.get(PL.TYPES.get(key))
+            if lisible:
+                autorise = [lisible[1][c] for c in sorted(info["set"]) if c < len(lisible[1])]
+                problems.append(f"{lineno}: {nom} ({key}): {val!r} is refused here; "
+                                f"this parameter only permits {autorise}")
+            else:
+                problems.append(f"{lineno}: {nom} ({key}): {val!r} encodes to {wire}, "
+                                f"outside the permitted set {sorted(info['set'])}")
             continue
-        dec = p["decode"]
-        if dec is not None:
-            # The value written in the file is the DTE input; check it first.
-            if val not in dec:
-                problems.append(
-                    f"{lineno}: {k} ({p['key']}): {v} is not an accepted {p['enc']} input "
-                    f"{sorted(dec)}")
-                continue
-            # Then the permitted set, which the firmware applies to the
-            # DECODED value -- and only for encodings that call validate().
-            decoded = dec[val]
-            if p["set"] and p["enc"] in VALIDATED_AFTER_DECODE and decoded is not None \
-                    and decoded not in p["set"]:
-                problems.append(
-                    f"{lineno}: {k} ({p['key']}): input {v} decodes to {decoded}, "
-                    f"outside the permitted set {sorted(p['set'])}")
-            continue
-        if p["set"]:
-            if val not in p["set"]:
-                problems.append(
-                    f"{lineno}: {k} ({p['key']}): {v} not in permitted set {sorted(p['set'])}")
-            continue
-        lo, hi = p["min"], p["max"]
-        if lo is not None and hi is not None and hi > lo and not (lo <= val <= hi):
-            problems.append(f"{lineno}: {k} ({p['key']}): {v} outside [{lo}, {hi}]")
+        lo, hi = info["min"], info["max"]
+        if lo is not None and hi is not None and hi > lo and not (lo <= wire <= hi):
+            problems.append(f"{lineno}: {nom} ({key}): {val} outside [{lo}, {hi}]")
     return n, problems, gated
 
 
 def main():
-    params = load_params()
+    fw = load_firmware()
+    rc = 0
+    drift = check_mirror(fw)
+    if drift:
+        rc = 1
+        print(f"FAIL tools/pylinkit_map.py ({len(drift)} problems)")
+        for d in drift:
+            print(f"       {d}")
+
     files = sys.argv[1:] or sorted(glob.glob(os.path.join(ROOT, "template_conf/*.cfg")))
     if not files:
         print("no template to check")
-        return 0
-    rc = 0
+        return rc
     for f in files:
-        n, problems, gated = check(f, params)
+        n, problems, gated = check(f, fw)
         rel = os.path.relpath(f, ROOT)
         if problems:
             rc = 1
@@ -245,12 +219,10 @@ def main():
         else:
             print(f"ok   {rel}  ({n} keys)")
         if gated:
-            # Not an error: these exist, but only on a build whose flag is set.
-            # Pushed elsewhere they are reported as not implemented and ignored.
             print(f"       note: {len(gated)} key(s) behind a build flag —")
-            for k, key, gate in gated:
-                print(f"         {k} ({key}) requires {gate}")
-    print(f"\n{len(params)} parameters in the firmware table")
+            for nom, key, gate in gated:
+                print(f"         {nom} ({key}) requires {gate}")
+    print(f"\n{len(fw)} parameters in the firmware table, {len(PL.NAMES)} known to PyLinkit")
     return rc
 
 

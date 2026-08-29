@@ -20,6 +20,30 @@ build; nine of its keys sit behind `HAS_BOARD_RSPB`, `HAS_EXTERNAL_WAKEUP` or
 `ENABLE_MORTALITY_SENSOR` and are reported as not implemented on a LinkIt
 build.
 
+## These files are written in PyLinkit's language, not the firmware's
+
+They are pushed with `pylinkit_cli config push`, and PyLinkit sits between the
+file and the wire. Two consequences that decide how every line is spelled:
+
+**Parameter NAMES are PyLinkit's.** Thirty-one of them differ from the
+firmware's name for the same key — `ARGOS_DUTY_CYCLE` not `DUTY_CYCLE`,
+`GNSS_ENABLE` not `GNSS_EN`, `GNSS_DELTATIME_ACQ` not `DLOC_ARG_NOM`,
+`UW_ENABLE` not `UNDERWATER_EN`. Reading the firmware table alone will lead you
+to the wrong spelling.
+
+**VALUES are human, not wire codes.** PyLinkit encodes them itself:
+
+| Write | Not | Because |
+|---|---|---|
+| `ARGOS_MODE = SURFACING_BURST` | `5` | PyLinkit maps the name to the code |
+| `LED_MODE = 24HRS` | `1` | accepted: `OFF`, `24HRS`, `ALWAYS` |
+| `ARGOS_DEPTH_PILE = 16` | `10` | the depth, not the code for it |
+| `GNSS_DELTATIME_ACQ = 10` | `1` | **minutes**, not the acquisition-period code |
+| `GNSS_DYN_MODEL = SEA` | `5` | names again |
+
+`GNSS_FASTLOC_MODE` and `GNSS_CLOUDLOCATE_FORMAT` are the exception: PyLinkit
+passes them through as plain integers, so they keep their numeric values.
+
 ## Validating a file
 
 ```bash
@@ -27,40 +51,41 @@ python3 tools/check_template_conf.py                       # every template
 python3 tools/check_template_conf.py template_conf/x.cfg   # just one
 ```
 
-The checker reads `core/protocol/dte_params.cpp` and `dte_protocol.hpp`, so it
-follows the firmware rather than a copy of it. It reports:
+PyLinkit checks neither the spelling of a name against the firmware nor any
+numeric range: an unknown name is dropped, and an out-of-range value is only
+refused by the device. The checker closes both gaps — it reads
+`core/protocol/dte_params.cpp` for the keys and their limits, and
+`tools/pylinkit_map.py` for the names and the human-value tables. It reports:
 
-- an unknown parameter name;
+- an unknown parameter name — and, if you used the firmware's name for a
+  parameter PyLinkit spells differently, which name to use instead;
 - a read-only parameter (silently a no-op in a config file);
 - a duplicate key;
-- a value outside `[min, max]`;
-- a value that is not an accepted input for a coded parameter;
-- a coded input that decodes to a value outside the permitted set;
-- keys that only exist behind a build flag (informational).
+- a value that is not one of the accepted words for a coded parameter;
+- a value outside the firmware's `[min, max]`;
+- a value the firmware permits nowhere — `HAULED_ARGOS_MODE` takes any Argos
+  mode except `SURFACING_BURST`, since a hauled device is dry and stationary
+  and would transmit exactly zero times;
+- keys that only exist behind a build flag (informational);
+- drift between `tools/pylinkit_map.py`, the firmware, and — when `PYLINKIT`
+  points at a checkout — that installation of PyLinkit.
 
-### The two traps it exists to catch
+Regenerate the mirror after a PyLinkit change:
 
-**Coded parameters take a code, not the value.** `ARGOS_DEPTH_PILE` accepts
-`1 2 3 4 8 9 10 11 12`, which decode to depths `1 2 3 4 8 12 16 20 24`. Writing
-`ARGOS_DEPTH_PILE = 16` is rejected at push time; the code for a 16-deep pile
-is `10`. `DLOC_ARG_NOM` and `MOORED_DLOC` are the same: `4` means one hour, not
-four seconds.
-
-**A permitted set can be narrower than the decoder.** `HAULED_ARGOS_MODE`
-decodes `0..5` like any Argos mode, but only `0..4` are permitted — a hauled
-device is dry and stationary by definition, so `SURFACING_BURST` there would
-transmit exactly zero times.
+```bash
+python3 tools/gen_pylinkit_map.py /path/to/pylinkit-v4 > tools/pylinkit_map.py
+```
 
 ## Two rules for whoever writes a new one
 
-1. **Every key must exist in the firmware, and every value must be accepted.**
-   Run the checker above. This is not theoretical: the two files that used to
-   live here were removed in 2026-08 after drifting badly — **32 of 135 keys**
-   in the turtle file and **47 of 287** in the RSPB one named parameters that
-   no longer existed (`ARGOS_DUTY_CYCLE`, `GNSS_ENABLE`, `UW_ENABLE`,
-   `LB_TRESHOLD` — a typo that had fossilised). The firmware skips unknown keys
-   cleanly and reports them, so nothing broke; but a quarter of a reference file
-   shipped to operators described settings that were never applied.
+1. **Run the checker.** This is not theoretical. The two files that used to
+   live here were removed in 2026-08 for naming parameters said not to exist —
+   but that audit had been run against the *firmware* table, and most of the
+   names it flagged (`ARGOS_DUTY_CYCLE`, `GNSS_ENABLE`, `UW_ENABLE`) are
+   perfectly valid PyLinkit names. What it did catch for real was
+   `LB_TRESHOLD`, a typo of `LB_THRESHOLD` that both tables agree on and that
+   had fossilised across both files. The lesson is the same either way: check
+   against the table that actually consumes the file, mechanically.
 
 2. **No real credentials.** The removed files carried live CLS
    `ARGOS_RADIOCONF` values and an AES key. Templates are examples;
