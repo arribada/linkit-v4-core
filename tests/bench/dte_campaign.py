@@ -5177,6 +5177,15 @@ def c_rx_gate_batterie(r, case):
     On observe l ordonnancement du service, seul temoin accessible au banc.
     """
     b = r.b
+    # La reception Argos n existe que sur KIM2. SmdSat::start_receive et
+    # stop_receive repondent "Not supported", et main() n instancie
+    # ArgosRxService que dans la branche KIM2 — il n y a donc aucun service a
+    # observer sur un build SMD, et %SCHED a raison de ne rien rapporter.
+    # Mesure du 2026-08-30, ou le cas concluait "sonde ou service absent".
+    if any(nom == 'KIMBR' for nom, _ in _commandes_absentes(b)):
+        return r.record(case, 'SKIP',
+                        'ce build ne porte pas la reception Argos (SmdSat: "Not supported", '
+                        'ArgosRxService instancie seulement en KIM2) — rien a observer ici')
     try:
         b.enter_config()
         b.write_params({'ARGOS_RX_EN': 1, 'ARGOS_MODE': 1, 'LB_EN': 1,
