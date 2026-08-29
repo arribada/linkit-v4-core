@@ -1393,9 +1393,20 @@ private:
 			auto key = s.substr(prev, pos - prev);
 			if (!key.empty()) {
 				ParamID param;
-				if (try_lookup_key(key, param)) {
+				if (try_lookup_key(key, param) && param_map[(int)param].is_implemented) {
 					val.push_back(param);
 				} else {
+					// A key this build does not implement is treated exactly like
+					// an unknown one. Without that, PARMR and PARMW disagreed about
+					// what exists: PWP05 on a non-RSPB board READ back a value while
+					// PARMW refused to write it. Measured on the SMD board 2026-08-30.
+					// An operator reading a parameter, seeing a number, then failing
+					// to change it has no way to tell a build restriction from a bug —
+					// and tooling that probes by key concluded the board was an RSPB.
+					// The is_implemented filter existed only in the "give me
+					// everything" branch of read_params_by_filter; explicit key
+					// requests bypassed it entirely.
+					//
 					// An unknown key was simply thrown away here, with no trace.
 					// Downstream, a request in which NONE of the keys is recognised
 					// therefore arrived with an empty list — indistinguishable from

@@ -6343,7 +6343,15 @@ def _mode_emet(r, case, mode, nom, position=True, secondes=180, **extra):
     On verifie les DEUX: qu un paquet soit CONSTRUIT au bon format et qu il
     parte. Un paquet construit et jamais emis, ou une emission sans paquet
     trace, sont deux pannes distinctes et il faut pouvoir les distinguer.
+
+    Le garde-fou radio est pose ICI plutot que chez chaque appelant. Mesure du
+    2026-08-30: c_mode_duty tient en une seule ligne apres sa docstring, et une
+    detection automatique y a vu le garde-fou de la fonction SUIVANTE — MOD-02
+    est donc parti sans protection et a accuse le firmware d un paquet "jamais
+    emis" sur une carte au module muet. Un tronc commun se garde au tronc.
     """
+    if saute_si_radio_muette(r, case, 'une emission reussie'):
+        return
     b = r.b
     try:
         _config_mode(b, mode, **extra)
