@@ -425,12 +425,58 @@ def c_cmd_inconnue(r, case):
                  f'reponse NON DETERMINISTE a une commande inconnue — {len(reps)} formes, {silences} silences',
                  json.dumps(vus, ensure_ascii=False))
 
+def _commandes_absentes(b):
+    """Quelles commandes DTE sont absentes de la table sur CE build.
+
+    L absence depend de la cible, pas d une verite generale: SMDTST n existe
+    que sur ARGOS_SMD, KIMBR que sur un build ni-SMD-ni-LoRa, LORATX/LORABR que
+    sur LORA_RAK3172. Tester l absence de SMDTST sur une carte SMD revient a
+    tester l absence d une commande presente — mesure du 2026-08-29, ou le cas
+    a interroge SMDTST quatre fois de suite sur un build SMD, chaque appel
+    prenant 28 s cote firmware.
+
+    On demande au build ce qu il porte plutot que de le supposer: ARP60
+    (SMD_LPM_MODE) n existe que sur SMD, LRP07 (LORA_NJM) que sur LoRa.
+    """
+    try:
+        _, lus = b.read_params(['SMD_LPM_MODE', 'LORA_NJM'], timeout=10.0)
+    except Exception:
+        return [('SMDTST', '000;'), ('LORATX', '001;5'), ('LORABR', '001;1')]
+    est_smd = 'ARP60' in lus
+    est_lora = 'LRP07' in lus
+    absentes = []
+    if not est_smd:
+        absentes.append(('SMDTST', '000;'))
+    if not est_lora:
+        absentes += [('LORATX', '001;5'), ('LORABR', '001;1')]
+    if est_smd or est_lora:
+        absentes.append(('KIMBR', '000;'))
+    return absentes
+
+
 def c_cmd_absente_du_build(r, case):
-    """SMDTST / LORATX / LORABR ne sont pas dans la table sur un build KIM."""
-    vus = []
-    for nom, payload in [('SMDTST','000;'), ('LORATX','001;5'), ('LORABR','001;1')]:
+    """Une commande absente de la table de CE build ne doit pas etre aiguillee.
+
+    Le risque n est pas le silence: c est qu une commande inconnue soit
+    dispatchee sur le gestionnaire d une AUTRE, et reponde sous son nom. Mesure
+    2026-08-26: onze reponses sur douze portaient le nom d une autre commande.
+    """
+    b = r.b
+    paires = _commandes_absentes(b)
+    if not paires:
+        return r.record(case, 'SKIP',
+                        'ce build porte toutes les commandes conditionnelles — rien a '
+                        'eprouver ici')
+    vus, envois_rates = [], 0
+    for nom, payload in paires:
         for k in range(4):
             lines, err = r.raw(f"${nom}#{payload}\r", wait=1.5)
+            if lines is None:
+                # raw() rend (None, message) quand l envoi echoue; iterer dessus
+                # levait un TypeError et faisait passer un incident de lien pour
+                # un defaut de firmware.
+                envois_rates += 1
+                continue
             got = None
             for l in lines:
                 mm = re.search(r'\$([ON]);([A-Z]+)#', l)
@@ -438,14 +484,19 @@ def c_cmd_absente_du_build(r, case):
             vus.append((nom, got))
     mauvais = [v for v in vus if v[1] is not None and v[1] != v[0]]
     silences = [v for v in vus if v[1] is None]
+    quoi = ', '.join(n for n, _ in paires)
+    if not vus:
+        return r.record(case, 'ERROR',
+                        f'{envois_rates} envoi(s) impossible(s), rien observe — cas non concluant')
     if mauvais:
         r.record(case, 'FAIL',
                  f'la reponse porte le nom d\'une AUTRE commande — {len(mauvais)}/{len(vus)} cas',
                  json.dumps(mauvais, ensure_ascii=False))
     elif len(silences) == len(vus):
-        r.record(case, 'PASS', 'silence uniforme, aucun aiguillage errone')
+        r.record(case, 'PASS', f'silence uniforme sur {quoi}, aucun aiguillage errone')
     else:
-        r.record(case, 'PASS', f'reponses coherentes ({len(silences)} silences sur {len(vus)})')
+        r.record(case, 'PASS',
+                 f'reponses coherentes sur {quoi} ({len(silences)} silences sur {len(vus)})')
 
 def c_sans_terminateur(r, case):
     """Trame sans \\r: le decodeur doit se resynchroniser, pas perdre le canal."""
