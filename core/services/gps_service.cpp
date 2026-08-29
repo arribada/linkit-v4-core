@@ -577,9 +577,17 @@ bool GPSService::service_is_enabled() {
 	return enabled;
 }
 
-/// @brief Compute next GNSS schedule aligned to UTC 00:00 boundary.
-/// @return Delay in ms until next acquisition, or SCHEDULE_DISABLED.
+/// @brief Legacy entry point, superseded by service_next_schedule().
+/// Still required while the base declares it pure -- deliberately, so that a new
+/// service implementing neither cannot compile and be silently off for ever.
 unsigned int GPSService::service_next_schedule_in_ms() {
+	return SCHEDULE_DISABLED;
+}
+
+/// @brief Decide what GNSS does next: acquire, wait on a named gate, or stay off.
+/// @return A Run aligned to the UTC 00:00 grid, a bounded hold naming what holds
+/// us, or Off when the configuration itself asks for no periodic acquisition.
+ScheduleDecision GPSService::service_next_schedule() {
 	GNSSConfig gnss_config;
 	configuration_store->get_gnss_configuration(gnss_config);
 
@@ -637,8 +645,10 @@ unsigned int GPSService::service_next_schedule_in_ms() {
 	//     immediate is set).
 	//   - Underwater / cooldown: handled by separate gates further down.
 	if (m_device.is_in_deep_idle() && m_deep_idle_started_at_ms > 0) {
-		DEBUG_TRACE("GPSService::service_next_schedule_in_ms: deep-idle engaged — SCHEDULE_DISABLED");
-		return Service::SCHEDULE_DISABLED;
+		// Bounded by the hard cap itself: if the auto-off task were ever lost,
+		// the re-evaluation brings us back to the branch above, which cuts the
+		// rail. That branch used to be unreachable without an outside caller.
+		return ScheduleDecision::hold_for_event(DEEP_IDLE_HARD_CAP_S, "GNSS in deep idle");
 	}
 
 	// Cooldown gate (2026-05): refuse to schedule a GPS acquisition while
@@ -651,8 +661,10 @@ unsigned int GPSService::service_next_schedule_in_ms() {
 	// is_in_cooldown(). When cooldown expires, SWS re-emits its state and
 	// notify_underwater_state(false) rewakes us via the normal path.
 	if (rtc && rtc->is_set() && ServiceManager::is_in_cooldown(service_current_time())) {
-		DEBUG_TRACE("GPSService::service_next_schedule_in_ms: cooldown active — SCHEDULE_DISABLED");
-		return Service::SCHEDULE_DISABLED;
+		const std::time_t now_s = service_current_time();
+		return ScheduleDecision::hold_until(
+		    (uint32_t)(now_s + (std::time_t)ServiceManager::get_cooldown_remaining_s(now_s)),
+		    "surface-cycle cooldown");
 	}
 
 	// Rate-limit gate (2026-05-23): if Argos TX is rate-limited, acquiring
@@ -676,7 +688,7 @@ unsigned int GPSService::service_next_schedule_in_ms() {
 			constexpr unsigned int MAX_RESCHEDULE_MS = 0xFFFFFFFEu;
 			unsigned int rl_reschedule_ms =
 			    (rl_reschedule_s > MAX_RESCHEDULE_MS / 1000u) ? MAX_RESCHEDULE_MS : rl_reschedule_s * 1000u;
-			return rl_reschedule_ms;
+			return ScheduleDecision::run(rl_reschedule_ms, "Argos rate limit");
 		}
 	}
 
@@ -689,15 +701,18 @@ unsigned int GPSService::service_next_schedule_in_ms() {
 	// handler clears the gate then calls service_reschedule(immediate)
 	// which routes back here and now returns a real delay.
 	if (m_defer_gnss_until_argos_first_tx) {
-		DEBUG_TRACE("GPSService::service_next_schedule_in_ms: gate armed — SCHEDULE_DISABLED");
-		return Service::SCHEDULE_DISABLED;
+		// m_defer_gnss_timeout_task is the primary release -- it clears the flag,
+		// which this bound cannot do. The bound is the second net: without a
+		// flag clear, a re-evaluation lands right back here.
+		return ScheduleDecision::hold_for_event(DEFER_GNSS_MAX_S + 10,
+		                                        "deferred until the first Argos TX");
 	}
 #endif
 
 	// Single fix mode: don't reschedule GNSS after first successful fix
 	if (m_is_first_fix_found && configuration_store->read_param<bool>(ParamID::GNSS_SESSION_SINGLE_FIX)) {
 		DEBUG_INFO("GPSService: GNSS_SESSION_SINGLE_FIX enabled | not rescheduling after first fix");
-		return Service::SCHEDULE_DISABLED;
+		return ScheduleDecision::off("GNSS_SESSION_SINGLE_FIX, fix already obtained");
 	}
 
 	// GNSS_NTRY: max consecutive failed acquisitions per cycle (0=unlimited).
@@ -723,16 +738,17 @@ unsigned int GPSService::service_next_schedule_in_ms() {
 		aq_period = m_is_first_fix_found ? gnss_config.dloc_arg_nom : gnss_config.cold_start_retry_period;
 	}
 
+	const char *const aq_why = m_is_first_schedule    ? "first schedule"
+	                           : ntry_exhausted       ? "NTRY back-off to GNSS_DELTATIME_ACQ"
+	                           : m_is_first_fix_found ? "GNSS_DELTATIME_ACQ"
+	                                                  : "cold-start retry";
+
 	DEBUG_INFO("GPSService::retry_counter: ntry=%u limit=%u exhausted=%u aq_period=%us (%s)", m_cold_start_ntry,
-	           gnss_ntry, (unsigned)ntry_exhausted, (unsigned)aq_period,
-	           m_is_first_schedule    ? "first_schedule"
-	           : ntry_exhausted       ? "NTRY_BACKOFF"
-	           : m_is_first_fix_found ? "dloc_arg_nom"
-	                                  : "cold_start_retry_period");
+	           gnss_ntry, (unsigned)ntry_exhausted, (unsigned)aq_period, aq_why);
 
 	if (aq_period == 0) {
 		DEBUG_INFO("GPSService: aq_period=0 (config) — GNSS periodic scheduling disabled");
-		return Service::SCHEDULE_DISABLED;
+		return ScheduleDecision::off("GNSS acquisition period is 0");
 	}
 
 	// Find the next schedule time aligned to UTC 00:00
@@ -749,7 +765,8 @@ unsigned int GPSService::service_next_schedule_in_ms() {
 	// Find the time in milliseconds until this schedule (cast to uint64_t to prevent
 	// overflow when aq_period > 4294 seconds, since the result is truncated to unsigned int)
 	uint64_t delay_ms = static_cast<uint64_t>(next_schedule - now) * MS_PER_SEC;
-	return (delay_ms > UINT32_MAX) ? UINT32_MAX : static_cast<unsigned int>(delay_ms);
+	return ScheduleDecision::run((delay_ms > UINT32_MAX) ? UINT32_MAX : static_cast<unsigned int>(delay_ms),
+	                             aq_why);
 }
 
 /// @brief Start GNSS acquisition — configure nav settings, power on M10Q.

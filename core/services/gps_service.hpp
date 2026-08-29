@@ -78,6 +78,7 @@ protected:
 	void service_term() override;
 	bool service_is_enabled() override;
 	unsigned int service_next_schedule_in_ms() override;
+	ScheduleDecision service_next_schedule() override;
 	void service_initiate() override;
 	bool service_cancel() override;
 	unsigned int service_next_timeout() override;
