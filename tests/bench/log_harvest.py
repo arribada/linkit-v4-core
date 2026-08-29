@@ -86,13 +86,69 @@ def analyse(texte):
         'backoff':           compte(r'backoff|suspension'),
         'limiteur':          compte(r'rate limit reached'),
     }
-    # Temps de premier fix, quand la trace les porte
-    ttff = [int(m.group(1)) for l in lignes
-            for m in [re.search(r'ttff[=:](\d+)', l)] if m]
-    if ttff:
-        bilan['ttff_min_ms'] = min(ttff)
-        bilan['ttff_max_ms'] = max(ttff)
-        bilan['ttff_moy_ms'] = sum(ttff) // len(ttff)
+    return bilan
+
+
+def analyse_gnss(texte):
+    """Bilan chiffre du journal GNSS, qui est un CSV et pas des lignes de trace.
+
+    C est ICI que vivent les temps: le journal systeme ne porte aucun ttff, il
+    est une colonne du CSV produit par GPSLogFormatter. Chercher un `ttff=` dans
+    system.log ne rend donc jamais rien, et on croit la balise muette sur ses
+    performances alors qu elle les journalise ailleurs.
+
+    En-tete: log_datetime,batt_voltage,iTOW,fix_datetime,valid,onTime,ttff,
+             fixType,flags,flags2,flags3,numSV,lon,lat,height,hMSL,hAcc,...
+    """
+    lignes = [l for l in texte.splitlines() if l.strip()]
+    if not lignes:
+        return {'lignes': 0}
+    entete = None
+    for l in lignes:
+        if l.startswith('log_datetime'):
+            entete = [c.strip() for c in l.split(',')]
+            break
+    if entete is None:
+        return {'lignes': len(lignes), 'note': 'en-tete CSV absente — journal tronque ?'}
+
+    idx = {nom: i for i, nom in enumerate(entete)}
+    fixes = []
+    for l in lignes:
+        if l.startswith('log_datetime'):
+            continue
+        cols = l.split(',')
+        if len(cols) < len(entete):
+            continue
+        fixes.append(cols)
+
+    def col(cols, nom, conv=float):
+        try:
+            return conv(cols[idx[nom]])
+        except (KeyError, IndexError, ValueError):
+            return None
+
+    def stats(nom, conv=float, valides_seulement=True):
+        vals = []
+        for c in fixes:
+            if valides_seulement and col(c, 'valid', int) != 1:
+                continue
+            v = col(c, nom, conv)
+            if v is not None:
+                vals.append(v)
+        if not vals:
+            return None
+        vals.sort()
+        return {'n': len(vals), 'min': vals[0], 'median': vals[len(vals) // 2],
+                'max': vals[-1], 'moy': sum(vals) / len(vals)}
+
+    valides = sum(1 for c in fixes if col(c, 'valid', int) == 1)
+    bilan = {'entrees': len(fixes), 'positions_valides': valides,
+             'positions_rejetees': len(fixes) - valides}
+    for nom, cle in (('ttff', 'ttff_ms'), ('onTime', 'temps_allume_ms'),
+                     ('numSV', 'satellites'), ('hAcc', 'hAcc_mm'), ('hDOP', 'hDOP')):
+        st = stats(nom)
+        if st:
+            bilan[cle] = st
     return bilan
 
 
@@ -120,8 +176,13 @@ def main():
           f'{" (TRONQUE)" if tronque else ""}')
     print(f'ecrit dans {a.out}')
     print('--- bilan ---')
-    for k, v in analyse(texte).items():
-        print(f'  {k:20} {v}')
+    fonction = analyse_gnss if a.log == 'gnss' else analyse
+    for k, v in fonction(texte).items():
+        if isinstance(v, dict):
+            print(f'  {k:20} n={v["n"]:<5} min={v["min"]:<10.0f} med={v["median"]:<10.0f} '
+                  f'moy={v["moy"]:<10.1f} max={v["max"]:.0f}')
+        else:
+            print(f'  {k:20} {v}')
 
 
 if __name__ == '__main__':
