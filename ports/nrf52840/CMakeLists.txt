@@ -274,7 +274,11 @@ if(${BOARD} MATCHES RSPB)
     set(TARGET_NAME ${PROJECT_NAME}_RSPB_board)
     set(DEVICE_MODEL "RSPB")
     set(BOARD_DIR "${PROJ_DIR}/bsp/rspbtracker_v1.0")
-    set(BOOTLOADER "bootloader/secure_bootloader/rspbtracker_v1.0/armgcc/_build/rspb_bootloader_v1_linkit_merged.hex")
+    # Absolute: mergehex runs from the build directory, where this relative
+    # path does not resolve -- "merged_hex" then failed with "one of the
+    # files to merge cannot be found", naming the bootloader rather than the
+    # working directory that was actually wrong.
+    set(BOOTLOADER "${CMAKE_CURRENT_LIST_DIR}/bootloader/secure_bootloader/rspbtracker_v1.0/armgcc/_build/rspb_bootloader_v1_linkit_merged.hex")
     # RSPB defaults (user can override via -D)
     if(NOT DEFINED ENABLE_THERMISTOR_SENSOR)
         set(ENABLE_THERMISTOR_SENSOR 1)
@@ -320,7 +324,7 @@ else()
     else()
         set(LORA_POWER_OFF_UNDERWATER_VAL 0)
     endif()
-    set(BOOTLOADER "bootloader/secure_bootloader/linkitv4_v1.0/armgcc/_build/cls_bootloader_v1_linkit_merged.hex")
+    set(BOOTLOADER "${CMAKE_CURRENT_LIST_DIR}/bootloader/secure_bootloader/linkitv4_v1.0/armgcc/_build/cls_bootloader_v1_linkit_merged.hex")
     if(NOT DEFINED ENABLE_SWS_ANALOG)
         set(ENABLE_SWS_ANALOG 1)
     endif()
