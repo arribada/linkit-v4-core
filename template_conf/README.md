@@ -62,6 +62,33 @@ The bench harness in [`../tests/bench/`](../tests/bench/) speaks the other
 language — raw DTE, firmware names, wire codes — because it drives the device
 directly. Do not carry a value across from one to the other.
 
+## The depth pile only pays off on LDA2
+
+`ARGOS_DEPTH_PILE` is the most consequential setting in these files after the
+mode itself, and its benefit depends on something no config file can state: how
+the module is provisioned.
+
+A LONG Argos packet is **192 bits** and carries up to three positions. **LDK
+carries 128**, so a LONG does not fit. On a module transmitting in LDK the
+firmware caps the retrieval to **one position per transmission** — deliberately,
+and at retrieve time, so a position whose transmission KIM2 would drop does not
+also spend one of its redundancy slots. The pile then carries nothing and a
+battery budget computed as "three positions per transmission" is wrong by a
+factor of three.
+
+Two conditions, not one:
+
+1. **LDA2 provisioned** — `ARGOS_RADIOCONF_LDA2` exactly 32 characters. That is
+   the firmware's own test (`refresh_modulation_availability`).
+2. **LDA2 reachable** — either the master RCONF decodes to LDA2, or
+   `ARGOS_ADAPTIVE_MODULATION = 1` lets the service switch to it for the
+   transmission.
+
+The second is easy to miss. The bench board carries all three RCONFs, its master
+decodes to LDK, and adaptive is off: LDA2 is present and entirely unused, so no
+LONG packet can leave it as configured. The `PROV-01` bench case reads all three
+facts and returns that verdict for a given board.
+
 ## Validating a file
 
 ```bash
