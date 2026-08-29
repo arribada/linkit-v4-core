@@ -781,6 +781,16 @@ def c_lecture_exhaustive(r, case):
 def c_pont_kim(r, case):
     """Pont serie vers le module: une fois ouvert il capte TOUT, la sortie est +++."""
     b = r.b
+    # KIMBR n est compile que sur un build ni-SMD-ni-LoRa. Ailleurs son absence
+    # est le comportement attendu, et le silence qu on obtient n est pas un
+    # refus d ouverture — mesure du 2026-08-30 sur carte SMD, ou le cas
+    # concluait "ouverture du pont refusee: <silence>" sur un firmware qui ne
+    # porte simplement pas la commande. Le pont equivalent y est LORABR, et le
+    # pont GNSS (BRDG-01) existe partout.
+    if any(nom == 'KIMBR' for nom, _ in _commandes_absentes(b)):
+        return r.record(case, 'SKIP',
+                        'ce build ne porte pas KIMBR (SMD ou LoRa) — le pont KIM2 n existe '
+                        'pas ici, son absence est correcte')
     lines, err = r.raw("$KIMBR#001;1\r", wait=3.0)
     if err: return r.record(case, 'ERROR', err)
     m = _resp(lines, 'KIMBR')
