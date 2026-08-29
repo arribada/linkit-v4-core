@@ -130,6 +130,11 @@ struct ArgosConfig {
 	bool blind_en;
 	unsigned int blind_retx_nb;
 	unsigned int blind_retx_period_s;
+	/// @brief Plancher de periode BLIND, en secondes.
+	/// Le module ne sait pas repeter plus vite que cela; c est aussi le minimum
+	/// DTE d'ARP46. Sert de critere de compatibilite avec la cadence d'un mode
+	/// qui rythme deja sa propre sequence.
+	static constexpr unsigned int BLIND_MIN_RETX_PERIOD_S = 60;
 };
 
 enum class ConfigMode {
@@ -1321,12 +1326,35 @@ public:
 		// Mark GNSS disabled if certification is set
 		if (argos_config.cert_tx_enable) argos_config.gnss_en = false;
 
-		// BLIND is disabled when the EFFECTIVE mode (after LB/OoZ/HAULED override)
-		// runs its own nRF-paced burst — SURFACING_BURST and DOPPLER — because a
-		// module-owned retx would double-transmit. Makes argos_config.blind_en the
-		// mode-aware source of truth for the drivers and the TX service.
-		if (argos_config.mode == BaseArgosMode::SURFACING_BURST || argos_config.mode == BaseArgosMode::DOPPLER)
+		// BLIND against the modes that pace their own burst. argos_config.blind_en
+		// is the mode-aware source of truth for the drivers and the TX service.
+		//
+		// SURFACING_BURST: never, and not negotiable. It runs a progressive
+		// Doppler cascade AND a GNSS phase, both paced by the nRF; a
+		// module-owned retx on top would put every message on air twice —
+		// double the satellite budget, and a beacon talking over itself.
+		//
+		// DOPPLER: the operator's choice, under one condition. BLIND hands the
+		// repetition to the module, which cannot repeat faster than
+		// BLIND_MIN_RETX_PERIOD_S. The Doppler sequence spaces its own messages
+		// by surfacing_burst_init_s and grows to surfacing_burst_max_s. If that
+		// settled cadence is tighter than the BLIND floor the two cannot be
+		// reconciled — the module would still be repeating the previous message
+		// when the nRF schedules the next — so BLIND is refused rather than run
+		// half-honoured. Otherwise the module's period is ALIGNED on the
+		// sequence's own cadence instead of ARP46: that is what makes the two
+		// coherent, and it is why ARP46 is not what ends up on air here.
+		//
+		// ArgosTxService::service_init reports the outcome once, so an operator
+		// who asked for BLIND and did not get it reads why.
+		if (argos_config.mode == BaseArgosMode::SURFACING_BURST) {
 			argos_config.blind_en = false;
+		} else if (argos_config.mode == BaseArgosMode::DOPPLER && argos_config.blind_en) {
+			if (argos_config.surfacing_burst_max_s < ArgosConfig::BLIND_MIN_RETX_PERIOD_S)
+				argos_config.blind_en = false;
+			else
+				argos_config.blind_retx_period_s = argos_config.surfacing_burst_max_s;
+		}
 
 		// Adaptive modulation configuration
 		argos_config.adaptive_modulation = read_param<bool>(ParamID::ARGOS_ADAPTIVE_MODULATION);

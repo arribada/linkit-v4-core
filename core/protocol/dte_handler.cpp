@@ -145,6 +145,19 @@ std::string DTEHandler::PARMW_REQ(int error_code, std::vector<ParamValue> &param
 					// Type mismatch — let configuration_store handle / reject
 				}
 			}
+			// SHUTDOWN_NTIME_SAT / LB_SHUTDOWN_NTIME_SAT: RSPB only. Accepting
+			// them anywhere else stored a number that silently does nothing —
+			// an operator sets a session budget, gets no shutdown, and has no
+			// way to tell the parameter apart from a broken one. Worse, the
+			// name promises a per-session cap that a permanently powered board
+			// could only honour as a lifetime cap. Refuse it where it cannot
+			// mean what it says; the PARMW response names the key.
+			if (!param_map[(int)param_values[i].param].is_implemented) {
+				DEBUG_WARN("DTEHandler::PARMW_REQ: %s is not implemented on this build — rejected",
+				           param_map[(int)param_values[i].param].name.c_str());
+				rejected_keys.push_back(param_map[(int)param_values[i].param].key);
+				continue;
+			}
 			configuration_store->write_param(param_values[i].param, param_values[i].value);
 #if !defined(ARGOS_SMD) || (ARGOS_SMD != 1)
 			if (param_values[i].param == ParamID::ARGOS_RADIOCONF

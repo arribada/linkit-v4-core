@@ -187,6 +187,14 @@ TEST(DTEHandler, PARMR_REQ_CheckEmptyRequest) {
 	std::string resp;
 	std::string req = "$PARMR#000;\r";
 	CHECK_TRUE(DTEAction::NONE == dte_handler->handle_dte_message(req, resp));
+	// 2026-08: PWP05 / LBP14 (SHUTDOWN_NTIME_SAT and its low-battery twin) left
+	// this list. They are now declared HAS_BOARD_RSPB, so on any other build
+	// PARMR no longer advertises them and PARMW refuses them. "Session" only
+	// means one duty cycle where the TPL5111 cuts power at the end of it; on a
+	// permanently powered board the parameter could only ever act as a LIFETIME
+	// cap, which is not what its name promises. This is a protocol-visible
+	// change: a host reading every parameter gets two fewer keys.
+	//
 	// Refreshed 2026-05 after addition of GNP47/GNP48/GNP49 (GNSS extras),
 	// SMP00/SMP01 (SMD params), GNP50 (REUSE_LAST max fix age, Plan 1 step 1),
 	// RLP01/02/03 (rolling-window rate limiter, Plan 1 step 2) and UNP08
@@ -203,7 +211,7 @@ TEST(DTEHandler, PARMR_REQ_CheckEmptyRequest) {
 	// mode). STATR_REQ_CheckEmptyRequest moves #0C6 -> #0CE for MRT01, the
 	// read-only state mirror (T-keys are the STATR set).
 	STRCMP_EQUAL(
-	    "$O;PARMR#818;IDP12=0,IDP11=FACTORY,ARP05=60,ARP01=2,ARP19=0,ARP18=0,GNP01=1,ARP11=1,ARP16=10,GNP02=1,GNP03=2,"
+	    "$O;PARMR#808;IDP12=0,IDP11=FACTORY,ARP05=60,ARP01=2,ARP19=0,ARP18=0,GNP01=1,ARP11=1,ARP16=10,GNP02=1,GNP03=2,"
 	    "GNP05=120,GNP04=0,UNP01=0,UNP02=0,UNP03=1,LBP01=0,LBP02=10,ARP06=240,LBP04=2,LBP05=0,LBP06=1,ARP12=4,LBP07=2,"
 	    "LBP08=1,LBP09=120,UNP04=10,PPP01=15,PPP02=90,PPP03=30,PPP04=1000,PPP05=300,PPP06=10,GNP09=530,GNP10=3,GNP11=0,"
 	    "GNP20=1,GNP21=5,GNP22=1,GNP23=60,ARP30=1,LDP01=1,ARP31=1,ARP32=1,ARP33=900,ARP34=90,GNP24=1,LBP10=5,LBP11=4,"
@@ -215,7 +223,7 @@ TEST(DTEHandler, PARMR_REQ_CheckEmptyRequest) {
 	    "AXP02=0,AXP03=0,AXP04=5,AXP08=0,AXP09=0,PRP01=0,PRP02=0,DBP01=1,GNP27=0,UNP05=1,UNP06=1,UNP07=1000,UNP08=1000,"
 	    "GNP40=15,GNP41=300,UNP22=4,UNP23=3600,UNP24=7200,UNP25=5,UNP12=0,UNP13=0,GNP42=10,GNP43=10,LBP12=5,PRP03=0,"
 	    "GNP28=0,STP04=0,STP05=1,STP06=1000,PHP04=0,PHP05=1,PHP06=1000,LTP04=0,LTP05=1,LTP06=1000,PRP04=0,PRP05=1,"
-	    "PRP06=1000,AXP05=0,AXP06=1,AXP07=1000,THP06=0,THP07=1,THP08=1000,IDP14=,PWP05=0,LBP14=0,GNP30=0,PRP07=0,GNP31="
+	    "PRP06=1000,AXP05=0,AXP06=1,AXP07=1000,THP06=0,THP07=1,THP08=1000,IDP14=,GNP30=0,PRP07=0,GNP31="
 	    ",PWP06=0,LRP01=,LRP02=,LRP03=,LRP04=,LRP05=,LRP06=,LRP07=1,LRP08=4,LRP09=0,LRP10=3,LRP11=0,LRP12=0,LRP13=0,"
 	    "LRP14=2,LRP15=1,ARP40=5,ARP41=1,ARP42=30,MTP01=0,MTP02=10,MTP03=25,MTP04=50,MTP05=3,MTP06=0,MTP07=0,ARP51="
 	    "03921fb104b92859209b18abd009de96,ARP52=2c93600d6be3bac0ccfe9047c02c058e,ARP53="
@@ -1986,4 +1994,33 @@ TEST(DTEHandler, PARMW_DiveStartTimeIsBounded) {
 	req = "$PARMW#00B;UNP13=86401\r";
 	CHECK_TRUE(DTEAction::CONFIG_UPDATED == dte_handler->handle_dte_message(req, resp));
 	STRCMP_EQUAL("$N;PARMW#005;UNP13\r", resp.c_str());
+}
+
+TEST(DTEHandler, PARMW_SessionBudgetIsRefusedOffRSPB) {
+	/*
+	 * SHUTDOWN_NTIME_SAT means "per session", and a session is one duty cycle
+	 * only where the TPL5111 cuts power at the end of it. On a board that stays
+	 * powered, m_session_tx_count is reset in service_init and nowhere else, so
+	 * the parameter could only act as a LIFETIME cap: at TR_NOM=60 s a budget of
+	 * 100 kills the beacon 100 minutes into the deployment.
+	 *
+	 * Storing it silently was the bad outcome -- the operator sets a budget, no
+	 * shutdown happens, and nothing distinguishes that from a broken parameter.
+	 * Refused here, and the response names the key.
+	 */
+	std::string resp;
+
+	std::string req = "$PARMW#009;PWP05=100\r";
+	CHECK_TRUE(DTEAction::CONFIG_UPDATED == dte_handler->handle_dte_message(req, resp));
+	STRCMP_EQUAL("$N;PARMW#005;PWP05\r", resp.c_str());
+
+	req = "$PARMW#009;LBP14=100\r";
+	CHECK_TRUE(DTEAction::CONFIG_UPDATED == dte_handler->handle_dte_message(req, resp));
+	STRCMP_EQUAL("$N;PARMW#005;LBP14\r", resp.c_str());
+
+	/* A refusal must not cost the other keys in the same frame. */
+	req = "$PARMW#012;PWP05=100,ARP05=90\r";
+	CHECK_TRUE(DTEAction::CONFIG_UPDATED == dte_handler->handle_dte_message(req, resp));
+	STRCMP_EQUAL("$N;PARMW#005;PWP05\r", resp.c_str());
+	CHECK_EQUAL(90U, configuration_store->read_param<unsigned int>(ParamID::TR_NOM));
 }

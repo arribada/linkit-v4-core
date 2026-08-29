@@ -278,8 +278,15 @@ const BaseMap param_map[] = {
 	{ "ARGOS_SECKEY", "IDP13", BaseEncoding::TEXT, "", "", {}, (ARGOS_SMD == 1), true },
 	{ "ARGOS_RADIOCONF", "IDP14", BaseEncoding::TEXT, "", "", {}, true, true },
 	// [174-176] Session shutdown control (slots always reserved)
-	{ "SHUTDOWN_NTIME_SAT", "PWP05", BaseEncoding::UINT, 0U, 65535U, {}, true, true },
-	{ "LB_SHUTDOWN_NTIME_SAT", "LBP14", BaseEncoding::UINT, 0U, 65535U, {}, true, true },
+	// RSPB ONLY, and enforced as such. "Session" means one duty cycle, which is
+	// only true where the TPL5111 cuts power at the end of it and the counter
+	// restarts at the next boot. On a board that stays powered
+	// m_session_tx_count is reset in service_init and nowhere else, so the
+	// parameter would become a LIFETIME cap: at TR_NOM=60 s a budget of 100
+	// kills the beacon 100 minutes into the deployment. Not implemented
+	// elsewhere, and PARMW refuses it there — see DTEHandler::PARMW_REQ.
+	{ "SHUTDOWN_NTIME_SAT", "PWP05", BaseEncoding::UINT, 0U, 65535U, {}, HAS_BOARD_RSPB, true },
+	{ "LB_SHUTDOWN_NTIME_SAT", "LBP14", BaseEncoding::UINT, 0U, 65535U, {}, HAS_BOARD_RSPB, true },
 	{ "GNSS_SESSION_SINGLE_FIX", "GNP30", BaseEncoding::BOOLEAN, 0, 0, {}, true, true },
 	// [177] Pressure sensor full scale (slots always reserved)
 	{ "PRESSURE_SENSOR_FULL_SCALE", "PRP07", BaseEncoding::PRESSURESENSORFULLSCALE, 0, 0, {}, ENABLE_PRESSURE_SENSOR, true },

@@ -163,6 +163,30 @@ void ArgosTxService::service_init() {
 		if (status_led) status_led->flash(RGBLedColor::RED, 200);
 	}
 
+	// BLIND: say once what the operator actually gets. Asking for it and
+	// silently not getting it is the failure mode this reports — and the
+	// aligned period matters too, because in DOPPLER what goes on air is the
+	// sequence's cadence, not ARP46.
+	if (configuration_store->read_param<bool>(ParamID::ARGOS_BLIND_EN)) {
+		if (argos_config.mode == BaseArgosMode::SURFACING_BURST) {
+			DEBUG_WARN("ArgosTxService: BLIND requested but REFUSED in SURFACING_BURST — that mode paces its own "
+			           "Doppler cascade and GNSS phase, so a module-owned burst would transmit every message "
+			           "twice. Transmitting in BASIC MAC.");
+		} else if (argos_config.mode == BaseArgosMode::DOPPLER && !argos_config.blind_en) {
+			DEBUG_WARN("ArgosTxService: BLIND requested but REFUSED in DOPPLER — the sequence settles at "
+			           "SURFACING_BURST_MAX_S=%u s, below the %u s the module needs between two repeats. Raise "
+			           "SURFACING_BURST_MAX_S to at least %u s, or leave BLIND off. Transmitting in BASIC MAC.",
+			           argos_config.surfacing_burst_max_s, ArgosConfig::BLIND_MIN_RETX_PERIOD_S,
+			           ArgosConfig::BLIND_MIN_RETX_PERIOD_S);
+		} else if (argos_config.blind_en) {
+			DEBUG_INFO("ArgosTxService: BLIND active — retx_nb=%u period=%u s%s", argos_config.blind_retx_nb,
+			           argos_config.blind_retx_period_s,
+			           argos_config.mode == BaseArgosMode::DOPPLER
+			               ? " (aligned on SURFACING_BURST_MAX_S, not ARGOS_BLIND_RETX_PERIOD_S)"
+			               : "");
+		}
+	}
+
 	DEBUG_INFO("ArgosTxService::service_init: Argos ID=%u", (unsigned int)argos_config.argos_id);
 	// Jitter seed: shared derivation with LoRaTxService (see
 	// ConfigurationStore::get_tx_jitter_seed) so both services jitter off the
