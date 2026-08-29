@@ -89,6 +89,21 @@ TEST_GROUP(GPSService) {
 		increment_time_ms(min * 60 * 1000);
 	}
 
+	/* Advance simulated time in ONE step instead of a million 1 ms ticks.
+	 *
+	 * The watchdogs in this service are armed a day and several days out, and
+	 * increment_time_ms() walks a millisecond at a time -- 86.4 million
+	 * iterations for a single day, each running the scheduler. Jumping the
+	 * counter fires every schedule that came due, which is what these tests
+	 * need; use increment_time_* wherever the PATH through time matters. */
+	void jump_time_s(uint64_t s) {
+		m_current_ms += s * 1000;
+		fake_rtc->incrementtime((std::time_t)s);
+		fake_timer->set_counter(m_current_ms);
+		/* Let a task that re-arms itself settle. */
+		for (int i = 0; i < 8; i++) system_scheduler->run();
+	}
+
 	void notify_underwater_state(bool state) {
 		ServiceEvent e;
 		e.event_type = ServiceEventType::SERVICE_LOG_UPDATED;
@@ -1429,5 +1444,103 @@ TEST(GPSService, NoPvtWatchdogExemptsACloudLocateModeTagWithoutTheOnlyFlag) {
 	jump_to(fake_timer, fake_rtc, t0, 8ULL * 24 * 3600);
 	fake_config_store->write_param(ParamID::LAST_TX, (std::time_t)(t0 + 8 * 24 * 3600 - 60));
 	system_scheduler->run();
+	mock().checkExpectations();
+}
+
+
+/*
+ * GPS health watchdog: 24 h without any GPS event.
+ *
+ * Four branches, and three of them must NOT reset -- a safety net that reboots
+ * a working beacon is worse than no net at all. Real time would need a day per
+ * branch, so the tests jump the clock instead.
+ */
+
+static void hwdt_base_config(FakeConfigurationStore *cs, bool gnss_en) {
+	cs->write_param(ParamID::LB_EN, false);
+	cs->write_param(ParamID::GNSS_EN, gnss_en);
+	unsigned int dloc = 10 * 60;
+	cs->write_param(ParamID::DLOC_ARG_NOM, dloc);
+	unsigned int t = 60;
+	cs->write_param(ParamID::GNSS_ACQ_TIMEOUT, t);
+	cs->write_param(ParamID::GNSS_COLD_ACQ_TIMEOUT, t);
+	cs->write_param(ParamID::GNSS_HDOPFILT_EN, false);
+	cs->write_param(ParamID::UNDERWATER_EN, false);
+	BaseGNSSFixMode fix_mode = BaseGNSSFixMode::FIX_3D;
+	cs->write_param(ParamID::GNSS_FIX_MODE, fix_mode);
+	BaseGNSSDynModel dyn_model = BaseGNSSDynModel::SEA;
+	cs->write_param(ParamID::GNSS_DYN_MODEL, dyn_model);
+}
+
+TEST(GPSService, HealthWDT_GnssOffIsNotAFault) {
+	/* A tag deliberately configured Doppler-only produces no GPS event, ever.
+	 * Resetting it every 24 h for the length of the deployment would be the net
+	 * breaking a perfectly working beacon. */
+	hwdt_base_config(fake_config_store, false);
+	fake_rtc->settime(1700000000);
+
+	GPSService s(*mock_m10q, fake_log);
+	s.start();
+
+	mock().ignoreOtherCalls();
+	mock().expectNoCall("reset");
+	jump_time_s(25 * 3600);
+	mock().checkExpectations();
+}
+
+TEST(GPSService, HealthWDT_TransmittingBeaconIsNotReset) {
+	/* The receiver is silent but the beacon is on air: the problem is confined
+	 * to the GNSS side and a device reset is the wrong tool -- it costs the RAM
+	 * state, a flash write and a forced cold path. */
+	hwdt_base_config(fake_config_store, true);
+	fake_rtc->settime(1700000000);
+
+	GPSService s(*mock_m10q, fake_log);
+	s.start();
+
+	mock().ignoreOtherCalls();
+	mock().expectNoCall("reset");
+
+	/* Stop just short of the deadline, then date a transmission to NOW so the
+	 * beacon is transmitting when the watchdog looks. */
+	jump_time_s(24 * 3600 - 60);
+	std::time_t last_tx = fake_rtc->gettime();
+	fake_config_store->write_param(ParamID::LAST_TX, last_tx);
+	jump_time_s(120);
+
+	mock().checkExpectations();
+}
+
+TEST(GPSService, HealthWDT_SilentBeaconIsReset) {
+	/* No GPS event and no transmission in 24 h: nothing is working. This is the
+	 * one branch that must reset. */
+	hwdt_base_config(fake_config_store, true);
+	fake_rtc->settime(1700000000);
+	std::time_t never = 0;
+	fake_config_store->write_param(ParamID::LAST_TX, never);
+
+	GPSService s(*mock_m10q, fake_log);
+	s.start();
+
+	mock().ignoreOtherCalls();
+	mock().expectOneCall("reset").withParameter("dfu_mode", false);
+	jump_time_s(25 * 3600);
+	mock().checkExpectations();
+}
+
+TEST(GPSService, HealthWDT_StaleTransmissionIsReset) {
+	/* A transmission older than the window is not evidence the beacon works:
+	 * it is the same silence, dated. */
+	hwdt_base_config(fake_config_store, true);
+	fake_rtc->settime(1700000000);
+	std::time_t old_tx = (std::time_t)1700000000 - (std::time_t)(48 * 3600);
+	fake_config_store->write_param(ParamID::LAST_TX, old_tx);
+
+	GPSService s(*mock_m10q, fake_log);
+	s.start();
+
+	mock().ignoreOtherCalls();
+	mock().expectOneCall("reset").withParameter("dfu_mode", false);
+	jump_time_s(25 * 3600);
 	mock().checkExpectations();
 }
