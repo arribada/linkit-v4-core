@@ -515,24 +515,96 @@ void Service::reschedule(bool immediate) {
 	// picks m_scheduled_task and m_scheduled_mode, arms the cooldown, refreshes
 	// the prepass status. Moving it below the test would silently stop all of
 	// that from happening on an already-initiated service.
-	unsigned int next_schedule = immediate ? 0 : service_next_schedule_in_ms();
+	// `immediate` still bypasses the virtual entirely, and still reports
+	// "scheduled": that bypass is load-bearing (GPSService documents that an
+	// immediate reschedule deliberately skips its deep-idle gate, and Argos
+	// relies on it not re-picking m_scheduled_task), and the string is matched
+	// verbatim by tests/bench/dte_campaign.py.
+	const ScheduleDecision decision = immediate ? ScheduleDecision::run(0, "scheduled") : service_next_schedule();
+
+	// The legacy value this decision would have been before the type existed.
+	// Only a Run carries a delay; every other kind read as SCHEDULE_DISABLED,
+	// and the bench report must keep saying exactly that.
+	[[maybe_unused]] const unsigned int legacy_ms =
+	    (decision.kind() == ScheduleDecision::Kind::Run) ? decision.delay_ms() : SCHEDULE_DISABLED;
 
 	if (m_is_initiated) {
 		DEBUG_TRACE("Service::reschedule: service %s already initiated", m_name);
-		BENCH_SCHED_NOTE(next_schedule, "already-initiated");
-		return;
-	}
-	if (next_schedule == SCHEDULE_DISABLED) {
-		DEBUG_TRACE("Service::reschedule: service %s schedule currently disabled", m_name);
-		BENCH_SCHED_NOTE(SCHEDULE_DISABLED, "no-schedule");
+		BENCH_SCHED_NOTE(legacy_ms, "already-initiated");
 		return;
 	}
 
-	DEBUG_TRACE("Service::reschedule: service %s scheduled in %u msecs", m_name, next_schedule);
-	BENCH_SCHED_NOTE(next_schedule, "scheduled");
-	m_last_schedule = next_schedule;
-	m_task_period = system_scheduler->post_task_prio([this]() { run_scheduled_task(); }, "ServicePeriod",
-	                                                 Scheduler::DEFAULT_PRIORITY, next_schedule);
+	if (decision.kind() == ScheduleDecision::Kind::Run) {
+		m_hold_reason = nullptr;
+		m_hold_streak = 0;
+		DEBUG_TRACE("Service::reschedule: service %s scheduled in %u msecs", m_name, decision.delay_ms());
+		BENCH_SCHED_NOTE(decision.delay_ms(), decision.reason());
+		// m_last_schedule is written by Run and by nothing else. It means "when
+		// is the next RUN", not "do I own a task" -- several tests use it as a
+		// virtual clock (t += get_last_schedule()) and would silently jump time
+		// by a hold's length if a hold wrote into it.
+		m_last_schedule = decision.delay_ms();
+		m_task_period = system_scheduler->post_task_prio([this]() { run_scheduled_task(); }, "ServicePeriod",
+		                                                 Scheduler::DEFAULT_PRIORITY, decision.delay_ms());
+		return;
+	}
+
+	if (decision.kind() == ScheduleDecision::Kind::Off) {
+		m_hold_reason = nullptr;
+		m_hold_streak = 0;
+		DEBUG_TRACE("Service::reschedule: service %s off (%s)", m_name, decision.reason());
+		BENCH_SCHED_NOTE(SCHEDULE_DISABLED, decision.reason());
+		return;
+	}
+
+	// A hold. The service owns nothing to run, but the framework WILL come back
+	// -- that is the whole difference with Off, and the reason a temporary
+	// condition can no longer become permanent.
+	post_hold_reevaluation(decision);
+}
+
+/// @brief Arm the re-evaluation that ends a hold, and keep repeats from polling.
+///
+/// Reuses m_task_period: this is only reachable when !m_is_initiated, and
+/// deschedule() at the top of every reschedule() already cancels it, so an
+/// event-driven reschedule -- the primary way out of a hold -- clears it for
+/// free. No extra handle per service, and no second task to leak.
+void Service::post_hold_reevaluation(const ScheduleDecision &decision) {
+	unsigned int delay_s;
+	if (decision.kind() == ScheduleDecision::Kind::HoldUntil) {
+		const std::time_t now = (rtc && rtc->is_set()) ? rtc->gettime() : 0;
+		const std::time_t until = (std::time_t)decision.epoch_s();
+		// An instant already past, or an unusable clock, becomes the floor
+		// rather than zero: a hold must never turn into a spin.
+		delay_s = (now > 0 && until > now) ? (unsigned int)(until - now) : ScheduleDecision::MIN_HOLD_S;
+		m_hold_reason = nullptr;  // a deadline is its own bound; no streak needed
+		m_hold_streak = 0;
+	} else {
+		delay_s = decision.max_hold_s();
+		// Same hold twice in a row: double the wait. Pointer identity on a
+		// static literal, so this costs one compare.
+		if (m_hold_reason == decision.reason()) {
+			if (m_hold_streak < 16) m_hold_streak++;
+			const unsigned int scaled = delay_s << (m_hold_streak > 20 ? 20 : m_hold_streak);
+			delay_s = (scaled > HOLD_STREAK_CEILING_S || scaled < delay_s) ? HOLD_STREAK_CEILING_S : scaled;
+			if (delay_s >= HOLD_STREAK_CEILING_S) {
+				DEBUG_ERROR("Service::reschedule: service %s has answered \"%s\" %u times running — still holding, "
+				            "now re-checking only every %u s",
+				            m_name, decision.reason(), (unsigned int)m_hold_streak, delay_s);
+			}
+		} else {
+			m_hold_reason = decision.reason();
+			m_hold_streak = 0;
+		}
+	}
+
+	DEBUG_INFO("Service::reschedule: service %s holding (%s) — re-evaluating in %u s", m_name, decision.reason(),
+	           delay_s);
+	BENCH_SCHED_NOTE(SCHEDULE_DISABLED, decision.reason());
+	// m_last_schedule deliberately left as deschedule() set it: a hold is not a
+	// run, and service_is_scheduled() must keep meaning "a run is pending".
+	m_task_period = system_scheduler->post_task_prio([this]() { reschedule(); }, "ServiceHoldReeval",
+	                                                 Scheduler::DEFAULT_PRIORITY, (uint64_t)delay_s * 1000ULL);
 }
 
 /// @brief Body of the scheduled-period task: arm the timeout, then initiate.

@@ -65,6 +65,19 @@ private:
 	/// handle_task_exception: without it a single transient throw left the
 	/// service owning no task at all.
 	Scheduler::TaskHandle m_task_exception_retry;
+
+	/// @brief Reason string of the hold currently in force, or nullptr.
+	/// Compared by POINTER identity: reasons are static literals, so this is a
+	/// one-cycle test and needs no strcmp.
+	const char *m_hold_reason = nullptr;
+	/// @brief How many times in a row the same hold has been re-evaluated.
+	/// The re-evaluation delay doubles with it, so a service that answers the
+	/// same hold for ever converges to one wake per HOLD_STREAK_CEILING_S
+	/// instead of polling. Without this the hold branch would recreate the
+	/// wake/log/skip loop this whole type exists to remove.
+	uint8_t m_hold_streak = 0;
+	/// @brief Ceiling for the doubling above.
+	static constexpr unsigned int HOLD_STREAK_CEILING_S = 6 * 3600;
 	/// @brief Delay before that recovery. Long enough that a deterministic
 	/// throw becomes a slow trickle in the log rather than a storm, short
 	/// enough that a transient one costs one skipped cycle.
@@ -87,6 +100,9 @@ private:
 	///        nothing would ever put it back (it is armed in exactly one place,
 	///        run_scheduled_task).
 	void deschedule(bool cancel_timeout = true);
+
+	/// @brief Arm the re-evaluation that ends a hold. See the definition.
+	void post_hold_reevaluation(const ScheduleDecision &decision);
 
 	/// @brief Body of the scheduled-period task: arm the timeout, then initiate.
 	/// Runs from the scheduler, so it is the outermost frame service code has —
