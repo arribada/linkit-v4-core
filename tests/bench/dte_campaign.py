@@ -2514,7 +2514,7 @@ def _led(b, evt=None, timeout=12.0):
     # ne met pas a jour m_color, donc la couleur seule ne suffit pas.
     return (m.group(1), int(m.group(2)) or int(m.group(3))) if m else (None, None)
 
-def _led_calme(b, fenetre=3.0, essais=10):
+def _led_calme(b, fenetre=3.0, essais=30):
     """Attend que la FSM LED cesse de bouger d elle-meme.
 
     GNSS_EN=0 empeche la PROCHAINE session GNSS, pas celle qui tourne deja.
@@ -2522,6 +2522,11 @@ def _led_calme(b, fenetre=3.0, essais=10):
     (GNSSOn en particulier) pendant que le cas injecte sa sequence, et elle
     ecrase l etat teste — un firmware correct echoue alors sur un artefact de
     banc. On attend donc un etat stable avant d injecter quoi que ce soit.
+
+    Le budget (30 tentatives de 3 s) depasse volontairement GNSS_ACQ_TIMEOUT
+    (120 s par defaut): une session deja lancee doit pouvoir aller au bout de
+    son echeance pendant qu on attend, sinon on renonce juste avant qu elle se
+    taise.
 
     Renvoie l etat stable, ou None si la FSM n a pas cesse de bouger.
     """
