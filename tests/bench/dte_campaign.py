@@ -63,7 +63,7 @@ class Runner:
         self._lockf.write(str(os.getpid())); self._lockf.flush()
         self.b = None
         self.logf = open(LOG, 'a', buffering=1)
-        self.n_pass = self.n_fail = self.n_error = 0
+        self.n_pass = self.n_fail = self.n_error = self.n_skip = 0
 
     def say(self, s):
         line = f"{time.strftime('%H:%M:%S')}  {s}"
@@ -283,10 +283,16 @@ class Runner:
         if evidence: rec['trace'] = evidence[:2000]
         with open(RESULTS, 'a') as f:
             f.write(json.dumps(rec, ensure_ascii=False) + '\n')
-        mark = {'PASS':'ok  ', 'FAIL':'ECHEC', 'ERROR':'err '}.get(verdict, '?')
+        mark = {'PASS':'ok  ', 'FAIL':'ECHEC', 'ERROR':'err ', 'SKIP':'saute'}.get(verdict, '?')
         self.say(f"  {mark} [{case['risque'][:4]}] {case['id']}: {detail}")
         if verdict == 'PASS': self.n_pass += 1
         elif verdict == 'FAIL': self.n_fail += 1
+        # SKIP: le cas ne PEUT pas conclure dans les conditions physiques du
+        # moment (electrode a sec, pas de ciel, module sans credentials). Ce
+        # n est ni un succes ni une panne, et le compter comme une erreur rend
+        # le bilan de campagne mensonger dans les deux sens: on croit avoir un
+        # defaut, et on croit avoir couvert le cas.
+        elif verdict == 'SKIP': self.n_skip += 1
         else: self.n_error += 1
 
     def run(self, cases):
@@ -308,7 +314,8 @@ class Runner:
                 self.record(case, 'ERROR', f'exception {type(e).__name__}: {e}')
                 if not self.recover():
                     self.say("ABANDON: recuperation impossible"); return
-        self.say(f"=== fin — {self.n_pass} ok, {self.n_fail} echecs, {self.n_error} erreurs ===")
+        saute = f", {self.n_skip} sautes" if self.n_skip else ""
+        self.say(f"=== fin — {self.n_pass} ok, {self.n_fail} echecs, {self.n_error} erreurs{saute} ===")
 
 
 # =====================================================================
@@ -3889,9 +3896,11 @@ def c_sws_contraste(r, case):
         #
         # A SIGNALER cote IHM: un afficheur qui montre "contraste 0.0x" sur une
         # balise saine inquiete pour rien. C est cosmetique, pas fonctionnel.
-        return r.record(case, 'ERROR',
-                        'contraste non encore calcule (aucune recalibration depuis le '
-                        'demarrage) — cas non concluant a sec', trace)
+        return r.record(case, 'SKIP',
+                        'contraste non calcule: aucune recalibration depuis le demarrage, '
+                        'ce qui est l etat NORMAL d une electrode a sec et stable. Le champ '
+                        'est un cache d execution, ni persiste ni recalcule a l init. '
+                        'Ce cas demande une electrode mouillee.', trace)
     # Une unite de tolerance: le firmware arrondit, nous aussi.
     if ecart > 1:
         return r.record(case, 'FAIL',
