@@ -7011,9 +7011,16 @@ def cles_implementees(b):
         return _CLES_IMPL
     _CLES_IMPL = set()
     try:
+        # b.dte() ne rend qu un groupe (\$([ON]);CMD#): la charge utile se lit sur
+        # la ligne entiere. Un m.group(3) y leve IndexError, l except plus bas
+        # l avale, et la sonde rend un ensemble vide sans que rien ne le dise —
+        # elle ne saute alors plus rien, ce qui est le bon defaut mais la rend
+        # inutile. Verifie sur la carte le 2026-08-30.
         m = b.dte('PARML', '', timeout=12.0)
-        if m and m.group(1) == 'O':
-            _CLES_IMPL = {k.strip() for k in m.group(3).rstrip('\r').split(',') if k.strip()}
+        ligne = (m.string if m and hasattr(m, 'string') else '') or ''
+        mm = re.search(r'\$O;PARML#[0-9A-Fa-f]{3};(.*)', ligne)
+        if mm:
+            _CLES_IMPL = {k.strip() for k in mm.group(1).rstrip('\r').split(',') if k.strip()}
     except Exception:
         pass
     return _CLES_IMPL
