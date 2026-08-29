@@ -3934,10 +3934,36 @@ def c_sws_etat_coherent(r, case):
     if not (st['air'] < st['seuil'] < st['eau']):
         defauts.append(f"seuil hors de l intervalle air..eau "
                        f"({st['air']} < {st['seuil']} < {st['eau']} est faux)")
-    # SAADC 12 bits: toute valeur au-dela de 4095 est une lecture aberrante.
+
+def _adc_pleine_echelle():
+    """Pleine echelle SAADC, lue dans le firmware et non recopiee.
+
+    Le SAADC de cette carte echantillonne en 14 bits: sws_analog_constants.hpp
+    definit ADC_INVALID_MAX 16383, et nrf_battery_mon.cpp comme thermistor.cpp
+    posent ADC_MAX_VALUE 16384 (2^14). Un cas qui assertait contre 4095 (12
+    bits) declarait aberrantes des lectures parfaitement valides — mesure du
+    2026-08-29: eau=15050, pic=15060, sur une electrode saine.
+    """
+    import os
+    chemin = os.path.join(os.path.dirname(os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__)))),
+        'core', 'services', 'sws_analog_constants.hpp')
+    try:
+        m = re.search(r'#define\s+ADC_INVALID_MAX\s+(\d+)', open(chemin).read())
+        if m:
+            return int(m.group(1))
+    except OSError:
+        pass
+    return 16383   # 2^14 - 1, la valeur du firmware au 2026-08
+
+
+    # Pleine echelle SAADC: toute valeur au-dela est une lecture aberrante. La
+    # borne vient du firmware (ADC_INVALID_MAX), pas d une constante recopiee.
+    pleine_echelle = _adc_pleine_echelle()
     for cle in ('air', 'eau', 'seuil', 'adc_brut', 'adc_filtre', 'pic_observe'):
-        if st[cle] > 4095:
-            defauts.append(f'{cle}={st[cle]} depasse la pleine echelle SAADC (4095)')
+        if st[cle] > pleine_echelle:
+            defauts.append(f'{cle}={st[cle]} depasse la pleine echelle SAADC '
+                           f'({pleine_echelle})')
     if st['palier'] > 5:
         defauts.append(f"palier de detection {st['palier']} hors de la plage L1..L5")
     try:
