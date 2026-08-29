@@ -5409,6 +5409,12 @@ CASES_V25 = [
 
 def _config_ciel(b, **extra):
     """Configuration d acquisition reelle: aucune injection, aucune emission."""
+    # PLAFOND D ACQUISITION AU MAXIMUM (600 = borne DTE). Cette carte perd sa
+    # BBR a chaque coupure du rail — le firmware le prevoit ("no cell": le
+    # fichier en flash devient le seul vecteur de demarrage a chaud) — donc
+    # CHAQUE session est un demarrage a froid absolu. Un froid sans almanach
+    # peut demander jusqu a 12,5 min rien que pour le telecharger; 180 s ou
+    # 300 s condamnaient la vague exterieure a echouer quel que soit le ciel.
     # CADENCE D ACQUISITION — l oubli le plus couteux de ce harnais. Aucun des
     # deux helpers de ciel ne la remettait, et DP-01 laisse derriere lui
     # DLOC_ARG_NOM=10, qui dans l espace DTE brut vaut 1440 min = 24 HEURES.
@@ -5426,7 +5432,7 @@ def _config_ciel(b, **extra):
            'ZONE_ENABLE_OUT_OF_ZONE_DETECTION_MODE': 0,
            'DLOC_ARG_NOM': 13, 'GNSS_NTRY': 5,
            'GNSS_ASSISTNOW_EN': 1, 'GNSS_ASSISTNOW_OFFLINE_EN': 1,
-           'GNSS_ACQ_TIMEOUT': 240, 'GNSS_COLD_ACQ_TIMEOUT': 300,
+           'GNSS_ACQ_TIMEOUT': 600, 'GNSS_COLD_ACQ_TIMEOUT': 600,
            'GNSS_HACCFILT_EN': 0, 'GNSS_HDOPFILT_EN': 0,
            'GNSS_DEEP_IDLE_AFTER_OFF_S': 0, 'GNSS_SESSION_SINGLE_FIX': 1}
     cfg.update(extra)
@@ -6311,7 +6317,9 @@ _CIEL_BASE = {
     'GNSS_DEEP_IDLE_AFTER_OFF_S': 0, 'GNSS_SESSION_SINGLE_FIX': 1,
     'GNSS_MIN_CNO': 10, 'GNSS_MIN_ELEV': 10, 'GNSS_MIN_NUM_FIXES': 1,
     'GNSS_CONSTELLATION_MASK': 0x0F, 'GNSS_FIX_MODE': 3,
-    'GNSS_ACQ_TIMEOUT': 180, 'GNSS_COLD_ACQ_TIMEOUT': 180,
+    # 600 = borne DTE. Voir _config_ciel: sans BBR retenue, chaque session est
+    # un froid absolu et 180 s ne suffisent pas a telecharger un almanach.
+    'GNSS_ACQ_TIMEOUT': 600, 'GNSS_COLD_ACQ_TIMEOUT': 600,
     # Voir _config_ciel: sans ces quatre lignes, la vague exterieure herite de
     # la cadence de 24 h laissee par DP-01, des tentatives epuisees par GPS-04
     # et du demarrage a froid force par GPS-06.
