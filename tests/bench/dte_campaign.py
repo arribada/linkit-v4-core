@@ -6074,6 +6074,18 @@ def c_mode_doppler(r, case):
     """
     _mode_emet(r, case, 4, 'DOPPLER', position=False, GNSS_EN=0)
 
+# ARGOS_CACHED_MODULATION (SMP01) suit la convention SmdArgosModulation:
+# 0=LDA2, 1=LDK, 2=VLDA4. L enum KineisModulation, celui qui apparait dans le
+# log "TX SUCCESS ... mode=N", utilise un ORDRE DIFFERENT: LDK=0, LDA2=1,
+# VLDA4=2. kim2.cpp fait la conversion explicitement et dit "never cast";
+# confondre les deux inverse LDK et LDA2, donc inverse exactement la conclusion
+# qu on tire sur la pile de profondeur.
+_CACHE_LDA2, _CACHE_LDK, _CACHE_VLDA4 = '0', '1', '2'
+
+def _nom_cache(v):
+    return {'0': 'LDA2', '1': 'LDK', '2': 'VLDA4'}.get(v, f'inconnu({v})')
+
+
 def c_mode_long_multi(r, case):
     """Trois positions dans la pile: le format LONG doit etre choisi.
 
@@ -6123,14 +6135,15 @@ def c_mode_long_multi(r, case):
             b.exit_config()
         except Exception:
             pass
-        if modul == '0':
+        if modul == _CACHE_LDK:
             return r.record(case, 'SKIP',
                             'module en LDK (128 bits): un LONG de 192 bits ne rentre pas et '
                             'le firmware plafonne a une position par emission, ce qui est '
                             'correct. Il faut une RCONF LDA2 pour conclure.', trace)
         return r.record(case, 'FAIL',
-                        f'trois positions en pile mais AUCUN paquet LONG (modulation={modul}): '
-                        'chaque position coute une emission entiere', trace)
+                        f'trois positions en pile mais AUCUN paquet LONG '
+                        f'(modulation en cache={_nom_cache(modul)}): chaque position coute '
+                        'une emission entiere', trace)
     for _, bits in longs:
         if bits and bits != _BITS_ATTENDUS['LONG']:
             return r.record(case, 'FAIL',
@@ -6621,9 +6634,8 @@ def c_modulations_provisionnees(r, case):
     ldk, lda2, vlda4 = porte('ARP51'), porte('ARP52'), porte('ARP53')
     cache = lus.get('SMP01', '?')
     adapt = lus.get('ARP54', '?')
-    noms = {'0': 'LDK', '1': 'LDA2', '2': 'VLDA4'}
     trace = (f'LDK={ldk} LDA2={lda2} VLDA4={vlda4} '
-             f'modulation en cache={cache} ({noms.get(cache, "?")}) adaptative={adapt}')
+             f'modulation en cache={cache} ({_nom_cache(cache)}) adaptative={adapt}')
 
     if not (ldk or lda2 or vlda4):
         return r.record(case, 'FAIL',
