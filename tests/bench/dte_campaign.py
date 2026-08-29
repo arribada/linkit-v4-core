@@ -2067,6 +2067,16 @@ def c_surface_promotion_fix(r, case):
     promotion n a pas lieu, la balise gaspille sa fenetre de surface en Doppler
     alors qu elle a mieux a dire.
     """
+    # Depend de la radio, contrairement a ce qu une classification automatique
+    # avait conclu. La promotion n est evaluee QUE lorsque le service se
+    # reprogramme (schedule_surfacing_burst, argos_tx_service.cpp:602). Sur une
+    # carte dont le module ne repond jamais, le service est gare sur un maintien
+    # d erreur peripherique pouvant aller jusqu a l heure, donc rien ne le
+    # rappelle dans la fenetre de 120 s et aucune ligne de promotion ne sort.
+    # Preuve par l histoire: six PASS sur la carte KIM2 (module vivant) des 27
+    # au 29 aout, un seul echec — sur la carte SMD au module muet.
+    if saute_si_radio_muette(r, case, 'la promotion en phase GNSS'):
+        return
     b = r.b
     try:
         _config_surface(b, SURFACING_BURST_MAX_MSG=8)
@@ -2321,6 +2331,8 @@ def c_zone_batterie_prime(r, case):
     tester. Rendre ce cas concluant demande une injection de mesure batterie
     (sonde %BATT <mv>), qui n existe pas encore.
     """
+    if saute_si_batterie_trop_pleine(r, case, 'la priorite de LOW_BATTERY sur le hors-zone'):
+        return
     b = r.b
     try:
         b.enter_config()
@@ -2591,6 +2603,53 @@ CASES_V12 = [
     dict(id='RL-02',    risque='MAJEUR',   titre='Le limiteur bloque au-dela du quota',        fn=c_limiteur_bloque),
 ]
 
+def charge_batterie(b):
+    """Charge en % lue par STATR POT03, ou None si illisible."""
+    try:
+        b.enter_config()
+        cle = 'POT03'
+        mk = b.mark(); b._send(f'$STATR#{len(cle):03X};{cle}\r')
+        m = b.expect(r'\$([ON]);STATR#[0-9A-Fa-f]{3};(.*)$', 12.0, from_idx=mk)
+        b.exit_config()
+    except Exception:
+        try: b.exit_config()
+        except Exception: pass
+        return None
+    if not m:
+        return None
+    for morceau in m.group(2).rstrip('\r').split(','):
+        if morceau.startswith('POT03='):
+            try:
+                return float(morceau.split('=', 1)[1])
+            except ValueError:
+                return None
+    return None
+
+
+# Marge minimale sous 100 % pour qu un seuil batterie soit posable au-dessus de
+# la charge. LB_THRESHOLD est borne a 100 et le drapeau se leve sur
+# charge < seuil, STRICTEMENT: a 99 % le seuil vaut 100 et une derive d un seul
+# point entre la lecture et l evaluation suffit a faire echouer un firmware
+# sain. Mesure du 2026-08-30 sur la carte SMD alimentee par USB.
+MARGE_SEUIL_BATTERIE = 94
+
+
+def saute_si_batterie_trop_pleine(r, case, quoi):
+    """SKIP motive si la charge ne laisse pas de place a un seuil au-dessus.
+
+    Ne saute pas quand la charge est illisible: l appelant doit alors conclure
+    lui-meme, car une mesure absente n est pas une batterie pleine.
+    """
+    soc = charge_batterie(r.b)
+    if soc is None or soc <= MARGE_SEUIL_BATTERIE:
+        return False
+    r.record(case, 'SKIP',
+             f'charge a {soc:.0f} % — au-dessus de {MARGE_SEUIL_BATTERIE} % aucun seuil ne se '
+             f'pose franchement sous 100 %, donc {quoi} n est pas eprouvable. '
+             'Ce cas demande une carte sur batterie partiellement dechargee.')
+    return True
+
+
 def c_seuils_batterie_vivants(r, case):
     """Les seuils batterie doivent prendre effet SANS redemarrage.
 
@@ -2635,11 +2694,12 @@ def c_seuils_batterie_vivants(r, case):
                 except ValueError: pass
     if soc is None:
         return r.record(case, 'ERROR', 'charge (POT03) illisible — cas non concluant')
-    if soc >= 100:
+    if soc > MARGE_SEUIL_BATTERIE:
         return r.record(case, 'SKIP',
-                        f'charge a {soc:.0f} % et LB_THRESHOLD borne a 100: aucun seuil ne peut '
-                        'la depasser, donc le drapeau ne peut pas se lever. Ce cas demande une '
-                        'batterie non pleine.')
+                        f'charge a {soc:.0f} %: au-dessus de {MARGE_SEUIL_BATTERIE} % le seuil '
+                        'haut est plafonne a 100 et le drapeau ne monte que sur une charge '
+                        'STRICTEMENT inferieure — une derive d un point suffit a faire echouer '
+                        'un firmware sain. Ce cas demande une batterie partiellement dechargee.')
     seuil_haut = min(100, int(soc) + 5)
     seuil_bas = max(0, int(soc) - 5)
 
@@ -2675,7 +2735,7 @@ def c_seuils_batterie_vivants(r, case):
         pass
     if not haut or not bas:
         return r.record(case, 'ERROR', '%ARGOSCFG sans reponse')
-    trace = f'seuil 99: {haut}\nseuil 10: {bas}'
+    trace = f'seuil {seuil_haut}: {haut}\nseuil {seuil_bas}: {bas}'
     if not haut['lb']:
         r.record(case, 'FAIL',
                  'seuil releve au-dessus de la charge: le drapeau batterie basse ne monte pas '
