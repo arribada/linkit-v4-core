@@ -77,6 +77,11 @@ refused by the device. The checker closes both gaps — it reads
   mode except `SURFACING_BURST`, since a hauled device is dry and stationary
   and would transmit exactly zero times;
 - keys that only exist behind a build flag (informational);
+- **combinations that produce a silent beacon** — every parameter in range,
+  every name valid, and a tracker that never transmits: `PASS_PREDICTION` with
+  the GNSS off, `SURFACING_BURST` without the water sensor, CloudLocate in any
+  mode but `SURFACING_BURST`, an empty duty-cycle mask, a critical battery
+  threshold above the low one;
 - drift between `tools/pylinkit_map.py`, the firmware, and — when `PYLINKIT`
   points at a checkout — that installation of PyLinkit.
 

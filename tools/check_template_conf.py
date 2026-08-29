@@ -174,9 +174,50 @@ def to_wire(key, value, live=None, nom=None):
     return None, f"{value!r} is not one of {offert}"
 
 
+def coherence(valeurs):
+    """Combinations the firmware accepts and that produce a silent beacon.
+
+    Every one of these is a valid config: no parameter is out of range, no key
+    is unknown, and the device will happily store it. They are here because a
+    file that passes every other check can still describe a tracker that never
+    transmits, and that failure is indistinguishable at sea from a lost tag.
+    """
+    v = valeurs.get
+    out = []
+    mode = v("ARGOS_MODE")
+    if mode == "PASS_PREDICTION" and v("GNSS_ENABLE") == "0":
+        out.append("ARGOS_MODE=PASS_PREDICTION with GNSS_ENABLE=0 schedules NOTHING: "
+                   "pass prediction is computed from a position. The service logs an "
+                   "error and no transmission is ever planned.")
+    if mode == "SURFACING_BURST" and v("UW_ENABLE") == "0":
+        out.append("ARGOS_MODE=SURFACING_BURST with UW_ENABLE=0: the burst is triggered "
+                   "by a surfacing event, and without the water sensor there is none.")
+    if v("GNSS_FASTLOC_MODE") == "2" and mode != "SURFACING_BURST":
+        out.append(f"GNSS_FASTLOC_MODE=2 (CloudLocate) needs ARGOS_MODE=SURFACING_BURST; "
+                   f"with {mode} the raw-measurement capture is never armed.")
+    if v("ARGOS_RX_EN") == "1" and mode != "PASS_PREDICTION":
+        out.append(f"ARGOS_RX_EN=1 only bites in PASS_PREDICTION; with {mode} the receive "
+                   "window never opens and the parameter does nothing.")
+    dc = (v("ARGOS_DUTY_CYCLE") or "").strip().upper()
+    if dc in ("0", "000000", "00000000"):
+        out.append("ARGOS_DUTY_CYCLE is an empty hour mask: the beacon is MUTE, "
+                   "twenty-four hours a day.")
+    if v("GNSS_ENABLE") == "1" and v("GNSS_HACCFILT_ENABLE") == "1":
+        seuil = _num(v("GNSS_HACCFILT_THR"))
+        if seuil is not None and seuil <= 5:
+            out.append(f"GNSS_HACCFILT_THR={seuil} m is strict enough to reject most fixes "
+                       "from a wet antenna, and a rejected fix is not logged as a fault.")
+    if v("LB_EN") == "1":
+        lb, crit = _num(v("LB_THRESHOLD")), _num(v("LB_CRITICAL_THRESH"))
+        if lb is not None and crit is not None and crit >= lb:
+            out.append(f"LB_CRITICAL_THRESH ({crit}) is not below LB_THRESHOLD ({lb}): "
+                       "the critical shutdown moves up to the low-battery threshold.")
+    return out
+
+
 def check(path, fw, live=None):
     problems, gated, seen, n = [], [], set(), 0
-    non_verifies = []
+    non_verifies, valeurs = [], {}
     par_nom = {n_: k for k, n_ in PL.NAMES.items()}
     fw_par_nom = {v["fw_name"]: k for k, v in fw.items()}
 
@@ -187,6 +228,7 @@ def check(path, fw, live=None):
         nom, _, val = s.partition("=")
         nom, val = nom.strip(), val.strip()
         n += 1
+        valeurs[nom] = val
         if nom in seen:
             problems.append(f"{lineno}: {nom}: duplicate key")
         seen.add(nom)
@@ -231,6 +273,7 @@ def check(path, fw, live=None):
         lo, hi = info["min"], info["max"]
         if lo is not None and hi is not None and hi > lo and not (lo <= wire <= hi):
             problems.append(f"{lineno}: {nom} ({key}): {val} outside [{lo}, {hi}]")
+    problems.extend(f"coherence: {c}" for c in coherence(valeurs))
     return n, problems, gated, non_verifies
 
 
