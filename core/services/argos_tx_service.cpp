@@ -2957,7 +2957,7 @@ void ArgosTxService::refresh_prepass_status(const ArgosConfig &config, std::time
 			configuration_store->write_param(ParamID::SAT_NEXT_PASS_TS, static_cast<unsigned int>(next_pass_epoch));
 	} catch (...) {
 		// A status is information, never a reason to prevent a TX.
-		DEBUG_WARN("ArgosTxService::refresh_prepass_status: ecriture impossible");
+		DEBUG_WARN("ArgosTxService::refresh_prepass_status: could not write the status parameters");
 	}
 }
 

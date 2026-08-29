@@ -964,7 +964,14 @@ def c_modes_planifient(r, case):
         ms, pourquoi = _sched_argos(r)
         with b._lock:
             jr = [l for _, l in b.history[mk:]]
-        sans_aop = any('prepass indisponible' in l or 'returned no pass' in l for l in jr)
+        # Libelles EXACTS du firmware (argos_tx_service.cpp). Les deux chaines
+        # cherchees auparavant — 'prepass indisponible' et 'returned no pass' —
+        # n existent nulle part, donc sans_aop etait TOUJOURS faux et le filet
+        # qui excuse PASS_PREDICTION sans AOP ne s est jamais declenche.
+        sans_aop = any('no pass is computable' in l
+                       or 'prepass impossible' in l
+                       or 'prepass unavailable until the first fix' in l
+                       for l in jr)
         releve[nom] = f'{ms}ms ({pourquoi})' if ms is not None else f'RIEN ({pourquoi})'
         if ms is None:
             if nom == 'PASS_PREDICTION' and sans_aop:
@@ -1428,9 +1435,14 @@ def c_duty_masque_nul(r, case):
         time.sleep(2)
         with b._lock:
             jr = [l for _, l in b.history[mk:]]
+        # Le libelle EXACT du firmware (argos_tx_scheduler.cpp): "duty-cycle
+        # mask is 0 — no hour is permitted". La version precedente de ce cas
+        # cherchait "DUTY_CYCLE mask is 0x000000", qui n existe nulle part —
+        # elle echouait donc sur un firmware parfaitement sain, mesure du
+        # 2026-08-29. "no TX slot found in 24h search" ne peut pas se produire
+        # non plus: le repli sur 24 h l empeche justement.
         avert = [l.strip()[24:170] for l in jr
-                 if 'DUTY_CYCLE mask is 0x000000' in l
-                 or 'no TX slot found in 24h search' in l]
+                 if 'duty-cycle mask is 0' in l]
         if avert:
             break
     s_nul = _sched_argos(r)
@@ -1457,10 +1469,20 @@ def c_duty_masque_nul(r, case):
     trace = f'masque nul -> {s_nul} | masque plein -> {s_plein}\n' + '\n'.join(avert[:2])
     if not avert:
         r.record(case, 'FAIL', 'masque nul: aucun avertissement, la balise se tait en silence', trace)
+    # Le contrat est DOUBLE: signaler, et continuer d emettre. Le firmware
+    # bascule sur les 24 h justement pour qu une balise scellee ne se taise pas
+    # sur une erreur de configuration — verifier l avertissement sans verifier
+    # l emission laisserait passer un repli casse.
+    elif not (s_nul and s_nul[0] is not None):
+        r.record(case, 'FAIL',
+                 'masque nul signale, mais AUCUNE emission planifiee: le repli sur les '
+                 '24 h ne fonctionne pas', trace)
     elif not (s_plein and s_plein[0] is not None):
         r.record(case, 'FAIL', 'masque plein: aucune emission planifiee', trace)
     else:
-        r.record(case, 'PASS', 'masque nul signale explicitement, masque plein planifie', trace)
+        r.record(case, 'PASS',
+                 'masque nul signale explicitement ET repli sur les 24 h (la balise emet '
+                 'quand meme), masque plein planifie', trace)
 
 CASES_V8 = [
     dict(id='DC-01', risque='BLOQUANT',
@@ -2982,7 +3004,10 @@ def c_gnss_deep_idle(r, case):
     time.sleep(3)
     mk = b.mark()
     b.inject_gps(43.2, 5.8)
-    vues = _attendre_trace(b, [r'deep-idle for (\d+) s', r'deep-idle engaged',
+    # 'deep-idle engaged' n existe pas dans le firmware; le motif utile est
+    # 'deep-idle for <n> s'. Le garder ne cassait rien (il etait en OU) mais
+    # laissait croire a une couverture qui n existait pas.
+    vues = _attendre_trace(b, [r'deep-idle for (\d+) s',
                                r'never-poweroff', r'disabled — power_off'],
                            60, depuis=mk)
     try:

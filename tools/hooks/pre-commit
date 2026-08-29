@@ -32,4 +32,15 @@ if git diff --cached --name-only | grep -qE '^(template_conf/|core/protocol/dte_
     fi
 fi
 
+# Bench: une chaine de log cherchee mais absente du firmware est silencieuse
+# dans le pire sens — le cas passe (ou echoue) pour une raison etrangere au
+# firmware. Trois faux resultats en une journee sont venus de la.
+if git diff --cached --name-only | grep -qE '^(tests/bench/|core/|ports/nrf52840/core/)'; then
+    echo "=== Pre-commit: Checking bench log patterns ==="
+    if ! python3 "$REPO_ROOT/tools/check_bench_log_patterns.py"; then
+        echo "ERROR: a bench case greps for a log line the firmware does not emit. Commit aborted."
+        exit 1
+    fi
+fi
+
 echo "=== Pre-commit: Build OK ==="
