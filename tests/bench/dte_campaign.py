@@ -6653,3 +6653,93 @@ def c_modulations_provisionnees(r, case):
 CASES_V31.append(dict(id='PROV-01', risque='MAJEUR',
                       titre='Modulations reellement provisionnees dans le module',
                       fn=c_modulations_provisionnees))
+
+
+def c_premier_message_apres_boot(r, case):
+    """Le PREMIER message apres un demarrage a froid est dimensionne juste.
+
+    C est la garantie que le cache de modulation existe pour tenir. La RCONF
+    maitresse est du hex chiffre que le firmware ne sait PAS decoder: seul le
+    module le peut (AT+RCONF=?). Or le service demande get_current_modulation()
+    pour dimensionner la trame AVANT que le module soit allume et interroge.
+    Sans le cache il partait sur LDA2 par defaut, et sur une unite dont la
+    maitresse encode LDK cela donnait une trame de 12 octets a une radio LDK
+    figee a 16 -> +ERROR=5, une emission perdue A CHAQUE DEMARRAGE.
+
+    On regarde donc, apres un redemarrage volontaire et sur la toute premiere
+    emission:
+      - aucun "TX mode != RCONF mode, realigning" (le symptome exact),
+      - aucun +ERROR=5,
+      - une emission qui aboutit.
+
+    PORTEE: ceci valide la modulation reellement provisionnee dans CE module,
+    pas les trois. Valider LDK, LDA2 et VLDA4 demanderait leurs RCONF
+    respectives, qui sont des credentials.
+    """
+    b = r.b
+    try:
+        b.enter_config()
+        _, avant = b.read_params(['ARGOS_CACHED_MODULATION', 'ARGOS_ADAPTIVE_MODULATION'])
+        b.exit_config()
+    except Exception as e:
+        return r.record(case, 'ERROR', f'lecture impossible: {type(e).__name__}: {e}')
+    cache_avant = avant.get('SMP01', '?')
+
+    # DOPPLER sans GNSS: la premiere emission part vite et ne depend d aucun fix.
+    try:
+        _config_mode(b, 4, GNSS_EN=0, TR_NOM=30, ARGOS_ADAPTIVE_MODULATION=0)
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+
+    # RSTBW, pas %BOOT: %BOOT ne fait que LIRE le compteur d echecs, il ne
+    # redemarre rien. Le lien USB tombe au redemarrage, c est attendu.
+    try:
+        b.enter_config()
+        b.dte('RSTBW', '', timeout=8.0)
+    except Exception as e:
+        return r.record(case, 'ERROR', f'RSTBW impossible: {type(e).__name__}: {e}')
+    time.sleep(6)
+    if not r.connect():
+        return r.record(case, 'ERROR', 'la carte ne revient pas apres RSTBW')
+    b = r.b
+    mk = b.mark()
+    if not b.wait_state('OPERATIONAL', timeout=90):
+        return r.record(case, 'ERROR', 'la carte ne repasse pas en OPERATIONAL apres RSTBW')
+    vues = _compter_trace(b, [r'TX SUCCESS', r'\+ERROR=', r'realigning',
+                              r'resync_rconf_cache'], 180, depuis=mk)
+    try:
+        b.enter_config()
+        _, apres = b.read_params(['ARGOS_CACHED_MODULATION'])
+        b.write_params({'ARGOS_MODE': 0})
+        b.exit_config()
+    except Exception:
+        apres = {}
+
+    realign = [l for l in vues if 'realigning' in l]
+    erreurs = [l for l in vues if '+ERROR=' in l]
+    succes = [l for l in vues if 'TX SUCCESS' in l]
+    corrige = [l for l in vues if 'resync_rconf_cache: cache' in l]
+    trace = (f'cache avant={cache_avant} ({_nom_cache(cache_avant)}) '
+             f'apres={apres.get("SMP01", "?")} ({_nom_cache(apres.get("SMP01"))})\n'
+             + '\n'.join(vues[:8]))
+
+    if realign:
+        return r.record(case, 'FAIL',
+                        'la premiere emission apres demarrage a du realigner la modulation: '
+                        'la trame etait dimensionnee pour la mauvaise', trace)
+    if erreurs and not succes:
+        return r.record(case, 'FAIL',
+                        f'premiere emission refusee: {erreurs[0][-60:]}', trace)
+    if not succes:
+        return r.record(case, 'ERROR',
+                        'aucune emission observee en 3 min — cas non concluant', trace)
+    detail = (f'premiere emission juste en {_nom_cache(apres.get("SMP01", cache_avant))}, '
+              f'sans realignement ni +ERROR=5')
+    if corrige:
+        detail += ' (le cache etait perime et a ete corrige au demarrage)'
+    r.record(case, 'PASS', detail, trace)
+
+
+CASES_V29.append(dict(id='MOD-06', risque='BLOQUANT',
+                      titre='Le premier message apres demarrage est dimensionne juste',
+                      fn=c_premier_message_apres_boot))
