@@ -419,9 +419,10 @@ void GPSService::try_enter_deep_idle_or_poweroff() {
 	m_deep_idle_started_at_ms = PMU::get_timestamp_ms();  // R5 timestamp
 
 	// The sentinel (0xFFFFFFFF = "never power the rail off") now arms this task
-	// too, because the scheduling gate in service_next_schedule_in_ms() returns
-	// SCHEDULE_DISABLED for as long as deep-idle is engaged, and
-	// Service::reschedule() arms no timer on SCHEDULE_DISABLED. With no
+	// too, because the scheduling gate in service_next_schedule() holds for as
+	// long as deep-idle is engaged. That hold is bounded at the 24 h hard cap,
+	// so the framework does come back on its own; this task remains the prompt
+	// exit, at the end of the actual GNP52 window rather than a day later. With no
 	// auto-off task, nothing was left to re-enter that function, so on any
 	// configuration without a peer-event source (UNDERWATER_EN=0, i.e. a plain
 	// periodic tracker) GNSS acquisition stopped permanently — the old code
@@ -476,8 +477,8 @@ void GPSService::try_enter_deep_idle_or_poweroff() {
 		    }
 
 		    // 2026-05-25 deep-idle scheduling gate exit: the gate in
-		    // service_next_schedule_in_ms returned SCHEDULE_DISABLED for the whole
-		    // GNP52 window, which left m_task_period unarmed. Now that the window
+		    // service_next_schedule holds for the whole GNP52 window, so no
+		    // acquisition is armed while it runs. Now that the window
 		    // is over (m_deep_idle_started_at_ms cleared), explicitly call
 		    // service_reschedule so the framework re-arms the next acquisition
 		    // through the normal path. Without this, the service would idle until
@@ -699,7 +700,8 @@ ScheduleDecision GPSService::service_next_schedule() {
 	// returning SCHEDULE_DISABLED here is what actually cancels the
 	// UTC-aligned boot-time schedule. The ArgosTx SERVICE_INACTIVE
 	// handler clears the gate then calls service_reschedule(immediate)
-	// which routes back here and now returns a real delay.
+	// which routes back here and now returns a real delay. The bound below is
+	// the second net, not the release: only that handler can clear the flag.
 	if (m_defer_gnss_until_argos_first_tx) {
 		// m_defer_gnss_timeout_task is the primary release -- it clears the flag,
 		// which this bound cannot do. The bound is the second net: without a
@@ -1796,10 +1798,10 @@ void GPSService::notify_peer_event(ServiceEvent &e) {
 					// gate is meant to avoid. service_is_triggered_on_surfaced
 					// returns false (gate armed) so the base class doesn't
 					// re-schedule, but it also doesn't cancel the existing
-					// task. Force a reschedule here; service_next_schedule_in_ms
-					// returns SCHEDULE_DISABLED while the gate is armed, so the
-					// reschedule cancels the pending task without arming a new
-					// one. The ArgosTx SERVICE_INACTIVE handler below
+					// task. Force a reschedule here; service_next_schedule
+					// answers a bounded hold while the gate is armed, so the
+					// reschedule cancels the pending acquisition without arming
+					// a new one. The ArgosTx SERVICE_INACTIVE handler below
 					// reschedules properly once TX is done (or has errored out).
 					service_reschedule(false);
 					DEBUG_INFO("GPSService: surfaced — GNSS deferred until first Argos TX completes");

@@ -638,12 +638,12 @@ ScheduleDecision ArgosTxService::schedule_surfacing_burst(ArgosConfig &argos_con
 
 	// Burst ended — wait for the next surfacing event.
 	//
-	// This returns SCHEDULE_DISABLED, which means the service is left owning
-	// nothing at all. Only two things clear the flag: a dive→surface transition,
-	// or a NEW VALID GPS fix. A NO_FIX does not, so a tag that has stopped
-	// diving and is not getting fixes stays silent indefinitely -- and it used
-	// to do so without a single line in the log, not even at TRACE, which makes
-	// it indistinguishable from a dead radio on a recovered device. Say it.
+	// This used to return SCHEDULE_DISABLED, leaving the service owning nothing
+	// at all. Only two things clear the flag: a dive→surface transition, or a
+	// NEW VALID GPS fix. A NO_FIX does not, so a tag that had stopped diving and
+	// was not getting fixes stayed silent indefinitely -- and did so without a
+	// single line in the log, not even at TRACE, which makes it
+	// indistinguishable from a dead radio on a recovered device.
 	if (m_awaiting_surfacing) return schedule_surfacing_heartbeat(argos_config, now);
 
 	// Not yet surfaced (boot): send Doppler at legacy rate
