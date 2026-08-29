@@ -110,6 +110,26 @@ private:
 	/// its first satellite TX. Reduces CPU contention during the burst sequence.
 	/// Set true on surface (in notify_peer_event), cleared on first ARGOS_TX SERVICE_INACTIVE.
 	bool m_defer_gnss_until_argos_first_tx = false;
+
+	/// @brief Bounded release for the gate above.
+	///
+	/// The gate is armed on the TX MODE, not on ArgosTxService having anything
+	/// to send, and its only release is an ARGOS_TX SERVICE_INACTIVE — which the
+	/// TX service emits only if it INITIATES. The comment on the arming site
+	/// already guards two paths where it never does (mode OFF, cooldown), but
+	/// enumerating them is what failed: an empty depth pile is a third, and it
+	/// is the state of every boot, because the pile is a RAM-only std::deque.
+	/// That closes a loop — GNSS waits for a TX, the TX waits for a fix, the fix
+	/// needs the GNSS — and a dive does not break it, since the next surfacing
+	/// re-arms the gate before the first acquisition can run.
+	///
+	/// So the gate now lifts itself. A safety may depend on an event; it may not
+	/// depend on that event for ever.
+	Scheduler::TaskHandle m_defer_gnss_timeout_task;
+	/// @brief How long the deferral may hold. Generous next to a first Argos TX
+	/// after surfacing (immediate ping, ~30 s device timeout) and far below any
+	/// deployment cadence.
+	static constexpr unsigned int DEFER_GNSS_MAX_S = 120;
 #endif
 	unsigned int m_pending_backup_duration_s = 0;  ///< Set when waiting for M10 poweroff to retry
 	Scheduler::TaskHandle m_backup_exit_task;      ///< Auto-exit timer once backup-charge is active

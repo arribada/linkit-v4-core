@@ -492,6 +492,9 @@ void GPSService::try_enter_deep_idle_or_poweroff() {
 /// deep-idle refactor): never trust that prior state left the rail clean. Cuts
 /// rail even if state == idle/poweroff — safe no-op in those cases.
 void GPSService::service_term() {
+#if defined(ARGOS_SMD) && (ARGOS_SMD == 1)
+	system_scheduler->cancel_task(m_defer_gnss_timeout_task);
+#endif
 	system_scheduler->cancel_task(m_initiate_retry_task);
 	system_scheduler->cancel_task(m_backup_exit_task);
 	system_scheduler->cancel_task(m_backup_retry_task);
@@ -1745,6 +1748,20 @@ void GPSService::notify_peer_event(ServiceEvent &e) {
 				                     && !ServiceManager::is_in_cooldown(service_current_time());
 				if (argos_will_tx) {
 					m_defer_gnss_until_argos_first_tx = true;
+					// Bounded, because the release event may never come — see the
+					// note on m_defer_gnss_timeout_task.
+					system_scheduler->cancel_task(m_defer_gnss_timeout_task);
+					m_defer_gnss_timeout_task = system_scheduler->post_task_prio(
+					    [this]() {
+						    if (!m_defer_gnss_until_argos_first_tx) return;
+						    DEBUG_WARN("GPSService: no Argos TX within %u s of surfacing — lifting the GNSS deferral "
+						               "and acquiring. The gate is armed on the TX mode, not on the TX service "
+						               "having anything to send.",
+						               DEFER_GNSS_MAX_S);
+						    m_defer_gnss_until_argos_first_tx = false;
+						    if (is_started()) service_reschedule(false);
+					    },
+					    "GPSDeferGnssTimeout", Scheduler::DEFAULT_PRIORITY, (uint64_t)DEFER_GNSS_MAX_S * MS_PER_SEC);
 					// GNSS MED #5 audit fix: also cancel any pending deep-idle
 					// auto-off timer. Without this, if GNP52 < surfacing-burst
 					// duration, the auto-off fires mid-burst → calls power_off
@@ -1776,6 +1793,8 @@ void GPSService::notify_peer_event(ServiceEvent &e) {
 #if defined(ARGOS_SMD) && (ARGOS_SMD == 1)
 			// Reset gate on submerge so a future surfacing re-arms cleanly.
 			m_defer_gnss_until_argos_first_tx = false;
+		system_scheduler->cancel_task(m_defer_gnss_timeout_task);
+			system_scheduler->cancel_task(m_defer_gnss_timeout_task);
 #endif
 		}
 	}
