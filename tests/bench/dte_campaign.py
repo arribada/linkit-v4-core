@@ -6424,3 +6424,115 @@ CASES_V30 = [
     dict(id='GPS-C8', risque='BLOQUANT', titre='Une position reelle part par satellite',
          fn=c_ciel_emission_reelle),
 ]
+
+
+# =====================================================================
+#  Vague 31 — les templates de deploiement, poses sur la vraie carte
+# =====================================================================
+
+TEMPLATES = ('turtle_doppler_only', 'turtle_gps', 'turtle_cloudlocate',
+             'drifter', 'fix_beacon')
+# rspb_avian_mortality_cyprus_boat est exclu: neuf de ses cles vivent derriere
+# HAS_BOARD_RSPB / HAS_EXTERNAL_WAKEUP / ENABLE_MORTALITY_SENSOR et seraient
+# rapportees comme non implementees sur un build KIM2. Le cas doit rejouer tel
+# quel sur une carte RSPB.
+
+def _encode_template(nom):
+    """Rend [(cle, valeur_fil)] pour un template, via l encodeur PyLinkit.
+
+    C est PyLinkit qui pousse ces fichiers en production, donc c est son
+    encodeur qui fait foi: plusieurs codecs TRANSFORMENT la valeur au lieu de
+    la chercher dans une table (le cycle de service est lu en hexadecimal), et
+    reimplementer cette conversion cote banc reviendrait a tester notre copie
+    plutot que le chemin reel.
+    """
+    import configparser
+    chemin = os.path.join(os.path.dirname(os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__)))), 'template_conf', f'{nom}.cfg')
+    cfg = configparser.RawConfigParser()
+    cfg.optionxform = lambda o: o
+    cfg.read(chemin)
+    params = dict(cfg['PARAM'])
+
+    racine = os.environ.get('PYLINKIT')
+    if not racine:
+        raise RuntimeError('PYLINKIT non defini — impossible d encoder comme le fait '
+                           'la production; cas non concluant')
+    if racine not in sys.path:
+        sys.path.insert(0, racine)
+    from pylinkit.protocol.dte_params import DTEParamMap
+    return [(DTEParamMap.param_to_key(k), DTEParamMap.encode(k, v))
+            for k, v in params.items()]
+
+
+def _pousser_template(b, paires, taille=10):
+    """PARMW par tranches. Rend la liste des cles refusees."""
+    refuses = []
+    for i in range(0, len(paires), taille):
+        tranche = paires[i:i + taille]
+        charge = ','.join(f'{k}={v}' for k, v in tranche)
+        mk = b.mark()
+        b._send(f'$PARMW#{len(charge):03X};{charge}\r')
+        m = b.expect(r'\$([ON]);PARMW#([0-9A-Fa-f]{3});?(.*)$', 12.0, from_idx=mk)
+        if not m:
+            refuses.append(f'(pas de reponse sur la tranche {i // taille + 1})')
+        elif m.group(1) == 'N':
+            refuses.extend(x for x in m.group(3).rstrip('\r').split(',') if x)
+    return refuses
+
+
+def _cas_template(nom):
+    def cas(r, case):
+        b = r.b
+        try:
+            paires = _encode_template(nom)
+        except Exception as e:
+            return r.record(case, 'SKIP', f'template non encodable: {e}')
+        if not _en_config(b):
+            return r.record(case, 'ERROR', 'mode configuration inaccessible')
+        # L identite de la carte de banc est restauree a la fin: un template
+        # ecrit PROFILE_NAME et DEVICE_MODEL, et laisser "TURTLE-DOPPLER" sur
+        # la carte ferait mentir tous les cas suivants qui lisent son modele.
+        _, identite = b.read_params(['PROFILE_NAME', 'DEVICE_MODEL'], timeout=12.0)
+        try:
+            refuses = _pousser_template(b, paires)
+        except Exception as e:
+            return r.record(case, 'ERROR', f'ecriture impossible: {type(e).__name__}: {e}')
+        if refuses:
+            return r.record(case, 'FAIL',
+                            f'{len(refuses)} cle(s) refusee(s) par la balise: '
+                            f'{", ".join(refuses[:8])}',
+                            f'{len(paires)} cles poussees')
+
+        # Relire: une cle acceptee mais ecrasee par un service ne se voit pas
+        # dans la reponse PARMW. On ne relit que les cles numeriques, les
+        # champs texte revenant parfois normalises.
+        cles = [k for k, _ in paires]
+        ecarts = []
+        for i in range(0, len(cles), 12):
+            _, lus = b.read_params(cles[i:i + 12], timeout=12.0)
+            for k, v in paires[i:i + 12]:
+                if k in lus and lus[k].strip() != str(v).strip():
+                    ecarts.append(f'{k}: pose {v}, relu {lus[k]}')
+        try:
+            if identite:
+                b.write_params({k: v for k, v in identite.items()}, timeout=12.0)
+            b.exit_config()
+        except Exception:
+            pass
+        if ecarts:
+            return r.record(case, 'FAIL',
+                            f'{len(ecarts)} parametre(s) relu(s) differents: '
+                            f'{"; ".join(ecarts[:6])}')
+        r.record(case, 'PASS',
+                 f'{len(paires)} parametres poses et relus identiques',
+                 f'template {nom}')
+    return cas
+
+
+CASES_V31 = [
+    dict(id=f'TPL-{i:02d}', risque='MAJEUR',
+         titre=f'Le template {nom} se pose entierement sur la carte',
+         fn=_cas_template(nom))
+    for i, nom in enumerate(TEMPLATES, 1)
+]
