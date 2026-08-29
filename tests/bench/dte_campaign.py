@@ -19,6 +19,26 @@ os.makedirs(OUT, exist_ok=True)
 RESULTS = f'{OUT}/campaign_results.jsonl'
 LOG     = f'{OUT}/campaign.log'
 
+def _nrfjprog(args, timeout=180):
+    """Appelle nrfjprog SANS chemin graphique et SANS stdin.
+
+    JLinkGUIServerExe ouvre une boite de dialogue (deverrouillage, mise a jour
+    de la sonde...) sur un affichage qui n existe pas en session non
+    interactive, et ATTEND INDEFINIMENT. Le symptome est un timeout avec ZERO
+    octet de sortie: ni erreur, ni progression, rien — ce qui ressemble a une
+    sonde morte et n en est pas une.
+
+    Mesure du 2026-08-29: quatre --recover bloques d affilee, puis rc=0 du
+    premier coup une fois DISPLAY et stdin coupes. Le timeout monte aussi a
+    180 s: un --recover legitime depasse regulierement les 60 s d origine.
+    """
+    import os
+    env = {k: v for k, v in os.environ.items()
+           if k not in ('DISPLAY', 'WAYLAND_DISPLAY')}
+    with open(os.devnull, 'rb') as devnull:
+        return subprocess.run(['nrfjprog'] + args, capture_output=True,
+                              timeout=timeout, env=env, stdin=devnull)
+
 BENCH_LOCK = '/tmp/dte_campaign.lock'
 
 class BancOccupe(RuntimeError):
@@ -144,8 +164,8 @@ class Runner:
         ps(f'usbipd detach --busid {busid}')
         time.sleep(3)
         for v in ('0', '1'):
-            sp.run(['nrfjprog','--memwr','0x40027504','--val',v], capture_output=True, timeout=60)
-            sp.run(['nrfjprog','--run'], capture_output=True, timeout=60)
+            _nrfjprog(['--memwr','0x40027504','--val',v])
+            _nrfjprog(['--run'])
             if v == '0': time.sleep(4)
         for _ in range(25):
             time.sleep(1)
@@ -187,7 +207,7 @@ class Runner:
             self.say(f"!! reparation du lien: {type(e).__name__}: {e}")
         self.say("   la carte reste muette — reset materiel")
         try:
-            subprocess.run(['nrfjprog','--reset'], capture_output=True, timeout=60)
+            _nrfjprog(['--reset'])
         except Exception as e:
             self.say(f"!! nrfjprog: {e}")
         time.sleep(12)
@@ -525,7 +545,7 @@ def c_persistance(r, case):
     try: r.b.close()
     except Exception: pass
     r.b = None
-    try: subprocess.run(['nrfjprog','--reset'], capture_output=True, timeout=60)
+    try: _nrfjprog(['--reset'])
     except Exception as e: return r.record(case, 'ERROR', f'reset: {e}')
     time.sleep(14)
     if not r.connect(): return r.record(case, 'ERROR', 'carte injoignable apres redemarrage')
@@ -585,7 +605,7 @@ def c_redemarrages(r, case):
         try: r.b.close()
         except Exception: pass
         r.b = None
-        try: subprocess.run(['nrfjprog','--reset'], capture_output=True, timeout=60)
+        try: _nrfjprog(['--reset'])
         except Exception as e: echecs.append(f'{k+1}: reset {e}'); continue
         time.sleep(14)
         if not r.connect(tries=25): echecs.append(f'{k+1}: injoignable apres reset')
@@ -890,9 +910,10 @@ def _sched_argos(r, timeout=45.0):
         m, _ = r.raw_until('%SCHED\r', r'%SCHED .*ARGOSTX=', timeout=6.0)
         if m:
             ligne = m.string if hasattr(m, 'string') else ''
-            mm = re.search(r'ARGOSTX=(none|\d+ms)\(([^)]*)\)', ligne)
+            mm = re.search(r'ARGOSTX=(none|hold\d+s|\d+ms)\(([^)]*)\)', ligne)
             if mm:
-                dernier = (None if mm.group(1) == 'none' else int(mm.group(1)[:-2]), mm.group(2))
+                quand = mm.group(1)
+                dernier = (int(quand[:-2]) if _est_planifie(quand) else None, mm.group(2))
                 # "stopped"/"not-enabled" juste apres la sortie de config est
                 # transitoire: on laisse le service se relancer avant de conclure.
                 if dernier[1] not in ('stopped', 'not-enabled', 'never'):
@@ -988,12 +1009,32 @@ CASES_V4 = [
 # venaient d'un critere invente avant d'avoir vu le comportement reel.
 # ---------------------------------------------------------------------------
 
+def _est_planifie(quand):
+    """Vrai si le service a une ECHEANCE D EXECUTION.
+
+    Trois formes depuis la migration ScheduleDecision (2026-08):
+      <n>ms   -- il va s executer dans n ms
+      hold<n>s -- il attend quelque chose, et se re-interrogera dans n s
+      none    -- decision finale, il ne repassera pas de lui-meme
+
+    Seule la premiere est une emission a venir. Tester la RAISON exacte, comme
+    le faisait ce fichier, ne marche plus: chaque service nomme desormais sa
+    propre cause ('TR_NOM period', 'cold-start retry', 'depth pile empty'...)
+    la ou tous rendaient 'scheduled' ou 'no-schedule'.
+    """
+    return bool(quand) and quand.endswith('ms')
+
 def _sched_tous(r, timeout=10.0):
-    """Rend {service: (ms|None, raison)} pour TOUS les services."""
+    """Rend {service: (ms|None, raison)} pour TOUS les services.
+
+    Un hold rend ms=None comme un none: dans les deux cas rien n est prevu a
+    l execution. La raison distingue les deux, et le prefixe hold<n>s dit en
+    plus au bout de combien de temps le service se reveillera tout seul.
+    """
     m, _ = r.raw_until('%SCHED\r', r'%SCHED .*ARGOSTX=', timeout=timeout)
     if not m: return {}
-    return {nom: (None if val == 'none' else int(val[:-2]), why)
-            for nom, val, why in re.findall(r'(\w+)=(none|\d+ms)\(([^)]*)\)', m.string)}
+    return {nom: (int(val[:-2]) if _est_planifie(val) else None, why)
+            for nom, val, why in re.findall(r'(\w+)=(none|hold\d+s|\d+ms)\(([^)]*)\)', m.string)}
 
 def _attendre_raison(r, service, raisons, timeout=40.0):
     """Sonde %SCHED jusqu'a ce que `service` presente une des raisons attendues."""
@@ -1003,6 +1044,35 @@ def _attendre_raison(r, service, raisons, timeout=40.0):
         if service in d:
             vu = d[service]
             if vu[1] in raisons: return vu
+        time.sleep(2)
+    return vu
+
+def _attendre_planifie(r, service, timeout=40.0):
+    """Sonde %SCHED jusqu'a ce que `service` ait une echeance d execution.
+
+    Remplace l attente sur ('scheduled', 'already-initiated'): 'scheduled' n est
+    plus rendu que par les services non migres et par le chemin immediat, si
+    bien qu exiger cette chaine ferait echouer un firmware qui planifie
+    parfaitement — le pire faux positif possible, celui qui dit muette une
+    balise qui emet.
+    """
+    fin = time.time() + timeout; vu = None
+    while time.time() < fin:
+        d = _sched_tous(r)
+        if service in d:
+            vu = d[service]
+            if vu[0] is not None: return vu
+        time.sleep(2)
+    return vu
+
+def _attendre_sans_echeance(r, service, timeout=40.0):
+    """Sonde %SCHED jusqu'a ce que `service` n ait plus AUCUNE echeance."""
+    fin = time.time() + timeout; vu = None
+    while time.time() < fin:
+        d = _sched_tous(r)
+        if service in d:
+            vu = d[service]
+            if vu[0] is None: return vu
         time.sleep(2)
     return vu
 
@@ -1034,16 +1104,18 @@ def c_sws_gate(r, case):
     # (ms is None). N'exiger que 'underwater' faisait echouer le test alors que
     # le firmware coupait bel et bien — un faux "la balise emet sous l'eau",
     # le pire faux positif possible sur un traceur marin.
-    GATE_OK = ('underwater', 'descheduled', 'no-schedule')
+    # Le critere est structurel, pas lexical: plus AUCUNE echeance d execution.
+    # La raison exacte varie ('underwater', 'descheduled', ou la cause propre du
+    # service depuis la migration ScheduleDecision) et n a jamais ete la preuve.
     ecarts = []
     b._send('%DIVE\r')
     for svc in ('ARGOSTX', 'GNSS'):
-        vu = _attendre_raison(r, svc, GATE_OK)
-        if not vu or vu[0] is not None or vu[1] not in GATE_OK:
-            ecarts.append(f'{svc} apres %DIVE: {vu} (attendu: aucune echeance, {GATE_OK})')
+        vu = _attendre_sans_echeance(r, svc)
+        if not vu or vu[0] is not None:
+            ecarts.append(f'{svc} apres %DIVE: {vu} (attendu: aucune echeance)')
     b._send('%SURFACE\r')
-    vu = _attendre_raison(r, 'ARGOSTX', ('scheduled', 'already-initiated'))
-    if not vu or vu[1] not in ('scheduled', 'already-initiated'):
+    vu = _attendre_planifie(r, 'ARGOSTX')
+    if not vu or vu[0] is None:
         ecarts.append(f'ARGOSTX apres %SURFACE: {vu} (attendu re-planifie)')
 
     if ecarts:
@@ -1072,7 +1144,7 @@ def c_sws_dry_time(r, case):
             return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
         time.sleep(2); b._send('%GPS 43.6 3.9 5000 9\r'); time.sleep(8)
         b._send('%DIVE\r');    _attendre_raison(r, 'ARGOSTX', ('underwater',), 30)
-        b._send('%SURFACE\r'); vu = _attendre_raison(r, 'ARGOSTX', ('scheduled', 'already-initiated'), 30)
+        b._send('%SURFACE\r'); vu = _attendre_planifie(r, 'ARGOSTX', 30)
         mesures[dry] = vu
     m60, m5 = mesures.get(60), mesures.get(5)
     if not m60 or m60[0] is None or not m5 or m5[0] is None:
@@ -1104,7 +1176,7 @@ def c_surfacing_burst(r, case):
     time.sleep(2); b._send('%GPS 43.6 3.9 5000 9\r'); time.sleep(10)
     b._send('%DIVE\r'); _attendre_raison(r, 'ARGOSTX', ('underwater',), 30)
     mk = b.mark(); b._send('%SURFACE\r')
-    vu = _attendre_raison(r, 'ARGOSTX', ('scheduled', 'already-initiated'), 45)
+    vu = _attendre_planifie(r, 'ARGOSTX', 45)
     time.sleep(10)
     with b._lock:
         jr = [l for _, l in b.history[mk:]]
@@ -2435,6 +2507,33 @@ def _led(b, evt=None, timeout=12.0):
     # ne met pas a jour m_color, donc la couleur seule ne suffit pas.
     return (m.group(1), int(m.group(2)) or int(m.group(3))) if m else (None, None)
 
+def _led_calme(b, fenetre=3.0, essais=10):
+    """Attend que la FSM LED cesse de bouger d elle-meme.
+
+    GNSS_EN=0 empeche la PROCHAINE session GNSS, pas celle qui tourne deja.
+    Dehors, une acquisition en vol continue de pousser ses propres evenements
+    (GNSSOn en particulier) pendant que le cas injecte sa sequence, et elle
+    ecrase l etat teste — un firmware correct echoue alors sur un artefact de
+    banc. On attend donc un etat stable avant d injecter quoi que ce soit.
+
+    Renvoie l etat stable, ou None si la FSM n a pas cesse de bouger.
+    """
+    for _ in range(essais):
+        depart = _led(b)[0]
+        if depart is None:
+            return None
+        t0 = time.time()
+        stable = True
+        while time.time() - t0 < fenetre:
+            time.sleep(0.4)
+            if _led(b)[0] != depart:
+                stable = False
+                break
+        if stable:
+            return depart
+    return None
+
+
 def c_led_transit_orphelin(r, case):
     """Un transit LED differe ne doit pas ecraser l etat suivant.
 
@@ -2449,12 +2548,24 @@ def c_led_transit_orphelin(r, case):
     """
     b = r.b
     try:
-        b.enter_config(); b.write_params({'LED_MODE': 3, 'ARGOS_MODE': 0}); b.exit_config()   # 3 = ALWAYS
+        # GNSS_EN=0 est indispensable, pas une precaution: ces cas injectent une
+        # SEQUENCE d evenements LED et verifient qui ecrase qui. Dehors, une
+        # acquisition reelle pousse ses propres evenements au milieu et fait
+        # echouer un firmware correct — mesure du 2026-08-29, l etat devenait
+        # GNSSOn en pleine fenetre. En interieur le recepteur ne trouvait rien
+        # et le cas passait par chance.
+        b.enter_config()
+        b.write_params({'LED_MODE': 3, 'ARGOS_MODE': 0, 'GNSS_EN': 0})   # 3 = ALWAYS
+        b.exit_config()
     except Exception as e:
         return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
     time.sleep(2)
     if _led(b)[0] is None:
         return r.record(case, 'ERROR', '%LED sans reponse (sonde absente du build ?)')
+    if _led_calme(b) is None:
+        return r.record(case, 'ERROR',
+                        'la FSM LED bouge encore toute seule (session GNSS en vol ?) — '
+                        'sequence non injectable, cas non concluant')
 
     _led(b, 'GNSSON'); time.sleep(0.5)
     _led(b, 'GNSSPOWEROFF')          # arme l orphelin a +500 ms
@@ -2689,7 +2800,7 @@ def c_gnss_desactive(r, case):
     time.sleep(4)
     m, _ = r.raw_until('%SCHED\r', r'%SCHED .*GNSS=', timeout=15.0)
     ligne = (m.string if m and hasattr(m, 'string') else '') or ''
-    mm = re.search(r'GNSS=(none|\d+ms)\(([^)]*)\)', ligne)
+    mm = re.search(r'GNSS=(none|hold\d+s|\d+ms)\(([^)]*)\)', ligne)
     try:
         b.enter_config(); b.write_params({'GNSS_EN': 1}); b.exit_config()
     except Exception:
@@ -2697,7 +2808,7 @@ def c_gnss_desactive(r, case):
     if not mm:
         return r.record(case, 'ERROR', '%SCHED ne rapporte pas le service GNSS', ligne[:200])
     quand, raison = mm.group(1), mm.group(2)
-    if quand != 'none':
+    if _est_planifie(quand):
         r.record(case, 'FAIL',
                  f'GNSS_EN=0 mais le service reste programme dans {quand} ({raison})', ligne[:200])
     else:
@@ -3921,9 +4032,16 @@ def c_led_contrat_couleurs(r, case):
     """
     b = r.b
     try:
+        # GNSS_EN=0: dehors, une acquisition reelle pousse ses propres evenements
+        # LED au milieu de la sequence injectee (cf. LED-01).
+        b.write_params({'GNSS_EN': 0})
         _led_mode(b, 3)   # ALWAYS: sinon la fenetre 24 h peut tout eteindre
     except Exception as e:
         return r.record(case, 'ERROR', f'LED_MODE=3 impossible: {type(e).__name__}: {e}')
+    if _led_calme(b) is None:
+        return r.record(case, 'ERROR',
+                        'la FSM LED bouge encore toute seule (session GNSS en vol ?) — '
+                        'sequence non injectable, cas non concluant')
     attendus = [
         ('GNSSON',    'GNSSOn',           None,    'acquisition en cours'),
         ('GNSSNOFIX', 'GNSSOffWithout',   ROUGE,   'session sans position'),
@@ -3969,9 +4087,14 @@ def c_led_mode_off_total(r, case):
     """
     b = r.b
     try:
+        b.write_params({'GNSS_EN': 0})
         _led_mode(b, 0)
     except Exception as e:
         return r.record(case, 'ERROR', f'LED_MODE=0 impossible: {type(e).__name__}: {e}')
+    if _led_calme(b) is None:
+        return r.record(case, 'ERROR',
+                        'la FSM LED bouge encore toute seule (session GNSS en vol ?) — '
+                        'sequence non injectable, cas non concluant')
     allumes, observe = [], []
     for evt in ('GNSSON', 'GNSSNOFIX', 'ARGOSTX'):
         etat, couleur = _led(b, evt)
@@ -4001,9 +4124,14 @@ def c_led_cloudlocate_preserve(r, case):
     """
     b = r.b
     try:
+        b.write_params({'GNSS_EN': 0})
         _led_mode(b, 3)
     except Exception as e:
         return r.record(case, 'ERROR', f'LED_MODE=3 impossible: {type(e).__name__}: {e}')
+    if _led_calme(b) is None:
+        return r.record(case, 'ERROR',
+                        'la FSM LED bouge encore toute seule (session GNSS en vol ?) — '
+                        'sequence non injectable, cas non concluant')
     etat_cl, couleur_cl = _led(b, 'CLREADY')
     # Immediatement: la fin de session sans fix, celle qui ecrasait.
     etat_apres, couleur_apres = _led(b, 'GNSSNOFIX')
@@ -4842,7 +4970,7 @@ def c_rx_gate_batterie(r, case):
     time.sleep(4)
     m, _ = r.raw_until('%SCHED\r', r'%SCHED ', timeout=20.0)
     ligne = (m.string if m and hasattr(m, 'string') else '') or ''
-    mm = re.search(r'ARGOSRX=(none|\d+ms)\(([^)]*)\)', ligne)
+    mm = re.search(r'ARGOSRX=(none|hold\d+s|\d+ms)\(([^)]*)\)', ligne)
     try:
         b.enter_config()
         b.write_params({'LB_EN': 0, 'LB_ARGOS_MODE': 2, 'ARGOS_MODE': 0})
@@ -4858,7 +4986,7 @@ def c_rx_gate_batterie(r, case):
     # La batterie du banc est pleine: LB_EN=1 seul ne declenche pas le profil.
     # Ce cas est donc un GARDE de configuration, pas une preuve de terrain — il
     # verifie qu on n arme pas la reception hors PASS_PREDICTION reel.
-    if quand != 'none' and 'not-enabled' not in raison and 'stopped' not in raison:
+    if _est_planifie(quand) and 'not-enabled' not in raison and 'stopped' not in raison:
         return r.record(case, 'ERROR',
                         f'la carte est sur batterie pleine (LB inactif): ARGOSRX={quand} '
                         f'({raison}) — cas non concluant sans alimentation pilotable',
@@ -5064,7 +5192,7 @@ def c_ordonnanceur_complet(r, case):
     ligne = (m.string if m and hasattr(m, 'string') else '') or ''
     if not m:
         return r.record(case, 'ERROR', '%SCHED sans reponse')
-    services = re.findall(r'(\w+)=(none|\d+ms)\(([^)]*)\)', ligne)
+    services = re.findall(r'(\w+)=(none|hold\d+s|\d+ms)\(([^)]*)\)', ligne)
     if not services:
         return r.record(case, 'FAIL', f'%SCHED ne rend aucun service: {ligne[:120]}', ligne[:250])
     muets = [nom for nom, _, raison in services if not raison.strip()]
@@ -5427,4 +5555,850 @@ CASES_V26 = [
          fn=c_ciel_emission_reelle),
     dict(id='OUT-05', risque='MAJEUR',   titre='La prepasse calcule un passage sur AOP fraiche',
          fn=c_ciel_prepasse_reelle),
+]
+
+
+# =====================================================================
+#  Vague 27 — VALIDATION DEPLOIEMENT KIM2
+#
+#  Les configurations reelles de mission, pas des unites isolees. Chaque cas
+#  repond a une question de deploiement: "si je pose une balise comme ceci,
+#  est-ce qu elle emet, et est-ce qu elle CONTINUE d emettre ?"
+#
+#  Le fil rouge est le meme partout: la panne redoutee n est pas le plantage,
+#  c est le SILENCE. Une balise qui se tait sans trace est indiscernable d une
+#  balise perdue, et personne ne va la rechercher.
+# =====================================================================
+
+def _compter_trace(b, motifs, secondes, depuis=None):
+    """Observe PENDANT TOUTE la fenetre et rend tout ce qui a correspondu.
+
+    A ne pas confondre avec _attendre_trace, qui rend la main au PREMIER motif
+    trouve quand on ne lui passe pas `exiger`. Compter des evenements avec elle
+    donne toujours 1: c est ainsi que DEP-01 a conclu "1 emission en 5 min"
+    apres avoir observe 53 secondes, sur une cadence de 30 s ou une seule
+    emission est exactement ce qu on attend.
+
+    Quand la question est "combien", il faut attendre la fin de la fenetre.
+    """
+    mk = b.mark() if depuis is None else depuis
+    fin = time.time() + secondes
+    while time.time() < fin:
+        time.sleep(3)
+    with b._lock:
+        lignes = [l for _, l in b.history[mk:]]
+    return [l.strip()[24:200] for l in lignes if any(re.search(m, l) for m in motifs)]
+
+def c_doppler_seul_continu(r, case):
+    """Doppler seul, sans GNSS ni SWS: la balise emet et NE S ARRETE PAS.
+
+    C est le deploiement le plus depouille — GNSS_EN=0, UNDERWATER_EN=0, mode
+    LEGACY — et le plus expose: rien ne vient reveiller la balise si elle
+    s endort. Un verrou de premier fix, un refroidissement, un backoff sans
+    sortie, et elle se tait pour de bon.
+
+    On observe sur plusieurs cycles: il ne suffit pas qu elle emette une fois.
+    """
+    b = r.b
+    try:
+        b.enter_config()
+        b.write_params({'ARGOS_MODE': 2, 'TR_NOM': 30, 'GNSS_EN': 0,
+                        'UNDERWATER_EN': 0, 'NTRY_PER_MESSAGE': 0,
+                        'ARGOS_DEPTH_PILE': 1, 'DUTY_CYCLE': 16777215,
+                        'LB_EN': 0, 'RATE_LIMIT_EN': 0, 'SAT_PREPASS_EN': 0,
+                        'MIN_SURFACE_CYCLE_INTERVAL_S': 0})
+        b.exit_config()
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    mk = b.mark()
+    # 5 min: assez pour une dizaine de periodes a TR_NOM=30 s.
+    vues = _compter_trace(b, [r'TX SUCCESS', r'\+ERROR=', r'reset cause',
+                              r'entry: BootState'], 300, depuis=mk)
+    emissions = [l for l in vues if 'TX SUCCESS' in l]
+    reboots = [l for l in vues if 'BootState' in l or 'reset cause' in l]
+    try:
+        b.enter_config(); b.write_params({'ARGOS_MODE': 0}); b.exit_config()
+    except Exception:
+        pass
+    trace = f'{len(emissions)} emissions, {len(reboots)} redemarrages\n' + '\n'.join(vues[:6])
+    if reboots:
+        return r.record(case, 'FAIL',
+                        f'{len(reboots)} redemarrage(s) pendant une emission Doppler continue',
+                        trace)
+    if not emissions:
+        return r.record(case, 'FAIL',
+                        'aucune emission en 5 min sans GNSS ni SWS — la balise est muette '
+                        'dans la configuration la plus simple', trace)
+    if len(emissions) < 3:
+        return r.record(case, 'FAIL',
+                        f'{len(emissions)} emission(s) seulement en 5 min a TR_NOM=30 s: '
+                        'la cadence s arrete', trace)
+    r.record(case, 'PASS',
+             f'{len(emissions)} emissions en 5 min, aucun redemarrage', trace)
+
+def c_duty_masque_valide(r, case):
+    """Un masque horaire VALIDE n emet que dans son heure, et le repli ne l ecrase pas.
+
+    DUTY-01 couvre le masque VIDE (mort silencieuse). Le risque inverse n etait
+    pas couvert: qu un masque partiel soit ignore et que la balise emette a
+    toute heure, brulant son quota satellite et sa batterie hors des fenetres
+    voulues.
+    """
+    b = r.b
+    # L horloge de la CARTE est imposee, elle n a rien a voir avec celle de
+    # l hote: is_in_duty_cycle() teste `duty & (0x800000 >> heure_RTC)`. Une
+    # premiere version derivait le masque de time.gmtime() cote hote et
+    # concluait que le duty-cycle bloquait tout, alors que la carte etait a une
+    # autre heure. 10:30 UTC place le test au milieu de l heure 10, loin des
+    # bords ou un changement d heure fausserait le verdict.
+    base = 1767263400   # 2026-01-01 10:30:00 UTC
+    heure = 10
+    masque_courant = 0x800000 >> heure
+    masque_autre = 0x800000 >> ((heure + 12) % 24)
+    try:
+        b.enter_config()
+        _rtcw(b, base)
+        b.write_params({'ARGOS_MODE': 3, 'TR_NOM': 30, 'GNSS_EN': 0,
+                        'UNDERWATER_EN': 0, 'NTRY_PER_MESSAGE': 0,
+                        'ARGOS_DEPTH_PILE': 1, 'LB_EN': 0, 'RATE_LIMIT_EN': 0,
+                        'ARGOS_TX_JITTER_EN': 0,
+                        'DUTY_CYCLE': masque_autre})
+        b.exit_config()
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    mk = b.mark()
+    hors = _compter_trace(b, [r'TX SUCCESS'], 120, depuis=mk)
+    try:
+        b.enter_config(); b.write_params({'DUTY_CYCLE': masque_courant}); b.exit_config()
+    except Exception as e:
+        return r.record(case, 'ERROR', f'reconfiguration impossible: {type(e).__name__}: {e}')
+    mk2 = b.mark()
+    dedans = _compter_trace(b, [r'TX SUCCESS'], 150, depuis=mk2)
+    try:
+        b.enter_config()
+        b.write_params({'ARGOS_MODE': 0, 'DUTY_CYCLE': 16777215}); b.exit_config()
+    except Exception:
+        pass
+    trace = (f'heure RTC imposee={heure}\nmasque AUTRE heure ({masque_autre:#08x}): '
+             f'{len(hors)} emission(s)\nmasque HEURE COURANTE ({masque_courant:#08x}): '
+             f'{len(dedans)} emission(s)')
+    if hors:
+        return r.record(case, 'FAIL',
+                        f'{len(hors)} emission(s) avec un masque excluant l heure courante: '
+                        'le duty-cycle est ignore', trace)
+    if not dedans:
+        return r.record(case, 'FAIL',
+                        'aucune emission avec un masque AUTORISANT l heure courante: '
+                        'le duty-cycle bloque tout', trace)
+    r.record(case, 'PASS',
+             f'silencieux hors fenetre, {len(dedans)} emission(s) dans la fenetre', trace)
+
+def c_credentials_survivent(r, case):
+    """Les identifiants Argos survivent aux redemarrages.
+
+    Le chemin de brick: trois demarrages rates declenchent un reset usine qui
+    efface DECID, HEXID et la cle secrete. Sur balise scellee, definitif — plus
+    aucun moyen de la reprogrammer sur le terrain.
+
+    On ne PROVOQUE pas d echec de demarrage: ce serait irreversible si le
+    correctif ne tenait pas. On verifie que les identifiants sont la, que le
+    compteur d echecs est a zero, et qu un redemarrage volontaire ne les touche
+    pas.
+    """
+    b = r.b
+    if not _en_config(b):
+        return r.record(case, 'ERROR', 'mode configuration inaccessible')
+    try:
+        _, avant = b.read_params(['ARGOS_DECID', 'ARGOS_HEXID'])
+    except Exception as e:
+        return r.record(case, 'ERROR', f'lecture impossible: {type(e).__name__}: {e}')
+    echecs, usine = _boot(b)
+    if echecs is None:
+        return r.record(case, 'ERROR', '%BOOT sans reponse')
+    decid = avant.get(b._key('ARGOS_DECID'), '')
+    if not decid or decid == '0':
+        return r.record(case, 'FAIL',
+                        f'ARGOS_DECID vaut {decid!r}: la carte n a pas d identifiant satellite',
+                        f'avant={avant} boot=({echecs},{usine})')
+    if usine:
+        return r.record(case, 'FAIL',
+                        'une tentative de reset usine est enregistree — les identifiants '
+                        'ont pu etre effaces', f'boot=({echecs},{usine})')
+    # Redemarrage volontaire, puis relecture.
+    try:
+        b.dte('RSTBW', '', timeout=8.0)
+    except Exception:
+        pass
+    time.sleep(8)
+    if not r.connect():
+        return r.record(case, 'ERROR', 'la carte ne revient pas apres RSTBW')
+    b = r.b
+    if not b.wait_state('OPERATIONAL', timeout=90):
+        return r.record(case, 'ERROR', 'la carte ne repasse pas en OPERATIONAL')
+    if not _en_config(b):
+        return r.record(case, 'ERROR', 'mode configuration inaccessible apres redemarrage')
+    _, apres = b.read_params(['ARGOS_DECID', 'ARGOS_HEXID'])
+    echecs2, usine2 = _boot(b)
+    trace = f'avant={avant}\napres={apres}\nboot apres=({echecs2},{usine2})'
+    if apres != avant:
+        return r.record(case, 'FAIL', 'les identifiants ont CHANGE apres un redemarrage', trace)
+    if echecs2:
+        return r.record(case, 'FAIL',
+                        f'compteur d echecs a {echecs2} apres un demarrage reussi', trace)
+    r.record(case, 'PASS',
+             f'identifiants intacts apres redemarrage (DECID={decid}), compteur a zero', trace)
+
+def c_batterie_transitoire_tx(r, case):
+    """Aucune alerte batterie critique sur une batterie saine pendant les emissions.
+
+    Une emission Argos tire un pic de courant. Si la mesure n est pas filtree,
+    le creux de tension passe pour une batterie mourante et la balise bascule en
+    profil basse consommation — voire s eteint — alors qu elle est saine. La
+    mediane doit absorber le creux.
+    """
+    b = r.b
+    try:
+        b.enter_config()
+        b.write_params({'ARGOS_MODE': 2, 'TR_NOM': 30, 'GNSS_EN': 0,
+                        'UNDERWATER_EN': 0, 'NTRY_PER_MESSAGE': 0,
+                        'ARGOS_DEPTH_PILE': 1, 'DUTY_CYCLE': 16777215,
+                        'LB_EN': 1, 'RATE_LIMIT_EN': 0})
+        b.exit_config()
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    mk = b.mark()
+    vues = _compter_trace(b, [r'TX SUCCESS', r'BatteryMonitorEventVoltageCritical',
+                              r'LOW_BATTERY', r'critical'], 240, depuis=mk)
+    emissions = [l for l in vues if 'TX SUCCESS' in l]
+    alertes = [l for l in vues if 'ritical' in l or 'LOW_BATTERY' in l]
+    try:
+        b.enter_config(); b.write_params({'ARGOS_MODE': 0, 'LB_EN': 0}); b.exit_config()
+    except Exception:
+        pass
+    trace = f'{len(emissions)} emissions, {len(alertes)} alertes\n' + '\n'.join(vues[:6])
+    if not emissions:
+        return r.record(case, 'ERROR', 'aucune emission — transitoire non observable', trace)
+    if alertes:
+        return r.record(case, 'FAIL',
+                        f'{len(alertes)} alerte(s) batterie sur {len(emissions)} emissions '
+                        'avec une batterie saine: le transitoire n est pas absorbe', trace)
+    r.record(case, 'PASS',
+             f'{len(emissions)} emissions, aucune alerte batterie', trace)
+
+def c_reveil_apres_refroidissement(r, case):
+    """LE cas qui decide: apres un refroidissement, l emission REPART-ELLE ?
+
+    Sur une configuration sans GNSS ni SWS, rien ne vient reveiller la balise:
+    pas de fix, pas d emersion. Si le refroidissement n a pas d echeance propre,
+    la balise se tait DEFINITIVEMENT — et c est indiscernable d une balise
+    perdue.
+
+    On arme un refroidissement court, on attend qu il expire, et on verifie que
+    l emission reprend d elle-meme.
+    """
+    b = r.b
+    try:
+        b.enter_config()
+        b.write_params({'ARGOS_MODE': 2, 'TR_NOM': 30, 'GNSS_EN': 0,
+                        'UNDERWATER_EN': 0, 'NTRY_PER_MESSAGE': 0,
+                        'ARGOS_DEPTH_PILE': 1, 'DUTY_CYCLE': 16777215,
+                        'LB_EN': 0, 'RATE_LIMIT_EN': 0,
+                        'MIN_SURFACE_CYCLE_INTERVAL_S': 90,
+                        'COOLDOWN_TRIGGER_MODE': 3})
+        b.exit_config()
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    mk = b.mark()
+    avant = _attendre_trace(b, [r'TX SUCCESS'], 120, depuis=mk)
+    if not avant:
+        try:
+            b.enter_config()
+            b.write_params({'ARGOS_MODE': 0, 'MIN_SURFACE_CYCLE_INTERVAL_S': 0})
+            b.exit_config()
+        except Exception:
+            pass
+        return r.record(case, 'ERROR',
+                        'aucune emission initiale — le reveil n est pas evaluable',
+                        '\n'.join(avant[:4]))
+    # Le refroidissement s arme sur la derniere emission (UNP30=3). On attend
+    # sa fenetre PLUS une marge, et on exige une reprise.
+    mk2 = b.mark()
+    apres = _attendre_trace(b, [r'TX SUCCESS'], 260, depuis=mk2)
+    try:
+        b.enter_config()
+        b.write_params({'ARGOS_MODE': 0, 'MIN_SURFACE_CYCLE_INTERVAL_S': 0,
+                        'COOLDOWN_TRIGGER_MODE': 3})
+        b.exit_config()
+    except Exception:
+        pass
+    trace = (f'avant refroidissement: {len(avant)} emission(s)\n'
+             f'apres la fenetre de 90 s: {len(apres)} emission(s)\n' + '\n'.join(apres[:4]))
+    if not apres:
+        return r.record(case, 'FAIL',
+                        'la balise a emis puis N A JAMAIS REPRIS apres le refroidissement, '
+                        'sans GNSS ni SWS pour la reveiller — silence definitif', trace)
+    r.record(case, 'PASS',
+             f'l emission repart seule apres le refroidissement ({len(apres)} emission(s))',
+             trace)
+
+CASES_V27 = [
+    dict(id='DEP-01', risque='BLOQUANT', titre='Doppler seul: emet et ne s arrete pas',
+         fn=c_doppler_seul_continu),
+    dict(id='DEP-02', risque='BLOQUANT', titre='Masque horaire valide: silencieux hors fenetre, actif dedans',
+         fn=c_duty_masque_valide),
+    dict(id='DEP-03', risque='BLOQUANT', titre='Les identifiants Argos survivent aux redemarrages',
+         fn=c_credentials_survivent),
+    dict(id='DEP-04', risque='MAJEUR',   titre='Aucune alerte batterie sur le transitoire d emission',
+         fn=c_batterie_transitoire_tx),
+    dict(id='DEP-05', risque='BLOQUANT', titre='L emission repart apres un refroidissement, sans reveil externe',
+         fn=c_reveil_apres_refroidissement),
+]
+
+def c_factory_reset_recuperable(r, case):
+    """FACTW efface la configuration, et la balise RETROUVE son identite.
+
+    C est le chemin de brick documente par l audit: trois demarrages rates
+    declenchent un reset usine, sans operateur. Si ce reset emporte les
+    identifiants, la balise scellee n emet plus jamais et rien ne peut la
+    reprogrammer sur le terrain — le mecanisme cense la sauver serait celui qui
+    la tue.
+
+    DESTRUCTIF, et sur KIM2 SEULEMENT. Ce qui le rend sur ici:
+      - DECID et HEXID sont RELUS DU MODULE a chaque init (kim2.cpp:1026), donc
+        ils reviennent d eux-memes;
+      - les RADIOCONF sont dans PROTECTED_PARAMS sans condition;
+      - ARGOS_SECKEY n est protege que sous ARGOS_SMD, mais sur KIM2 la cle vit
+        dans le module (RCONF chiffre, decodable par lui seul) et n est pas
+        utilisee cote nRF.
+    Sur une carte SMD ce cas EFFACERAIT une cle irrecuperable: ne pas le jouer
+    la-bas sans carte sacrifiable.
+
+    A JOUER EN DERNIER: tout le reste de la configuration revient aux defauts.
+    """
+    b = r.b
+    if not _en_config(b):
+        return r.record(case, 'ERROR', 'mode configuration inaccessible')
+    try:
+        _, avant = b.read_params(['ARGOS_DECID', 'ARGOS_HEXID', 'ARGOS_RADIOCONF_LDK'])
+    except Exception as e:
+        return r.record(case, 'ERROR', f'lecture impossible: {type(e).__name__}: {e}')
+    decid_avant = avant.get(b._key('ARGOS_DECID'), '')
+    if not decid_avant or decid_avant == '0':
+        return r.record(case, 'ERROR',
+                        'aucun identifiant avant le reset — cas non evaluable', f'{avant}')
+
+    m = b.dte('FACTW', '', timeout=15.0)
+    if not m:
+        return r.record(case, 'ERROR', 'FACTW sans reponse')
+    if m.group(1) != 'O':
+        ligne = m.string if hasattr(m, 'string') else ''
+        return r.record(case, 'FAIL', f'FACTW refuse: {ligne[:70]}')
+
+    # Le reset usine redemarre la carte, et ce redemarrage fait re-enumerer le
+    # CDC. Mesure du 2026-08-29: le noeud revient mais l endpoint ne draine plus
+    # — zero octet, ecriture en timeout — et seul un reset SWD le ranime. Une
+    # simple reconnexion concluait donc "la carte ne revient pas apres FACTW",
+    # ce qui ressemble beaucoup a un brick et n en est pas un: le SWD repondait,
+    # et la carte est revenue en OPERATIONAL avec ses identifiants intacts.
+    #
+    # La reconnexion fait partie du cas, et elle doit aller jusqu au bout: une
+    # tentative douce, puis la reparation du lien, puis un reset materiel.
+    time.sleep(12)
+    revenue = r.connect(tries=10)
+    if not revenue:
+        r.say('   FACTW: lien perdu au redemarrage, reparation…')
+        revenue = r.recover()
+    if not revenue:
+        return r.record(case, 'ERROR',
+                        'la carte ne repond plus apres FACTW, meme apres reparation du '
+                        'lien et reset materiel — verifier au SWD avant de conclure a un brick')
+    b = r.b
+    if not b.wait_state('OPERATIONAL', timeout=120):
+        return r.record(case, 'ERROR',
+                        'la carte ne repasse pas en OPERATIONAL apres FACTW — brick')
+    if not _en_config(b):
+        return r.record(case, 'ERROR', 'mode configuration inaccessible apres FACTW')
+    _, apres = b.read_params(['ARGOS_DECID', 'ARGOS_HEXID', 'ARGOS_RADIOCONF_LDK'])
+    echecs, usine = _boot(b)
+    trace = f'avant={avant}\napres={apres}\nboot=({echecs},{usine})'
+
+    defauts = []
+    if apres.get(b._key('ARGOS_DECID')) != decid_avant:
+        defauts.append(f"DECID perdu: {decid_avant} -> {apres.get(b._key('ARGOS_DECID'))}")
+    if apres.get(b._key('ARGOS_HEXID')) != avant.get(b._key('ARGOS_HEXID')):
+        defauts.append('HEXID perdu')
+    rc_avant = avant.get(b._key('ARGOS_RADIOCONF_LDK'), '')
+    rc_apres = apres.get(b._key('ARGOS_RADIOCONF_LDK'), '')
+    if rc_avant and rc_apres != rc_avant:
+        defauts.append(f'RADIOCONF_LDK perdu: {rc_avant[:16]}... -> {rc_apres[:16] or "(vide)"}')
+    if defauts:
+        return r.record(case, 'FAIL',
+                        'reset usine NON RECUPERABLE: ' + '; '.join(defauts), trace)
+    r.record(case, 'PASS',
+             f'la balise retrouve son identite apres reset usine (DECID={decid_avant})', trace)
+
+CASES_V28 = [
+    dict(id='DEP-06', risque='BLOQUANT', titre='Un reset usine ne tue pas la balise',
+         fn=c_factory_reset_recuperable),
+]
+
+
+# =====================================================================
+#  Vague 29 — MATRICE: chaque mode Argos, chaque format de charge utile
+#
+#  La campagne eprouvait des modes isoles et des formats isoles, jamais leur
+#  CROISEMENT. Or c est la que vivent les defauts: une trame dimensionnee pour
+#  la mauvaise modulation, un format qui ne part que dans un mode, un mode qui
+#  n emet jamais le format qu on croit.
+#
+#  Tailles documentees (argos_packet_builder.hpp):
+#    SHORT       96 bits   (1 position)
+#    LONG       192 bits   (2 a 3 positions, LDA2_FRAME_BITS)
+#    FASTLOC    192 bits
+#    MEASC12    128 bits   (CloudLocate, LDK)
+# =====================================================================
+
+_BITS_ATTENDUS = {'SHORT': 96, 'LONG': 192, 'FASTLOC': 192}
+
+def _config_mode(b, mode, **extra):
+    """Configuration minimale pour qu un mode emette, sans rien d autre."""
+    cfg = {'ARGOS_MODE': mode, 'TR_NOM': 30, 'GNSS_EN': 1,
+           'NTRY_PER_MESSAGE': 0, 'ARGOS_DEPTH_PILE': 1,
+           'DUTY_CYCLE': 16777215, 'UNDERWATER_EN': 0, 'LB_EN': 0,
+           'RATE_LIMIT_EN': 0, 'SAT_PREPASS_EN': 0,
+           'MIN_SURFACE_CYCLE_INTERVAL_S': 0, 'ARGOS_TX_JITTER_EN': 0,
+           'GNSS_SESSION_SINGLE_FIX': 1}
+    cfg.update(extra)
+    b.enter_config(); b.write_params(cfg); b.exit_config()
+
+def _emissions(vues):
+    """Extrait (type, mode) de chaque TX SUCCESS."""
+    out = []
+    for l in vues:
+        m = re.search(r'TX SUCCESS — type=(\S+) mode=(\d+)', l)
+        if m:
+            out.append((m.group(1), int(m.group(2))))
+    return out
+
+def _paquets(vues):
+    """Extrait (format, bits) de chaque construction de paquet."""
+    out = []
+    for l in vues:
+        m = re.search(r'build_gnss_packet: (SHORT|LONG) packet, .*?(\d+) bits', l)
+        if m:
+            out.append((m.group(1), int(m.group(2))))
+        m2 = re.search(r'build_fastloc_packet', l)
+        if m2:
+            out.append(('FASTLOC', None))
+    return out
+
+def _mode_emet(r, case, mode, nom, position=True, secondes=180, **extra):
+    """Tronc commun: un mode donne construit un paquet et l emet.
+
+    On verifie les DEUX: qu un paquet soit CONSTRUIT au bon format et qu il
+    parte. Un paquet construit et jamais emis, ou une emission sans paquet
+    trace, sont deux pannes distinctes et il faut pouvoir les distinguer.
+    """
+    b = r.b
+    try:
+        _config_mode(b, mode, **extra)
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    mk = b.mark()
+    if position:
+        b._send('%GPS 43.6 3.9 5000 9\r')
+    vues = _compter_trace(b, [r'TX SUCCESS', r'build_\w+_packet', r'\+ERROR=',
+                              r'periodique', r'SCHEDULE_DISABLED'], secondes, depuis=mk)
+    try:
+        b.enter_config(); b.write_params({'ARGOS_MODE': 0}); b.exit_config()
+    except Exception:
+        pass
+    emis = _emissions(vues)
+    paquets = _paquets(vues)
+    erreurs = [l for l in vues if '+ERROR=' in l]
+    trace = (f'{len(emis)} emission(s): {emis[:6]}\n'
+             f'{len(paquets)} paquet(s): {paquets[:6]}\n' + '\n'.join(vues[:5]))
+    if erreurs:
+        return r.record(case, 'FAIL', f'module en erreur: {erreurs[0][:60]}', trace)
+    if not paquets and not emis:
+        return r.record(case, 'FAIL',
+                        f'{nom}: aucun paquet construit ni emis en {secondes} s', trace)
+    if not emis:
+        return r.record(case, 'FAIL',
+                        f'{nom}: paquet construit mais JAMAIS emis', trace)
+    # Tailles: un format annonce doit porter le nombre de bits documente.
+    for fmt, bits in paquets:
+        attendu = _BITS_ATTENDUS.get(fmt)
+        if attendu and bits and bits != attendu:
+            return r.record(case, 'FAIL',
+                            f'{fmt} construit avec {bits} bits au lieu de {attendu}', trace)
+    return r.record(case, 'PASS',
+                    f'{nom}: {len(emis)} emission(s), formats {sorted({f for f, _ in paquets})}',
+                    trace)
+
+def c_mode_legacy(r, case):
+    """LEGACY: emission periodique, format SHORT sur une position."""
+    _mode_emet(r, case, 2, 'LEGACY')
+
+def c_mode_duty(r, case):
+    """DUTY_CYCLE avec masque plein: doit emettre comme LEGACY."""
+    _mode_emet(r, case, 3, 'DUTY_CYCLE')
+
+def c_mode_doppler(r, case):
+    """DOPPLER: charge minimale, SANS position.
+
+    C est le mode de repli quand le GNSS ne donne rien — il doit emettre
+    justement quand il n y a pas de fix, sinon il ne sert a rien.
+    """
+    _mode_emet(r, case, 4, 'DOPPLER', position=False, GNSS_EN=0)
+
+def c_mode_long_multi(r, case):
+    """Trois positions dans la pile: le format LONG doit etre choisi.
+
+    Un LONG transporte jusqu a trois positions. Si la balise n emettait que du
+    SHORT, chaque position couterait une emission entiere — trois fois le
+    budget satellite pour la meme information.
+    """
+    b = r.b
+    try:
+        _config_mode(b, 2, ARGOS_DEPTH_PILE=4, NTRY_PER_MESSAGE=1, TR_NOM=60)
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    mk = b.mark()
+    for lat in (43.60, 43.61, 43.62):
+        b._send(f'%GPS {lat} 3.9 5000 9\r')
+        time.sleep(12)
+    vues = _compter_trace(b, [r'TX SUCCESS', r'build_gnss_packet'], 150, depuis=mk)
+    try:
+        b.enter_config(); b.write_params({'ARGOS_MODE': 0}); b.exit_config()
+    except Exception:
+        pass
+    paquets = _paquets(vues)
+    trace = f'paquets: {paquets}\n' + '\n'.join(vues[:6])
+    longs = [(f, n) for f, n in paquets if f == 'LONG']
+    if not paquets:
+        return r.record(case, 'FAIL', 'aucun paquet construit avec 3 positions en pile', trace)
+    if not longs:
+        return r.record(case, 'FAIL',
+                        'trois positions en pile mais AUCUN paquet LONG: chaque position '
+                        'coute une emission entiere', trace)
+    for _, bits in longs:
+        if bits and bits != _BITS_ATTENDUS['LONG']:
+            return r.record(case, 'FAIL',
+                            f"LONG construit avec {bits} bits au lieu de "
+                            f"{_BITS_ATTENDUS['LONG']}", trace)
+    r.record(case, 'PASS', f'{len(longs)} paquet(s) LONG de 192 bits', trace)
+
+def c_charge_sans_fix(r, case):
+    """Sans aucun fix, la balise emet quand meme un signe de vie.
+
+    Le verrou de premier message tenait TOUTE emission tant qu aucun fix n etait
+    tombe: une balise qui redemarrait sans jamais retrouver le ciel
+    disparaissait des ecrans. Le heartbeat doit partir malgre tout.
+    """
+    b = r.b
+    try:
+        _config_mode(b, 2, GNSS_EN=0)
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    mk = b.mark()
+    vues = _compter_trace(b, [r'TX SUCCESS', r'build_\w+_packet'], 150, depuis=mk)
+    try:
+        b.enter_config(); b.write_params({'ARGOS_MODE': 0}); b.exit_config()
+    except Exception:
+        pass
+    emis = _emissions(vues)
+    trace = f'{len(emis)} emission(s): {emis[:6]}\n' + '\n'.join(vues[:5])
+    if not emis:
+        return r.record(case, 'FAIL',
+                        'aucune emission sans fix: une balise qui ne retrouve pas le ciel '
+                        'disparait des ecrans', trace)
+    r.record(case, 'PASS', f'{len(emis)} emission(s) sans aucun fix', trace)
+
+CASES_V29 = [
+    dict(id='MOD-01', risque='BLOQUANT', titre='LEGACY construit et emet',           fn=c_mode_legacy),
+    dict(id='MOD-02', risque='BLOQUANT', titre='DUTY_CYCLE masque plein emet',       fn=c_mode_duty),
+    dict(id='MOD-03', risque='BLOQUANT', titre='DOPPLER emet sans position',         fn=c_mode_doppler),
+    dict(id='MOD-04', risque='MAJEUR',   titre='Trois positions donnent un LONG de 192 bits', fn=c_mode_long_multi),
+    dict(id='MOD-05', risque='BLOQUANT', titre='Sans fix, la balise donne signe de vie', fn=c_charge_sans_fix),
+]
+
+
+# =====================================================================
+#  Vague 30 — GNSS PLEIN AIR: tous les parametres, et surtout leurs bornes
+#
+#  Une seule question traverse cette vague: un parametre regle trop STRICT
+#  produit-il un echec PROPRE ET TRACE, ou une mort silencieuse ?
+#
+#  C est le mode de defaillance le plus couteux du produit. Un operateur qui
+#  serre GNSS_MIN_CNO ou GNSS_MIN_ELEV pour "n avoir que de bonnes positions"
+#  peut, sans le savoir, configurer une balise qui n en rapportera jamais
+#  aucune — et rien dans le journal ne le lui dira si le firmware se contente
+#  de ne rien trouver.
+#
+#  Les filtres hAcc et HDOP vivent dans le pilote M10Q, sur la trame NAV-PVT
+#  REELLE (m10qasync.cpp): %GPS les court-circuite. Cette vague est le seul
+#  endroit de toute la campagne qui les exerce.
+#
+#  Duree: chaque cas s arrete des qu il a sa reponse. Les cas qui attendent un
+#  ECHEC sont bornes par le timeout d acquisition configure, pas par une
+#  attente fixe — c est ce qui rend la vague tenable en une passe.
+# =====================================================================
+
+_CIEL_BASE = {
+    'GNSS_EN': 1, 'ARGOS_MODE': 0, 'UNDERWATER_EN': 0, 'LB_EN': 0,
+    'RATE_LIMIT_EN': 0, 'MOORED_DETECT_EN': 0, 'HAULED_DETECT_EN': 0,
+    'ZONE_ENABLE_OUT_OF_ZONE_DETECTION_MODE': 0, 'SAT_PREPASS_EN': 0,
+    'GNSS_HACCFILT_EN': 0, 'GNSS_HDOPFILT_EN': 0,
+    'GNSS_DEEP_IDLE_AFTER_OFF_S': 0, 'GNSS_SESSION_SINGLE_FIX': 1,
+    'GNSS_MIN_CNO': 10, 'GNSS_MIN_ELEV': 10, 'GNSS_MIN_NUM_FIXES': 1,
+    'GNSS_CONSTELLATION_MASK': 0x0F, 'GNSS_FIX_MODE': 3,
+    'GNSS_ACQ_TIMEOUT': 180, 'GNSS_COLD_ACQ_TIMEOUT': 180,
+}
+
+def _ciel(b, **extra):
+    cfg = dict(_CIEL_BASE); cfg.update(extra)
+    b.enter_config(); b.write_params(cfg); b.exit_config()
+
+def _session(b, secondes=240, depuis=None):
+    """Observe UNE session GNSS. Rend (issue, hAcc_mm, numSV, secondes, lignes).
+
+    issue vaut 'fix', 'sans-fix', 'degrade' ou None (rien observe). On s arrete
+    des qu une issue tombe: attendre la fin d une fenetre quand la reponse est
+    deja la ne mesure que la patience.
+    """
+    mk = b.mark() if depuis is None else depuis
+    t0 = time.time()
+    motifs = [r'task_process_gnss_data: lat=', r'acquisition timeout — no fix',
+              r'timeout with degraded PVT', r'M10Q on —']
+    fin = t0 + secondes
+    while time.time() < fin:
+        time.sleep(3)
+        with b._lock:
+            lignes = [l.strip()[24:220] for l in b.history[mk:]
+                      if any(re.search(m, l) for m in motifs)]
+        for l in lignes:
+            if 'task_process_gnss_data' in l:
+                h = re.search(r'hAcc=([\d.]+)', l)
+                n = re.search(r'numSV=(\d+)', l)
+                return ('fix', float(h.group(1)) if h else None,
+                        int(n.group(1)) if n else 0, time.time() - t0, lignes)
+            if 'degraded PVT' in l:
+                h = re.search(r'hAcc=(\d+)', l)
+                return ('degrade', float(h.group(1)) if h else None, 0,
+                        time.time() - t0, lignes)
+            if 'no fix' in l:
+                return ('sans-fix', None, 0, time.time() - t0, lignes)
+    with b._lock:
+        lignes = [l.strip()[24:220] for l in b.history[mk:]
+                  if any(re.search(m, l) for m in motifs)]
+    return (None, None, 0, time.time() - t0, lignes)
+
+
+def c_ciel_reference(r, case):
+    """Position reelle de reference: precision, satellites, temps.
+
+    Tous les cas suivants se calibrent sur ces chiffres. Sans eux, un seuil
+    "strict" est une supposition.
+    """
+    b = r.b
+    try:
+        _ciel(b)
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    issue, hacc, numsv, dt, lignes = _session(b, 300)
+    trace = f'issue={issue} hAcc={hacc} numSV={numsv} en {dt:.0f}s\n' + '\n'.join(lignes[:5])
+    if issue != 'fix':
+        return r.record(case, 'ERROR',
+                        f'pas de position reelle en 5 min (issue={issue}) — antenne masquee ?',
+                        trace)
+    r.b._ciel_hacc = hacc
+    r.b._ciel_numsv = numsv
+    defauts = []
+    if hacc > 50000:
+        defauts.append(f'hAcc={hacc/1000:.1f} m inexploitable pour du suivi animal')
+    if numsv < 4:
+        defauts.append(f'numSV={numsv}: un fix 3D en demande au moins 4')
+    if defauts:
+        return r.record(case, 'FAIL', '; '.join(defauts), trace)
+    r.record(case, 'PASS',
+             f'reference: hAcc={hacc/1000:.1f} m, {numsv} satellites, {dt:.0f} s', trace)
+
+
+def _borne_stricte(r, case, nom, quoi, **cfg):
+    """Tronc commun des cas limites: un reglage impossible doit ECHOUER PROPREMENT.
+
+    Le verdict ne porte pas sur l absence de position — elle est attendue — mais
+    sur la maniere: la session doit se TERMINER et le DIRE. Une session qui ne
+    conclut jamais laisse le recepteur allume et la balise muette.
+    """
+    b = r.b
+    try:
+        _ciel(b, **cfg)
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    issue, hacc, numsv, dt, lignes = _session(b, 240)
+    try:
+        _ciel(b)
+    except Exception:
+        pass
+    trace = f'issue={issue} hAcc={hacc} numSV={numsv} en {dt:.0f}s\n' + '\n'.join(lignes[:6])
+    if issue is None:
+        return r.record(case, 'FAIL',
+                        f'{nom}: la session ne conclut NI par un fix NI par un echec en '
+                        f'{dt:.0f} s — le recepteur reste allume et la balise muette', trace)
+    if issue == 'fix':
+        return r.record(case, 'PASS',
+                        f'{nom}: fixe malgre {quoi} (hAcc={hacc/1000:.1f} m, {numsv} sat)', trace)
+    return r.record(case, 'PASS',
+                    f'{nom}: pas de position ({issue}) mais la session se termine et le dit '
+                    f'en {dt:.0f} s', trace)
+
+
+def c_ciel_cno_max(r, case):
+    """GNSS_MIN_CNO=50 (le maximum): presque aucun satellite ne passe le seuil."""
+    _borne_stricte(r, case, 'MIN_CNO=50', 'un seuil de signal au maximum',
+                   GNSS_MIN_CNO=50, GNSS_ACQ_TIMEOUT=90)
+
+def c_ciel_elev_max(r, case):
+    """GNSS_MIN_ELEV=90: seuls les satellites au zenith exact comptent."""
+    _borne_stricte(r, case, 'MIN_ELEV=90', 'un masque d antenne au zenith',
+                   GNSS_MIN_ELEV=90, GNSS_ACQ_TIMEOUT=90)
+
+def c_ciel_mask_gps_seul(r, case):
+    """GNSS_CONSTELLATION_MASK=0x01: GPS seul, la constellation minimale.
+
+    Un deploiement peut vouloir GPS seul pour la consommation. Il doit alors
+    fixer quand meme — sinon le reglage est un piege.
+    """
+    _borne_stricte(r, case, 'GPS seul', 'la constellation minimale',
+                   GNSS_CONSTELLATION_MASK=0x01, GNSS_ACQ_TIMEOUT=180)
+
+def c_ciel_acq_minimal(r, case):
+    """GNSS_ACQ_TIMEOUT=10, la borne basse: dix echantillons pour fixer."""
+    _borne_stricte(r, case, 'ACQ_TIMEOUT=10', 'la fenetre d acquisition minimale',
+                   GNSS_ACQ_TIMEOUT=10, GNSS_COLD_ACQ_TIMEOUT=10)
+
+def c_ciel_hacc_frontiere(r, case):
+    """Le filtre hAcc a la FRONTIERE de ce que le ciel donne.
+
+    Le vrai cas limite: un seuil juste EN DESSOUS de la precision mesuree doit
+    rejeter, un seuil juste AU-DESSUS doit accepter. Regler au hasard ne
+    distingue pas un filtre qui marche d un filtre inerte.
+    """
+    b = r.b
+    hacc = getattr(b, '_ciel_hacc', None)
+    if hacc is None:
+        return r.record(case, 'ERROR',
+                        'pas de precision de reference — jouer GPS-C1 avant ce cas')
+    sous = max(1, int(hacc / 1000) - 1)      # metres, juste sous la mesure
+    sur = int(hacc / 1000) + 10              # confortablement au-dessus
+    try:
+        _ciel(b, GNSS_HACCFILT_EN=1, GNSS_HACCFILT_THR=sous, GNSS_ACQ_TIMEOUT=90)
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    i1, h1, _, t1, l1 = _session(b, 150)
+    try:
+        _ciel(b, GNSS_HACCFILT_EN=1, GNSS_HACCFILT_THR=sur, GNSS_ACQ_TIMEOUT=180)
+    except Exception:
+        pass
+    i2, h2, _, t2, l2 = _session(b, 240)
+    try:
+        _ciel(b)
+    except Exception:
+        pass
+    trace = (f'ciel: hAcc={hacc/1000:.1f} m\n'
+             f'seuil {sous} m -> {i1} ({t1:.0f}s)\n'
+             f'seuil {sur} m -> {i2} ({t2:.0f}s)\n' + '\n'.join((l1 + l2)[:6]))
+    if i1 == 'fix':
+        return r.record(case, 'FAIL',
+                        f'seuil a {sous} m mais une position a {h1/1000:.1f} m est ACCEPTEE: '
+                        'le filtre hAcc ne filtre pas', trace)
+    if i2 != 'fix':
+        return r.record(case, 'FAIL',
+                        f'seuil desserre a {sur} m et pourtant aucune position ({i2}): '
+                        'le filtre rejette tout', trace)
+    r.record(case, 'PASS',
+             f'rejette a {sous} m, accepte a {sur} m — le filtre discrimine bien', trace)
+
+def c_ciel_fix_chaud(r, case):
+    """Le second fix doit etre plus rapide: l ephemeride est conservee.
+
+    Contrepartie mesurable de la mort GNSS a deux jours. On rend les DEUX temps,
+    parce que le rapport est la vraie information — pas le fait binaire.
+    """
+    b = r.b
+    try:
+        _ciel(b, GNSS_DEEP_IDLE_AFTER_OFF_S=30)
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    i1, h1, n1, t1, _ = _session(b, 300)
+    if i1 != 'fix':
+        try:
+            _ciel(b)
+        except Exception:
+            pass
+        return r.record(case, 'ERROR', f'pas de premier fix (issue={i1}) — cas non evaluable')
+    time.sleep(40)
+    i2, h2, n2, t2, l2 = _session(b, 300)
+    try:
+        _ciel(b)
+    except Exception:
+        pass
+    trace = f'froid: {t1:.0f}s ({n1} sat)\nchaud: {t2:.0f}s ({n2} sat)\n' + '\n'.join(l2[:4])
+    if i2 != 'fix':
+        return r.record(case, 'FAIL',
+                        'la seconde session ne fixe plus alors que la premiere a reussi: '
+                        'rien n est conserve entre sessions', trace)
+    r.record(case, 'PASS', f'froid {t1:.0f} s, chaud {t2:.0f} s', trace)
+
+def c_ciel_emission_reelle(r, case):
+    """Bout en bout: ciel -> pilote -> pile -> encodage -> KIM2 -> antenne."""
+    b = r.b
+    try:
+        _ciel(b, ARGOS_MODE=2, TR_NOM=60, NTRY_PER_MESSAGE=1,
+              ARGOS_DEPTH_PILE=1, DUTY_CYCLE=16777215)
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    mk = b.mark()
+    issue, hacc, numsv, dt, _ = _session(b, 300, depuis=mk)
+    if issue != 'fix':
+        try:
+            _ciel(b)
+        except Exception:
+            pass
+        return r.record(case, 'ERROR', f'pas de position (issue={issue}) — emission non evaluable')
+    vues = _compter_trace(b, [r'TX SUCCESS', r'\+ERROR=', r'build_\w+_packet'], 150, depuis=mk)
+    try:
+        _ciel(b)
+    except Exception:
+        pass
+    succes = [l for l in vues if 'TX SUCCESS' in l]
+    erreurs = [l for l in vues if '+ERROR=' in l]
+    trace = f'hAcc={hacc/1000:.1f} m, {numsv} sat\n' + '\n'.join(vues[:6])
+    if erreurs and not succes:
+        return r.record(case, 'FAIL', f'emission refusee: {erreurs[0][:70]}', trace)
+    if not succes:
+        return r.record(case, 'FAIL',
+                        'position reelle acquise mais aucune emission aboutie', trace)
+    r.record(case, 'PASS',
+             f'{len(succes)} emission(s) avec position reelle ({hacc/1000:.1f} m)', trace)
+
+CASES_V30 = [
+    dict(id='GPS-C1', risque='BLOQUANT', titre='Position de reference: precision, satellites, temps',
+         fn=c_ciel_reference),
+    dict(id='GPS-C2', risque='BLOQUANT', titre='Filtre hAcc a la frontiere: rejette sous, accepte au-dessus',
+         fn=c_ciel_hacc_frontiere),
+    dict(id='GPS-C3', risque='MAJEUR',   titre='MIN_CNO au maximum echoue proprement',
+         fn=c_ciel_cno_max),
+    dict(id='GPS-C4', risque='MAJEUR',   titre='MIN_ELEV au zenith echoue proprement',
+         fn=c_ciel_elev_max),
+    dict(id='GPS-C5', risque='MAJEUR',   titre='GPS seul fixe ou le dit',
+         fn=c_ciel_mask_gps_seul),
+    dict(id='GPS-C6', risque='MAJEUR',   titre='Fenetre d acquisition minimale conclut',
+         fn=c_ciel_acq_minimal),
+    dict(id='GPS-C7', risque='MAJEUR',   titre='Le fix a chaud est plus rapide que le froid',
+         fn=c_ciel_fix_chaud),
+    dict(id='GPS-C8', risque='BLOQUANT', titre='Une position reelle part par satellite',
+         fn=c_ciel_emission_reelle),
 ]

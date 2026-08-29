@@ -1850,3 +1850,95 @@ TEST(DTEHandler, GNSSA_REQ_NoAlmanacFile) {
 
 	gps_device = nullptr;
 }
+
+TEST(DTEHandler, PARMW_HaccThresholdIsBounded) {
+	/*
+	 * The three hAcc thresholds used to be declared 0..0 -- unbounded -- and
+	 * the receiver multiplied them by 1000 in 32 bits to compare against
+	 * nav.pvt.hAcc in millimetres. 4294968 m therefore wrapped to 704 mm
+	 * effective, and every real fix was discarded with nothing in the log.
+	 *
+	 * The comparison is 64-bit now, but the bound is what keeps an absurd
+	 * value from ever reaching the receiver, so it is worth pinning: the DTE
+	 * port must refuse it rather than store it.
+	 */
+	std::string resp;
+
+	/* The value that used to wrap. */
+	/* PARMW is partial-success: it NAMES the refused keys in a $N response and
+	 * still writes the accepted ones, so the action stays CONFIG_UPDATED. */
+	std::string req = "$PARMW#00D;GNP21=4294968\r";
+	CHECK_TRUE(DTEAction::CONFIG_UPDATED == dte_handler->handle_dte_message(req, resp));
+	STRCMP_EQUAL("$N;PARMW#005;GNP21\r", resp.c_str());
+
+	/* One past the ceiling, and the ceiling itself. */
+	req = "$PARMW#00C;GNP21=100001\r";
+	CHECK_TRUE(DTEAction::CONFIG_UPDATED == dte_handler->handle_dte_message(req, resp));
+	STRCMP_EQUAL("$N;PARMW#005;GNP21\r", resp.c_str());
+
+	req = "$PARMW#00C;GNP21=100000\r";
+	CHECK_TRUE(DTEAction::CONFIG_UPDATED == dte_handler->handle_dte_message(req, resp));
+	STRCMP_EQUAL("$O;PARMW#000;\r", resp.c_str());
+	CHECK_EQUAL(100000U, configuration_store->read_param<unsigned int>(ParamID::GNSS_HACCFILT_THR));
+
+	/* The low-battery and zone copies share the same ceiling. */
+	req = "$PARMW#00D;LBP10=4294968\r";
+	CHECK_TRUE(DTEAction::CONFIG_UPDATED == dte_handler->handle_dte_message(req, resp));
+	STRCMP_EQUAL("$N;PARMW#005;LBP10\r", resp.c_str());
+
+	req = "$PARMW#00D;ZOP16=4294968\r";
+	CHECK_TRUE(DTEAction::CONFIG_UPDATED == dte_handler->handle_dte_message(req, resp));
+	STRCMP_EQUAL("$N;PARMW#005;ZOP16\r", resp.c_str());
+
+	req = "$PARMW#00A;LBP10=5000\r";
+	CHECK_TRUE(DTEAction::CONFIG_UPDATED == dte_handler->handle_dte_message(req, resp));
+	CHECK_EQUAL(5000U, configuration_store->read_param<unsigned int>(ParamID::LB_GNSS_HACCFILT_THR));
+
+	req = "$PARMW#00A;ZOP16=5000\r";
+	CHECK_TRUE(DTEAction::CONFIG_UPDATED == dte_handler->handle_dte_message(req, resp));
+	CHECK_EQUAL(5000U, configuration_store->read_param<unsigned int>(ParamID::ZONE_GNSS_HACCFILT_THR));
+}
+
+TEST(DTEHandler, PARMW_DepthPileTakesACodeNotADepth) {
+	/*
+	 * ARGOS_DEPTH_PILE is a code table: the DTE input 10 means a 16-deep pile.
+	 * Writing 16 -- the depth an operator has in mind -- is not a valid code
+	 * and must be refused, not silently rounded to something else. This is the
+	 * single most confusable parameter in a hand-written config file, so pin
+	 * both halves of the mapping.
+	 */
+	std::string resp;
+
+	std::string req = "$PARMW#008;ARP16=10\r";
+	CHECK_TRUE(DTEAction::CONFIG_UPDATED == dte_handler->handle_dte_message(req, resp));
+	STRCMP_EQUAL("$O;PARMW#000;\r", resp.c_str());
+	CHECK_EQUAL((unsigned int)BaseDepthPile::DEPTH_PILE_16,
+	            (unsigned int)configuration_store->read_param<BaseDepthPile>(ParamID::ARGOS_DEPTH_PILE));
+
+	req = "$PARMW#008;ARP16=16\r";
+	CHECK_TRUE(DTEAction::CONFIG_UPDATED == dte_handler->handle_dte_message(req, resp));
+	STRCMP_EQUAL("$N;PARMW#005;ARP16\r", resp.c_str());
+	/* Still the value set by the accepted write above. */
+	CHECK_EQUAL((unsigned int)BaseDepthPile::DEPTH_PILE_16,
+	            (unsigned int)configuration_store->read_param<BaseDepthPile>(ParamID::ARGOS_DEPTH_PILE));
+}
+
+TEST(DTEHandler, PARMW_HauledArgosModeRefusesSurfacingBurst) {
+	/*
+	 * HAULED_ARGOS_MODE decodes 0..5 like any Argos mode but permits 0..4. In
+	 * HAULED the device is dry and stationary by definition, so a surfacing
+	 * burst can never be triggered: accepting mode 5 there would produce a
+	 * beacon that transmits exactly zero times, silently.
+	 */
+	std::string resp;
+
+	std::string req = "$PARMW#007;HMP10=5\r";
+	CHECK_TRUE(DTEAction::CONFIG_UPDATED == dte_handler->handle_dte_message(req, resp));
+	STRCMP_EQUAL("$N;PARMW#005;HMP10\r", resp.c_str());
+
+	req = "$PARMW#007;HMP10=4\r";
+	CHECK_TRUE(DTEAction::CONFIG_UPDATED == dte_handler->handle_dte_message(req, resp));
+	STRCMP_EQUAL("$O;PARMW#000;\r", resp.c_str());
+	CHECK_EQUAL((unsigned int)BaseArgosMode::DOPPLER,
+	            (unsigned int)configuration_store->read_param<BaseArgosMode>(ParamID::HAULED_ARGOS_MODE));
+}
