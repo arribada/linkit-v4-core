@@ -17,12 +17,16 @@ Example DTE configuration files, to be pushed with
 Each file carries its rationale inline: why the mode, and — more useful in
 practice — which value would silence the beacon.
 
-These files are pushed to **RSPB boards**. The bench wave that writes them to a
-device (`TPL-*`) detects the board and skips itself on anything else: writing a
-full template to the KIM2 bench board reconfigures the very device under
-validation and represents no real deployment. The RSPB file additionally has
-nine keys behind `HAS_BOARD_RSPB`, `HAS_EXTERNAL_WAKEUP` or
-`ENABLE_MORTALITY_SENSOR`, reported as not implemented anywhere else.
+The `.cfg` format itself is generic — `pylinkit --parmw <file>` serves the whole
+family (Linkit, Horizon, RSPB). What is **not** generic is writing a whole
+template to a device on the bench: the wave that does it (`TPL-*`) reads
+`RSPB_PACKET_FORMAT` and skips itself on anything but an RSPB board, because
+pushing a full profile to the KIM2 bench board reconfigures the very device
+under validation and represents no deployment anyone performs.
+
+The RSPB file additionally has nine keys behind `HAS_BOARD_RSPB`,
+`HAS_EXTERNAL_WAKEUP` or `ENABLE_MORTALITY_SENSOR`, reported as not implemented
+anywhere else.
 
 ## These files are written in PyLinkit's language, not the firmware's
 

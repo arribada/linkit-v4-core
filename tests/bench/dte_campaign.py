@@ -6527,18 +6527,19 @@ def _cas_template(nom):
             return r.record(case, 'SKIP', f'template non encodable: {e}')
         if not _en_config(b):
             return r.record(case, 'ERROR', 'mode configuration inaccessible')
-        # Les fichiers de template_conf/ sont pousses sur les cartes RSPB. Les
-        # ecrire en bloc sur une KIM reconfigure la carte meme qu on est en
-        # train de valider, et ne represente aucun deploiement reel. On
-        # constate le type de carte plutot que de le supposer.
+        # Le format .cfg est generique (pylinkit --parmw sert toute la famille);
+        # ce qui ne l est pas, c est d ECRIRE un profil entier sur la carte de
+        # banc. Sur une KIM cela reconfigure la carte meme qu on est en train de
+        # valider, et ne represente aucun deploiement reel. On constate le type
+        # de carte plutot que de le supposer.
         if not _est_rspb(b):
             try:
                 b.exit_config()
             except Exception:
                 pass
             return r.record(case, 'SKIP',
-                            'carte non-RSPB (RSP01 absent): les templates se poussent sur '
-                            'les cartes RSPB, ce cas ne represente rien ici')
+                            'carte non-RSPB (RSP01 absent): ecrire un profil entier sur la '
+                            'carte en cours de validation ne represente aucun deploiement reel')
         # L identite de la carte de banc est restauree a la fin: un template
         # ecrit PROFILE_NAME et DEVICE_MODEL, et laisser "TURTLE-DOPPLER" sur
         # la carte ferait mentir tous les cas suivants qui lisent son modele.
