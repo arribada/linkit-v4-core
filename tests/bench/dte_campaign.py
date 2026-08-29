@@ -6710,10 +6710,27 @@ def c_modulations_provisionnees(r, case):
         return r.record(case, 'FAIL',
                         'aucune RCONF de 32 caracteres: le module ne peut emettre dans '
                         'aucune modulation', trace)
+
+    # PROVISIONNE n est pas UTILISE. Un LONG de 192 bits ne part que si la
+    # modulation EFFECTIVE est LDA2, c est-a-dire si la RCONF maitresse decode
+    # en LDA2, ou si l adaptatif autorise le service a y basculer. Une carte
+    # peut tres bien porter les trois RCONF et n emettre qu en LDK.
+    maitresse_lda2 = (cache == _CACHE_LDA2)
+    adaptatif = (adapt == '1')
+    long_possible = lda2 and (maitresse_lda2 or adaptatif)
+
+    if long_possible:
+        pourquoi = 'maitresse en LDA2' if maitresse_lda2 else 'adaptatif autorise la bascule'
+        return r.record(case, 'PASS',
+                        f'LDA2 provisionne ET effectivement atteignable ({pourquoi}): un '
+                        'paquet LONG de 192 bits peut partir, la pile de profondeur '
+                        'rapporte jusqu a 3 positions par emission', trace)
     if lda2:
         return r.record(case, 'PASS',
-                        'LDA2 provisionne: un paquet LONG de 192 bits peut partir, la pile '
-                        'de profondeur rapporte jusqu a 3 positions par emission', trace)
+                        f'LDA2 provisionne mais INUTILISE: la maitresse decode en '
+                        f'{_nom_cache(cache)} et l adaptatif est eteint. Aucun paquet LONG '
+                        'ne peut partir tel quel — ARGOS_DEPTH_PILE > 1 ne fait rien gagner '
+                        'tant que ARGOS_ADAPTIVE_MODULATION reste a 0.', trace)
     r.record(case, 'PASS',
              'LDK seul: pas de paquet LONG possible, chaque position coute une emission '
              'entiere. ARGOS_DEPTH_PILE > 1 ne fait rien gagner sur ce module.', trace)
