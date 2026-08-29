@@ -309,9 +309,21 @@ class Runner:
                 if case.get('needs_baseline', True) and not self.baseline():
                     self.record(case, 'ERROR', 'impossible de poser la configuration de reference')
                     continue
-                if case.get('ciel') and saute_si_gnss_muet(
-                        self, case, 'le plein air'):
-                    continue
+                if case.get('ciel'):
+                    # Les cas de plein air ne se jouent que sur demande. Les
+                    # jouer en interieur ne peut rien prouver: ils attendent
+                    # chacun plusieurs minutes une position que quatre murs ne
+                    # rendront pas, puis accusent le firmware. Pire, les faire
+                    # SAUTER sur "pas de fix" masquerait le jour ou l absence de
+                    # fix EST le defaut — dehors, antenne degagee. On les rend
+                    # donc volontaires plutot que devinables.
+                    if not os.environ.get('DTE_CIEL'):
+                        self.record(case, 'SKIP',
+                                    'vague de plein air non demandee — relancer '
+                                    'antenne vers le ciel avec DTE_CIEL=1')
+                        continue
+                    if saute_si_gnss_muet(self, case, 'le plein air'):
+                        continue
                 if case.get('radio') and saute_si_radio_muette(
                         self, case, 'le dialogue avec le module'):
                     continue
