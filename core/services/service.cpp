@@ -433,10 +433,19 @@ bool Service::service_is_battery_level_low() {
 /// EVERY branch of reschedule(), including those that plan nothing: a test that
 /// only sees the success path cannot tell "this mode scheduled an emission" from
 /// "this mode scheduled nothing and I am reading the previous mode's value".
-#define BENCH_SCHED_NOTE(ms, why)  \
-	do {                           \
-		m_bench_sched_ms = (ms);   \
-		m_bench_sched_why = (why); \
+#define BENCH_SCHED_NOTE(ms, why)     \
+	do {                              \
+		m_bench_sched_ms = (ms);      \
+		m_bench_sched_why = (why);    \
+		m_bench_sched_hold_s = 0;     \
+	} while (0)
+
+/// @brief A hold: no deadline to run, but a deadline to think again.
+#define BENCH_SCHED_HOLD(hold_s, why)        \
+	do {                                     \
+		m_bench_sched_ms = SCHEDULE_DISABLED; \
+		m_bench_sched_why = (why);           \
+		m_bench_sched_hold_s = (hold_s);     \
 	} while (0)
 
 /// @brief Bench-only: one-line schedule report over ALL registered services.
@@ -445,7 +454,10 @@ std::string ServiceManager::bench_schedule_report() {
 	for (auto const &kv : m_map) {
 		Service &s = kv.second;
 		char buf[96];
-		if (s.bench_sched_ms() == Service::SCHEDULE_DISABLED)
+		if (s.bench_sched_hold_s())
+			snprintf(buf, sizeof(buf), "%s=hold%us(%s) ", s.bench_name(), s.bench_sched_hold_s(),
+			         s.bench_sched_why());
+		else if (s.bench_sched_ms() == Service::SCHEDULE_DISABLED)
 			snprintf(buf, sizeof(buf), "%s=none(%s) ", s.bench_name(), s.bench_sched_why());
 		else
 			snprintf(buf, sizeof(buf), "%s=%ums(%s) ", s.bench_name(), s.bench_sched_ms(), s.bench_sched_why());
@@ -456,6 +468,9 @@ std::string ServiceManager::bench_schedule_report() {
 #else
 #define BENCH_SCHED_NOTE(ms, why) \
 	do {                          \
+	} while (0)
+#define BENCH_SCHED_HOLD(hold_s, why) \
+	do {                              \
 	} while (0)
 #endif
 
@@ -600,7 +615,7 @@ void Service::post_hold_reevaluation(const ScheduleDecision &decision) {
 
 	DEBUG_INFO("Service::reschedule: service %s holding (%s) — re-evaluating in %u s", m_name, decision.reason(),
 	           delay_s);
-	BENCH_SCHED_NOTE(SCHEDULE_DISABLED, decision.reason());
+	BENCH_SCHED_HOLD(delay_s, decision.reason());
 	// m_last_schedule deliberately left as deschedule() set it: a hold is not a
 	// run, and service_is_scheduled() must keep meaning "a run is pending".
 	m_task_period = system_scheduler->post_task_prio([this]() { reschedule(); }, "ServiceHoldReeval",

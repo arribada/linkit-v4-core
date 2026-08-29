@@ -51,6 +51,11 @@ public:
 	/// which branch decided it.
 	unsigned int bench_sched_ms() const { return m_bench_sched_ms; }
 	const char *bench_sched_why() const { return m_bench_sched_why; }
+	/// @brief Non-zero when the last answer was a HOLD: seconds until the service
+	/// re-evaluates itself. Zero means the answer was final. Both print as "no
+	/// deadline" without this, and on a bench the difference between "waiting,
+	/// back in 600 s" and "off until further notice" is the whole question.
+	unsigned int bench_sched_hold_s() const { return m_bench_sched_hold_s; }
 	const char *bench_name() const { return m_name; }
 #endif
 
@@ -90,6 +95,7 @@ private:
 #ifdef BENCH_TEST
 	unsigned int m_bench_sched_ms = SCHEDULE_DISABLED;
 	const char *m_bench_sched_why = "never";
+	unsigned int m_bench_sched_hold_s = 0;
 #endif
 
 	void reschedule(bool immediate = false);

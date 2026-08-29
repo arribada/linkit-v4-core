@@ -63,12 +63,21 @@ def count_since(b, pattern, from_idx):
 
 
 def sched(b, service="ARGOSTX", timeout=5.0):
-    """(-1, reason) when the service reports no schedule, else (ms, reason)."""
+    """(ms, reason) when a run is due, else (-1, reason).
+
+    A third shape exists since the ScheduleDecision migration: hold<n>s means
+    the service is waiting on something named but will re-interrogate itself in
+    n seconds. It has no run deadline, so it reports -1 like none does -- the
+    reason string, and the hold delay now carried in it, tell the two apart.
+    """
     mk = b.mark()
     b._send("%SCHED\r\n")
     m = b.expect(r"%SCHED .*" + service + r"=(\d+)ms\(([^)]*)\)", timeout, from_idx=mk)
     if m:
         return int(m.group(1)), m.group(2)
+    m = b.expect(r"%SCHED .*" + service + r"=hold(\d+)s\(([^)]*)\)", 0.5, from_idx=mk)
+    if m:
+        return -1, "hold %ss: %s" % (m.group(1), m.group(2))
     m = b.expect(r"%SCHED .*" + service + r"=none\(([^)]*)\)", 0.5, from_idx=mk)
     if m:
         return -1, m.group(1)
