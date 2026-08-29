@@ -1094,6 +1094,13 @@ static void init_communication(LFSFileSystem &lfs_file_system) {
 		smd_sat_instance = &argos_smd;  // Store pointer for SMD DFU OTA
 		kineis_device_instance = &argos_smd;
 		static ArgosTxService argos_tx_service(argos_smd);
+#ifdef BENCH_TEST
+		// Same exposure as the KIM2 branch below. Without it the bench console's
+		// %PILE probe answers "ERR no-service" on every SMD build, and every case
+		// that watches the depth pile is unrunnable there -- the pointer was
+		// assigned in the KIM2 branch only.
+		argos_tx_service_instance = &argos_tx_service;
+#endif
 	} catch (...) {
 		DEBUG_INFO("SMD not detected");
 		smd_sat_instance = nullptr;
