@@ -2680,18 +2680,37 @@ def c_pile_rotation(r, case):
     descendre en alternance, et chaque entree doit finir a zero apres N
     emissions, pas moins.
 
+    COMMENT l alternance est reellement verifiee: en injectant les deux
+    positions AVANT toute emission, donc a credits EGAUX. L invariant devient
+    alors simple et solide — les deux compteurs ne doivent jamais differer de
+    plus de 1. Un firmware qui viderait N x A puis N x B creuserait un ecart de
+    N-1 et se ferait prendre.
+
+    Cet invariant tient pour les DEUX modulations, qui alternent differemment:
+      - LDA2 (max_messages=3): le slot 0 porte les deux entrees, elles sont
+        decrementees ENSEMBLE et partent dans un seul paquet LONG (ecart 0);
+      - LDK (max_messages=1): slot 0 = la plus recente, slot 1 = la plus
+        ancienne, slots 2-3 vides — l alternance se fait entre slots (ecart 1).
+
     NOTE — ce cas a d abord ete ecrit pour demasquer un defaut suppose:
     retrieve_gps() decremente burst_counter sur toutes les entrees rendues AVANT
     que la salve ne decide laquelle encoder, donc un fastloc plus recent devait
-    faire perdre un tour au fix. La MESURE l a refute: la rotation de retrieve()
-    ne rend jamais les deux ensemble ici, chacun garde son compte. Le cas reste
-    comme garde: si la rotation se casse un jour, il le dira.
+    faire perdre un tour au fix. La MESURE l a refute. Le cas reste comme garde.
+
+    Et une version anterieure de ce cas AFFIRMAIT tester l alternance sans la
+    verifier: ses assertions ne portaient que sur "les credits descendent sans
+    remonter et finissent a zero", que N x A puis N x B satisfait tout aussi
+    bien. L injection se faisait aussi emission ACTIVE, donc la premiere entree
+    avait deja perdu du credit avant la seconde — a credits inegaux, aucun
+    ecart n est concluant.
     """
     b = r.b
     N = 2
     try:
         b.enter_config()
-        b.write_params({'ARGOS_MODE': 2, 'GNSS_EN': 1, 'NTRY_PER_MESSAGE': N,
+        # ARGOS_MODE=0 pendant l injection: les deux entrees doivent entrer dans
+        # la pile a credits EGAUX, sinon l ecart entre compteurs ne prouve rien.
+        b.write_params({'ARGOS_MODE': 0, 'GNSS_EN': 1, 'NTRY_PER_MESSAGE': N,
                         'ARGOS_DEPTH_PILE': 4, 'TR_NOM': 30, 'UNDERWATER_EN': 0,
                         'SAT_PREPASS_EN': 0, 'RATE_LIMIT_EN': 0, 'LB_EN': 0,
                         'HAULED_DETECT_EN': 0, 'ARGOS_TX_JITTER_EN': 0,
@@ -2710,11 +2729,26 @@ def c_pile_rotation(r, case):
     # puis 1 sur deux passes consecutives. Une pile homogene eprouve exactement
     # la meme chose (A B A B) sans cette interference.
     mk = b.mark()
-    b._send('%GPS 43.600000 3.900000 5000 9\r'); time.sleep(10)
-    b._send('%GPS 44.000000 4.000000 5000 9\r')
+    b._send('%GPS 43.600000 3.900000 5000 9\r'); time.sleep(6)
+    b._send('%GPS 44.000000 4.000000 5000 9\r'); time.sleep(4)
+
+    depart_egal = _pile(b)
+    if not depart_egal or len(depart_egal) < 2:
+        return r.record(case, 'ERROR',
+                        f'moins de deux entrees apres injection: {depart_egal}')
+    if len({c for _, c in depart_egal}) != 1:
+        return r.record(case, 'ERROR',
+                        f'les entrees ne partent pas a credits egaux ({depart_egal}) — '
+                        'l ecart ne prouverait rien')
+
+    # Maintenant seulement, on ouvre l emission.
+    try:
+        b.enter_config(); b.write_params({'ARGOS_MODE': 2}); b.exit_config()
+    except Exception as e:
+        return r.record(case, 'ERROR', f'passage en emission impossible: {type(e).__name__}: {e}')
 
     # on echantillonne toute la descente des credits
-    suite = []
+    suite = [depart_egal]
     fin_t = time.time() + 165
     while time.time() < fin_t:
         time.sleep(10)
@@ -2752,11 +2786,21 @@ def c_pile_rotation(r, case):
     if any(c != 0 for _, c in final):
         defauts.append(f'des credits subsistent en fin d observation: {final}')
 
+    # L ALTERNANCE elle-meme: partis a credits egaux, les compteurs ne doivent
+    # jamais s ecarter de plus de 1. C est ce qui distingue A B A B de A A B B,
+    # et c est ce que l ancienne version du cas ne verifiait pas.
+    for etat in suite:
+        vivants = [c for _, c in etat if c > 0]
+        if len(vivants) > 1 and (max(vivants) - min(vivants)) > 1:
+            defauts.append(f'ecart de credit > 1 entre entrees actives: {etat} — '
+                           'une entree est videe avant de passer a la suivante')
+
     if defauts:
         r.record(case, 'FAIL', f'{len(defauts)} anomalie(s) de rotation', trace + '\n' + '\n'.join(defauts))
     else:
         r.record(case, 'PASS',
-                 f'les {len(depart)} entrees descendent une a une jusqu a zero, sans saut ni remontee',
+                 f'les {len(depart)} entrees partent a credits egaux et descendent en '
+                 f'ALTERNANCE (ecart <= 1) jusqu a zero, sans saut ni remontee',
                  trace)
 
 CASES_V15 = [
