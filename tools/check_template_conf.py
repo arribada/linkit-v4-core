@@ -46,12 +46,21 @@ def load_live_encoder():
     if not live:
         return None
     sys.path.insert(0, live)
-    try:
-        from pylinkit.protocol.dte_params import DTEParamMap
-    except Exception as e:
-        print(f"note: PYLINKIT={live} could not be imported ({e}); using the mirror")
-        return None
-    return DTEParamMap
+    # The module moved between PyLinkit versions: v3 exposes pylinkit.dte_params,
+    # later layouts nest it under pylinkit.protocol. Trying only one path made
+    # this helper fail silently for anyone on the other layout — measured
+    # 2026-08-30, where every run had quietly fallen back to the mirror and the
+    # ARGOSDUTYCYLE hex encoding had therefore never been checked by the real
+    # encoder in any of the six deployment templates.
+    dernier = None
+    for chemin in ("pylinkit.protocol.dte_params", "pylinkit.dte_params"):
+        try:
+            module = __import__(chemin, fromlist=["DTEParamMap"])
+            return getattr(module, "DTEParamMap")
+        except Exception as e:
+            dernier = e
+    print(f"note: PYLINKIT={live} could not be imported ({dernier}); using the mirror")
+    return None
 
 class _Unverifiable(str):
     """Marker: this line needs the real encoder, it is not an error."""
