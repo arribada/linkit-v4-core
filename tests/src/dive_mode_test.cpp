@@ -207,3 +207,42 @@ TEST(DiveMode, DiveModeRunsMultipleTimes) {
 	s.stop();
 	CHECK_FALSE(fake_switch.is_paused());
 }
+
+TEST(DiveMode, StartTimeBeyondTheCeilingIsClamped) {
+	/*
+	 * UW_DIVE_MODE_START_TIME is seconds; the scheduler wants milliseconds, so
+	 * the service multiplies by 1000. In an unsigned int that wraps above
+	 * 4294967 s: 4294968 became 704 ms, and engaging dive mode pauses the reed
+	 * switch -- the operator lost magnet control seven weeks before he expected
+	 * anything to happen.
+	 *
+	 * The DTE now refuses such a value, but a device configured before that
+	 * bound still holds one in flash, which is why the clamp lives in the
+	 * service and not only in the parameter table.
+	 */
+	bool dive_mode_en = true;
+	configuration_store->write_param(ParamID::UW_DIVE_MODE_ENABLE, dive_mode_en);
+
+	/* The exact value that used to wrap. */
+	unsigned int start_period = 4294968;
+	configuration_store->write_param(ParamID::UW_DIVE_MODE_START_TIME, start_period);
+
+	DiveModeService s(fake_switch);
+	s.start();
+	notify_underwater_state(true);
+	CHECK_EQUAL(1000u * 86400u, s.get_last_schedule());
+	s.stop();
+}
+
+TEST(DiveMode, StartTimeAtTheCeilingIsUntouched) {
+	bool dive_mode_en = true;
+	configuration_store->write_param(ParamID::UW_DIVE_MODE_ENABLE, dive_mode_en);
+	unsigned int start_period = 86400;
+	configuration_store->write_param(ParamID::UW_DIVE_MODE_START_TIME, start_period);
+
+	DiveModeService s(fake_switch);
+	s.start();
+	notify_underwater_state(true);
+	CHECK_EQUAL(1000u * 86400u, s.get_last_schedule());
+	s.stop();
+}
