@@ -3092,11 +3092,21 @@ def _gnss_base(b, **extra):
     tentative d emission declenche un backoff d erreur peripherique qui
     perturbe tout ce qui suit). UNDERWATER_EN=0 evite que la cascade SWS
     reprogramme le GNSS sous nos pieds.
+
+    GNSS_NTRY et DLOC_ARG_NOM sont poses ICI, meme quand le cas ne s y interesse
+    pas. baseline() ne remet que le mode Argos, donc tout le reste est HERITE du
+    cas precedent — et GPS-04 epuise NTRY deliberement. Le 2026-08-30 une coupure
+    USB a interrompu GPS-04 avant son nettoyage: GPS-05 a herite d un service en
+    repli, n a vu aucune session, et a conclu que la veille profonde ne
+    fonctionnait pas. Cinq PASS les jours precedents disaient le contraire.
+    Une aide de preconditions pose TOUT ce dont le cas depend, pas seulement ce
+    qui l interesse.
     """
     cfg = {'ARGOS_MODE': 0, 'GNSS_EN': 1, 'UNDERWATER_EN': 0,
            'MOORED_DETECT_EN': 0, 'HAULED_DETECT_EN': 0,
            'UW_DIVE_MODE_ENABLE': 0, 'LB_EN': 0, 'RATE_LIMIT_EN': 0,
-           'ZONE_ENABLE_OUT_OF_ZONE_DETECTION_MODE': 0}
+           'ZONE_ENABLE_OUT_OF_ZONE_DETECTION_MODE': 0,
+           'GNSS_NTRY': 0, 'DLOC_ARG_NOM': 13}
     cfg.update(extra)
     b.enter_config(); b.write_params(cfg); b.exit_config()
 
