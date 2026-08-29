@@ -5409,9 +5409,23 @@ CASES_V25 = [
 
 def _config_ciel(b, **extra):
     """Configuration d acquisition reelle: aucune injection, aucune emission."""
+    # CADENCE D ACQUISITION — l oubli le plus couteux de ce harnais. Aucun des
+    # deux helpers de ciel ne la remettait, et DP-01 laisse derriere lui
+    # DLOC_ARG_NOM=10, qui dans l espace DTE brut vaut 1440 min = 24 HEURES.
+    # Tout cas exterieur attendait donc une session programmee le lendemain et
+    # concluait "antenne masquee". Mesure du 2026-08-29: OUT-01 n a pas meme vu
+    # la ligne "M10Q on" — le recepteur n avait jamais ete allume. Code 13 = 5 min.
+    #
+    # GNSS_NTRY et l assistance pour la meme raison: GPS-04 epuise les
+    # tentatives et GPS-06 force un demarrage a froid (effacement de la BBR du
+    # recepteur). Sans remise a zero, un cas exterieur herite d un service en
+    # repli et d une acquisition qui repart de zero — ephemeride, almanach,
+    # position, heure.
     cfg = {'GNSS_EN': 1, 'ARGOS_MODE': 0, 'UNDERWATER_EN': 0, 'LB_EN': 0,
            'RATE_LIMIT_EN': 0, 'MOORED_DETECT_EN': 0, 'HAULED_DETECT_EN': 0,
            'ZONE_ENABLE_OUT_OF_ZONE_DETECTION_MODE': 0,
+           'DLOC_ARG_NOM': 13, 'GNSS_NTRY': 5,
+           'GNSS_ASSISTNOW_EN': 1, 'GNSS_ASSISTNOW_OFFLINE_EN': 1,
            'GNSS_ACQ_TIMEOUT': 240, 'GNSS_COLD_ACQ_TIMEOUT': 300,
            'GNSS_HACCFILT_EN': 0, 'GNSS_HDOPFILT_EN': 0,
            'GNSS_DEEP_IDLE_AFTER_OFF_S': 0, 'GNSS_SESSION_SINGLE_FIX': 1}
@@ -5451,8 +5465,19 @@ def c_ciel_premier_fix(r, case):
     trace = '\n'.join(vues[:6])
     if hacc is None:
         degrade = any('degraded PVT' in l for l in vues)
+        # Ne pas accuser le ciel quand on ne peut pas trancher: "le recepteur a
+        # cherche sans rien trouver" est une question de vue, "le recepteur ne
+        # s est jamais allume" est une question de configuration, et les deux
+        # envoient chercher le probleme a des endroits opposes.
+        allume = any('M10Q on' in l for l in vues)
+        if not allume:
+            return r.record(case, 'ERROR',
+                            'aucune session GNSS en 5 min: le recepteur ne s est PAS allume '
+                            '(cadence d acquisition, ou service desactive) — ce n est pas une '
+                            'question de ciel', trace)
         return r.record(case, 'ERROR',
-                        'aucune position reelle en 5 min — antenne masquee ou ciel bouche'
+                        'le recepteur a cherche sans aboutir en 5 min — vue du ciel, ou '
+                        'demarrage a froid recent'
                         + (' (fixes degrades seulement)' if degrade else ''), trace)
     defauts = []
     # 50 m: au-dela, ce n est pas un fix utilisable pour du suivi animal.
@@ -6287,6 +6312,11 @@ _CIEL_BASE = {
     'GNSS_MIN_CNO': 10, 'GNSS_MIN_ELEV': 10, 'GNSS_MIN_NUM_FIXES': 1,
     'GNSS_CONSTELLATION_MASK': 0x0F, 'GNSS_FIX_MODE': 3,
     'GNSS_ACQ_TIMEOUT': 180, 'GNSS_COLD_ACQ_TIMEOUT': 180,
+    # Voir _config_ciel: sans ces quatre lignes, la vague exterieure herite de
+    # la cadence de 24 h laissee par DP-01, des tentatives epuisees par GPS-04
+    # et du demarrage a froid force par GPS-06.
+    'DLOC_ARG_NOM': 13, 'GNSS_NTRY': 5,
+    'GNSS_ASSISTNOW_EN': 1, 'GNSS_ASSISTNOW_OFFLINE_EN': 1,
 }
 
 def _ciel(b, **extra):
@@ -6342,9 +6372,12 @@ def c_ciel_reference(r, case):
     issue, hacc, numsv, dt, lignes = _session(b, 300)
     trace = f'issue={issue} hAcc={hacc} numSV={numsv} en {dt:.0f}s\n' + '\n'.join(lignes[:5])
     if issue != 'fix':
+        if issue is None and not lignes:
+            return r.record(case, 'ERROR',
+                            'aucune session GNSS en 5 min: le recepteur ne s est PAS allume '
+                            '— configuration, pas ciel', trace)
         return r.record(case, 'ERROR',
-                        f'pas de position reelle en 5 min (issue={issue}) — antenne masquee ?',
-                        trace)
+                        f'le recepteur a cherche sans aboutir en 5 min (issue={issue})', trace)
     r.b._ciel_hacc = hacc
     r.b._ciel_numsv = numsv
     defauts = []
