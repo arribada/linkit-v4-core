@@ -47,6 +47,20 @@ void LoRaTxScheduler::schedule_periodic(unsigned int period_ms, bool jitter_en, 
 	// not checksum file DATA) would spin until the WDT resets, x3 -> factory
 	// reset. Fail cleanly instead — both callers catch this and return
 	// INVALID_SCHEDULE. (Mirrors the same guard in ArgosTxScheduler.)
+	// A mask of zero permits NO hour at all, so the 24 h search below finds
+	// nothing and throws, and the caller turns that into INVALID_SCHEDULE, which
+	// Service::reschedule treats as "post nothing". Zero is also the factory
+	// default, so selecting DUTY_CYCLE and forgetting the mask is a one-step
+	// mistake that silences the beacon with no visible symptom. Same fallback
+	// and same reasoning as ArgosTxScheduler: transmitting on the nominal period
+	// is a configuration to correct, a mute sealed tag is a lost deployment.
+	if (duty_cycle == 0) {
+		DEBUG_ERROR("LoRaTxScheduler::schedule_periodic: duty-cycle mask is 0 — no hour is permitted. Check "
+		            "ARGOS_DUTY_CYCLE (or LB_ARGOS_DUTY_CYCLE). Falling back to the nominal period so the beacon "
+		            "still transmits.");
+		duty_cycle = 0xFFFFFFu;  // all 24 hours
+	}
+
 	if (period_ms == 0) {
 		DEBUG_ERROR("LoRaTxScheduler::schedule_periodic: period_ms=0 (corrupt config?) — TX schedule aborted");
 		m_curr_schedule_abs.reset();

@@ -45,6 +45,9 @@ private:
 	bool m_is_tx_pending = false;
 	unsigned int m_session_tx_count = 0;
 	unsigned int m_consecutive_device_errors = 0;
+	/// @brief Latch so the "session budget ignored on this board" warning is
+	/// said once, not on every transmission that follows it.
+	bool m_ntime_sat_ignored_logged = false;
 	static constexpr unsigned int DEVICE_ERROR_MAX_CONSECUTIVE = 3;
 	static constexpr unsigned int DEVICE_ERROR_BACKOFF_BASE_MS = 60000;  ///< 1 min
 	static constexpr unsigned int DEVICE_ERROR_BACKOFF_MAX_MS = 600000;  ///< 10 min

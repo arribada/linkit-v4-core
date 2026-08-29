@@ -243,9 +243,20 @@ unsigned int LoRaTxService::service_next_schedule_in_ms() {
 			return m_sched.schedule_legacy(argos_config, now);
 		}
 
-		// Burst ended — wait for next surfacing event
+		// Burst ended — wait for the next surfacing event, but keep the presence
+		// heartbeat going rather than returning SCHEDULE_DISABLED. Same reasoning
+		// as ArgosTxService::schedule_surfacing_heartbeat: returning disabled
+		// leaves the service owning nothing, and only a dive→surface transition
+		// or a new valid fix clears the flag -- so an animal that stopped diving
+		// and is not getting fixes went silent for the rest of the deployment.
+		// A status heartbeat at the nominal period is what the beacon has to say
+		// meanwhile, and it costs nothing while the animal is actually diving
+		// because the dive deschedules the service outright.
 		if (m_awaiting_surfacing) {
-			return Service::SCHEDULE_DISABLED;
+			DEBUG_INFO("LoRaTxService: burst finished, waiting for the next surfacing — status heartbeat at the "
+			           "nominal period meanwhile (not a fault).");
+			m_scheduled_task = [this]() { process_status_burst(); };
+			return m_sched.schedule_legacy(argos_config, now);
 		}
 
 		return Service::SCHEDULE_DISABLED;
@@ -956,11 +967,24 @@ void LoRaTxService::react(KineisEventTxComplete const &) {
 	ArgosConfig argos_config;
 	configuration_store->get_argos_configuration(argos_config);
 	if (argos_config.shutdown_ntime_sat > 0 && m_session_tx_count >= argos_config.shutdown_ntime_sat) {
-		DEBUG_INFO("LoRaTxService: Session TX limit reached (%u/%u) | shutdown", m_session_tx_count,
-		           argos_config.shutdown_ntime_sat);
+#if defined(BOARD_RSPB)
+		DEBUG_ERROR("LoRaTxService: session TX budget reached (%u/%u) — powering down ON PURPOSE. The TPL5111 duty "
+		            "cycle restores power and the counter resets on the next boot.",
+		            m_session_tx_count, argos_config.shutdown_ntime_sat);
 		configuration_store->save_params();  // Flush before shutdown
 		PMU::powerdown();
 		return;
+#else
+		// RSPB only, same reasoning as ArgosTxService: m_session_tx_count is
+		// reset in service_init and nowhere else, so on a board that stays
+		// powered a per-session budget silently becomes a one-shot lifetime cap.
+		if (!m_ntime_sat_ignored_logged) {
+			m_ntime_sat_ignored_logged = true;
+			DEBUG_WARN("LoRaTxService: session TX budget reached (%u/%u) but SHUTDOWN_NTIME_SAT only applies to RSPB, "
+			           "whose duty cycle power-cycles the board. Ignored here. Transmission continues.",
+			           m_session_tx_count, argos_config.shutdown_ntime_sat);
+		}
+#endif
 	}
 
 	// Cooldown arming based on trigger mode — parity with ArgosTxService.
