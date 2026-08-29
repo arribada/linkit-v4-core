@@ -2533,11 +2533,44 @@ def c_seuils_batterie_vivants(r, case):
     redemarrage entre les deux.
     """
     b = r.b
+    # Mesurer AVANT de choisir le seuil. Le drapeau se leve sur SOC < seuil, et
+    # LB_THRESHOLD est borne a 100: sur une carte alimentee par USB, batterie
+    # pleine, AUCUN seuil ne peut depasser la charge et le cas est
+    # inconcluable. L ancienne version codait 99 en dur et concluait "les
+    # seuils sont figes au boot" alors que 100 < 99 est simplement faux —
+    # mesure du 2026-08-29, sur un firmware qui appliquait correctement la
+    # regle.
+    try:
+        b.enter_config()
+        p = 'POT03'
+        mk = b.mark(); b._send(f'$STATR#{len(p):03X};{p}\r')
+        m = b.expect(r'\$([ON]);STATR#[0-9A-Fa-f]{3};(.*)$', 12.0, from_idx=mk)
+        b.exit_config()
+    except Exception as e:
+        try: b.exit_config()
+        except Exception: pass
+        return r.record(case, 'ERROR', f'lecture de la charge impossible: {type(e).__name__}: {e}')
+    soc = None
+    if m:
+        for morceau in m.group(2).rstrip('\r').split(','):
+            if morceau.startswith('POT03='):
+                try: soc = float(morceau.split('=', 1)[1])
+                except ValueError: pass
+    if soc is None:
+        return r.record(case, 'ERROR', 'charge (POT03) illisible — cas non concluant')
+    if soc >= 100:
+        return r.record(case, 'SKIP',
+                        f'charge a {soc:.0f} % et LB_THRESHOLD borne a 100: aucun seuil ne peut '
+                        'la depasser, donc le drapeau ne peut pas se lever. Ce cas demande une '
+                        'batterie non pleine.')
+    seuil_haut = min(100, int(soc) + 5)
+    seuil_bas = max(0, int(soc) - 5)
+
     try:
         b.enter_config()
         _, av = b.read_params(['LB_THRESHOLD', 'LB_CRITICAL_THRESH'])
         b.write_params({'ARGOS_MODE': 2, 'TR_NOM': 60, 'GNSS_EN': 1, 'LB_EN': 1,
-                        'LB_THRESHOLD': 99, 'LB_CRITICAL_THRESH': 1,
+                        'LB_THRESHOLD': seuil_haut, 'LB_CRITICAL_THRESH': 1,
                         'LB_ARGOS_MODE': 2, 'LB_ARGOS_DEPTH_PILE': 2,
                         'LB_NTRY_PER_MESSAGE': 5, 'TR_LB': 900,
                         'ARGOS_DEPTH_PILE': 4, 'NTRY_PER_MESSAGE': 0,
@@ -2550,7 +2583,7 @@ def c_seuils_batterie_vivants(r, case):
     time.sleep(3); b._send('%GPS 43.6 3.9 5000 9\r'); time.sleep(14)
     haut = _argoscfg(b)
     try:
-        b.enter_config(); b.write_params({'LB_THRESHOLD': 10}); b.exit_config()
+        b.enter_config(); b.write_params({'LB_THRESHOLD': seuil_bas}); b.exit_config()
     except Exception as e:
         return r.record(case, 'ERROR', f'abaissement impossible: {type(e).__name__}: {e}')
     time.sleep(3); b._send('%GPS 43.6 3.9 5000 9\r'); time.sleep(14)
