@@ -112,6 +112,11 @@ refused by the device. The checker closes both gaps — it reads
   mode except `SURFACING_BURST`, since a hauled device is dry and stationary
   and would transmit exactly zero times;
 - keys that only exist behind a build flag (informational);
+- **keys that are set but inert in this very configuration** (informational) —
+  a GNSS timeout with the receiver off, a low-battery threshold with `LB_EN=0`,
+  `ARGOS_BLIND_RETX_PERIOD_S` in `DOPPLER` where the period comes from the
+  sequence instead. Neither an error nor a silence: a setting the operator made
+  that will do nothing, and that no response from the port would ever mention;
 - **combinations that produce a silent beacon** — every parameter in range,
   every name valid, and a tracker that never transmits: `PASS_PREDICTION` with
   the GNSS off, `SURFACING_BURST` without the water sensor, CloudLocate in any
@@ -147,6 +152,16 @@ once per clone:
 ```bash
 cp tools/hooks/pre-commit .git/hooks/ && chmod +x .git/hooks/pre-commit
 ```
+
+### Why this is not done in the firmware
+
+`is_implemented` is fixed at compile time, so `PARML` and `PARMR` already hide
+what a build cannot honour — `tools/params_for_build.py` shows exactly what a
+given build exposes. Hiding *mode-inert* parameters would be different: the set
+of keys returned would then vary with the configuration, and a host that reads,
+modifies and writes back would silently drop everything the current mode masks.
+A configuration backup taken in one mode would not restore in another. Saying it
+here costs nothing and breaks nothing.
 
 ## Two rules for whoever writes a new one
 

@@ -185,6 +185,102 @@ def to_wire(key, value, live=None, nom=None):
     return None, f"{value!r} is not one of {offert}"
 
 
+
+# Parametres implementes sur la carte, mais SANS EFFET dans la configuration
+# decrite par le fichier. Ce n est ni une erreur ni un silence: c est un
+# reglage que l operateur a pose et qui ne fera rien, ce qu aucune reponse du
+# port ne lui dira. Chaque regle: (predicat sur les valeurs, prefixes ou noms
+# concernes, raison).
+#
+# Deliberement PAS un filtre cote firmware. is_implemented est fige a la
+# compilation; rendre PARMR dependant du mode ferait varier l ensemble des cles
+# rendues selon la configuration, et un hote qui lit-modifie-reecrit perdrait
+# en silence tout ce que le mode courant masque. Le dire ici ne coute rien et
+# ne casse rien.
+INERTES = [
+    (lambda v: v.get("GNSS_ENABLE") == "0",
+     ("GNSS_", "DLOC_ARG_NOM", "GNSS_DELTATIME_ACQ"),
+     "GNSS_ENABLE=0 — le recepteur ne demarre jamais"),
+    (lambda v: v.get("LB_EN") == "0",
+     ("LB_",),
+     "LB_EN=0 — le profil basse batterie ne s active jamais"),
+    (lambda v: v.get("UW_ENABLE") == "0",
+     ("UW_", "SWS_", "MIN_SURFACE_CYCLE_INTERVAL", "COOLDOWN_TRIGGER_MODE"),
+     "UW_ENABLE=0 — aucune detection d immersion, donc aucun evenement"),
+    (lambda v: v.get("MOORED_DETECT_EN") == "0",
+     ("MOORED_",),
+     "MOORED_DETECT_EN=0 — le classifieur ne tourne pas"),
+    (lambda v: v.get("HAULED_DETECT_EN") == "0",
+     ("HAULED_",),
+     "HAULED_DETECT_EN=0 — la detection d echouage ne tourne pas"),
+    (lambda v: v.get("ZONE_ENABLE_OUT_OF_ZONE_DETECTION_MODE") == "0",
+     ("ZONE_",),
+     "detection hors zone desactivee — le profil ZONE ne se substitue jamais"),
+    (lambda v: v.get("RATE_LIMIT_EN") == "0",
+     ("RATE_LIMIT_",),
+     "RATE_LIMIT_EN=0 — le limiteur ne compte rien"),
+    (lambda v: v.get("MORTALITY_EN") == "0",
+     ("MORTALITY_",),
+     "MORTALITY_EN=0 — la detection de mortalite ne tourne pas"),
+    (lambda v: v.get("ARGOS_MODE") != "PASS_PREDICTION",
+     ("ARGOS_RX_",),
+     "ArgosRxService ne tourne qu en PASS_PREDICTION"),
+    (lambda v: v.get("SAT_PREPASS_EN") == "0" and v.get("ARGOS_MODE") != "PASS_PREDICTION",
+     ("PP_",),
+     "ni prepasse ni PASS_PREDICTION — aucun passage n est calcule"),
+    (lambda v: v.get("GNSS_FASTLOC_MODE") not in ("2",),
+     ("GNSS_CLOUDLOCATE_",),
+     "GNSS_FASTLOC_MODE != 2 — la capture CloudLocate n est jamais armee"),
+    (lambda v: v.get("ARGOS_MODE") not in ("SURFACING_BURST", "DOPPLER"),
+     ("SURFACING_BURST_",),
+     "la sequence d emersion n existe qu en SURFACING_BURST et DOPPLER"),
+    (lambda v: v.get("ARGOS_MODE") == "SURFACING_BURST" and v.get("ARGOS_BLIND_EN") == "1",
+     ("ARGOS_BLIND_RETX_NB", "ARGOS_BLIND_RETX_PERIOD_S"),
+     "BLIND est refuse en SURFACING_BURST — la rafale n est jamais confiee au module"),
+    (lambda v: v.get("ARGOS_MODE") == "DOPPLER" and v.get("ARGOS_BLIND_EN") == "1",
+     ("ARGOS_BLIND_RETX_PERIOD_S",),
+     "en DOPPLER la periode BLIND vient de SURFACING_BURST_MAX_S, pas d ARP46"),
+]
+
+
+INTERRUPTEURS = {
+    "GNSS_ENABLE", "LB_EN", "UW_ENABLE", "MOORED_DETECT_EN", "HAULED_DETECT_EN",
+    "RATE_LIMIT_EN", "MORTALITY_EN", "SAT_PREPASS_EN", "ARGOS_BLIND_EN",
+    "ARGOS_RX_EN", "ZONE_ENABLE_OUT_OF_ZONE_DETECTION_MODE", "GNSS_FASTLOC_MODE",
+    "ARGOS_MODE",
+}
+
+
+def inertes(valeurs):
+    """Parametres poses qui ne feront rien dans cette configuration."""
+    out = []
+    for predicat, cibles, raison in INERTES:
+        try:
+            if not predicat(valeurs):
+                continue
+        except Exception:
+            continue
+        for nom, valeur in valeurs.items():
+            if nom in INTERRUPTEURS:
+                continue  # l interrupteur qui eteint la famille, pas une victime
+            if not any((nom.startswith(c) if c.endswith("_") else nom == c) for c in cibles):
+                continue
+            # Un reglage deja neutre n a rien d une surprise: signaler
+            # "ARGOS_RX_EN=0 est sans effet" n apprend rien a personne. On ne
+            # remonte que ce qui FERAIT quelque chose ailleurs.
+            v = (valeur or "").strip().upper()
+            if v in ("0", "OFF", "0.0", "FALSE", "", "000000"):
+                continue
+            out.append((nom, raison))
+    # Un parametre peut tomber sous deux regles; garder la premiere.
+    vus, uniques = set(), []
+    for nom, raison in out:
+        if nom not in vus:
+            vus.add(nom)
+            uniques.append((nom, raison))
+    return uniques
+
+
 def coherence(valeurs):
     """Combinations the firmware accepts and that produce a silent beacon.
 
@@ -285,7 +381,7 @@ def check(path, fw, live=None):
         if lo is not None and hi is not None and hi > lo and not (lo <= wire <= hi):
             problems.append(f"{lineno}: {nom} ({key}): {val} outside [{lo}, {hi}]")
     problems.extend(f"coherence: {c}" for c in coherence(valeurs))
-    return n, problems, gated, non_verifies
+    return n, problems, gated, non_verifies, inertes(valeurs)
 
 
 def main():
@@ -305,7 +401,7 @@ def main():
         print("no template to check")
         return rc
     for f in files:
-        n, problems, gated, non_verifies = check(f, fw, live)
+        n, problems, gated, non_verifies, inutiles = check(f, fw, live)
         rel = os.path.relpath(f, ROOT)
         if problems:
             rc = 1
@@ -317,6 +413,14 @@ def main():
         for nom, key, quoi in non_verifies:
             non_verifies_total.setdefault((nom, key, quoi), 0)
             non_verifies_total[(nom, key, quoi)] += 1
+        if inutiles:
+            print(f"       note: {len(inutiles)} key(s) set but INERT in this configuration —")
+            par_raison = {}
+            for nom, raison in inutiles:
+                par_raison.setdefault(raison, []).append(nom)
+            for raison, noms in sorted(par_raison.items()):
+                print(f"         {', '.join(sorted(noms))}")
+                print(f"           ({raison})")
         if gated:
             print(f"       note: {len(gated)} key(s) behind a build flag —")
             for nom, key, gate in gated:

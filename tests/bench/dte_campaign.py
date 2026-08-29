@@ -5250,8 +5250,10 @@ def c_erase_journal(r, case):
         return r.record(case, 'ERROR', 'ERASE sans reponse sur type inconnu')
     if m.group(1) != 'N':
         return r.record(case, 'FAIL', 'ERASE accepte un type de journal inconnu (99)')
-    # Type 2 = journal capteurs: moins critique que le journal systeme, qui
-    # porte les traces dont les autres cas se servent.
+    # BaseEraseType: 1 = GNSS_SENSOR, 2 = SYSTEM, 3 = ALL. Le type 2 est donc
+    # bien le journal SYSTEME — d ou l obligation de jouer ce cas en dernier,
+    # puisque tous les autres lisent ses traces. Le commentaire precedent
+    # disait "journal capteurs", ce qui etait faux dans les deux sens.
     _dumpd_silence(b)
     avant, _, _, _ = _dumpd(b, 1, plafond=4)
     # 120 s, pas 25: truncate() est SYNCHRONE et efface un journal d 1 Mo secteur
