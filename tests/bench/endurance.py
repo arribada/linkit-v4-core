@@ -47,6 +47,9 @@ PROFILS = {
             'ARGOS_MODE': 4, 'TR_NOM': 60, 'NTRY_PER_MESSAGE': 0,
             'ARGOS_DEPTH_PILE': 1, 'DUTY_CYCLE': 16777215,
             'GNSS_EN': 0, 'UNDERWATER_EN': 0,
+            # 0 = sequence Doppler NON bornee. C est voulu ICI et seulement ici:
+            # on veut un flux continu pour mesurer une cadence. Sur un animal,
+            # cette valeur le fait emettre en surface jusqu a vider la batterie.
             'SURFACING_BURST_MAX_MSG': 0,
             'LB_EN': 0, 'RATE_LIMIT_EN': 0, 'LED_MODE': 0,
             'SAT_PREPASS_EN': 0, 'ARGOS_RX_EN': 0,
@@ -93,17 +96,21 @@ def arm(profil):
     b.write_params(p['params'])
     # Relire ce qu on vient d ecrire: un parametre refuse est annonce par le
     # port, mais un parametre ecrit puis ecrase par un service ne l est pas.
-    relu = b.read_params(list(p['params'].keys()))
+    _, relu = b.read_params(list(p['params'].keys()), timeout=15.0)
     b.exit_config()
     time.sleep(2)
     etat_fin = b.get_state(timeout=12)
     b.close()
 
+    # read_params rend un dict indexe par CLE ('ARP01'), pas par nom: comparer
+    # sur les noms ne trouve jamais rien et l ecart passe inapercu. On traduit.
     ecarts = []
     for k, v in p['params'].items():
-        # read_params rend des chaines; on compare sur la valeur DTE.
-        if k in relu and str(relu[k]).strip() != str(v):
-            ecarts.append(f'{k}: pose {v}, relu {relu[k]}')
+        cle = b._key(k)
+        if cle in relu and str(relu[cle]).strip() != str(v).strip():
+            ecarts.append(f'{k} ({cle}): pose {v}, relu {relu[cle]}')
+        elif cle not in relu:
+            ecarts.append(f'{k} ({cle}): absent de la relecture')
 
     t0 = time.time()
     with open(ETAT, 'w') as f:
