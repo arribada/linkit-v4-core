@@ -223,7 +223,11 @@ const BaseMap param_map[] = {
 
 	// Dive mode
 	{ "UW_DIVE_MODE_ENABLE", "UNP12", BaseEncoding::BOOLEAN, 0, 0, {}, true, true },
-	{ "UW_DIVE_MODE_START_TIME", "UNP13", BaseEncoding::UINT, 0U, 0xFFFFFFFFU, {}, true, true },
+	// Seconds, turned into a millisecond scheduler delay: above 4294967 the
+	// `* 1000` overflowed an unsigned int and a dive scheduled weeks out
+	// engaged instantly, pausing the reed switch with it. One day, like the
+	// other delays that bound how long a sealed device may stay silent.
+	{ "UW_DIVE_MODE_START_TIME", "UNP13", BaseEncoding::UINT, 0U, 86400U, {}, true, true },
 
 	// [140] GNSS min C/N0, [141] GNSS min elevation (remaining slots reserved)
 	{ "GNSS_MIN_CNO", "GNP42", BaseEncoding::UINT, 0U, 50U, {}, true, true },

@@ -84,7 +84,22 @@ protected:
 		// If dive mode start is pending then return the timer for scheduling
 		// when to engage dive mode
 		if (m_dive_state == DiveState::StartPending) {
-			return service_read_param<unsigned int>(ParamID::UW_DIVE_MODE_START_TIME) * 1000;
+			// Clamp before the multiply, in 64 bits. UNP13 is a delay in
+			// SECONDS and the scheduler wants milliseconds, so `* 1000`
+			// overflowed an unsigned int above 4294967 s (~49.7 days): a dive
+			// scheduled seven weeks out engaged 0.7 s later, and engaging pauses
+			// the reed switch -- the operator loses magnet control at the exact
+			// moment he believes nothing is armed yet. The DTE bound now stops
+			// such a value arriving, but a device configured before that bound
+			// still holds one in flash, so the clamp belongs here too.
+			constexpr uint64_t MAX_START_DELAY_S = 86400;  // one day, as elsewhere
+			uint64_t start_s = service_read_param<unsigned int>(ParamID::UW_DIVE_MODE_START_TIME);
+			if (start_s > MAX_START_DELAY_S) {
+				DEBUG_WARN("DiveModeService: UW_DIVE_MODE_START_TIME=%llu s is beyond the %llu s ceiling — clamped",
+				           (unsigned long long)start_s, (unsigned long long)MAX_START_DELAY_S);
+				start_s = MAX_START_DELAY_S;
+			}
+			return (unsigned int)(start_s * 1000u);
 		} else {
 			return SCHEDULE_DISABLED;
 		}

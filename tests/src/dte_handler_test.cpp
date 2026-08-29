@@ -1963,3 +1963,27 @@ TEST(DTEHandler, EveryRequestHasAMatchingErrorResponse) {
 		STRCMP_EQUAL(attendu.c_str(), resp.c_str());
 	}
 }
+
+TEST(DTEHandler, PARMW_DiveStartTimeIsBounded) {
+	/*
+	 * UNP13 is a delay in seconds that the scheduler consumes in milliseconds.
+	 * It was declared 0..0xFFFFFFFF, so anything above 4294967 s wrapped the
+	 * `* 1000` and a dive scheduled weeks out engaged within a second --
+	 * pausing the reed switch, so the operator lost magnet control exactly
+	 * when he believed nothing was armed yet.
+	 */
+	std::string resp;
+
+	std::string req = "$PARMW#00D;UNP13=4294968\r";
+	CHECK_TRUE(DTEAction::CONFIG_UPDATED == dte_handler->handle_dte_message(req, resp));
+	STRCMP_EQUAL("$N;PARMW#005;UNP13\r", resp.c_str());
+
+	req = "$PARMW#00B;UNP13=86400\r";
+	CHECK_TRUE(DTEAction::CONFIG_UPDATED == dte_handler->handle_dte_message(req, resp));
+	STRCMP_EQUAL("$O;PARMW#000;\r", resp.c_str());
+	CHECK_EQUAL(86400U, configuration_store->read_param<unsigned int>(ParamID::UW_DIVE_MODE_START_TIME));
+
+	req = "$PARMW#00B;UNP13=86401\r";
+	CHECK_TRUE(DTEAction::CONFIG_UPDATED == dte_handler->handle_dte_message(req, resp));
+	STRCMP_EQUAL("$N;PARMW#005;UNP13\r", resp.c_str());
+}
