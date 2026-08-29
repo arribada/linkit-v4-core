@@ -76,7 +76,33 @@ bool LoRaTxService::service_is_enabled() {
 	return (argos_config.mode != BaseArgosMode::OFF);
 }
 
+/// @brief Translate a LoRaTxScheduler answer, which uses INVALID_SCHEDULE for
+/// "could not compute a slot" -- numerically the same value as SCHEDULE_DISABLED,
+/// which is exactly how a computation failure used to pass for a deliberate stop.
+static ScheduleDecision from_scheduler(unsigned int ms, const char *ran_why, const char *failed_why) {
+	if (ms == LoRaTxScheduler::INVALID_SCHEDULE) return ScheduleDecision::hold_for_event(600, failed_why);
+	return ScheduleDecision::run(ms, ran_why);
+}
+
+/// @brief Burst over, still no surfacing: presence heartbeat at the nominal rate.
+/// Mirror of ArgosTxService::schedule_surfacing_heartbeat.
+ScheduleDecision LoRaTxService::schedule_surfacing_heartbeat(ArgosConfig &argos_config, std::time_t now) {
+	DEBUG_INFO("LoRaTxService: burst finished, waiting for the next surfacing — status heartbeat at the "
+	           "nominal period meanwhile (not a fault).");
+	m_scheduled_task = [this]() { process_status_burst(); };
+	return from_scheduler(m_sched.schedule_legacy(argos_config, now), "surfacing heartbeat",
+	                      "surfacing heartbeat: no slot computable");
+}
+
+/// @brief Legacy entry point, superseded by service_next_schedule().
+/// Still required while the base declares it pure -- deliberately, so that a new
+/// service implementing neither cannot compile and be silently off for ever.
 unsigned int LoRaTxService::service_next_schedule_in_ms() {
+	return SCHEDULE_DISABLED;
+}
+
+/// @brief Decide what LoRa does next: transmit, wait on a named gate, or stay off.
+ScheduleDecision LoRaTxService::service_next_schedule() {
 	ArgosConfig argos_config;
 	configuration_store->get_argos_configuration(argos_config);
 	std::time_t now = service_current_time();
@@ -92,12 +118,12 @@ unsigned int LoRaTxService::service_next_schedule_in_ms() {
 			DEBUG_INFO("LoRaTxService: CRITICAL battery SOC %u%% < %u%% - shutdown", current_soc, critical_level);
 			configuration_store->save_params();
 			PMU::powerdown();
-			return Service::SCHEDULE_DISABLED;
+			return ScheduleDecision::off("critical battery — powering down");
 		}
 	}
 
 	if (argos_config.mode == BaseArgosMode::OFF) {
-		return Service::SCHEDULE_DISABLED;
+		return ScheduleDecision::off("ARGOS_MODE=OFF");
 	}
 
 	// The first-message lock is gone, as it went on the Argos side in 2026-08.
@@ -136,16 +162,18 @@ unsigned int LoRaTxService::service_next_schedule_in_ms() {
 	if (argos_config.mode == BaseArgosMode::DUTY_CYCLE) {
 		if (m_is_first_tx && m_depth_pile_manager.eligible()) {
 			m_sched.schedule_at(now);
-			return 0;
+			return ScheduleDecision::run(0, "first TX, depth pile ready");
 		}
-		return m_sched.schedule_duty_cycle(argos_config, now);
+		return from_scheduler(m_sched.schedule_duty_cycle(argos_config, now), "duty-cycle window",
+		                      "duty cycle: no window computable");
 	}
 	if (argos_config.mode == BaseArgosMode::LEGACY) {
 		if (m_is_first_tx && m_depth_pile_manager.eligible()) {
 			m_sched.schedule_at(now);
-			return 0;
+			return ScheduleDecision::run(0, "first TX, depth pile ready");
 		}
-		return m_sched.schedule_legacy(argos_config, now);
+		return from_scheduler(m_sched.schedule_legacy(argos_config, now), "TR_NOM period",
+		                      "legacy: no slot computable");
 	}
 	if (argos_config.mode == BaseArgosMode::SURFACING_BURST) {
 		// Phase 1: Status heartbeat burst (battery level) until GNSS fix
@@ -165,7 +193,11 @@ unsigned int LoRaTxService::service_next_schedule_in_ms() {
 				}
 				m_is_surfacing_burst = false;
 				m_awaiting_surfacing = true;
-				return Service::SCHEDULE_DISABLED;
+				// Heartbeat now, in this same pass. Setting the flag and then
+				// answering "nothing" left the beacon mute until something else
+				// happened to re-evaluate it -- and the flag itself is what
+				// stops anything else from happening.
+				return schedule_surfacing_heartbeat(argos_config, now);
 			}
 
 			m_scheduled_task = [this]() { process_status_burst(); };
@@ -194,7 +226,7 @@ unsigned int LoRaTxService::service_next_schedule_in_ms() {
 				if (have_cached_position) {
 					DEBUG_INFO("LoRaTxService::SURFACING_BURST: status #1 immediate (cached position available)");
 					m_sched.schedule_at(now);
-					return 0;
+					return ScheduleDecision::run(0, "surfacing burst: status #1, cached position");
 				}
 
 				unsigned int fastloc_mode = configuration_store->read_param<unsigned int>(ParamID::GNSS_FASTLOC_MODE);
@@ -211,12 +243,12 @@ unsigned int LoRaTxService::service_next_schedule_in_ms() {
 					    "LoRaTxService::SURFACING_BURST: status #1 deferred up to %u s waiting for CloudLocate raw",
 					    wait_s);
 					m_sched.schedule_at(now + wait_s);
-					return wait_s * 1000;
+					return ScheduleDecision::run(wait_s * 1000, "surfacing burst: waiting for a CloudLocate raw");
 				}
 				DEBUG_INFO("LoRaTxService::SURFACING_BURST: status #%u (immediate, no cache)",
 				           m_status_burst_count + 1);
 				m_sched.schedule_at(now);
-				return 0;
+				return ScheduleDecision::run(0, "surfacing burst: status #1");
 			}
 
 			// Progressive interval: init + (count-1) * step, capped at max
@@ -229,7 +261,7 @@ unsigned int LoRaTxService::service_next_schedule_in_ms() {
 			// reached" / "STATUS-PURE silencing") are the meaningful markers.
 			DEBUG_TRACE("LoRaTxService::SURFACING_BURST: status #%u in %u s", m_status_burst_count + 1, interval_s);
 			m_sched.schedule_at(now + interval_s);
-			return interval_s * 1000;
+			return ScheduleDecision::run(interval_s * 1000, "surfacing burst: progressive status");
 		}
 
 		// Phase 2: GNSS fix available — TX position immediately, then TR_NOM
@@ -240,7 +272,7 @@ unsigned int LoRaTxService::service_next_schedule_in_ms() {
 				m_awaiting_surfacing = true;
 				m_has_gnss_fix_since_surfacing = false;
 				m_first_gnss_tx_sent = false;
-				return Service::SCHEDULE_DISABLED;
+				return schedule_surfacing_heartbeat(argos_config, now);
 			}
 			if (argos_config.sensor_tx_enable) {
 				m_scheduled_task = [this]() { process_sensor_burst(); };
@@ -253,9 +285,10 @@ unsigned int LoRaTxService::service_next_schedule_in_ms() {
 			if (!m_first_gnss_tx_sent) {
 				DEBUG_INFO("LoRaTxService::SURFACING_BURST: GNSS fix — TX immediate");
 				m_sched.schedule_at(now);
-				return 0;
+				return ScheduleDecision::run(0, "surfacing burst: first TX after fix");
 			}
-			return m_sched.schedule_legacy(argos_config, now);
+			return from_scheduler(m_sched.schedule_legacy(argos_config, now), "surfacing burst: GNSS phase",
+			                      "surfacing burst: no slot computable");
 		}
 
 		// Burst ended — wait for the next surfacing event, but keep the presence
@@ -267,17 +300,18 @@ unsigned int LoRaTxService::service_next_schedule_in_ms() {
 		// A status heartbeat at the nominal period is what the beacon has to say
 		// meanwhile, and it costs nothing while the animal is actually diving
 		// because the dive deschedules the service outright.
-		if (m_awaiting_surfacing) {
-			DEBUG_INFO("LoRaTxService: burst finished, waiting for the next surfacing — status heartbeat at the "
-			           "nominal period meanwhile (not a fault).");
-			m_scheduled_task = [this]() { process_status_burst(); };
-			return m_sched.schedule_legacy(argos_config, now);
-		}
+		if (m_awaiting_surfacing) return schedule_surfacing_heartbeat(argos_config, now);
 
-		return Service::SCHEDULE_DISABLED;
+		// Not yet surfaced (boot): status heartbeat at the legacy rate, as Argos
+		// sends its Doppler at the legacy rate in the same situation. A tag that
+		// has not dived yet is usually one that has just been deployed; being
+		// silent until the first dive is indistinguishable from a dead radio.
+		m_scheduled_task = [this]() { process_status_burst(); };
+		return from_scheduler(m_sched.schedule_legacy(argos_config, now), "not surfaced yet — legacy-rate status",
+		                      "not surfaced yet: no slot computable");
 	}
 
-	return Service::SCHEDULE_DISABLED;
+	return ScheduleDecision::off("ARGOS_MODE has no LoRa equivalent");
 }
 
 void LoRaTxService::service_initiate() {

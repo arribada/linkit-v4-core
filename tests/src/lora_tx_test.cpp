@@ -125,6 +125,21 @@ TEST_GROUP(LoRaTxService) {
 		fake_config_store->write_param(ParamID::ARGOS_TX_JITTER_EN, false);
 	}
 
+	void configure_surfacing_burst(unsigned int max_msg = 0) {
+		fake_config_store->write_param(ParamID::ARGOS_MODE, BaseArgosMode::SURFACING_BURST);
+		fake_config_store->write_param(ParamID::ARGOS_DEPTH_PILE, BaseDepthPile::DEPTH_PILE_1);
+		fake_config_store->write_param(ParamID::GNSS_EN, true);
+		fake_config_store->write_param(ParamID::LB_EN, false);
+		fake_config_store->write_param(ParamID::TR_NOM, (unsigned int)60);
+		fake_config_store->write_param(ParamID::ARGOS_TX_JITTER_EN, false);
+		fake_config_store->write_param(ParamID::UNDERWATER_EN, (bool)true);
+		fake_config_store->write_param(ParamID::DRY_TIME_BEFORE_TX, (unsigned int)0);
+		fake_config_store->write_param(ParamID::SURFACING_BURST_INIT_S, (unsigned int)5);
+		fake_config_store->write_param(ParamID::SURFACING_BURST_STEP_S, (unsigned int)10);
+		fake_config_store->write_param(ParamID::SURFACING_BURST_MAX_S, (unsigned int)60);
+		fake_config_store->write_param(ParamID::SURFACING_BURST_MAX_MSG, max_msg);
+	}
+
 	/// Drive `count` failed transmissions. Expectations must already be set.
 	void fail_n_transmissions(LoRaTxService & serv, std::time_t & t, unsigned int count) {
 		for (unsigned int i = 0; i < count; i++) {
@@ -332,3 +347,88 @@ TEST(LoRaTxService, SuccessfulTxClearsTheErrorCount) {
 	mock().checkExpectations();
 }
 
+// SURFACING_BURST, freshly deployed, no dive yet: m_awaiting_surfacing is still
+// false and m_is_surfacing_burst has never been set, so the mode used to fall
+// off the end of the dispatch and answer SCHEDULE_DISABLED. A tag was therefore
+// mute from power-on until its first dive -- and on a mooring or a slow animal
+// that can be days, indistinguishable from a dead radio. Argos has always sent
+// Doppler at the legacy rate in exactly this situation; LoRa now sends status.
+TEST(LoRaTxService, SurfacingBurstBeforeAnyDiveStillSendsAStatusHeartbeat) {
+	configure_surfacing_burst();
+
+	LoRaTxService serv(*mock_device);
+	std::time_t t = 1652105502000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+
+	mock().expectOneCall("send").onObject(mock_device).ignoreOtherParameters();
+	mock().ignoreOtherCalls();
+
+	serv.start();
+
+	// A real delay, not the sentinel: something is planned.
+	CHECK(serv.get_last_schedule() != Service::SCHEDULE_DISABLED);
+
+	t += serv.get_last_schedule();
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	system_scheduler->run();
+
+	mock().checkExpectations();
+}
+
+// End of a status burst on SURFACING_BURST_MAX_MSG. The service sets
+// m_awaiting_surfacing and used to answer SCHEDULE_DISABLED in the same breath
+// -- so the heartbeat that flag is supposed to allow only materialised if
+// something else happened to re-evaluate the service, and that flag is
+// precisely what stops anything else from happening. The heartbeat is now
+// scheduled in the same pass.
+TEST(LoRaTxService, BurstEndingOnMaxMessagesKeepsTheHeartbeatInTheSamePass) {
+	configure_surfacing_burst(2);  // two status messages, then the burst is over
+
+	LoRaTxService serv(*mock_device);
+	std::time_t t = 1652105502000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+
+	// Two burst messages, then one heartbeat at TR_NOM. A third send is what
+	// proves the heartbeat was scheduled in the same pass as the burst end;
+	// a strict count is also what would catch the burst running on.
+	mock().expectNCalls(3, "send").onObject(mock_device).ignoreOtherParameters();
+	mock().ignoreOtherCalls();
+
+	// A cached position, put straight into the store without notifying the
+	// service: process_status_burst silences the whole burst after its first
+	// ping when it has nothing at all to say ("STATUS-PURE ... silencing
+	// further pings"), which would end the burst long before max_msg. The
+	// cache keeps the progressive burst alive; not notifying the service keeps
+	// m_has_gnss_fix_since_surfacing false, so we stay in the status phase.
+	GPSLogEntry cached = make_gps_location(t / 1000);
+	cached.info.event_type = GPSEventType::FIX;
+	configuration_store->notify_gps_location(cached);
+
+	serv.start();
+	notify_underwater_state(true);
+	notify_underwater_state(false);  // surfacing -> status burst begins
+
+	// Burn the two allowed status messages.
+	for (unsigned int k = 0; k < 2; k++) {
+		t += serv.get_last_schedule();
+		fake_rtc->settime(t / 1000);
+		fake_timer->set_counter(t);
+		system_scheduler->run();
+		mock_device->notify(KineisEventTxComplete({}));
+	}
+
+	// The burst is over and no surfacing has happened since. Walk past TR_NOM
+	// on the wall clock -- deliberately NOT via get_last_schedule(), which only
+	// a Run decision updates and which would therefore read as a stale delay
+	// exactly in the case this test exists to catch.
+	t += 120000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	system_scheduler->run();
+	mock_device->notify(KineisEventTxComplete({}));
+
+	mock().checkExpectations();
+}

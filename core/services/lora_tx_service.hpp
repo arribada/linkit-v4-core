@@ -31,6 +31,7 @@ protected:
 	void service_term() override;
 	bool service_is_enabled() override;
 	unsigned int service_next_schedule_in_ms() override;
+	ScheduleDecision service_next_schedule() override;
 	void service_initiate() override;
 	bool service_cancel() override;
 	unsigned int service_next_timeout() override;
@@ -38,6 +39,10 @@ protected:
 	bool service_is_active_on_initiate() override;
 
 private:
+	/// @brief Burst over, still no surfacing: keep a presence heartbeat at the
+	/// nominal rate rather than leaving the service owning nothing.
+	ScheduleDecision schedule_surfacing_heartbeat(ArgosConfig &argos_config, std::time_t now);
+
 	KineisDevice &m_device;
 	DepthPileManager m_depth_pile_manager;
 	LoRaTxScheduler m_sched;
