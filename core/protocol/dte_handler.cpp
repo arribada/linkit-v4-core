@@ -1985,8 +1985,28 @@ DTEAction DTEHandler::handle_dte_message(const std::string &req, std::string &re
 		default: break;
 		}
 	} catch (...) {
-		DEBUG_ERROR("DTEHandler: unexpected exception in command handler");
-		resp.clear();
+		// Answer, do not go silent. Clearing the response here made a
+		// well-formed command produce nothing at all on the wire, which an
+		// operator cannot tell apart from a dead board -- the same failure the
+		// DUMPM address path was fixed for, except this barrier covers EVERY
+		// command. The exception has already cost us the command's own result;
+		// it must not also cost us the port.
+		//
+		// The response half of DTECommand mirrors the request half in order and
+		// under the same #if guards (static_assert below), so the matching
+		// <CMD>_RESP is the request plus RESP_CMD_BASE.
+		static_assert((unsigned int)DTECommand::__NUM_RESP - RESP_CMD_BASE == (unsigned int)DTECommand::__NUM_REQ,
+		              "DTECommand request and response halves must stay in step");
+		DEBUG_ERROR("DTEHandler: unexpected exception in the handler for command %u — answering INCORRECT_DATA",
+		            (unsigned int)command);
+		try {
+			resp = DTEEncoder::encode((DTECommand)((unsigned int)command + RESP_CMD_BASE),
+			                          (int)DTEError::INCORRECT_DATA);
+		} catch (...) {
+			// The encoder itself failed: nothing left to say, and a throw out of
+			// here would take the main loop down with it.
+			resp.clear();
+		}
 	}
 
 	return action;

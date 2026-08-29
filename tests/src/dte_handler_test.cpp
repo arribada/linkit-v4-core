@@ -1942,3 +1942,24 @@ TEST(DTEHandler, PARMW_HauledArgosModeRefusesSurfacingBurst) {
 	CHECK_EQUAL((unsigned int)BaseArgosMode::DOPPLER,
 	            (unsigned int)configuration_store->read_param<BaseArgosMode>(ParamID::HAULED_ARGOS_MODE));
 }
+
+TEST(DTEHandler, EveryRequestHasAMatchingErrorResponse) {
+	/*
+	 * The dispatch's exception barrier answers by encoding the response that
+	 * matches whatever command threw, computed as request + RESP_CMD_BASE.
+	 * That arithmetic is only correct while the two halves of DTECommand stay
+	 * in step -- same order, same #if guards -- and a misordered entry would
+	 * make a failing command answer under ANOTHER command's name, which is
+	 * worse than the silence it replaced.
+	 *
+	 * A static_assert pins the count; this pins the names, one by one.
+	 */
+	for (unsigned int i = 0; i < (unsigned int)DTECommand::__NUM_REQ; i++) {
+		DTECommand resp_cmd = (DTECommand)(i + RESP_CMD_BASE);
+		std::string resp = DTEEncoder::encode(resp_cmd, (int)DTEError::INCORRECT_DATA);
+
+		/* "$N;" + the request's own name + "#001;5\r" */
+		std::string attendu = "$N;" + command_map[i].name + "#001;5\r";
+		STRCMP_EQUAL(attendu.c_str(), resp.c_str());
+	}
+}
