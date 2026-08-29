@@ -327,7 +327,18 @@ class Runner:
                 if case.get('radio') and saute_si_radio_muette(
                         self, case, 'le dialogue avec le module'):
                     continue
+                avant = self.n_pass + self.n_fail + self.n_error + self.n_skip
                 case['fn'](self, case)
+                # Un cas qui sort sans rien enregistrer DISPARAIT de la campagne:
+                # le total baisse, aucun rouge n apparait, et personne ne le voit.
+                # C est arrive le 2026-08-30 — une aide inseree au milieu de
+                # c_sws_etat_coherent avait coupe la fonction avant son verdict, et
+                # ses verifications vivaient en code mort apres un return. Le seul
+                # indice etait un resultat perime qui survivait d une passe a l autre.
+                if self.n_pass + self.n_fail + self.n_error + self.n_skip == avant:
+                    self.record(case, 'ERROR',
+                                'le cas s est termine SANS rendre de verdict — '
+                                'chemin sans record(), a corriger dans le harnais')
             except Exception as e:
                 self.record(case, 'ERROR', f'exception {type(e).__name__}: {e}')
                 if not self.recover():
@@ -456,12 +467,11 @@ def _commandes_absentes(b):
     On demande au build ce qu il porte plutot que de le supposer: ARP60
     (SMD_LPM_MODE) n existe que sur SMD, LRP07 (LORA_NJM) que sur LoRa.
     """
-    try:
-        _, lus = b.read_params(['SMD_LPM_MODE', 'LORA_NJM'], timeout=10.0)
-    except Exception:
+    clefs = cles_implementees(b)
+    if not clefs:
         return [('SMDTST', '000;'), ('LORATX', '001;5'), ('LORABR', '001;1')]
-    est_smd = 'ARP60' in lus
-    est_lora = 'LRP07' in lus
+    est_smd = 'ARP60' in clefs
+    est_lora = 'LRP07' in clefs
     absentes = []
     if not est_smd:
         absentes.append(('SMDTST', '000;'))
@@ -1340,11 +1350,24 @@ def c_fuite_taches_differees(r, case):
         if not q:
             return r.record(case, 'ERROR', '%SCHEDQ sans reponse en cours de cycle')
         suite.append(q[1])
-    croissance = suite[-1] - base[1]
-    trace = f'depart={base[1]} puis {suite}'
-    if croissance > 0:
+    # Comparer le DERNIER echantillon au premier revient a conclure une tendance
+    # a partir de deux points, sur une grandeur qui fluctue: d autres services
+    # programment et retirent des taches pendant la mesure. Mesure du 2026-08-30
+    # sur la carte SMD: depart=7 puis [6, 8, 6, 8, 8] — la file oscille entre 6
+    # et 8, et l ancien critere y voyait "+1 de croissance".
+    #
+    # Le bon critere vient de la nature de la fuite: une tache non annulee ne
+    # repart JAMAIS, donc elle releve le PLANCHER de la file. Sur le binaire sans
+    # correctif (17 -> [18,19,20,21,22]) le plancher passe de 17 a 18 et le defaut
+    # est vu; ici le plancher descend a 6, donc rien ne fuit.
+    plancher = min(suite)
+    croissance = plancher - base[1]
+    monotone = all(suite[i] <= suite[i + 1] for i in range(len(suite) - 1))
+    trace = f'depart={base[1]} puis {suite} (plancher={plancher})'
+    if croissance > 0 or (monotone and suite[-1] - base[1] >= 2):
         r.record(case, 'FAIL',
-                 f'la file differee croit de {croissance} en 5 aller-retours — tache non annulee',
+                 f'la file differee ne redescend plus sous {plancher} (depart {base[1]}) '
+                 f'en 5 aller-retours — tache non annulee',
                  trace)
     else:
         r.record(case, 'PASS', 'file differee stable sur 5 aller-retours', trace)
@@ -1381,6 +1404,8 @@ def c_axl_transmissible(r, case):
     parametre visible par l operateur qui ne pouvait rien faire, alors que
     ArgosPacketBuilder encode l AXL completement.
     """
+    if saute_si_capacite_absente(r, case, 'AXP01', 'le bit AXL dans la charge utile'):
+        return
     b = r.b
     try:
         b.enter_config()
@@ -1622,6 +1647,8 @@ def c_capteurs_lecture(r, case):
     controle qui prouve d un coup que le composant repond, que l echelle est
     appliquee et que les offsets de calibration ne sont pas aberrants.
     """
+    if saute_si_capacite_absente(r, case, 'AXP01', 'la lecture des capteurs par SENSR'):
+        return
     b = r.b; defauts = []
     try:
         b.enter_config()
@@ -1676,6 +1703,8 @@ def c_capteur_plage_mesure(r, case):
     mesuree doit rester ~1 g a TOUTES les plages: c est ce qui prouve que le
     facteur d echelle suit bien le registre.
     """
+    if saute_si_capacite_absente(r, case, 'AXP01', 'la plage de mesure de l accelerometre'):
+        return
     b = r.b; defauts = []
     try:
         b.enter_config()
@@ -1725,6 +1754,8 @@ def c_capteur_calibration(r, case):
     Les offsets 9 et 10 servent ici a verifier que AXP08 et AXP09 arrivent
     reellement jusqu au BMA400, et pas seulement dans le magasin de config.
     """
+    if saute_si_capacite_absente(r, case, 'AXP01', 'la calibration de l accelerometre'):
+        return
     b = r.b; defauts = []
     def scalw(offset, value):
         p = f'0,{offset},{value}'
@@ -1818,6 +1849,8 @@ def c_capteur_basse_conso(r, case):
     silence: un seuil de reveil errone rend le tag soit aveugle au mouvement,
     soit constamment reveille — les deux se paient en batterie sur un an.
     """
+    if saute_si_capacite_absente(r, case, 'AXP01', 'le mode basse consommation de l accelerometre'):
+        return
     b = r.b; defauts = []
     essais = [
         ('AXL_SENSOR_POWER_MODE',       3,     'mode d alimentation (0..2)'),
@@ -3949,6 +3982,28 @@ def _sws_actif(b, secondes=30):
             return st
     return st
 
+def _adc_pleine_echelle():
+    """Pleine echelle SAADC, lue dans le firmware et non recopiee.
+
+    Le SAADC de cette carte echantillonne en 14 bits: sws_analog_constants.hpp
+    definit ADC_INVALID_MAX 16383, et nrf_battery_mon.cpp comme thermistor.cpp
+    posent ADC_MAX_VALUE 16384 (2^14). Un cas qui assertait contre 4095 (12
+    bits) declarait aberrantes des lectures parfaitement valides — mesure du
+    2026-08-29: eau=15050, pic=15060, sur une electrode saine.
+    """
+    import os
+    chemin = os.path.join(os.path.dirname(os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__)))),
+        'core', 'services', 'sws_analog_constants.hpp')
+    try:
+        m = re.search(r'#define\s+ADC_INVALID_MAX\s+(\d+)', open(chemin).read())
+        if m:
+            return int(m.group(1))
+    except OSError:
+        pass
+    return 16383   # 2^14 - 1, la valeur du firmware au 2026-08
+
+
 def c_sws_etat_coherent(r, case):
     """Le detecteur rend un etat physiquement coherent, a sec.
 
@@ -3982,28 +4037,6 @@ def c_sws_etat_coherent(r, case):
     if not (st['air'] < st['seuil'] < st['eau']):
         defauts.append(f"seuil hors de l intervalle air..eau "
                        f"({st['air']} < {st['seuil']} < {st['eau']} est faux)")
-
-def _adc_pleine_echelle():
-    """Pleine echelle SAADC, lue dans le firmware et non recopiee.
-
-    Le SAADC de cette carte echantillonne en 14 bits: sws_analog_constants.hpp
-    definit ADC_INVALID_MAX 16383, et nrf_battery_mon.cpp comme thermistor.cpp
-    posent ADC_MAX_VALUE 16384 (2^14). Un cas qui assertait contre 4095 (12
-    bits) declarait aberrantes des lectures parfaitement valides — mesure du
-    2026-08-29: eau=15050, pic=15060, sur une electrode saine.
-    """
-    import os
-    chemin = os.path.join(os.path.dirname(os.path.dirname(
-        os.path.dirname(os.path.abspath(__file__)))),
-        'core', 'services', 'sws_analog_constants.hpp')
-    try:
-        m = re.search(r'#define\s+ADC_INVALID_MAX\s+(\d+)', open(chemin).read())
-        if m:
-            return int(m.group(1))
-    except OSError:
-        pass
-    return 16383   # 2^14 - 1, la valeur du firmware au 2026-08
-
 
     # Pleine echelle SAADC: toute valeur au-dela est une lecture aberrante. La
     # borne vient du firmware (ADC_INVALID_MAX), pas d une constante recopiee.
@@ -6951,6 +6984,55 @@ for _c in CASES_V30:
 TEMPLATES = ('turtle_doppler_only', 'turtle_gps', 'turtle_cloudlocate',
              'drifter', 'fix_beacon', 'rspb_avian_mortality_cyprus_boat')
 
+_CLES_IMPL = None    # None = pas encore lu; sinon set() des cles que ce build porte
+
+
+def cles_implementees(b):
+    """L ensemble des cles que CE build porte, lu une fois par passe.
+
+    PARML est la seule reponse qui filtre sur is_implemented depuis toujours —
+    y compris avant le correctif du 2026-08-30 sur les lectures par cle. C est
+    donc la source de verite sur ce que la carte porte, et elle repond a TOUTES
+    les questions de capacite d un seul aller-retour: type de carte, presence de
+    l accelerometre, du SMD, du LoRa.
+
+    POURQUOI ELLE REMPLACE LES SONDES PAR PARMR. _est_rspb() demandait RSP01 par
+    PARMR et le recevait sur n importe quelle carte, parce que la lecture par
+    cle ne consultait pas is_implemented. Elle a donc declare RSPB une carte
+    LinkIt SMD, et SHUT-02 a conclu l inverse de la verite. Le firmware est
+    corrige, mais une sonde qui ne depend pas de la version du firmware qu elle
+    interroge vaut mieux qu une sonde qui en depend.
+
+    Rend un set vide si PARML ne repond pas — l appelant ne doit alors rien
+    conclure, et les aides ci-dessous ne sautent rien dans ce cas.
+    """
+    global _CLES_IMPL
+    if _CLES_IMPL is not None:
+        return _CLES_IMPL
+    _CLES_IMPL = set()
+    try:
+        m = b.dte('PARML', '', timeout=12.0)
+        if m and m.group(1) == 'O':
+            _CLES_IMPL = {k.strip() for k in m.group(3).rstrip('\r').split(',') if k.strip()}
+    except Exception:
+        pass
+    return _CLES_IMPL
+
+
+def saute_si_capacite_absente(r, case, cle, quoi):
+    """SKIP motive si `cle` n est pas implementee sur ce build.
+
+    Ne saute JAMAIS quand PARML n a pas repondu: on ne transforme pas une
+    absence de mesure en absence de capacite.
+    """
+    clefs = cles_implementees(r.b)
+    if not clefs or cle in clefs:
+        return False
+    r.record(case, 'SKIP',
+             f'{cle} n est pas implemente sur ce build — {quoi} n existe pas sur cette carte')
+    return True
+
+
 def _est_rspb(b):
     """La carte est-elle un build RSPB ?
 
@@ -6959,11 +7041,7 @@ def _est_rspb(b):
     le discriminant le plus direct, et il vient de la carte plutot que d une
     supposition de notre part.
     """
-    try:
-        _, lus = b.read_params(['RSPB_PACKET_FORMAT'], timeout=10.0)
-        return 'RSP01' in lus
-    except Exception:
-        return False
+    return 'RSP01' in cles_implementees(b)
 
 def _encode_template(nom):
     """Rend [(cle, valeur_fil)] pour un template, via l encodeur PyLinkit.
