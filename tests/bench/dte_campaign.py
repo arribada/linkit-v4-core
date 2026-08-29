@@ -6458,11 +6458,21 @@ CASES_V30 = [
 # =====================================================================
 
 TEMPLATES = ('turtle_doppler_only', 'turtle_gps', 'turtle_cloudlocate',
-             'drifter', 'fix_beacon')
-# rspb_avian_mortality_cyprus_boat est exclu: neuf de ses cles vivent derriere
-# HAS_BOARD_RSPB / HAS_EXTERNAL_WAKEUP / ENABLE_MORTALITY_SENSOR et seraient
-# rapportees comme non implementees sur un build KIM2. Le cas doit rejouer tel
-# quel sur une carte RSPB.
+             'drifter', 'fix_beacon', 'rspb_avian_mortality_cyprus_boat')
+
+def _est_rspb(b):
+    """La carte est-elle un build RSPB ?
+
+    RSPB_PACKET_FORMAT (RSP01) n existe que derriere HAS_BOARD_RSPB: sur un
+    build KIM2 il n est pas implemente et n apparait pas dans la reponse. C est
+    le discriminant le plus direct, et il vient de la carte plutot que d une
+    supposition de notre part.
+    """
+    try:
+        _, lus = b.read_params(['RSPB_PACKET_FORMAT'], timeout=10.0)
+        return 'RSP01' in lus
+    except Exception:
+        return False
 
 def _encode_template(nom):
     """Rend [(cle, valeur_fil)] pour un template, via l encodeur PyLinkit.
@@ -6517,6 +6527,18 @@ def _cas_template(nom):
             return r.record(case, 'SKIP', f'template non encodable: {e}')
         if not _en_config(b):
             return r.record(case, 'ERROR', 'mode configuration inaccessible')
+        # Les fichiers de template_conf/ sont pousses sur les cartes RSPB. Les
+        # ecrire en bloc sur une KIM reconfigure la carte meme qu on est en
+        # train de valider, et ne represente aucun deploiement reel. On
+        # constate le type de carte plutot que de le supposer.
+        if not _est_rspb(b):
+            try:
+                b.exit_config()
+            except Exception:
+                pass
+            return r.record(case, 'SKIP',
+                            'carte non-RSPB (RSP01 absent): les templates se poussent sur '
+                            'les cartes RSPB, ce cas ne represente rien ici')
         # L identite de la carte de banc est restauree a la fin: un template
         # ecrit PROFILE_NAME et DEVICE_MODEL, et laisser "TURTLE-DOPPLER" sur
         # la carte ferait mentir tous les cas suivants qui lisent son modele.
@@ -6557,9 +6579,11 @@ def _cas_template(nom):
     return cas
 
 
+# Vague RSPB: sautee d elle-meme sur une carte KIM2, ou elle ne represente
+# aucun deploiement reel.
 CASES_V31 = [
     dict(id=f'TPL-{i:02d}', risque='MAJEUR',
-         titre=f'Le template {nom} se pose entierement sur la carte',
+         titre=f'Le template {nom} se pose entierement sur la carte (RSPB)',
          fn=_cas_template(nom))
     for i, nom in enumerate(TEMPLATES, 1)
 ]

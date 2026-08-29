@@ -15,10 +15,14 @@ Example DTE configuration files, to be pushed with
 | [`rspb_avian_mortality_cyprus_boat.cfg`](rspb_avian_mortality_cyprus_boat.cfg) | RSPB Cyprus boat tracker, moored/underway | `LEGACY` + `MOORED_*` | every 5 min under way |
 
 Each file carries its rationale inline: why the mode, and — more useful in
-practice — which value would silence the beacon. The RSPB one targets an RSPB
-build; nine of its keys sit behind `HAS_BOARD_RSPB`, `HAS_EXTERNAL_WAKEUP` or
-`ENABLE_MORTALITY_SENSOR` and are reported as not implemented on a LinkIt
-build.
+practice — which value would silence the beacon.
+
+These files are pushed to **RSPB boards**. The bench wave that writes them to a
+device (`TPL-*`) detects the board and skips itself on anything else: writing a
+full template to the KIM2 bench board reconfigures the very device under
+validation and represents no real deployment. The RSPB file additionally has
+nine keys behind `HAS_BOARD_RSPB`, `HAS_EXTERNAL_WAKEUP` or
+`ENABLE_MORTALITY_SENSOR`, reported as not implemented anywhere else.
 
 ## These files are written in PyLinkit's language, not the firmware's
 

@@ -29,7 +29,11 @@ from kim_bench import Bench
 
 RE_PKT = re.compile(r'\$O;DUMPD#[0-9A-Fa-f]+;([0-9A-Fa-f]+),([0-9A-Fa-f]+),(\S*)')
 
-LOGS = {'system': 0, 'gnss': 1, 'sws': 11}
+# Les noms du protocole, pas les miens. Le type 1 est GNSS_SENSOR et le
+# fichier s appelle sensor.log: c est le dump des DONNEES CAPTEUR, et c est la
+# que vivent les colonnes ttff / onTime / numSV / hAcc. 'gnss' reste accepte
+# comme alias parce que c est ce qu on cherche dedans.
+LOGS = {'system': 0, 'sensor': 1, 'gnss': 1, 'sws': 11}
 
 
 def harvest(b, d_type=0, plafond=4000, silence=12.0):
@@ -90,7 +94,9 @@ def analyse(texte):
 
 
 def analyse_gnss(texte):
-    """Bilan chiffre du journal GNSS, qui est un CSV et pas des lignes de trace.
+    """Bilan chiffre du dump des donnees capteur (type 1, sensor.log).
+
+    C est un CSV, pas des lignes de trace.
 
     C est ICI que vivent les temps: le journal systeme ne porte aucun ttff, il
     est une colonne du CSV produit par GPSLogFormatter. Chercher un `ttff=` dans
@@ -154,7 +160,9 @@ def analyse_gnss(texte):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--log', default='system', choices=sorted(LOGS))
+    ap.add_argument('--log', default='system', choices=sorted(LOGS),
+                    help="'sensor' (alias 'gnss') = sensor.log, le dump des donnees "
+                         "capteur, ou vivent les temps de fix")
     ap.add_argument('--out', default='/tmp/harvest.log')
     ap.add_argument('--plafond', type=int, default=4000)
     a = ap.parse_args()
@@ -176,7 +184,7 @@ def main():
           f'{" (TRONQUE)" if tronque else ""}')
     print(f'ecrit dans {a.out}')
     print('--- bilan ---')
-    fonction = analyse_gnss if a.log == 'gnss' else analyse
+    fonction = analyse_gnss if LOGS[a.log] == 1 else analyse
     for k, v in fonction(texte).items():
         if isinstance(v, dict):
             print(f'  {k:20} n={v["n"]:<5} min={v["min"]:<10.0f} med={v["median"]:<10.0f} '
