@@ -44,6 +44,10 @@ to the wrong spelling.
 `GNSS_FASTLOC_MODE` and `GNSS_CLOUDLOCATE_FORMAT` are the exception: PyLinkit
 passes them through as plain integers, so they keep their numeric values.
 
+The bench harness in [`../tests/bench/`](../tests/bench/) speaks the other
+language — raw DTE, firmware names, wire codes — because it drives the device
+directly. Do not carry a value across from one to the other.
+
 ## Validating a file
 
 ```bash
