@@ -299,6 +299,7 @@ def main():
         for d in drift:
             print(f"       {d}")
 
+    non_verifies_total = {}
     files = sys.argv[1:] or sorted(glob.glob(os.path.join(ROOT, "template_conf/*.cfg")))
     if not files:
         print("no template to check")
@@ -313,15 +314,19 @@ def main():
                 print(f"       {p}")
         else:
             print(f"ok   {rel}  ({n} keys)")
-        if non_verifies:
-            print(f"       note: {len(non_verifies)} line(s) NOT verified — set PYLINKIT "
-                  f"to a checkout so the real encoder can check them:")
-            for nom, key, quoi in non_verifies:
-                print(f"         {nom} ({key}) takes {quoi}")
+        for nom, key, quoi in non_verifies:
+            non_verifies_total.setdefault((nom, key, quoi), 0)
+            non_verifies_total[(nom, key, quoi)] += 1
         if gated:
             print(f"       note: {len(gated)} key(s) behind a build flag —")
             for nom, key, gate in gated:
                 print(f"         {nom} ({key}) requires {gate}")
+    if non_verifies_total:
+        total = sum(non_verifies_total.values())
+        print(f"\n{total} line(s) NOT verified across {len(files)} file(s) — set PYLINKIT "
+              f"to a checkout so PyLinkit's own encoder can check them:")
+        for (nom, key, quoi), n in sorted(non_verifies_total.items()):
+            print(f"  {nom} ({key}) takes {quoi}  [x{n}]")
     source = "PyLinkit's own encoder" if live else "the mirror in tools/pylinkit_map.py"
     print(f"\n{len(fw)} parameters in the firmware table, {len(PL.NAMES)} known to "
           f"PyLinkit; values checked with {source}")
