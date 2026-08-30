@@ -182,7 +182,7 @@ echo "  SMDSAT_AUTOFALLBACK=${SMDSAT_AUTOFALLBACK}"
 echo ""
 
 cmake -DCMAKE_TOOLCHAIN_FILE=../../toolchain_arm_gcc_nrf52.cmake \
-      -DDEBUG_LEVEL=3 \
+      -DDEBUG_LEVEL=${DEBUG_LEVEL:-3} \
       -DBOARD=LINKIT \
       -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
       -DARGOS_SMD=${ARGOS_SMD} \

@@ -382,6 +382,21 @@ bool SmdSatCmdSpi::send_command_aplus(uint8_t command, const uint8_t *tx_data, u
 	// Parse response if caller wants it
 	if (response != nullptr) {
 		bool parsed = parse_aplus_response(response_frame, SPI_PROTOCOL_APLUS_FRAME_SIZE, response);
+		if (!parsed) {
+			// An unparseable frame used to say nothing about WHY. The raw bytes
+			// discriminate the three cases a person at the bench needs to tell
+			// apart: all 0xFF = MISO floating, nothing driving the line; all
+			// 0x00 = line held low, module unpowered; all 0xAA = the slave IDLE
+			// pattern, i.e. something IS running and driving MISO but has no
+			// response ready. Measured 2026-08-30 on the LinkIt SMD board:
+			// AA AA AA AA AA AA AA AA to CMD 0x02, forever — a module that talks
+			// but does not speak this protocol version.
+			DEBUG_WARN("SmdSatCmdSpi::%s: unparseable response to cmd 0x%02X — rx: "
+			           "%02X %02X %02X %02X %02X %02X %02X %02X",
+			           __func__, command, response_frame[0], response_frame[1], response_frame[2],
+			           response_frame[3], response_frame[4], response_frame[5], response_frame[6],
+			           response_frame[7]);
+		}
 		if (!parsed && !SPI_APLUS_IS_RECOVERABLE(response->status)) {
 			return false;
 		}
