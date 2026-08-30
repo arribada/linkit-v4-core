@@ -192,6 +192,7 @@ cmake -DCMAKE_TOOLCHAIN_FILE=../../toolchain_arm_gcc_nrf52.cmake \
       -DBATTERY_CHEMISTRY=${BATTERY_CHEMISTRY} \
       -DSMDSAT_USE_SAFE_TIMINGS=${SMDSAT_USE_SAFE_TIMINGS} \
       -DSMDSAT_AUTOFALLBACK=${SMDSAT_AUTOFALLBACK} \
+      -DSMD_FLASH_HOLD=${SMD_FLASH_HOLD:-OFF} \
       -DMETRIC_LATENCY_LOG_ENABLE=$([ "$METRICS" = "ON" ] && echo 1 || echo 0) \
       -DVALIDATION_LOG_ENABLE=$([ "$VALIDATION" = "ON" ] && echo 1 || echo 0) \
       ../..

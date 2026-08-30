@@ -144,16 +144,24 @@ class Bench:
                 continue
             try:
                 s.reset_input_buffer()
-                s.write(b"%PING\r\n")
-                s.flush()
-                deadline = time.time() + 1.5
+                # Une seule tentative dans une fenetre de 1,5 s declarait la carte
+                # absente alors qu elle repondait: mesure du 2026-08-30, ou une
+                # sonde manuelle a 3 s obtenait "%BENCH OK state=OPERATIONAL"
+                # quelques secondes apres que l autodetection eut abandonne. Juste
+                # apres un reset ou une reprise du lien usbipd, le premier %PING se
+                # perd souvent. Trois tentatives de 3 s coutent au pire 9 s sur un
+                # port muet, et evitent d abandonner sur une carte vivante.
                 acc = b""
-                while time.time() < deadline:
-                    acc += s.read(256)
-                    if b"%BENCH" in acc:
-                        print(f"[detect] bench board on {p}")
-                        s.close()
-                        return p
+                for _essai in range(3):
+                    s.write(b"%PING\r\n")
+                    s.flush()
+                    deadline = time.time() + 3.0
+                    while time.time() < deadline:
+                        acc += s.read(256)
+                        if b"%BENCH" in acc:
+                            print(f"[detect] bench board on {p}")
+                            s.close()
+                            return p
             except (serial.SerialException, OSError):
                 # Port present mais moribond: on passe au candidat suivant au
                 # lieu d avorter tout le balayage. Sans write_timeout ce chemin
