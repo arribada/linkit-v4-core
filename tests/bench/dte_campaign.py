@@ -7239,7 +7239,7 @@ for _c in CASES_V30:
 # =====================================================================
 
 TEMPLATES = ('turtle_doppler_only', 'turtle_gps', 'turtle_cloudlocate',
-             'drifter', 'fix_beacon', 'rspb_avian_mortality_cyprus_boat')
+             'drifter', 'fix_beacon')
 
 _CLES_IMPL = None    # None = pas encore lu; sinon set() des cles que ce build porte
 

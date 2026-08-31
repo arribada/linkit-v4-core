@@ -12,7 +12,6 @@ Example DTE configuration files, to be pushed with
 | [`turtle_cloudlocate.cfg`](turtle_cloudlocate.cfg) | Sea turtle, raw measurements positioned in the cloud | `SURFACING_BURST` | raw snapshot |
 | [`drifter.cfg`](drifter.cfg) | Drifting buoy, permanently at the surface | `PASS_PREDICTION` | hourly |
 | [`fix_beacon.cfg`](fix_beacon.cfg) | Fixed ground station | `PASS_PREDICTION` | daily |
-| [`rspb_avian_mortality_cyprus_boat.cfg`](rspb_avian_mortality_cyprus_boat.cfg) | RSPB Cyprus boat tracker, moored/underway | `LEGACY` + `MOORED_*` | every 5 min under way |
 
 Each file carries its rationale inline: why the mode, and — more useful in
 practice — which value would silence the beacon.
