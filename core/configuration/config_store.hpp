@@ -203,8 +203,24 @@ protected:
 		/* ARGOS_DEPTH_PILE */ BaseDepthPile::DEPTH_PILE_16,
 		/* _RESERVED_20 */ 0U,
 		/* _RESERVED_21 */ 0U,
+		// Seuils de qualite GNSS releves le 2026-08-31 (hAcc 5 -> 50 m, hDOP 2 -> 5),
+		// pour les trois familles: nominal, batterie basse, hors zone.
+		//
+		// POURQUOI. Sur 13 positions reelles mesurees a La Reunion les 29 et 30 aout,
+		// la MEILLEURE etait a 13,4 m et le meilleur hDOP a 1,97. Aux anciens defauts
+		// (5 m / 2), AUCUNE des 13 ne passait: une balise sortie d usine allumait son
+		// recepteur, obtenait une position, et la jetait — 13 fois sur 13, en
+		// rapportant NO_FIX. Et comme GNSS_FASTLOC_MODE vaut 0 par defaut, il n y a
+		// meme pas de repli degrade: la position est perdue, pas seulement declassee.
+		// A 50 m / 5 — les valeurs que portent deja les templates turtle_gps et rspb —
+		// 3 des 13 passent. Ce n est pas genereux, c est simplement realiste.
+		//
+		// Ne change QUE les balises remises a zero ou nouvellement provisionnees:
+		// celles du terrain gardent leur valeur enregistree. Aucun bump de version de
+		// configuration n est requis — aucun emplacement ne bouge (voir la regle plus
+		// haut), et un bump inutile effacerait les identifiants LoRaWAN.
 		/* GNSS_HDOPFILT_EN */ (bool)true,
-		/* GNSS_HDOPFILT_THR */ 2U,
+		/* GNSS_HDOPFILT_THR */ 5U,
 		/* GNSS_ACQ_TIMEOUT */ 120U,
 		/* GNSS_NTRY */ 0U, // 0 = unlimited retries; otherwise cap before backing off to dloc_arg_nom (see gps_service.cpp)
 		/* UNDERWATER_EN */ (bool)false,
@@ -218,7 +234,7 @@ protected:
 		/* LB_ARGOS_DUTY_CYCLE */ 0U,
 		/* LB_GNSS_EN */ (bool)true,
 		/* DLOC_ARG_LB */ 60*60U,
-		/* LB_GNSS_HDOPFILT_THR */ 2U,
+		/* LB_GNSS_HDOPFILT_THR */ 5U,
 		/* LB_ARGOS_DEPTH_PILE */ BaseDepthPile::DEPTH_PILE_1,
 		/* LB_GNSS_ACQ_TIMEOUT */ 120U,
 		/* SAMPLING_SURF_FREQ */ (double)10.0,
@@ -232,7 +248,7 @@ protected:
 		/* GNSS_FIX_MODE */ BaseGNSSFixMode::AUTO,
 		/* GNSS_DYN_MODEL */ BaseGNSSDynModel::PORTABLE,
 		/* GNSS_HACCFILT_EN */ (bool)true,
-		/* GNSS_HACCFILT_THR */ 5U,
+		/* GNSS_HACCFILT_THR */ 50U,
 		/* GNSS_MIN_NUM_FIXES */ 1U,
 		/* GNSS_COLD_START_RETRY_PERIOD */ 60U,
 		/* ARGOS_TIME_SYNC_BURST_EN */ (bool)true,
@@ -244,7 +260,7 @@ protected:
 		/* ARGOS_RX_COUNTER */ 0U,
 		/* ARGOS_RX_TIME */ 0U,
 		/* GNSS_ASSISTNOW_EN */ (bool)true,
-		/* LB_GNSS_HACCFILT_THR */ 5U,
+		/* LB_GNSS_HACCFILT_THR */ 50U,
 		/* LB_NTRY_PER_MESSAGE */ 4U,
 
 		/* ZONE_TYPE */ BaseZoneType::CIRCLE,
@@ -260,8 +276,8 @@ protected:
 		/* ZONE_ARGOS_DUTY_CYCLE */ 0xFFFFFFU,
 		/* ZONE_ARGOS_NTRY_PER_MESSAGE */ 0U,
 		/* ZONE_GNSS_DELTA_ARG_LOC_ARGOS_SECONDS */ 3600U,
-		/* ZONE_GNSS_HDOPFILT_THR */ 2U,
-		/* ZONE_GNSS_HACCFILT_THR */ 5U,
+		/* ZONE_GNSS_HDOPFILT_THR */ 5U,
+		/* ZONE_GNSS_HACCFILT_THR */ 50U,
 		/* ZONE_GNSS_ACQ_TIMEOUT */ 240U,
 		/* ZONE_CENTER_LONGITUDE */ -123.3925,
 		/* ZONE_CENTER_LATITUDE */ -48.8752,
