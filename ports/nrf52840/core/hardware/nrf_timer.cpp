@@ -122,13 +122,32 @@ static void rtc_event_handler(drv_rtc_t const *const p_instance) {
 	if (drv_rtc_overflow_pending(p_instance)) {
 		g_overflow_count = g_overflow_count + 1;
 	} else if (drv_rtc_compare_pending(p_instance, 0)) {
-		// Fire all due schedules
-		auto it = g_schedules.begin();
-		while (it != g_schedules.end()) {
-			if (it->m_target_ticks > current_ticks()) break;  // List is sorted — no more due
+		// Fire all due schedules.
+		//
+		// NEVER hold an iterator across sched.m_func(). The callback runs in this
+		// ISR and is free to re-enter the timer API -- every periodic service
+		// re-arms itself from here, so add_schedule() inserts into g_schedules and
+		// cancel_schedule() erases from it. The previous loop kept `it` live across
+		// that call: one insert or erase turned it into a stale node, and the next
+		// erase(it) released that node back into the ETL pool, tripping
+		// ETL_ASSERT(is_item_in_pool, pool_object_not_in_pool) -> etl_error_handler
+		// -> reset. Seen 4x on Cyprus 2026-08-31 ("PMU reset type: ETL", identical
+		// backtrace: erase <- rtc_event_handler, having preempted the UART IRQ).
+		//
+		// Re-reading front() each turn is safe and cheap: the list is kept
+		// time-sorted, so the earliest schedule is always at the head no matter what
+		// the callback did to the list.
+		//
+		// The bound stops a callback that re-arms itself at an already-due time from
+		// spinning inside the ISR; setup_compare_interrupt() below re-arms the
+		// compare, so anything left over fires on the next interrupt.
+		unsigned int fired = 0;
+		while (!g_schedules.empty() && fired < MAX_NUM_TIMERS) {
+			if (g_schedules.front().m_target_ticks > current_ticks()) break;  // Sorted — no more due
 
-			Schedule sched = *it;
-			it = g_schedules.erase(it);
+			Schedule sched = g_schedules.front();
+			g_schedules.pop_front();
+			fired++;
 			if (sched.m_func) sched.m_func();
 		}
 	} else if (drv_rtc_compare_pending(p_instance, 1)) {
