@@ -41,7 +41,7 @@ public:
 
 private:
 	bool m_is_init;
-	unsigned int m_power_ref_count;
+	volatile unsigned int m_power_ref_count;  ///< Shared with ISR — see power_up()
 
 	/// @name LittleFS FlashInterface overrides (called via LFS callbacks)
 	/// @{

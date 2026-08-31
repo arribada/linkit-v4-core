@@ -8,6 +8,8 @@
 #include "nrf_peripheral_power.hpp"
 #include "bsp.hpp"
 #include "debug.hpp"
+#include "gpio.hpp"
+#include "interrupt_lock.hpp"
 #include "is25_flash.hpp"
 #include "nrf_delay.h"
 
@@ -465,7 +467,10 @@ int Is25Flash::sync() {
 
 int Is25Flash::prog_fast(lfs_block_t block, lfs_off_t off, const void *buffer, lfs_size_t size) {
 	if (!m_is_init) return LFS_ERR_IO;
-	// NO power management here — caller must handle it for performance
+	// NO power management here — caller must handle it for performance. That
+	// now also means the VSYS interlock: power_up()/power_down() are what keep
+	// the rail at 3.3 V, and this die must never be programmed at the 2.3 V
+	// idle rail. Currently unused; wrap any new caller in power_up/power_down.
 	return _prog_fast(block, off, buffer, size);
 }
 
@@ -498,8 +503,23 @@ void Is25Flash::_power_up_hw() {
  * to ensure the flash chip stays deselected.  All other pins are pulled down.
  */
 void Is25Flash::_power_down_hw() {
-	// Wait for any writes/erases to complete before sleeping
-	_sync();
+	// Wait for any write/erase to finish before sleeping the die.
+	//
+	// NOT _sync(): its 300 ms budget is capped by the SoftDevice IRQ path (a BLE
+	// OTA write reaches it from the radio's own interrupt -- see _sync), and a
+	// 4 KB sector erase already spends all of it. This path only ever runs from
+	// the main loop, so it can afford the same 2 s the bring-up path uses.
+	//
+	// It matters because of what happens next: the caller releases the flash
+	// interlock, and PMU::reduce_power_rails() then takes VSYS down to 2.3 V --
+	// the die's absolute minimum -- about 250 ms later. Putting a die that is
+	// still programming to sleep and then browning it out is what left WIP armed
+	// for good on 2026-08-25 and 2026-08-29. With no load switch and no usable
+	// RESET#, that state is unrecoverable.
+	uint32_t waited = 0;
+	if (!wait_wip_clear(WIP_BOOT_TIMEOUT_US, waited))
+		DEBUG_ERROR("IS25LP128F: WIP still set after %lu us at power-down -- die left mid-program",
+		            (unsigned long)waited);
 
 	const nrf_qspi_cinstr_conf_t config = { .opcode = IS25LP128F::DP,  // Enter deep power mode
 	                                        .length = NRF_QSPI_CINSTR_LEN_1B,
@@ -530,11 +550,49 @@ void Is25Flash::_power_down_hw() {
 	nrf_gpio_cfg_input(BSP::QSPI_Inits[BSP::QSPI_0].config.pins.io3_pin, NRF_GPIO_PIN_PULLDOWN);
 }
 
+/// The reference count is shared with SOFTDEVICE INTERRUPT CONTEXT: a BLE OTA
+/// write reaches LittleFS -- and so prog() and power_up() -- straight out of
+/// BleInterface::stm_ota_event_handler, which the file itself documents as
+/// running in interrupt context (NRF_SDH_DISPATCH_MODEL = 0 in sdk_config.h).
+/// A bare ++/-- is a read-modify-write and silently loses one when the ISR
+/// lands in the middle. A lost increment lets power_down() reach zero while the
+/// main loop is still programming, which releases the rail interlock mid-erase
+/// -- precisely the brick the interlock exists to prevent.
+///
+/// The lock covers ONLY the counter and the flag. The hardware transitions stay
+/// outside it: _power_down_hw() can wait up to 2 s for WIP, and disabling
+/// interrupts for that long would break the SoftDevice.
 void Is25Flash::power_up() {
-	if (m_power_ref_count++ == 0) _power_up_hw();
+	bool bring_up;
+	{
+		InterruptLock lock;
+		// Interlock asserted BEFORE the count moves: reduce_power_rails() runs
+		// from the scheduler and must never see the flash in service at 2.3 V.
+		GPIOPins::set_flash_busy(true);
+		// Explicit read-modify-write: ++/-- on a volatile is deprecated in C++20
+		// (-Werror=volatile). Safe here — the whole sequence is inside the lock.
+		const unsigned int prev = m_power_ref_count;
+		m_power_ref_count = prev + 1;
+		bring_up = (prev == 0);
+	}
+	if (bring_up) _power_up_hw();
 }
 
 void Is25Flash::power_down() {
-	if (m_power_ref_count == 0) return;
-	if (--m_power_ref_count == 0) _power_down_hw();
+	bool shut_down;
+	{
+		InterruptLock lock;
+		if (m_power_ref_count == 0) return;
+		const unsigned int next = m_power_ref_count - 1;
+		m_power_ref_count = next;
+		shut_down = (next == 0);
+	}
+	if (shut_down) {
+		_power_down_hw();
+		// Release the interlock only if nobody re-acquired the flash while the
+		// die was going to sleep -- otherwise we would clear a flag that an
+		// interrupt has just legitimately raised.
+		InterruptLock lock;
+		if (m_power_ref_count == 0) GPIOPins::set_flash_busy(false);
+	}
 }

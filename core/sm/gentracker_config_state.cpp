@@ -16,6 +16,7 @@
  */
 
 #include "bsp.hpp"
+#include "gpio.hpp"
 #include "pmu.hpp"
 #include "ota_file_updater.hpp"
 #include "logger.hpp"
@@ -105,6 +106,12 @@ using buzz_handle = BuzzState;
 void ConfigurationState::entry() {
 	DEBUG_INFO("entry: ConfigurationState");
 
+	// Hold VSYS at 3.3 V for the whole session: the scheduler is idle here, so
+	// deep idle would otherwise drop the rail to 2.3 V under a live BLE/DTE
+	// exchange -- and an OTA write, dispatched from interrupt context, would
+	// program the IS25 below its rated minimum.
+	GPIOPins::set_config_mode_active(true);
+
 	// Flash the blue LED to indicate we have started BLE and we are
 	// waiting for a connection
 	led_handle::dispatch<SetLEDConfigNotConnected>({});
@@ -162,6 +169,9 @@ static void sync_bridge_log_silencing();  // Forward decl — defined near proce
 
 void ConfigurationState::exit() {
 	DEBUG_INFO("exit: ConfigurationState");
+
+	// Released FIRST, so the rail is freed even if the shutdown below throws.
+	GPIOPins::set_config_mode_active(false);
 	// Shut the BLE down FIRST, and under protection. This call used to be the LAST
 	// instruction of exit() and had no try/catch: if stop_bridge() or
 	// power_off_immediate() threw, we never got there and the beacon went back to

@@ -51,6 +51,41 @@ public:
 	static void set_gnss_uart_active(bool active);
 	static bool is_gnss_uart_active();
 
+	/// @brief "The flash is in service" interlock (2026-08).
+	///
+	/// Same rail, same 250 ms trigger, third component to need it. The
+	/// IS25LP128F is specified 2.30-3.60 V, so the 2.3 V idle rail sits exactly
+	/// on its lower bound -- no margin for regulator tolerance, nor for the
+	/// nRF's own load transients on the rail they share. Dropping the rail while
+	/// the die is programming leaves WIP armed for good, and the part has NO
+	/// load switch and NO usable RESET# (IO3 doubles as RESET# only while QE is
+	/// clear, and QE is non-volatile), so nothing in the system can power-cycle
+	/// it back: every such incident becomes a permanent brick. Field occurrences
+	/// 2026-08-25 and 2026-08-29 -- red 100 ms blink out of flash_init_failed()
+	/// with an empty system.log, which lives on the very flash that died.
+	///
+	/// Taken and released by Is25Flash::power_up()/power_down(), i.e. exactly
+	/// the lifetime of the reference count -- one single point, like the GNSS
+	/// interlock above.
+	static void set_flash_busy(bool busy);
+	static bool is_flash_busy();
+
+	/// @brief "We are in configuration mode" interlock (2026-08).
+	///
+	/// In ConfigurationState the scheduler is idle almost all the time -- the
+	/// device is waiting for a BLE or DTE command -- so reduce_power_rails()
+	/// fires within 250 ms and the whole session runs at 2.3 V. That is how a
+	/// SENSR arrived on a dead I2C bus (see DTEHandler::SENSR_REQ, which had to
+	/// call restore_power_rails() by hand), and it is how a BLE OTA write ends up
+	/// programming the IS25 at 2.3 V: the write is dispatched from SoftDevice
+	/// interrupt context, where nothing restores the rail.
+	///
+	/// Configuration mode is operator-driven, lasts minutes, and already keeps
+	/// the BLE radio on -- the idle rail saves nothing worth a brick here. Taken
+	/// and released by ConfigurationState::entry()/exit().
+	static void set_config_mode_active(bool active);
+	static bool is_config_mode_active();
+
 	/// @brief Force a VSENSORS off→on power-cycle to release a wedged I2C slave,
 	/// WITHOUT changing the reference count (the rail ends powered). Used by the
 	/// I2C bus-recovery path. No-op if the rail is currently off. Resets every
@@ -88,6 +123,8 @@ public:
 private:
 	static uint8_t m_sensors_pwr_refcount;
 	static bool m_gnss_uart_active;
+	static bool m_flash_busy;
+	static bool m_config_mode_active;
 
 	/// @brief Disconnect sensor I2C/interrupt pins to prevent backfeed when VSENSORS off.
 	static void disconnect_sensor_pins();

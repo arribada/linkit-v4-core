@@ -4,6 +4,8 @@
 
 uint8_t GPIOPins::m_sensors_pwr_refcount = 0;
 bool GPIOPins::m_gnss_uart_active = false;
+bool GPIOPins::m_flash_busy = false;
+bool GPIOPins::m_config_mode_active = false;
 
 void GPIOPins::initialise() {
 	mock().actualCall("initialise");
@@ -60,6 +62,21 @@ void GPIOPins::set_gnss_uart_active(bool active) {
 
 bool GPIOPins::is_gnss_uart_active() {
 	return m_gnss_uart_active;
+}
+
+void GPIOPins::set_flash_busy(bool busy) {
+	m_flash_busy = busy;
+}
+
+bool GPIOPins::is_flash_busy() {
+	return m_flash_busy;
+}
+void GPIOPins::set_config_mode_active(bool active) {
+	m_config_mode_active = active;
+}
+
+bool GPIOPins::is_config_mode_active() {
+	return m_config_mode_active;
 }
 
 uint8_t GPIOPins::get_sensors_pwr_refcount() {

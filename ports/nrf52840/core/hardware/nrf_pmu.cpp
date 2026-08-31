@@ -539,7 +539,15 @@ void PMU::reduce_power_rails() {
 	//     asserted. The shared rail is only dropped once nobody is talking to the
 	//     receiver any more; in deep-idle the UART is deinitialised and the M10Q
 	//     sleeps in backup, so the saving is kept where it counts.
-	if (!GPIOPins::get_sensors_pwr_state() && !GPIOPins::is_gnss_uart_active() && status_led
+	//   - 2026-08: IS25 flash. It shares this rail, is specified down to 2.30 V
+	//     only, and has neither a load switch nor a usable RESET# -- so a die
+	//     browned out mid-program stays wedged for good and the board never
+	//     boots again. See GPIOPins::set_flash_busy.
+	//   - 2026-08: configuration mode. The scheduler is idle almost all the time
+	//     there, so the whole operator session -- DTE commands, BLE OTA writes --
+	//     ran at 2.3 V. See GPIOPins::set_config_mode_active.
+	if (!GPIOPins::get_sensors_pwr_state() && !GPIOPins::is_gnss_uart_active() && !GPIOPins::is_flash_busy()
+	    && !GPIOPins::is_config_mode_active() && status_led
 	    && status_led->get_state() == RGBLedColor::BLACK && !status_led->is_flashing()) {
 		// Lower the POF brownout threshold BELOW the idle rail BEFORE dropping VSYS:
 		// POFCON is armed at 2.7V, but the idle rail is 2.3V, so at 2.7V the comparator
