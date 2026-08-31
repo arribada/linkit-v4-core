@@ -912,8 +912,8 @@ static LFSFileSystem &init_storage(NrfSwitch &nrf_reed_switch, Is25Flash &is25_f
 			// declare it not boundable.
 			rtc->settime(static_cast<std::time_t>(last_rtc));
 			rtc->note_source(RtcSource::RESTORED);
-			DEBUG_WARN("EXTERNAL_WAKEUP: reveil hors TPL (cause=%d) — chaine pseudo-RTC rompue, heure restauree sans "
-			           "avance (%u)",
+			DEBUG_WARN("EXTERNAL_WAKEUP: wake outside TPL (cause=%d) — pseudo-RTC chain broken, time restored without "
+			           "advance (%u)",
 			           (int)boot_cause, last_rtc);
 		} else {
 			DEBUG_INFO("EXTERNAL_WAKEUP: No pseudo RTC available (last_rtc=%u, wakeup_period=%u)", last_rtc,
@@ -954,7 +954,7 @@ static LFSFileSystem &init_storage(NrfSwitch &nrf_reed_switch, Is25Flash &is25_f
 			// the receiver as +/- 2 s — measured on the bench on 2026-08-25
 			// with 52 days of drift.
 			rtc->note_source(RtcSource::RESTORED);
-			DEBUG_INFO("Restored LAST_KNOWN_RTC = %u (provenance: restauree)", last_rtc);
+			DEBUG_INFO("Restored LAST_KNOWN_RTC = %u (source: restored)", last_rtc);
 		}
 #endif
 

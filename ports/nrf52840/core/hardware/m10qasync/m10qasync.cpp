@@ -990,7 +990,7 @@ void M10QAsyncReceiver::react(const UBXCommsEventNavReport &n) {
 				    if (!m_rtc_persisted_this_session && now >= RTC_MIN_REAL && configuration_store) {
 					    m_rtc_persisted_this_session = true;
 					    configuration_store->write_param(ParamID::LAST_KNOWN_RTC, static_cast<unsigned int>(now));
-					    DEBUG_INFO("M10QAsyncReceiver: heure GNSS persistee (%u), derive mesuree %d ppm",
+					    DEBUG_INFO("M10QAsyncReceiver: GNSS time persisted (%u), measured drift %d ppm",
 						           (unsigned int)now, (int)rtc->drift_ppm());
 				    }
 
@@ -1909,7 +1909,7 @@ void M10QAsyncReceiver::state_configure() {
 			// cancelled the request — precisely when it is needed (BBR retained, and
 			// therefore possibly stale or corrupt).
 			if (m_bbr_retained && m_gnss_info_valid && !m_nav_settings.cold_start && m_step == 0) {
-				DEBUG_INFO("M10QAsyncReceiver: BBR retenue (M10Q a %u baud) — fast path config", m_synced_baud);
+				DEBUG_INFO("M10QAsyncReceiver: BBR retained (M10Q at %u baud) — fast path config", m_synced_baud);
 				m_step = ConfigStep::FAST_VALIDATE_BAUD;  // Fast path: validate BBR
 				m_op_state = OpState::IDLE;
 				continue;
@@ -2405,7 +2405,7 @@ bool M10QAsyncReceiver::load_dbd_from_flash() {
 				// the bench, where the clock had gone 53 days backwards and the day's
 				// DBD was thrown away without a word.
 				DEBUG_INFO(
-				    "M10QAsyncReceiver::load_dbd_from_flash: RTC revenue en arriere (%u < %u) — assistance ecartee",
+				    "M10QAsyncReceiver::load_dbd_from_flash: RTC went backwards (%u < %u) — assistance discarded",
 				    now_t, save_time);
 				return false;
 			}
@@ -2413,12 +2413,12 @@ bool M10QAsyncReceiver::load_dbd_from_flash() {
 			const uint32_t max_age = m_bbr_retained ? DBD_MAX_AGE_BBR_S : DBD_MAX_AGE_NO_BBR_S;
 			if (age_s > max_age) {
 				DEBUG_INFO("M10QAsyncReceiver::load_dbd_from_flash: expired (%u s > %u s, BBR %s)", age_s, max_age,
-				           m_bbr_retained ? "retenue" : "perdue");
+				           m_bbr_retained ? "retained" : "lost");
 				return false;
 			}
-			DEBUG_INFO("M10QAsyncReceiver::load_dbd_from_flash: %u octets, age %u s (plafond %u s, BBR %s)",
+			DEBUG_INFO("M10QAsyncReceiver::load_dbd_from_flash: %u bytes, age %u s (cap %u s, BBR %s)",
 			           (unsigned int)(file.size() - sizeof(uint32_t)), age_s, max_age,
-			           m_bbr_retained ? "retenue" : "perdue");
+			           m_bbr_retained ? "retained" : "lost");
 		}
 
 		unsigned int data_len = (unsigned int)(file.size() - sizeof(uint32_t));
@@ -2565,7 +2565,7 @@ void M10QAsyncReceiver::state_senddatabase_enter() {
 	// was actually injected into the receiver. Without it you have to infer the
 	// answer from the time spent in the state — which is what we had to do on the
 	// bench on 2026-08-25 for want of anything better.
-	DEBUG_INFO("M10QAsyncReceiver::state_senddatabase: injection de %u octets d'assistance", m_ana_database_len);
+	DEBUG_INFO("M10QAsyncReceiver::state_senddatabase: injecting %u bytes of assistance", m_ana_database_len);
 }
 
 void M10QAsyncReceiver::state_senddatabase() {

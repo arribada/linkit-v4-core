@@ -2328,7 +2328,7 @@ def c_zone_batterie_prime(r, case):
     basse dans la session en cours. Le cas tente un redemarrage logiciel, mais
     il se declare NON CONCLUANT (ERROR, pas FAIL) si le drapeau ne monte pas:
     accuser le firmware sur une precondition non remplie serait pire que ne rien
-    tester. Rendre ce cas concluant demande une injection de mesure batterie
+    tester. Rendre ce cas concluant demande une injecting mesure batterie
     (sonde %BATT <mv>), qui n existe pas encore.
     """
     if saute_si_batterie_trop_pleine(r, case, 'la priorite de LOW_BATTERY sur le hors-zone'):
@@ -5747,7 +5747,7 @@ def _config_ciel(b, **extra):
 def _attend_fix_reel(b, secondes=330, depuis=None):
     """Attend une VRAIE position. Rend (lignes, hAcc_mm, numSV) ou (lignes, None, None).
 
-    On guette la trace de traitement du pilote, pas l injection de banc: c est
+    On guette la trace de traitement du pilote, pas l injecting banc: c est
     la seule qui prouve qu une trame NAV-PVT est reellement arrivee.
     """
     motifs = [r'task_process_gnss_data: lat=', r'timeout with degraded PVT',

@@ -415,7 +415,7 @@ def t10_inject(b):
     acc = b.wait(r"bench_inject_fix|retry_counter: reset", 25, since=idx)
     off = b.wait(r"dispatch=immediate_off|power_off", 25, since=idx)
     ok = bool(acc)
-    record("T10", "injection de fix + fin de session (R20)", ok,
+    record("T10", "injecting fix + fin de session (R20)", ok,
            ("fix accepté" if acc else "fix non accepté") +
            (", session close" if off else ", PAS de fin de session"),
            [x for x in (acc, off) if x])

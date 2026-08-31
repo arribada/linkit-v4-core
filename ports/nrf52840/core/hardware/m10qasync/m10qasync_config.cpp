@@ -349,14 +349,14 @@ void M10QAsyncReceiver::supply_time_assistance() {
 	const unsigned int tacc = rtc->time_accuracy_s();
 	if (tacc == 0) {
 		DEBUG_INFO("M10QAsyncReceiver::supply_time_assistance: time source accuracy not boundable (%s) — no injection",
-		           rtc->source() == RtcSource::RESTORED ? "restauree du flash" : "jamais synchronisee");
+		           rtc->source() == RtcSource::RESTORED ? "restored from flash" : "never synchronised");
 		m_step++;
 		m_op_state = OpState::IDLE;
 		run_state_machine();
 		return;
 	}
 
-	DEBUG_INFO("M10QAsyncReceiver::supply_time_assistance: MGA-INI-TIME tAccS=%u s (age %u s, derive %d ppm)", tacc,
+	DEBUG_INFO("M10QAsyncReceiver::supply_time_assistance: MGA-INI-TIME tAccS=%u s (age %u s, drift %d ppm)", tacc,
 	           rtc->age_s(), (int)rtc->drift_ppm());
 	uint16_t year;
 	uint8_t month, day, hour, min, sec;
@@ -424,14 +424,14 @@ void M10QAsyncReceiver::supply_position_assistance() {
 	// instant of the fix -- a false constraint it uses to narrow its search.
 	const unsigned long acc_cm = (unsigned long)last_gps.info.hAcc / 10UL + 100UL + age_s * speed_cm_s;
 	if (acc_cm > POS_ACC_MAX_CM) {
-		DEBUG_INFO("M10QAsyncReceiver::supply_position_assistance: position trop vieille (age %lu s, rayon %lu km) — "
-		           "pas d'injection",
+		DEBUG_INFO("M10QAsyncReceiver::supply_position_assistance: position too old (age %lu s, radius %lu km) — "
+		           "no injection",
 		           age_s, acc_cm / 100000UL);
 		return;
 	}
 
 	DEBUG_INFO(
-	    "M10QAsyncReceiver::supply_position_assistance: MGA-INI-POS lat=%f lon=%f rayon=%lu m (age %lu s, %lu cm/s)",
+	    "M10QAsyncReceiver::supply_position_assistance: MGA-INI-POS lat=%f lon=%f radius=%lu m (age %lu s, %lu cm/s)",
 	    last_gps.info.lat, last_gps.info.lon, acc_cm / 100UL, age_s, speed_cm_s);
 
 	MGA::MSG_INI_POS_LLH msg = {

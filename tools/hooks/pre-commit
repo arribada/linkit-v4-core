@@ -43,4 +43,16 @@ if git diff --cached --name-only | grep -qE '^(tests/bench/|core/|ports/nrf52840
     fi
 fi
 
+# Le firmware parle anglais. Le 2026-08-31 un utilisateur a recu un journal de
+# sa balise ou six messages sur dix etaient en francais; ces journaux partent
+# chez des partenaires. Le harnais de banc, lui, reste en francais et n est pas
+# verifie.
+if git diff --cached --name-only | grep -qE '^(core/|ports/nrf52840/(core/|main\.cpp|bsp/))'; then
+    echo "=== Pre-commit: Checking firmware logs are English ==="
+    if ! python3 "$REPO_ROOT/tools/check_english_logs.py"; then
+        echo "ERROR: a firmware log string is in French. Commit aborted."
+        exit 1
+    fi
+fi
+
 echo "=== Pre-commit: Build OK ==="
