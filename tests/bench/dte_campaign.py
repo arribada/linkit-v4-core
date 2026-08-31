@@ -3234,6 +3234,178 @@ def c_gnss_ntry_backoff(r, case):
         return r.record(case, 'FAIL', 'limite NTRY atteinte sans repli sur dloc_arg_nom', trace)
     r.record(case, 'PASS', 'limite NTRY annoncee et repli sur dloc_arg_nom', trace)
 
+def _deep_idle_dispatch(r, b, valeur, secondes=70):
+    """Configure GNP52, injecte un fix, et rend la ligne de disposition observee.
+
+    Les trois regimes emettent trois lignes DIFFERENTES, et c est la seule facon
+    de savoir laquelle la balise a choisie:
+      GNP52=0           -> "disabled — power_off"      (coupure immediate)
+      GNP52=0xFFFFFFFF  -> "never-poweroff (rail stays on"  (sentinelle)
+      sinon             -> "deep-idle for <n> s"
+    """
+    _gnss_base(b, GNSS_DEEP_IDLE_AFTER_OFF_S=valeur)
+    time.sleep(3)
+    mk = b.mark()
+    b.inject_gps(43.2, 5.8)
+    return _attendre_trace(b, [r'deep-idle for (\d+) s',
+                               r'never-poweroff \(rail stays on',
+                               r'disabled — power_off'],
+                           secondes, depuis=mk)
+
+
+def _deep_idle_restaure(b):
+    try:
+        b.enter_config(); b.write_params({'GNSS_DEEP_IDLE_AFTER_OFF_S': 0}); b.exit_config()
+    except Exception:
+        pass
+
+
+def c_deep_idle_zero(r, case):
+    """GNP52=0: coupure immediate du rail, et une session suivante repart.
+
+    C est le DEFAUT de toutes les balises, et il n avait aucun cas. Le risque
+    n est pas la coupure elle-meme mais ce qui suit: si le rail est coupe sans
+    que l ordonnanceur ne soit relance, l acquisition s arrete pour de bon. Le
+    cas verifie donc les DEUX: la coupure, puis la session suivante.
+    """
+    b = r.b
+    try:
+        vues = _deep_idle_dispatch(r, b, 0, secondes=60)
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    coupure = any('disabled — power_off' in l for l in vues)
+    if not coupure:
+        _deep_idle_restaure(b)
+        return r.record(case, 'FAIL', 'GNP52=0 mais aucune coupure immediate annoncee',
+                        '\n'.join(vues[:5]))
+    # la session suivante doit repartir: c est la moitie du cas
+    mk = b.mark()
+    suite = _attendre_trace(b, [r'M10Q on'], 400, depuis=mk)
+    _deep_idle_restaure(b)
+    if not suite:
+        return r.record(case, 'FAIL',
+                        'coupure immediate correcte, mais AUCUNE session GNSS ensuite en 400 s — '
+                        'acquisition arretee pour de bon', '\n'.join(vues[:5]))
+    r.record(case, 'PASS', 'coupure immediate, et la session suivante repart',
+             '\n'.join((vues + suite)[:6]))
+
+
+def c_deep_idle_longue(r, case):
+    """GNP52=600: une fenetre longue est annoncee a sa vraie valeur.
+
+    45 s (GPS-05) tient dans une seule fenetre d ordonnancement; 600 s n y tient
+    pas. Si la duree annoncee etait tronquee ou arrondie quelque part, seule une
+    valeur longue le montrerait.
+    """
+    b = r.b
+    try:
+        vues = _deep_idle_dispatch(r, b, 600)
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    _deep_idle_restaure(b)
+    duree = None
+    for l in vues:
+        m = re.search(r'deep-idle for (\d+) s', l)
+        if m:
+            duree = int(m.group(1)); break
+    if duree is None:
+        return r.record(case, 'FAIL', 'GNP52=600 mais aucune veille profonde annoncee',
+                        '\n'.join(vues[:5]))
+    if duree != 600:
+        return r.record(case, 'FAIL', f'veille profonde de {duree} s au lieu des 600 s configurees',
+                        '\n'.join(vues[:5]))
+    r.record(case, 'PASS', 'veille profonde de 600 s, conforme a GNP52', '\n'.join(vues[:5]))
+
+
+def c_deep_idle_sentinelle(r, case):
+    """GNP52=0xFFFFFFFF: le rail reste allume, et la balise le DIT.
+
+    Le regime le plus risque des trois, et jamais eprouve. Son propre commentaire
+    dans gps_service.cpp raconte qu une version precedente arretait DEFINITIVEMENT
+    l acquisition dans ce mode, faute de tache de reouverture — le rail restait
+    allume et plus rien ne revenait. Le cas suivant (c_deep_idle_sentinelle_sans_uw)
+    eprouve precisement cette configuration-la.
+    """
+    b = r.b
+    try:
+        vues = _deep_idle_dispatch(r, b, 0xFFFFFFFF)
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    _deep_idle_restaure(b)
+    if any('never-poweroff (rail stays on' in l for l in vues):
+        return r.record(case, 'PASS', 'sentinelle reconnue: rail maintenu, M10Q en PMREQ-backup',
+                        '\n'.join(vues[:5]))
+    if any('deep-idle for' in l for l in vues):
+        return r.record(case, 'FAIL',
+                        'la sentinelle est traitee comme une duree ordinaire — le rail sera coupe',
+                        '\n'.join(vues[:5]))
+    r.record(case, 'FAIL', 'GNP52=sentinelle mais aucune disposition annoncee',
+             '\n'.join(vues[:5]))
+
+
+def c_deep_idle_sentinelle_sans_uw(r, case):
+    """Sentinelle SANS detection d immersion: l acquisition doit continuer.
+
+    C est la regression que le code decrit noir sur blanc: "sur toute
+    configuration sans source d evenement pair (UNDERWATER_EN=0, c est-a-dire un
+    simple traceur periodique) l acquisition GNSS s arretait definitivement".
+    C est exactement le profil drifter et le profil fix_beacon — et celui de
+    Chypre. Le cas ne se contente donc pas de lire la ligne de disposition: il
+    attend la SESSION SUIVANTE.
+    """
+    b = r.b
+    try:
+        vues = _deep_idle_dispatch(r, b, 0xFFFFFFFF)
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    if not any('never-poweroff (rail stays on' in l for l in vues):
+        _deep_idle_restaure(b)
+        return r.record(case, 'ERROR', 'la sentinelle n a pas ete engagee — cas non concluant',
+                        '\n'.join(vues[:5]))
+    mk = b.mark()
+    # _gnss_base pose DLOC_ARG_NOM=13 (5 min): une session doit revenir bien avant 500 s.
+    suite = _attendre_trace(b, [r'M10Q on', r'sentinel deep-idle — re-opening scheduler'],
+                            500, depuis=mk)
+    _deep_idle_restaure(b)
+    if not suite:
+        return r.record(case, 'FAIL',
+                        'sentinelle engagee avec UNDERWATER_EN=0 et AUCUNE reprise en 500 s — '
+                        'l acquisition est arretee pour de bon (regression connue)',
+                        '\n'.join(vues[:5]))
+    r.record(case, 'PASS', 'sentinelle engagee, et l ordonnanceur rouvre bien sans evenement pair',
+             '\n'.join(suite[:5]))
+
+
+def c_deep_idle_borne(r, case):
+    """Une valeur au-dela du plafond de 24 h doit etre ramenee au plafond.
+
+    DEEP_IDLE_HARD_CAP_S vaut 24 h et borne auto_off_s. Une valeur de 48 h ne
+    doit donc pas produire une fenetre de 48 h — sinon une balise mal configuree
+    disparait deux jours au lieu d un.
+    """
+    b = r.b
+    deux_jours = 48 * 3600
+    try:
+        vues = _deep_idle_dispatch(r, b, deux_jours)
+    except Exception as e:
+        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
+    _deep_idle_restaure(b)
+    duree = None
+    for l in vues:
+        m = re.search(r'deep-idle for (\d+) s', l)
+        if m:
+            duree = int(m.group(1)); break
+    if duree is None:
+        return r.record(case, 'FAIL', 'GNP52=48 h mais aucune veille profonde annoncee',
+                        '\n'.join(vues[:5]))
+    if duree > 24 * 3600:
+        return r.record(case, 'FAIL',
+                        f'fenetre de {duree} s — le plafond de 24 h n est pas applique',
+                        '\n'.join(vues[:5]))
+    r.record(case, 'PASS', f'fenetre ramenee a {duree} s, plafond de 24 h applique',
+             '\n'.join(vues[:5]))
+
+
 def c_gnss_deep_idle(r, case):
     """GNSS_DEEP_IDLE_AFTER_OFF_S: veille profonde plutot que coupure du rail.
 
@@ -3630,6 +3802,21 @@ CASES_V16 = [
          fn=c_gnss_ntry_backoff),
     dict(id='GPS-05', risque='MAJEUR',   titre='La veille profonde respecte la duree configuree',
          fn=c_gnss_deep_idle),
+    # La veille profonde a QUATRE regimes, pas un continuum, et un seul avait un
+    # cas (GPS-05, valeur 45 s). Le defaut de toutes les balises — GNP52=0 —
+    # n en avait aucun, et la sentinelle non plus alors que c est le regime le
+    # plus risque: son propre commentaire raconte qu une version precedente
+    # arretait DEFINITIVEMENT l acquisition dans cette configuration.
+    dict(id='GPS-D1', risque='BLOQUANT', titre='GNP52=0: coupure immediate, et la session suivante repart',
+         fn=c_deep_idle_zero),
+    dict(id='GPS-D2', risque='MAJEUR',   titre='GNP52=600: une fenetre longue est annoncee juste',
+         fn=c_deep_idle_longue),
+    dict(id='GPS-D3', risque='BLOQUANT', titre='Sentinelle: le rail reste allume et la balise le dit',
+         fn=c_deep_idle_sentinelle),
+    dict(id='GPS-D4', risque='BLOQUANT', titre='Sentinelle sans immersion: l acquisition continue',
+         fn=c_deep_idle_sentinelle_sans_uw),
+    dict(id='GPS-D5', risque='MAJEUR',   titre='Au-dela de 24 h, la fenetre est ramenee au plafond',
+         fn=c_deep_idle_borne),
     dict(id='GPS-06', risque='MAJEUR',   titre='Demarrage a froid apres epuisement de NTRY',
          fn=c_gnss_cold_start),
     dict(id='MOOR-01', risque='MAJEUR',  titre='Entree en MOORED apres N fixes immobiles',

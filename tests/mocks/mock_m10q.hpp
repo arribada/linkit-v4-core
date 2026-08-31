@@ -51,6 +51,7 @@ public:
 
 	void power_on(const GPSNavSettings &nav_settings) override {
 		DEBUG_TRACE("MockM10Q::power_on()");
+		m_in_deep_idle = false;  // powering on always leaves deep idle
 		m_last_nav_settings = nav_settings;
 		mock()
 		    .actualCall("power_on")
@@ -65,9 +66,27 @@ public:
 
 	void power_off() override {
 		DEBUG_TRACE("MockM10Q::power_off()");
+		// Deep idle: honour the intent the service armed just before this call.
+		// GPSService::try_enter_deep_idle_or_poweroff() does
+		// request_deep_idle_on_next_stop() then power_off(), and the real driver
+		// reroutes the power-down chain to enterbackup, keeping VDD on. Without
+		// modelling that here, is_in_deep_idle() stayed false and the scheduling
+		// gate never held -- so no host test could observe the deep-idle window
+		// at all. The existing sentinel test says as much in its own comment.
+		m_in_deep_idle = m_deep_idle_requested;
+		m_deep_idle_requested = false;
 		mock().actualCall("power_off").onObject(this);
 	}
 
+	void request_deep_idle_on_next_stop() override { m_deep_idle_requested = true; }
+
+	bool is_in_deep_idle() const override { return m_in_deep_idle; }
+
+	/// Test helper: force the modelled state, for tests that start mid-window.
+	void set_in_deep_idle(bool v) { m_in_deep_idle = v; }
+
 private:
 	GPSNavSettings m_last_nav_settings{};
+	bool m_deep_idle_requested = false;
+	bool m_in_deep_idle = false;
 };

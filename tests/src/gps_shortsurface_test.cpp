@@ -517,6 +517,57 @@ TEST(GPSShortSurface, DeepIdleDisabledImmediatePowerOff) {
 /// "is_in_deep_idle" check returns false by default on the mock, so we
 /// observe normal scheduling behavior). This test pins that no extra calls
 /// fire from the sentinel branch.
+/// Which deep-idle REGIME does the service choose for a given GNP52?
+///
+/// GNP52 is not a continuum: 0 cuts the rail immediately, the sentinel keeps it
+/// on for good, and anything between opens a bounded window. Only the first had
+/// a test. These three pin the DECISION — the one thing a host test can assert
+/// honestly, now that MockM10Q models the deep-idle intent.
+///
+/// The exit TIMING is deliberately not asserted here. Reproducing it would mean
+/// modelling the scheduling gate, the auto-off task and the rail cycle inside
+/// the mock — at which point the test measures the mock, not the firmware. That
+/// half belongs on hardware, and lives in the bench cases GPS-D1..D5.
+TEST(GPSShortSurface, DeepIdleRegimeDisabledLeavesNoIdle) {
+	// GNP52=0 from the fixture.
+	fake_rtc->settime(1580083200);
+	GPSService s(*mock_m10q, fake_log);
+	s.start();
+	mock().ignoreOtherCalls();
+	increment_time_s(FIRST_AQPERIOD);
+	mock_m10q->notify_max_nav_samples();
+	CHECK_FALSE(mock_m10q->is_in_deep_idle());
+}
+
+TEST(GPSShortSurface, DeepIdleRegimeFiniteWindowEntersIdle) {
+	fake_config_store->write_param(ParamID::GNSS_DEEP_IDLE_AFTER_OFF_S, 600U);
+	fake_rtc->settime(1580083200);
+	GPSService s(*mock_m10q, fake_log);
+	s.start();
+	mock().ignoreOtherCalls();
+	increment_time_s(FIRST_AQPERIOD);
+	mock_m10q->notify_max_nav_samples();
+	CHECK_TRUE(mock_m10q->is_in_deep_idle());
+}
+
+/// The sentinel with UNDERWATER_EN=0 — the drifter, fix-beacon and Cyprus
+/// profile. The source comment records that this exact combination once stopped
+/// acquiring for good, because nothing re-opened the scheduler without a peer
+/// event. Entering deep idle here is correct; the bench case GPS-D4 is what
+/// proves the beacon comes back out of it.
+TEST(GPSShortSurface, DeepIdleRegimeSentinelWithoutPeerEventEntersIdle) {
+	fake_config_store->write_param(ParamID::UNDERWATER_EN, (bool)false);
+	fake_config_store->write_param(ParamID::GNSS_TRIGGER_ON_SURFACED, (bool)false);
+	fake_config_store->write_param(ParamID::GNSS_DEEP_IDLE_AFTER_OFF_S, 0xFFFFFFFFU);
+	fake_rtc->settime(1580083200);
+	GPSService s(*mock_m10q, fake_log);
+	s.start();
+	mock().ignoreOtherCalls();
+	increment_time_s(FIRST_AQPERIOD);
+	mock_m10q->notify_max_nav_samples();
+	CHECK_TRUE(mock_m10q->is_in_deep_idle());
+}
+
 TEST(GPSShortSurface, DeepIdleNeverOffSentinel) {
 	fake_config_store->write_param(ParamID::GNSS_DEEP_IDLE_AFTER_OFF_S, 0xFFFFFFFFU);
 	fake_rtc->settime(1580083200);
