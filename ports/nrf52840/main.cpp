@@ -287,26 +287,47 @@ FSM_INITIAL_STATE(GenTracker, BootState)
  *
  * Uses NrfRGBLed::set_color_raw() for bare-metal GPIO access (no timer/scheduler dependency).
  *
- * Fault color map:
- *   - RED 50 ms      → HardFault
- *   - YELLOW 50 ms   → MemManagement
- *   - MAGENTA 50 ms  → Stack overflow (__stack_chk_fail)
- *   - CYAN 50 ms     → Malloc failure
- *   - RED 200 ms     → ETL assertion
+ * ALWAYS RED, and the fault class is the BLINK COUNT — never the colour.
+ *
+ * Colour alone could never mean "fault": every colour this map used is also a
+ * normal state in ledsm.cpp (RED 7 times, MAGENTA 5, CYAN 2, YELLOW 2). A user
+ * reported a fast cyan blink on 2026-08-31 and could not tell a fatal malloc
+ * failure from a GNSS session, because both are cyan — the fault at 50 ms, the
+ * session at 1000 ms. Asking a field operator to judge a blink RATE by eye is
+ * not a diagnostic.
+ *
+ * So: N short red blinks, then a long pause, repeating. Nothing in normal
+ * operation emits a counted burst — ledsm.cpp only ever uses steady set() or an
+ * even flash(). "Red, and I counted four" is something anyone can report.
+ *
+ *   - 1 blink  → HardFault
+ *   - 2 blinks → MemManagement
+ *   - 3 blinks → Stack overflow (__stack_chk_fail)
+ *   - 4 blinks → Malloc failure
+ *   - 5 blinks → ETL assertion
  *
  * @param color    LED color identifying the fault type.
  * @param delay_ms Blink half-period in milliseconds (default 50 ms).
  */
-[[noreturn]] static void fault_blink_loop(RGBLedColor color, unsigned int delay_ms = 50) {
+[[noreturn]] static void fault_blink_loop(unsigned int blink_count) {
+	constexpr unsigned int BLINK_ON_MS = 120;   // long enough to see, short enough to count
+	constexpr unsigned int BLINK_OFF_MS = 180;  // gap inside a burst
+	constexpr unsigned int PAUSE_MS = 1500;     // gap between bursts — makes the count readable
+	const RGBLedColor color = RGBLedColor::RED;
 	for (;;) {
+		for (unsigned int i = 0; i < blink_count; i++) {
 #ifdef GPIO_LED_REG
 		GPIOPins::set(GPIO_LED_REG);
 #endif
-		NrfRGBLed::set_color_raw(BSP::GPIO::GPIO_LED_RED, BSP::GPIO::GPIO_LED_GREEN, BSP::GPIO::GPIO_LED_BLUE, color);
-		nrf_delay_ms(delay_ms);
-		NrfRGBLed::set_color_raw(BSP::GPIO::GPIO_LED_RED, BSP::GPIO::GPIO_LED_GREEN, BSP::GPIO::GPIO_LED_BLUE,
-		                         RGBLedColor::BLACK);
-		nrf_delay_ms(delay_ms);
+			NrfRGBLed::set_color_raw(BSP::GPIO::GPIO_LED_RED, BSP::GPIO::GPIO_LED_GREEN, BSP::GPIO::GPIO_LED_BLUE,
+			                         color);
+			nrf_delay_ms(BLINK_ON_MS);
+			NrfRGBLed::set_color_raw(BSP::GPIO::GPIO_LED_RED, BSP::GPIO::GPIO_LED_GREEN, BSP::GPIO::GPIO_LED_BLUE,
+			                         RGBLedColor::BLACK);
+			nrf_delay_ms(BLINK_OFF_MS);
+			PMU::kick_watchdog();
+		}
+		nrf_delay_ms(PAUSE_MS);
 		PMU::kick_watchdog();
 	}
 }
@@ -412,7 +433,7 @@ extern "C" void HardFault_Handler() {
 		PMU::reset(false);
 	}
 #else
-	fault_blink_loop(RGBLedColor::RED);
+	fault_blink_loop(1);  // HardFault
 #endif
 }
 
@@ -423,7 +444,7 @@ extern "C" void MemoryManagement_Handler(void) {
 		PMU::reset(false);
 	}
 #else
-	fault_blink_loop(RGBLedColor::YELLOW);
+	fault_blink_loop(2);  // MemManagement
 #endif
 }
 
@@ -436,7 +457,7 @@ void __wrap___stack_chk_fail(void) {
 	PMU::save_stack(PMULogType::STACK);
 	PMU::reset(false);
 #else
-	fault_blink_loop(RGBLedColor::MAGENTA);
+	fault_blink_loop(3);  // Stack overflow
 #endif
 }
 }
@@ -448,7 +469,7 @@ extern "C" void vApplicationMallocFailedHook() {
 		PMU::reset(false);
 	}
 #else
-	fault_blink_loop(RGBLedColor::CYAN);
+	fault_blink_loop(4);  // Malloc failure
 #endif
 }
 
@@ -463,7 +484,7 @@ void etl_error_handler(const etl::exception &e) {
 		PMU::reset(false);
 	}
 #else
-	fault_blink_loop(RGBLedColor::RED, 200);
+	fault_blink_loop(5);  // ETL assertion
 #endif
 }
 
