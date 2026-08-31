@@ -479,9 +479,13 @@ std::string DTEHandler::DUMPD_REQ(int error_code, std::vector<BaseType> &arg_lis
 	formatter = logger->get_log_formatter();
 
 	// Check to see if this is the first item
+	// Per-formatter batch size: a GPS line is an order of magnitude longer than
+	// a system.log one, and the packet is base64-encoded before it is sent.
+	const unsigned int max_dump_entries = formatter->max_dump_entries();
+
 	unsigned int total_entries = logger->num_entries();
 	if (0 == m_dumpd_NNN) {
-		m_dumpd_NNN = (total_entries + (DTE_HANDLER_MAX_LOG_DUMP_ENTRIES - 1)) / DTE_HANDLER_MAX_LOG_DUMP_ENTRIES;
+		m_dumpd_NNN = (total_entries + (max_dump_entries - 1)) / max_dump_entries;
 		// Special case where log file is empty we set NNN to 1 and will send an empty payload
 		m_dumpd_NNN = m_dumpd_NNN == 0 ? 1 : m_dumpd_NNN;
 		m_dumpd_mmm = 0;
@@ -489,11 +493,19 @@ std::string DTEHandler::DUMPD_REQ(int error_code, std::vector<BaseType> &arg_lis
 
 	LogEntry log_entry;
 	BaseRawData raw_data;
-	unsigned int start_index = m_dumpd_mmm * DTE_HANDLER_MAX_LOG_DUMP_ENTRIES;
+	unsigned int start_index = m_dumpd_mmm * max_dump_entries;
 	unsigned int num_entries =
-	    (start_index < total_entries) ? std::min(total_entries - start_index, DTE_HANDLER_MAX_LOG_DUMP_ENTRIES) : 0;
+	    (start_index < total_entries) ? std::min(total_entries - start_index, max_dump_entries) : 0;
 	raw_data.ptr = nullptr;
 	raw_data.length = 0;
+
+	// Reserve the whole batch up front. Without this, append() grows the string
+	// by doubling -- 15, 30, 60 ... 3840 -- and each step allocates the new block
+	// BEFORE freeing the old, so the two coexist. Over the hundreds of packets a
+	// full log takes, that churn fragments the heap until the largest free block
+	// is smaller than the next request, while the total free still looks healthy.
+	// One allocation of the final size instead of a dozen.
+	raw_data.str.reserve((size_t)num_entries * GPS_LOG_ENTRY_MAX_CHARS + 256);
 
 	// Set CSV header line if this is the first packet output
 	if (0 == m_dumpd_mmm) raw_data.str.append(formatter->header());

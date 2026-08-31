@@ -51,7 +51,10 @@ class GPSService;  // forward decl — full definition included in gps_service.h
 extern GPSService *gps_service;
 
 // This governs the maximum number of log entries we can read out in a single request
-#define DTE_HANDLER_MAX_LOG_DUMP_ENTRIES 8U
+/// @brief Upper bound on one formatted log line, used to size the DUMPD batch
+/// buffer up front. Matches the 512-byte snprintf buffer of the widest
+/// formatter (GPS). See LogFormatter::max_dump_entries.
+#define GPS_LOG_ENTRY_MAX_CHARS 512U
 
 enum class DTEAction {
 	NONE,   // Default action is none

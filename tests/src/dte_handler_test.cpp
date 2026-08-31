@@ -594,21 +594,23 @@ TEST(DTEHandler, DUMPD_REQ_SensorLog) {
 	             "lat,height,hMSL,hAcc,vAcc,velN,velE,velD,gSpeed,headMot,sAcc,headAcc,pDOP,vDOP,hDOP,headVeh\r\n",
 	             std::get<std::string>(arg_list[2]).c_str());
 
-	// Check N entries are retrieved requiring two passes
-	mock().expectOneCall("num_entries").onObject(mock_sensor_log).andReturnValue(12);
-	for (unsigned int i = 0; i < 8; i++)
-		mock().expectOneCall("read").onObject(mock_sensor_log).withIntParameter("index", i).ignoreOtherParameters();
-	CHECK_TRUE(DTEAction::AGAIN == dte_handler->handle_dte_message(req, resp));
+	// Check N entries are retrieved requiring three passes. The GPS formatter
+	// packs FOUR entries per packet, not the default eight: its line is 29 CSV
+	// fields out of a 512-byte buffer, so eight of them overflow the 4095-byte
+	// base64 payload limit and blew the heap on Cyprus (2026-08-31, MALLOC fault
+	// dumping a 1437-entry log). See LogFormatter::max_dump_entries.
+	for (unsigned int pass = 0; pass < 3; pass++) {
+		mock().expectOneCall("num_entries").onObject(mock_sensor_log).andReturnValue(12);
+		for (unsigned int i = pass * 4; i < (pass + 1) * 4; i++)
+			mock().expectOneCall("read").onObject(mock_sensor_log).withIntParameter("index", i).ignoreOtherParameters();
 
-	arg_list.clear();
-	DTEDecoder::decode(resp, command, error_code, arg_list, params, param_values);
-	CHECK_TRUE(DTECommand::DUMPD_RESP == command);
-	printf(std::get<std::string>(arg_list[2]).c_str());
+		const DTEAction expected = (pass == 2) ? DTEAction::NONE : DTEAction::AGAIN;
+		CHECK_TRUE(expected == dte_handler->handle_dte_message(req, resp));
 
-	mock().expectOneCall("num_entries").onObject(mock_sensor_log).andReturnValue(12);
-	for (unsigned int i = 8; i < 12; i++)
-		mock().expectOneCall("read").onObject(mock_sensor_log).withIntParameter("index", i).ignoreOtherParameters();
-	CHECK_TRUE(DTEAction::NONE == dte_handler->handle_dte_message(req, resp));
+		arg_list.clear();
+		DTEDecoder::decode(resp, command, error_code, arg_list, params, param_values);
+		CHECK_TRUE(DTECommand::DUMPD_RESP == command);
+	}
 
 	arg_list.clear();
 	DTEDecoder::decode(resp, command, error_code, arg_list, params, param_values);
@@ -636,26 +638,21 @@ TEST(DTEHandler, DUMPD_REQ_InternalLog) {
 	CHECK_TRUE(DTECommand::DUMPD_RESP == command);
 	STRCMP_EQUAL("log_datetime,log_level,message\r\n", std::get<std::string>(arg_list[2]).c_str());
 
-	// Check N entries are retrieved requiring two passes
-	mock().expectOneCall("num_entries").onObject(mock_system_log).andReturnValue(12);
-	for (unsigned int i = 0; i < 8; i++)
-		mock().expectOneCall("read").onObject(mock_system_log).withIntParameter("index", i).ignoreOtherParameters();
-	CHECK_TRUE(DTEAction::AGAIN == dte_handler->handle_dte_message(req, resp));
+	// Three passes of four: system.log formats into the same 512-byte buffer as
+	// every other formatter, so it gets the same derived batch. See
+	// LogFormatter::max_dump_entries.
+	for (unsigned int pass = 0; pass < 3; pass++) {
+		mock().expectOneCall("num_entries").onObject(mock_system_log).andReturnValue(12);
+		for (unsigned int i = pass * 4; i < (pass + 1) * 4; i++)
+			mock().expectOneCall("read").onObject(mock_system_log).withIntParameter("index", i).ignoreOtherParameters();
 
-	arg_list.clear();
-	DTEDecoder::decode(resp, command, error_code, arg_list, params, param_values);
-	CHECK_TRUE(DTECommand::DUMPD_RESP == command);
-	printf(std::get<std::string>(arg_list[2]).c_str());
+		const DTEAction expected = (pass == 2) ? DTEAction::NONE : DTEAction::AGAIN;
+		CHECK_TRUE(expected == dte_handler->handle_dte_message(req, resp));
 
-	mock().expectOneCall("num_entries").onObject(mock_system_log).andReturnValue(12);
-	for (unsigned int i = 8; i < 12; i++)
-		mock().expectOneCall("read").onObject(mock_system_log).withIntParameter("index", i).ignoreOtherParameters();
-	CHECK_TRUE(DTEAction::NONE == dte_handler->handle_dte_message(req, resp));
-
-	arg_list.clear();
-	DTEDecoder::decode(resp, command, error_code, arg_list, params, param_values);
-	CHECK_TRUE(DTECommand::DUMPD_RESP == command);
-	printf(std::get<std::string>(arg_list[2]).c_str());
+		arg_list.clear();
+		DTEDecoder::decode(resp, command, error_code, arg_list, params, param_values);
+		CHECK_TRUE(DTECommand::DUMPD_RESP == command);
+	}
 
 	mock().checkExpectations();
 }
