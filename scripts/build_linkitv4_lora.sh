@@ -195,7 +195,10 @@ if [ -n "${DISABLE_LORA_DCS+x}" ]; then
 fi
 ENABLE_SWS_LOG=${ENABLE_SWS_LOG:-OFF}
 # BATTERY_CHEMISTRY: discharge LUT (default BATT_CHEM_LS17500_2P — 2x Saft LiSOCl2 @ 3.6V parallel)
-# Options: BATT_CHEM_{S18650_2600|CGR18650_2250|NCR18650_3100_3400|LS17500_2P}
+# Options: BATT_CHEM_{S18650_2600|CGR18650_2250|NCR18650_3100_3400|LS17500_2P|ALKALINE_3S2P}
+# ALKALINE_3S2P = 6x Energizer EN95 (LR20 "D") in 3S2P, 2.7-4.7 V. It also switches
+# the SAADC to the 1/6 range (a fresh 3S pack at 4.7 V clips against 1/5); CMake
+# derives that from the chemistry name, nothing else to set.
 BATTERY_CHEMISTRY=${BATTERY_CHEMISTRY:-BATT_CHEM_LS17500_2P}
 GNSS_HAS_BACKUP_BATTERY=${GNSS_HAS_BACKUP_BATTERY:-ON}
 

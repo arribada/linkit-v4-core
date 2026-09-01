@@ -239,12 +239,33 @@ endif()
 
 # Battery chemistry (ANALOG monitor only): selects discharge LUT + voltage range.
 # Allowed: BATT_CHEM_S18650_2600, BATT_CHEM_CGR18650_2250, BATT_CHEM_NCR18650_3100_3400,
-#          BATT_CHEM_LS17500_2P (2x Saft LS17500 Li-SOCl2 in parallel).
+#          BATT_CHEM_LS17500_2P (2x Saft LS17500 Li-SOCl2 in parallel),
+#          BATT_CHEM_ALKALINE_3S2P (6x Energizer EN95 / LR20 "D" alkaline, 3S2P).
 if(NOT DEFINED BATTERY_CHEMISTRY)
     set(BATTERY_CHEMISTRY "BATT_CHEM_NCR18650_3100_3400")
 endif()
-if(NOT ${BATTERY_CHEMISTRY} MATCHES "^BATT_CHEM_(S18650_2600|CGR18650_2250|NCR18650_3100_3400|LS17500_2P)$")
-    message(FATAL_ERROR "BATTERY_CHEMISTRY must be one of {BATT_CHEM_S18650_2600, BATT_CHEM_CGR18650_2250, BATT_CHEM_NCR18650_3100_3400, BATT_CHEM_LS17500_2P}")
+if(NOT ${BATTERY_CHEMISTRY} MATCHES "^BATT_CHEM_(S18650_2600|CGR18650_2250|NCR18650_3100_3400|LS17500_2P|ALKALINE_3S2P)$")
+    message(FATAL_ERROR "BATTERY_CHEMISTRY must be one of {BATT_CHEM_S18650_2600, BATT_CHEM_CGR18650_2250, BATT_CHEM_NCR18650_3100_3400, BATT_CHEM_LS17500_2P, BATT_CHEM_ALKALINE_3S2P}")
+endif()
+
+# SAADC input range for the battery divider. The chemistry name reaches the
+# compiler as an *enum identifier*, not a number, so the C++ preprocessor cannot
+# compare it: inside a #if, an identifier that is not a macro evaluates to 0, and
+# `BATTERY_CHEMISTRY == BATT_CHEM_ALKALINE_3S2P` becomes `0 == 0` — true for
+# EVERY chemistry. Verified with the preprocessor, not assumed.
+#
+# So the comparison is done HERE, where CMake compares strings properly, and the
+# firmware only ever sees a plain 0/1. Anything that needs to know the range must
+# use this flag and must not try to test the chemistry itself.
+#
+# Why the range differs: SAADC full scale is 0.6 V / gain, and the divider adds
+# V_DIV_GAIN = 1.443, so gain 1/5 tops out at 4.33 V and gain 1/6 at 5.19 V. A
+# fresh 3S alkaline pack sits at 4.7 V and would clip flat against the 1/5 range.
+# Li-ion and Li-SOCl2 stay on 1/5, which gives them the finer resolution.
+if(BATTERY_CHEMISTRY STREQUAL "BATT_CHEM_ALKALINE_3S2P")
+    set(BATTERY_ADC_HIGH_RANGE 1)
+else()
+    set(BATTERY_ADC_HIGH_RANGE 0)
 endif()
 
 # STC3117 fuel-gauge SOC strategy (STC3117 monitor only — i.e. RSPB by default):
@@ -260,7 +281,7 @@ endif()
 
 message(STATUS "Battery monitor type: ${BATTERY_MONITOR_TYPE}")
 message(STATUS "STC3117 mixed mode: ${STC3117_MIXED_MODE}")
-message(STATUS "Battery chemistry: ${BATTERY_CHEMISTRY}")
+message(STATUS "Battery chemistry: ${BATTERY_CHEMISTRY} (ADC high range: ${BATTERY_ADC_HIGH_RANGE})")
 message(STATUS "Sensors: AXL=${ENABLE_AXL_SENSOR} PRESSURE=${ENABLE_PRESSURE_SENSOR} THERMISTOR=${ENABLE_THERMISTOR_SENSOR} SEA_TEMP=${ENABLE_SEA_TEMP_SENSOR} ALS=${ENABLE_ALS_SENSOR} CDT=${ENABLE_CDT_SENSOR} PH=${ENABLE_PH_SENSOR} MORTALITY=${ENABLE_MORTALITY_SENSOR}")
 message(STATUS "GNSS: BBR=${GNSS_HAS_BACKUP_BATTERY} SWS_LOG=${ENABLE_SWS_LOG}")
 
@@ -788,6 +809,8 @@ target_compile_definitions(${TARGET_NAME} PRIVATE
     $<$<STREQUAL:${BATTERY_MONITOR_TYPE},STC3117>:BATTERY_MONITOR_STC3117>
     # Battery chemistry (ANALOG only — selects discharge LUT)
     $<$<STREQUAL:${BATTERY_MONITOR_TYPE},ANALOG>:BATTERY_CHEMISTRY=${BATTERY_CHEMISTRY}>
+    # SAADC range for the battery divider — 0/1, resolved in CMake (see above)
+    $<$<STREQUAL:${BATTERY_MONITOR_TYPE},ANALOG>:BATTERY_ADC_HIGH_RANGE=${BATTERY_ADC_HIGH_RANGE}>
     # USB DTE interface (parallel with BLE)
     USB_DTE_ENABLED
     # Bench-test harness (autonomous HIL validation) — off in production

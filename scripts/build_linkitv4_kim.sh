@@ -156,7 +156,13 @@ BUZZER_ENABLE=${BUZZER_ENABLE:-0}
 # LinkIt uses the ANALOG/SAADC battery monitor, so BATTERY_CHEMISTRY selects the
 # discharge LUT. Classic Li-ion 18650 (3.2–4.2 V). Override with one of:
 #   BATT_CHEM_S18650_2600 | BATT_CHEM_CGR18650_2250 |
-#   BATT_CHEM_NCR18650_3100_3400 (default) | BATT_CHEM_LS17500_2P (LiSOCl2 primary).
+#   BATT_CHEM_NCR18650_3100_3400 (default) | BATT_CHEM_LS17500_2P (LiSOCl2 primary) |
+#   BATT_CHEM_ALKALINE_3S2P (6x Energizer EN95 / LR20 "D", 3S2P, 2.7-4.7 V).
+# The alkaline option also moves the SAADC to the 1/6 input range, because a fresh
+# 3S pack sits at 4.7 V and the 1/5 range tops out at 4.33 V. CMake resolves that
+# from the chemistry name -- do NOT try to test the chemistry in C, it is an enum
+# identifier and a #if comparison against it is true for every value (same trap as
+# GNSS_HAS_BACKUP_BATTERY below).
 BATTERY_CHEMISTRY=${BATTERY_CHEMISTRY:-BATT_CHEM_NCR18650_3100_3400}
 # GNSS backup (BBR) battery present? Consumed as `#if GNSS_HAS_BACKUP_BATTERY` in C,
 # so it MUST be numeric 0/1 — ON/OFF would BOTH evaluate to 0. 0 = no backup battery.

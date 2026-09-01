@@ -98,8 +98,19 @@
 #define BMA400_ADDRESS      0x14
 #define ADS1115_ADDRESS     0x48
 
-// Battery voltage ADC gain
+// Battery voltage ADC gain. Must stay in step with the SAADC channel gain set in
+// bsp.cpp — both are driven by BATTERY_ADC_HIGH_RANGE, which CMake resolves from
+// BATTERY_CHEMISTRY. The chemistry itself is an enum identifier, so the
+// preprocessor cannot compare it: inside a #if a non-macro identifier is 0, and
+// testing it directly is true for every chemistry. Full scale = 0.6 V / gain,
+// then x V_DIV_GAIN:
+//   1/5 -> 4.33 V   (Li-ion, Li-SOCl2 — finer resolution)
+//   1/6 -> 5.19 V   (3S alkaline, 4.7 V fresh, would clip against 1/5)
+#if defined(BATTERY_ADC_HIGH_RANGE) && (BATTERY_ADC_HIGH_RANGE == 1)
+#define ADC_GAIN            (1.0f / 6.0f)  // 1/6 gain
+#else
 #define ADC_GAIN            (1.0f / 5.0f)  // 1/5 gain
+#endif
 #define V_DIV_GAIN          1.443f
 // #define RP506_ADC_GAIN        4.0f
 
