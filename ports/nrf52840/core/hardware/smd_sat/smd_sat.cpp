@@ -1666,6 +1666,158 @@ cleanup:
 	}
 }
 
+#ifdef BENCH_TEST
+void SmdSat::bench_parallel_probe(unsigned int nb_parallel, unsigned int retx_nb, unsigned int retx_period_s,
+                                  char *out, unsigned int out_len) {
+	if (nb_parallel < 1) nb_parallel = 1;
+	if (nb_parallel > 4) nb_parallel = 4;   // enough to answer the question, bounded airtime
+	if (retx_nb < 1) retx_nb = 1;
+	if (retx_nb > 127) retx_nb = 127;
+	// The module's own default config documents the pairing:
+	//   .retx_period_s  "@attention ensure retx_period_s = 60 * nb_parallel_msg"
+	//   .nb_parrallel_msg  "User-Message FIFO size @attention do not exceed 4"
+	// (argos-smd-at-kineis-firmware, Kineis/App/kns_app.c). Honour it by default
+	// so the probe measures the queue, not a misconfiguration.
+	if (retx_period_s < 60 * nb_parallel) retx_period_s = 60 * nb_parallel;
+
+	// Start from a KNOWN state, always. Measured 2026-09-01: after two or three
+	// probe runs the SMD stopped answering any SPI command at all (every
+	// load_kmac_profil refused, endless "AA AA AA" reads) -- the wedge this board
+	// is already known for. A probe that inherits a wedged link measures the wedge,
+	// not the question, so power-cycle first and make each run independent.
+	DEBUG_INFO("SmdSat::bench_parallel_probe: power-cycling the module for a clean run");
+	try {
+		power_off_immediate();
+	} catch (...) {}
+	nrf_delay_ms(1500);
+	PMU::kick_watchdog();
+	power_on_blocking();
+	PMU::kick_watchdog();
+	nrf_delay_ms(smdsat_delay_power_on_ms());
+	const bool was_stopped = true;  // we own the power state now
+
+	uint8_t spi_st = 0, mac_st = 0;
+	unsigned int accepted = 0, refused = 0, threw = 0;
+	uint64_t t_first = 0;
+
+	try {
+		try {
+			m_cmd.read_spimac_state(&spi_st, &mac_st);
+		} catch (...) {}
+		DEBUG_INFO("SmdSat::bench_parallel_probe: START nb_parallel=%u retx_nb=%u period=%u s | mac=%u spi=%u",
+		           nb_parallel, retx_nb, retx_period_s, mac_st, spi_st);
+
+		// BLIND context with the requested nb_parallel — the one byte the
+		// production path pins to 1.
+		uint8_t ctx[7] = { (uint8_t)retx_nb,
+			               (uint8_t)nb_parallel,
+			               (uint8_t)(retx_period_s & 0xFF),
+			               (uint8_t)((retx_period_s >> 8) & 0xFF),
+			               (uint8_t)((retx_period_s >> 16) & 0xFF),
+			               (uint8_t)((retx_period_s >> 24) & 0xFF),
+			               0 };
+		try {
+			m_cmd.load_kmac_profil(2, ctx, sizeof(ctx));
+			nrf_delay_ms(smdsat_delay_load_kmac_ms());
+			DEBUG_INFO("SmdSat::bench_parallel_probe: BLIND ctx loaded (nb_parallel=%u)", nb_parallel);
+		} catch (...) {
+			snprintf(out, out_len, "%%TXPAR ERR kmac-load-refused nb_parallel=%u", nb_parallel);
+			if (was_stopped) {
+				m_cmd.deinit();
+				shutdown();
+				GPIOPins::release_sensors_pwr();
+				nrf_gpio_cfg_default(BSP::GPIO_Inits[SAT_RESET].pin_number);
+			}
+			return;
+		}
+
+		// Fire nb_parallel payloads back to back, no waiting. Each is a distinct
+		// 12-byte SHORT-sized frame so the module cannot dedupe them.
+		for (unsigned int i = 0; i < nb_parallel; i++) {
+			KineisPacket payload(12, (char)0x00);
+			payload[0] = (char)0xB0;
+			payload[1] = (char)i;
+			uint8_t mac_before = 0, spi_before = 0;
+			try {
+				m_cmd.read_spimac_state(&spi_before, &mac_before);
+			} catch (...) {}
+
+			// Wait for the SPI slave to service the bus again before pushing.
+			// The module ACKs WRITE_TX immediately then does TCXO warmup and the
+			// MAC queueing asynchronously, and during that window it simply does
+			// not drive MISO -- reads come back all-0xAA. The first campaign read
+			// those as a refusal; they are a busy bus. bMGR_SPI_CMD_WRITETX_cmd
+			// refuses only on ERROR_DATA_QUEUE_FULL, so a push that gets through
+			// is queued, up to USERDATA_TX_FIFO_SIZE = 4.
+			if (i > 0) {
+				for (unsigned int w = 0; w < 40; w++) {
+					uint8_t sp = 0, mc = 0;
+					bool answered = false;
+					try {
+						m_cmd.read_spimac_state(&sp, &mc);
+						answered = true;
+					} catch (...) {}
+					if (answered && mc != 0) break;
+					nrf_delay_ms(500);
+					PMU::kick_watchdog();
+				}
+			}
+			const uint64_t t0 = PMU::get_timestamp_ms();
+			if (!t_first) t_first = t0;
+			bool ok = false;
+			bool exception = false;
+			for (unsigned int attempt = 0; attempt < 3 && !ok; attempt++) {
+				try {
+					ok = m_cmd.initiate_tx(payload);
+				} catch (...) {
+					exception = true;
+				}
+				if (!ok) {
+					nrf_delay_ms(750);
+					PMU::kick_watchdog();
+				}
+			}
+			if (ok) exception = false;
+			const uint64_t dt = PMU::get_timestamp_ms() - t_first;
+
+			uint8_t mac_after = 0, spi_after = 0;
+			try {
+				m_cmd.read_spimac_state(&spi_after, &mac_after);
+			} catch (...) {}
+
+			if (exception)
+				threw++;
+			else if (ok)
+				accepted++;
+			else
+				refused++;
+
+			DEBUG_INFO("SmdSat::bench_parallel_probe: msg %u/%u t+%u ms -> %s | mac %u->%u spi %u->%u", i + 1,
+			           nb_parallel, (unsigned int)dt,
+			           exception ? "THREW" : (ok ? "ACCEPTED" : "REFUSED"), mac_before, mac_after, spi_before,
+			           spi_after);
+			PMU::kick_watchdog();
+		}
+
+		try {
+			m_cmd.read_spimac_state(&spi_st, &mac_st);
+		} catch (...) {}
+		snprintf(out, out_len, "%%TXPAR n=%u accepted=%u refused=%u threw=%u mac_end=%u spi_end=%u", nb_parallel,
+		         accepted, refused, threw, mac_st, spi_st);
+		DEBUG_INFO("SmdSat::bench_parallel_probe: DONE %s", out);
+	} catch (...) {
+		snprintf(out, out_len, "%%TXPAR ERR exception accepted=%u refused=%u threw=%u", accepted, refused, threw);
+	}
+
+	// Deliberately NOT tearing the module down when it was already running: a
+	// burst is now in flight and cutting power mid-burst is a different
+	// experiment. Only restore what we powered up ourselves.
+	if (was_stopped) {
+		DEBUG_INFO("SmdSat::bench_parallel_probe: module was stopped — leaving it powered for the burst");
+	}
+}
+#endif
+
 void SmdSat::read_credentials(unsigned int *dec_id, unsigned int *address, std::string *seckey,
                               std::string *radioconf) {
 	DEBUG_TRACE("SmdSat::%s", __func__);

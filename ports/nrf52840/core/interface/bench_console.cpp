@@ -37,6 +37,10 @@ extern ArgosTxService *argos_tx_service_instance;
 extern OTAFileUpdater *ota_updater;
 
 extern Is25Flash *bench_flash;
+#if defined(ARGOS_SMD) && (ARGOS_SMD == 1)
+#include "smd_sat.hpp"
+extern SmdSat *smd_sat_instance;
+#endif
 
 #include <cstdio>
 #include <cstdlib>
@@ -397,6 +401,28 @@ bool bench::handle_line(const std::string &raw) {
 			         status, (status & 0x40) ? 1 : 0, (status & 0x01) ? 1 : 0);
 			reply(buf);
 		}
+	} else if (cmd == "%TXPAR") {
+		// %TXPAR <N> [retx_nb] [period_s] — the BLIND parallel-message question,
+		// settled on real silicon instead of guessed. Loads the KMAC BLIND context
+		// with nb_parallel=N (production pins it to 1) and fires N payloads back to
+		// back without waiting, reporting what the MAC answered to each. If the
+		// second one is refused, parallel BLIND is unreachable with this command
+		// set and the whole feature can be closed with evidence.
+#if defined(ARGOS_SMD) && (ARGOS_SMD == 1)
+		if (!smd_sat_instance) {
+			reply("%TXPAR ERR no-smd");
+		} else {
+			unsigned int n = 2, rn = 2, per = 60;
+			const char *args = line.c_str() + cmd.size();
+			sscanf(args, "%u %u %u", &n, &rn, &per);
+			char buf[160];
+			buf[0] = 0;
+			smd_sat_instance->bench_parallel_probe(n, rn, per, buf, sizeof(buf));
+			reply(buf[0] ? buf : "%TXPAR ERR no-report");
+		}
+#else
+		reply("%TXPAR ERR not-an-smd-build");
+#endif
 	} else if (cmd == "%PILE") {
 		// Contents of the depth pile: type and burst counter per entry. This
 		// is the only way to watch the rotation at all -- retrieve() decrements

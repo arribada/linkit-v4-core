@@ -211,6 +211,21 @@ public:
 
 	void set_credentials(unsigned int dec_id, unsigned int address, const std::string &seckey,
 	                     const std::string &radioconf) override;
+#ifdef BENCH_TEST
+	/// @brief Bench probe: does the MAC accept a SECOND payload during a burst?
+	///
+	/// The whole "BLIND parallel messages" question reduces to this. Both backends
+	/// load-and-start in one primitive (WRITE_TX_REQ/SIZE/TX here, AT+TX on KIM2)
+	/// and the MAC answers MAC_TX_IN_PROGRESS while a burst runs, so nothing in
+	/// the tree says whether a queued second message is accepted or refused.
+	/// Loads the BLIND context with the requested nb_parallel, then fires
+	/// nb_parallel payloads back to back WITHOUT waiting, recording what the MAC
+	/// answered to each. Writes a one-line report into @p out.
+	/// Bench only — it deliberately does what the service is built never to do.
+	void bench_parallel_probe(unsigned int nb_parallel, unsigned int retx_nb, unsigned int retx_period_s, char *out,
+	                          unsigned int out_len);
+#endif
+
 	void read_credentials(unsigned int *dec_id, unsigned int *address, std::string *seckey,
 	                      std::string *radioconf) override;
 	static void shutdown(void);
