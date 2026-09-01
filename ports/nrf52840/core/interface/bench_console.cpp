@@ -80,8 +80,8 @@ void reply(const std::string &s) {
 static void cmd_satlog(const std::string &line) {
 	unsigned int secs = 10;
 	unsigned int baud = 115200;
-	unsigned int a = 0, b = 0;
-	int argc = sscanf(line.c_str(), "%%SATLOG %u %u", &a, &b);
+	unsigned int a = 0, b = 0, c = 0;
+	int argc = sscanf(line.c_str(), "%%SATLOG %u %u %u", &a, &b, &c);
 	if (argc >= 1 && a > 0 && a <= 120) secs = a;
 	if (argc >= 2 && b) baud = b;
 
@@ -94,11 +94,23 @@ static void cmd_satlog(const std::string &line) {
 	case 19200: baud_reg = 0x004EA000; break;
 	case 38400: baud_reg = 0x009D5000; break;
 	case 57600: baud_reg = 0x00EBF000; break;
+	case 460800: baud_reg = 0x03AFB000; break;  // the M10Q's rate, for checking the probe itself
 	default: baud = 115200; baud_reg = 0x01D7E000; break;
 	}
 
 	NRF_UARTE_Type *u = NRF_UARTE1;
-	const uint32_t rx_pin = BSP::UARTAsync_Inits[1].config.rx_pin;
+	// Default to the BSP's RX for this build, but let the caller name a pin: the
+	// satellite slot is P0.14 / P0.26 and the BSP assigns the direction per
+	// variant (LoRa receives on 26, KIM2/SMD on 14). Which way a given module
+	// drives it is a board fact, not a build fact, so the probe should be able to
+	// listen to either without a reflash.
+	uint32_t rx_pin = BSP::UARTAsync_Inits[1].config.rx_pin;
+	// PSEL encoding is port * 32 + pin, so 0..31 is P0 and 32..63 is P1. Being
+	// able to name a P1 pin is what makes the probe checkable: pointed at the
+	// GNSS UART RX (P1.08 = 40) while the M10Q is running, it must return
+	// bytes. A probe that has only ever returned zero proves nothing about the
+	// line it was pointed at.
+	if (argc >= 3 && c <= 63) rx_pin = c;
 
 	nrf_gpio_cfg_input(rx_pin, NRF_GPIO_PIN_NOPULL);
 	u->PSEL.RXD = rx_pin;
@@ -109,8 +121,8 @@ static void cmd_satlog(const std::string &line) {
 	u->CONFIG = 0;             // 8N1, no flow control
 	u->ENABLE = 8;
 
-	reply("%SATLOG start (P0." + std::to_string(rx_pin) + " @" + std::to_string(baud) + ", " + std::to_string(secs)
-	      + "s)");
+	reply("%SATLOG start (P" + std::to_string(rx_pin / 32) + "." + std::to_string(rx_pin % 32) + " @"
+	      + std::to_string(baud) + ", " + std::to_string(secs) + "s)");
 
 	static uint8_t buf[64];
 	const uint64_t deadline = PMU::get_timestamp_ms() + (uint64_t)secs * 1000u;
