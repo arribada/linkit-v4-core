@@ -65,6 +65,13 @@ public:
 	/// next send() dispatch immediately instead of paying the boot+configure
 	/// cost. Default no-op for backends where wake is already fast enough.
 	virtual void warm_up_for_tx() {}
+	/// @brief Whether the backend could actually put a frame on the air now.
+	/// Consulted BEFORE the depth pile is retrieved, and that ordering is the
+	/// whole point: retrieve() spends a burst credit, and an entry back at zero
+	/// is never eligible again, so a fix consumed by a transmission that could
+	/// never happen is lost for good -- with NTRY=1, on the first try. Backends
+	/// that are always able to transmit keep the default.
+	virtual bool can_transmit() const { return true; }
 	virtual void start_receive(const KineisModulation mode) = 0;
 	virtual bool stop_receive() = 0;
 

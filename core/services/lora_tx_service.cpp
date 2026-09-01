@@ -394,6 +394,22 @@ bool LoRaTxService::service_cancel() {
 	// won't happen on this cancel path.
 	m_cloudlocate_ready_pending = false;
 	m_device.stop_send();
+
+	// A TX that ends without transmitting: give the depth pile back what
+	// retrieve() debited before send() was ever reached. Same reasoning as
+	// ArgosTxService::service_cancel(). m_inflight_gps is emptied by TxComplete,
+	// so a cancel after a real transmission gives nothing back, and the eviction
+	// snapshot keeps the address matching honest.
+	if (is_pending && !m_inflight_reached_air && !m_inflight_gps.empty()
+	    && m_depth_pile_manager.gps_evictions() == m_inflight_evictions) {
+		const unsigned int n = m_depth_pile_manager.refund_gps(m_inflight_gps);
+		if (n) {
+			DEBUG_WARN("LoRaTxService: TX ended before reaching the air — %u depth-pile credit(s) given back", n);
+		}
+	}
+	m_inflight_gps.clear();
+	m_inflight_reached_air = false;
+
 	return is_pending;
 }
 
@@ -663,6 +679,13 @@ void LoRaTxService::process_gps_burst() {
 	// (Argos default is 3 to fit the LDA2 24-byte frame; LoRa can hold many more).
 	std::vector<GPSLogEntry *> v =
 	    m_depth_pile_manager.retrieve_gps((unsigned int)argos_config.depth_pile, max_entries);
+	// Note the debit as soon as it happens: retrieve() has already spent a credit
+	// on every entry, and LoRa reaches m_device.send() through several branches.
+	// Recording here rather than at each send covers them all, and service_cancel()
+	// hands the credits back if the frame never reaches the air.
+	m_inflight_gps = v;
+	m_inflight_reached_air = false;
+	m_inflight_evictions = m_depth_pile_manager.gps_evictions();
 
 	if (v.size()) {
 		KineisPacket packet;
@@ -731,6 +754,11 @@ void LoRaTxService::process_sensor_burst() {
 	configuration_store->get_argos_configuration(argos_config);
 
 	GPSLogEntry *gps = m_depth_pile_manager.retrieve_gps_single((unsigned int)argos_config.depth_pile);
+	// Same debit, one entry: retrieve_gps_single() goes through retrieve(depth, 1).
+	m_inflight_gps.clear();
+	if (gps != nullptr) m_inflight_gps.push_back(gps);
+	m_inflight_reached_air = false;
+	m_inflight_evictions = m_depth_pile_manager.gps_evictions();
 
 	if (gps != nullptr) {
 		// CloudLocate entries: send as dedicated CloudLocate packet
@@ -994,11 +1022,17 @@ void LoRaTxService::process_status_burst() {
 
 void LoRaTxService::react(KineisEventTxStarted const &) {
 	DEBUG_TRACE("LoRaTxService::react: KineisEventTxStarted");
+	// On air: the try is genuinely used, there is nothing to give back.
+	m_inflight_reached_air = true;
 	service_active();
 }
 
 void LoRaTxService::react(KineisEventTxComplete const &) {
 	DEBUG_TRACE("LoRaTxService::react: KineisEventTxComplete");
+	// Transmitted: the credits paid for a real emission. Drop the note so a later
+	// cancel cannot hand them back.
+	m_inflight_gps.clear();
+	m_inflight_reached_air = false;
 	m_is_tx_pending = false;
 	m_consecutive_device_errors = 0;
 

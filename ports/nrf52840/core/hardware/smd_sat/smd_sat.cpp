@@ -1317,6 +1317,22 @@ void SmdSat::set_tx_power(unsigned int power) {
 // Auto-write credentials from config store at boot
 // ============================================================================
 
+
+/**
+ * @brief Whether the module holds what it needs to actually transmit.
+ *
+ * The SMD refuses to emit without a 16-byte secret key and a radio config, and
+ * write_credentials_from_config() applies exactly those two checks before it
+ * writes anything. Repeating them here lets the scheduler hold the TX instead
+ * of scheduling one that dies inside send() -- by which point retrieve() has
+ * already spent the position's burst credit and lost it.
+ */
+bool SmdSat::can_transmit() const {
+	if (!configuration_store) return false;
+	const std::string seckey = configuration_store->read_param<std::string>(ParamID::ARGOS_SECKEY);
+	const std::string radioconf = configuration_store->read_param<std::string>(ParamID::ARGOS_RADIOCONF);
+	return seckey.size() == 32 && radioconf.size() >= 2 && (radioconf.size() % 2) == 0;
+}
 bool SmdSat::write_credentials_from_config() {
 	if (!configuration_store) return false;
 

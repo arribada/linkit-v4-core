@@ -179,6 +179,17 @@ void ArgosTxService::service_init() {
 			           argos_config.surfacing_burst_max_s, ArgosConfig::BLIND_MIN_RETX_PERIOD_S,
 			           ArgosConfig::BLIND_MIN_RETX_PERIOD_S);
 		} else if (argos_config.blind_en) {
+			// NTRY_PER_MESSAGE is the TOTAL number of frames wanted per position;
+			// the module now spends retx_nb of them in one burst. Asking for fewer
+			// than one burst's worth means the very first burst overshoots, and no
+			// accounting can undo a frame already on air -- say so rather than let
+			// the budget drift silently. 0 = unlimited and is never short.
+			if (argos_config.ntry_per_message != 0 && argos_config.blind_retx_nb > argos_config.ntry_per_message) {
+				DEBUG_WARN("ArgosTxService: ARGOS_BLIND_RETX_NB=%u exceeds NTRY_PER_MESSAGE=%u — the first BLIND "
+				           "burst already sends more frames than the position asked for. Set NTRY_PER_MESSAGE to a "
+				           "multiple of ARGOS_BLIND_RETX_NB, or 0 for unlimited.",
+				           argos_config.blind_retx_nb, argos_config.ntry_per_message);
+			}
 			DEBUG_INFO("ArgosTxService: BLIND active — retx_nb=%u period=%u s%s", argos_config.blind_retx_nb,
 			           argos_config.blind_retx_period_s,
 			           argos_config.mode == BaseArgosMode::DOPPLER
@@ -290,6 +301,21 @@ ScheduleDecision ArgosTxService::service_next_schedule() {
 	if (ServiceManager::is_in_cooldown(now)) {
 		return ScheduleDecision::hold_until(
 		    (uint32_t)(now + (std::time_t)ServiceManager::get_cooldown_remaining_s(now)), "surface-cycle cooldown");
+	}
+
+	// Backend readiness gate (2026-08). Scheduling a TX the radio cannot send is
+	// not merely wasted: process_gnss_burst() retrieves the depth pile FIRST, and
+	// retrieve() decrements the burst counter of every entry it hands back. An
+	// entry at zero is never eligible again, so a module that fails after the
+	// retrieve -- unprovisioned credentials, a backend that will not answer --
+	// destroys the position instead of deferring it. Measured on a linkit-v4-smd
+	// bench board with no credentials: "GPS FIX stored, burst_counter=1", then a
+	// SHORT packet built, then "credentials not configured | skipping", then
+	// "depth pile has no eligible entries" -- one fix, lost, with nothing ever
+	// transmitted. Holding here keeps the pile intact until the module is usable.
+	if (!m_kineis.can_transmit()) {
+		DEBUG_WARN("ArgosTxService: radio backend cannot transmit — holding, the depth pile keeps its credits");
+		return ScheduleDecision::hold_for_event(600, "backend cannot transmit");
 	}
 
 	// Rolling-window rate limit (Plan 1 step 2). Applies to ALL TX cycles
@@ -1080,6 +1106,24 @@ bool ArgosTxService::service_cancel() {
 	bool is_pending = m_is_tx_pending;
 	m_is_tx_pending = false;
 	m_kineis.stop_send();
+
+	// Single choke point for a TX that ends without transmitting: react(
+	// KineisEventDeviceError) calls this first thing, and the service framework
+	// calls it when the safety timeout expires. retrieve() debited the depth pile
+	// before send() was ever reached, so without this the positions of a burst
+	// that never made it on air are destroyed rather than deferred -- with
+	// NTRY=1, on the first try. m_inflight_gps is empty once TxComplete has run,
+	// so a cancel that follows a real transmission gives nothing back.
+	if (is_pending && !m_inflight_reached_air && !m_inflight_gps.empty()
+	    && m_depth_pile_manager.gps_evictions() == m_inflight_evictions) {
+		const unsigned int n = m_depth_pile_manager.refund_gps(m_inflight_gps);
+		if (n) {
+			DEBUG_WARN("ArgosTxService: TX ended before reaching the air — %u depth-pile credit(s) given back", n);
+		}
+	}
+	m_inflight_gps.clear();
+	m_inflight_reached_air = false;
+
 	return is_pending;
 }
 
@@ -1652,6 +1696,14 @@ void ArgosTxService::process_sensor_burst() {
 	configuration_store->get_argos_configuration(argos_config);
 	unsigned int size_bits;
 	GPSLogEntry *gps = m_depth_pile_manager.retrieve_gps_single((unsigned int)argos_config.depth_pile);
+	// retrieve_gps_single() goes through retrieve(depth, 1) and DEBITS a credit,
+	// exactly like the GNSS burst -- so the sensor path needs the same record, or
+	// its position is neither refunded when the TX dies before the air nor charged
+	// for the copies a BLIND burst puts on it.
+	m_inflight_gps.clear();
+	if (gps != nullptr) m_inflight_gps.push_back(gps);
+	m_inflight_reached_air = false;
+	m_inflight_evictions = m_depth_pile_manager.gps_evictions();
 	if (gps != nullptr) {
 		// If GPS entry is a CloudLocate, send CloudLocate packet (extract blob from overlay)
 		if (gps->info.event_type == GPSEventType::CLOUDLOCATE) {
@@ -1910,6 +1962,13 @@ void ArgosTxService::process_gnss_burst() {
 	} else {
 		v = m_depth_pile_manager.retrieve_gps((unsigned int)argos_config.depth_pile);
 	}
+	// Record the debit AT THE RETRIEVE, not at send(): every early return between
+	// here and m_kineis.send() -- a CloudLocate sentinel, a payload that will not
+	// fit the modulation -- leaves the credits spent too, and this is the one spot
+	// that sees them all. Same placement as process_sensor_burst and LoRaTxService.
+	m_inflight_gps = v;
+	m_inflight_reached_air = false;
+	m_inflight_evictions = m_depth_pile_manager.gps_evictions();
 	if (v.size()) {
 		KineisPacket packet;
 
@@ -2554,6 +2613,8 @@ void ArgosTxService::process_doppler_burst() {
 /// @brief TX started event — notify service manager that TX is in progress.
 void ArgosTxService::react(KineisEventTxStarted const &) {
 	DEBUG_TRACE("ArgosTxService::react: KineisEventTxStarted");
+	// The frame is on the air: the try is genuinely used, nothing to give back.
+	m_inflight_reached_air = true;
 #if !defined(ARGOS_SMD) || (ARGOS_SMD != 1)
 	// KIM2 only: surface the burst type + modulation + running session TX count
 	// so the operator can see WHAT is being sent and HOW MANY this session.
@@ -2613,6 +2674,26 @@ void ArgosTxService::react(KineisEventTxComplete const &) {
 	ArgosConfig argos_config;
 	configuration_store->get_argos_configuration(argos_config);
 	unsigned int tx_copies = (argos_config.blind_en && argos_config.blind_retx_nb > 0) ? argos_config.blind_retx_nb : 1;
+
+	// The pile was debited ONE credit by retrieve(), which is what a single frame
+	// on air costs. Under BLIND the module just sent tx_copies of them, so take the
+	// remainder off now -- otherwise NTRY_PER_MESSAGE and ARGOS_BLIND_RETX_NB
+	// multiply and the position is transmitted NTRY x retx_nb times. The eviction
+	// snapshot guards the address matching exactly as the refund path does; if the
+	// pile moved under us we leave the counters alone rather than charge the wrong
+	// position.
+	if (tx_copies > 1 && !m_inflight_gps.empty()
+	    && m_depth_pile_manager.gps_evictions() == m_inflight_evictions) {
+		const unsigned int n = m_depth_pile_manager.debit_gps_extra(m_inflight_gps, tx_copies - 1);
+		if (n) {
+			DEBUG_INFO("ArgosTxService: BLIND burst sent %u copies — charged %u extra credit(s) to %u entry(ies)",
+			           tx_copies, tx_copies - 1, n);
+		}
+	}
+	// Transmitted: the credits paid for real emissions. Drop the note so a later
+	// cancel cannot hand them back.
+	m_inflight_gps.clear();
+	m_inflight_reached_air = false;
 
 	// Increment TX counter
 	configuration_store->increment_tx_counter();

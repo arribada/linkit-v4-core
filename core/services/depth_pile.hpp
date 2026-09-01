@@ -33,6 +33,12 @@ private:
 	std::deque<Entry> m_entry;
 	unsigned int m_max_size;
 	unsigned int m_retrieve_index;
+	// Bumped on every eviction. refund() matches entries by ADDRESS, and a deque
+	// that has popped a front and pushed a back may hand the same address to a
+	// different entry -- which would credit the wrong position. Callers holding
+	// pointers across a long window (BLIND bursts run up to 2 h) compare this
+	// counter and simply skip the refund if the pile moved under them.
+	unsigned int m_evictions = 0;
 
 public:
 	DepthPile(unsigned int max_size = 24) : m_max_size(max_size), m_retrieve_index(0) {}
@@ -47,13 +53,18 @@ public:
 	void set_max_size(unsigned int n) {
 		if (n == 0) n = 1;  // safety: never allow a zero-cap pile
 		m_max_size = n;
-		while (m_entry.size() > m_max_size)
+		while (m_entry.size() > m_max_size) {
 			m_entry.pop_front();
+			m_evictions++;
+		}
 	}
 
 	void store(T &e, unsigned int burst_count) {
 		m_entry.push_back(Entry(e, burst_count));
-		if (m_entry.size() > m_max_size) m_entry.pop_front();
+		if (m_entry.size() > m_max_size) {
+			m_entry.pop_front();
+			m_evictions++;
+		}
 		DEBUG_TRACE("DepthPile::store: depth pile has %u/%u entries", m_entry.size(), m_max_size);
 	}
 
@@ -140,6 +151,72 @@ public:
 	T *peek_back() {
 		if (m_entry.empty()) return nullptr;
 		return &m_entry.back().data;
+	}
+
+	/// @brief Give back the credits retrieve() spent, for a burst that never
+	/// reached the air.
+	///
+	/// retrieve() decrements on RETRIEVAL, not on transmission, and an entry back
+	/// at zero is never eligible again. So every failure between the retrieve and
+	/// a frame actually leaving the antenna -- a module that will not answer, a
+	/// device error, the 30 s safety timeout -- destroys the position instead of
+	/// deferring it. With NTRY=1 that is the first try. Measured on a
+	/// linkit-v4-smd bench board: the credential write ate the TX window and the
+	/// fix was gone, with nothing transmitted.
+	///
+	/// The pointers are only ever COMPARED, never dereferenced: store() evicts
+	/// the oldest entry when the pile is full, so a caller holding pointers from
+	/// before an eviction may well hand us stale ones. Scanning m_entry and
+	/// matching by address makes that harmless -- an evicted entry simply finds
+	/// no match, and there is nothing to give back to it anyway.
+	/// @brief Eviction count, snapshotted by callers that hold pointers across a
+	/// window and compared before they ask for a refund.
+	unsigned int evictions() const { return m_evictions; }
+
+	/// @brief Take EXTRA credits off entries whose burst already went on air more
+	/// than once.
+	///
+	/// retrieve() debits exactly one credit per entry, which is right when one
+	/// send() puts one frame on air. Under the BLIND MAC it is not: the module
+	/// owns the repetition and emits retx_nb copies for that single send(). Without
+	/// this, NTRY_PER_MESSAGE and ARGOS_BLIND_RETX_NB MULTIPLY -- NTRY=4 with
+	/// retx_nb=4 puts 16 frames on air for one position instead of 4, and burns the
+	/// NTIME_SAT budget four times faster than the operator asked for.
+	///
+	/// Saturates at zero rather than wrapping: an entry may legitimately hold fewer
+	/// credits than the module just spent (NTRY < retx_nb), and that is the
+	/// operator's configuration to reconcile, not ours to underflow on.
+	/// Pointers are compared, never dereferenced -- see refund().
+	unsigned int debit_extra(const std::vector<T *> &spent, unsigned int extra) {
+		if (!extra) return 0;
+		unsigned int touched = 0;
+		for (auto *p : spent) {
+			for (auto &e : m_entry) {
+				if (&e.data == p) {
+					e.burst_counter = (e.burst_counter > extra) ? (e.burst_counter - extra) : 0;
+					touched++;
+					break;
+				}
+			}
+		}
+		return touched;
+	}
+
+	unsigned int refund(const std::vector<T *> &spent) {
+		unsigned int given_back = 0;
+		for (auto *p : spent) {
+			for (auto &e : m_entry) {
+				if (&e.data == p) {
+					e.burst_counter++;
+					given_back++;
+					break;
+				}
+			}
+		}
+		if (given_back) {
+			DEBUG_TRACE("DepthPile::refund: %u credit(s) given back", given_back);
+		}
+		return given_back;
 	}
 
 	std::vector<T *> retrieve(unsigned int depth, unsigned int max_messages = 3) {
@@ -255,6 +332,17 @@ public:
 #endif
 
 	std::vector<GPSLogEntry *> retrieve_gps(unsigned int depth_pile) { return m_gps_depth_pile.retrieve(depth_pile); }
+
+	/// @brief Hand back the credits of a GPS burst that never reached the air.
+	unsigned int refund_gps(const std::vector<GPSLogEntry *> &spent) { return m_gps_depth_pile.refund(spent); }
+
+	/// @brief Charge a GPS burst for the copies the module sent beyond the first.
+	unsigned int debit_gps_extra(const std::vector<GPSLogEntry *> &spent, unsigned int extra) {
+		return m_gps_depth_pile.debit_extra(spent, extra);
+	}
+
+	/// @brief GPS pile eviction count — see DepthPile::evictions().
+	unsigned int gps_evictions() const { return m_gps_depth_pile.evictions(); }
 
 	/// @brief Retrieve GPS entries with an explicit per-slot cap. LoRa uses a higher cap
 	/// than Argos (which is fixed at 3 by the LDA2 24-byte budget).

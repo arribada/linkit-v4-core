@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include <vector>
 #include <ctime>
 #include <optional>
 #include <functional>
@@ -48,6 +49,16 @@ private:
 	LoRaTxScheduler m_sched;
 	bool m_is_first_tx = true;
 	bool m_is_tx_pending = false;
+
+	// Credits spent by the retrieve() feeding the TX in flight, plus whether it
+	// ever reached the air and the pile's eviction count when it was noted.
+	// retrieve() debits on RETRIEVAL, so a burst that dies before
+	// KineisEventTxStarted has already destroyed its positions -- same defect and
+	// same cure as ArgosTxService. The eviction snapshot guards the address
+	// matching in DepthPile::refund().
+	std::vector<GPSLogEntry *> m_inflight_gps;
+	bool m_inflight_reached_air = false;
+	unsigned int m_inflight_evictions = 0;
 	unsigned int m_session_tx_count = 0;
 	unsigned int m_consecutive_device_errors = 0;
 	/// @brief Latch so the "session budget ignored on this board" warning is

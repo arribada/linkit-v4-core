@@ -201,6 +201,7 @@ public:
 	~SmdSat();
 	void send(const KineisModulation mode, const KineisPacket &packet, const unsigned int size_bits) override;
 	void stop_send() override;
+	bool can_transmit() const override;
 	void start_receive(const KineisModulation mode) override;
 	bool stop_receive() override;
 	void set_frequency(double freq_mhz) override;
