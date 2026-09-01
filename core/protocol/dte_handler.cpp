@@ -1511,7 +1511,19 @@ std::string DTEHandler::PWRON_REQ(int error_code, std::vector<BaseType> &arg_lis
 		DEBUG_TRACE("PWRON: Powering ON satellite module");
 		GPIOPins::acquire_sensors_pwr();
 #if defined(ARGOS_SMD) && (ARGOS_SMD == 1)
+		// Release NRST to high-Z as well, so the STM32WL actually boots and an
+		// external SWD probe owns its reset line. Without it, PWRON raised the
+		// rail on a module the nRF was still holding in reset:
+		// SmdSat::shutdown() drives SAT_RESET LOW before every rail cut, and a
+		// board looping on TX errors passes through it constantly. Powering the
+		// module from the DTE to flash it therefore did nothing.
+		//
+		// High-Z rather than a pull-up: the net has a pull-up on the module side,
+		// so the STM32WL still boots, and the probe drives the line without
+		// fighting us. Same treatment SMD_FLASH_HOLD applies in main.cpp, and the
+		// gap the KIM2 branch below had until 969d28c8.
 		GPIOPins::set(SAT_PWR_EN);
+		GPIOPins::release_to_highz(SAT_RESET);
 #elif defined(LORA_RAK3172) && (LORA_RAK3172 == 1)
 		GPIOPins::set(SAT_PWR_EN);
 #else
