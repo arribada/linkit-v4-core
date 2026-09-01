@@ -390,15 +390,28 @@ bool NrfBatteryMonitor::is_plausible(uint16_t mv) const {
 	unsigned int chem = static_cast<unsigned int>(m_chem);
 	if (chem >= sizeof(battery_profiles) / sizeof(battery_profiles[0])) chem = 0;
 
-	const BatteryProfile &profile = battery_profiles[chem];
+	(void)chem;
 
-	// Half the floor below, 300 mV above. A failed conversion reads 0 mV, which
-	// convert_level would faithfully turn into 0 % and hand to the critical
-	// shutdown; that is the case worth catching. The window is otherwise left
-	// wide on purpose — a battery below its profile floor is a real state we
-	// must still be able to report, and a fresh pack can sit slightly above its
-	// nominal maximum.
-	return (mv >= (profile.min_mv / 2)) && (mv <= (profile.max_mv + 300));
+	// Catch a FAILED CONVERSION, not a mis-set chemistry.
+	//
+	// This used to bound the sample by the configured profile (min/2 .. max+300).
+	// That reads well and is wrong: on a board whose fitted pack does not match
+	// the compiled chemistry, EVERY sample falls outside and is rejected, so the
+	// gauge freezes on its last value and logs an error per sample for ever.
+	// Measured 2026-09-01 on the SMD bench board — compiled LS17500 (2.7-3.7 V),
+	// a 4.2 V Li-ion fitted, 46 consecutive rejections and climbing.
+	//
+	// A voltage above the profile is not impossible. It is a configuration
+	// mistake, and the honest response is to report the voltage and let the SOC
+	// curve clamp, not to hide the reading. What IS impossible is a value the
+	// measurement chain cannot produce: 0 mV from a failed conversion, or
+	// anything beyond the ADC's own full scale.
+	static constexpr uint16_t FULL_SCALE_MV = static_cast<uint16_t>((ADC_REFERENCE / ADC_GAIN) * V_DIV_GAIN * 1000.0f);
+	// A powered board cannot be below the buck-boost's own input minimum; well
+	// under it means the conversion failed, not that the battery is that flat.
+	static constexpr uint16_t FLOOR_MV = 1000;
+
+	return (mv >= FLOOR_MV) && (mv <= FULL_SCALE_MV);
 }
 
 /**
