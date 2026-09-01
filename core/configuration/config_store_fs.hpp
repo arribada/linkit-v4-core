@@ -402,8 +402,10 @@ protected:
 	}
 
 	/// @brief Refresh cached battery level/voltage from BatteryMonitor.
-	void update_battery_level() override {
-		battery_monitor->update();
+	void update_battery_level(bool read_value = false) override {
+		if(read_value) {
+			battery_monitor->update();
+		}
 		m_battery_level = battery_monitor->get_level();
 		m_battery_voltage = battery_monitor->get_voltage();
 		m_is_battery_level_low = battery_monitor->is_battery_low();

@@ -964,7 +964,7 @@ void GPSService::task_process_gnss_data()
     gps_entry.header.log_type = LOG_GPS;
     service_set_log_header_time(gps_entry.header, service_current_time());
 
-	service_update_battery();
+	// service_update_battery(); // Commented out to avoid double battery update (already called in service_initiate)
     gps_entry.info.batt_voltage = service_get_voltage();
     copy_gnss_to_log(m_gnss_data.data, gps_entry);
     gps_entry.info.onTime = service_current_timer() - m_wakeup_time;

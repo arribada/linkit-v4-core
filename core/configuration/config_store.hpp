@@ -492,7 +492,7 @@ protected:
 	}
 
 	virtual void serialize_config() = 0;
-	virtual void update_battery_level() = 0;
+	virtual void update_battery_level(bool read_value = false) = 0;
 
 private:
 	static const inline unsigned int SECONDS_PER_MINUTE	= 60;
@@ -622,7 +622,7 @@ public:
 
 			// These parameters must always be accessible
 			if (param_id == ParamID::BATT_SOC) {
-				update_battery_level();
+				update_battery_level(true);
 				m_params.at((unsigned)param_id) = (unsigned int)m_battery_level;
 				b_is_valid = true;
 			} else if (param_id == ParamID::FW_APP_VERSION) {
@@ -654,7 +654,7 @@ public:
 				m_params.at((unsigned)param_id) = DEVICE_MODEL_NAME;
 				b_is_valid = true;
 			} else if (param_id == ParamID::BATT_VOLTAGE) {
-				update_battery_level();
+				update_battery_level(true);
 				m_params.at((unsigned)param_id) = (double)m_battery_voltage / 1000.0;
 				b_is_valid = true;
 			} else if (param_id == ParamID::DEVICE_DECID) {
