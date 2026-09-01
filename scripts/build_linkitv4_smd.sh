@@ -75,11 +75,13 @@ RECOVER=false
 BUILD_TYPE=Release
 METRICS=OFF
 VALIDATION=OFF
+BENCH=OFF
 for arg in "$@"; do
     case $arg in
         --clean) CLEAN=true ;;
         --recover) RECOVER=true ;;
         --debug) BUILD_TYPE=Debug ;;
+        --bench) BENCH=ON; BUILD_TYPE=Debug ;;
         --release) BUILD_TYPE=Release ;;
         --metrics) METRICS=ON ;;
         --no-metrics) METRICS=OFF ;;
@@ -179,6 +181,9 @@ echo "  GNSS_HAS_BACKUP_BATTERY=${GNSS_HAS_BACKUP_BATTERY}"
 echo "  BATTERY_CHEMISTRY=${BATTERY_CHEMISTRY}"
 echo "  SMDSAT_USE_SAFE_TIMINGS=${SMDSAT_USE_SAFE_TIMINGS}"
 echo "  SMDSAT_AUTOFALLBACK=${SMDSAT_AUTOFALLBACK}"
+if [ "$BENCH" = "ON" ]; then
+    printf '\033[1;35m  BENCH_TEST=ON  ->  %% USB-CDC console (%%CFG/%%OP/%%GPS) + GPS injection active\033[0m\n'
+fi
 echo ""
 
 cmake -DCMAKE_TOOLCHAIN_FILE=../../toolchain_arm_gcc_nrf52.cmake \
@@ -195,6 +200,7 @@ cmake -DCMAKE_TOOLCHAIN_FILE=../../toolchain_arm_gcc_nrf52.cmake \
       -DSMD_FLASH_HOLD=${SMD_FLASH_HOLD:-OFF} \
       -DMETRIC_LATENCY_LOG_ENABLE=$([ "$METRICS" = "ON" ] && echo 1 || echo 0) \
       -DVALIDATION_LOG_ENABLE=$([ "$VALIDATION" = "ON" ] && echo 1 || echo 0) \
+      -DBENCH_TEST=${BENCH} \
       ../..
 
 make -j 20
