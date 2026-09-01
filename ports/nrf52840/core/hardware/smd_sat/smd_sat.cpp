@@ -611,6 +611,33 @@ void SmdSat::state_load_kmac_enter() {
 }
 void SmdSat::state_load_kmac_exit() {}
 
+/// @brief Translate the host LPM bitmap into the module's.
+///
+/// The two enumerations do not agree, and nothing in the tree said so until a
+/// bench session went looking for why LPM never worked.
+///
+///   host   (base_types.hpp, ParamID::SMD_LPM_MODE, and ARP60 over DTE)
+///          0x01 NONE | 0x02 SLEEP | 0x04 STOP | 0x08 STANDBY | 0x10 SHUTDOWN
+///   module (mgr_lpm.h in argos-smd-at-kineis-firmware)
+///          0x00 NONE | 0x01 SLEEP | 0x02 STOP | 0x04 STANDBY | 0x08 SHUTDOWN
+///
+/// Ours is the module's shifted one bit left — it spends a bit naming NONE,
+/// which the module encodes as the absence of every other bit. So a plain >> 1
+/// maps the whole bitmap, NONE included.
+///
+/// Sending the host value raw is why the feature could never work.
+/// bMGR_SPI_CMD_WRITELPM_cmd refuses any bit outside 0x0F, so host SHUTDOWN
+/// (0x10) was rejected outright as a bad parameter, and host STANDBY (0x08)
+/// arrived as the module's SHUTDOWN, which that firmware does not compile in and
+/// also refuses. The only two values that arm the WKUP drop in
+/// state_idle_enter() were exactly the two the module would not accept.
+///
+/// Measured on the bench 2026-09-01: ARP60=16 answers a WRITE 0x13 failure,
+/// ARP60=4 (module STANDBY) is accepted silently.
+static inline uint8_t smd_lpm_host_to_module(uint8_t host_bitmap) {
+	return static_cast<uint8_t>(host_bitmap >> 1);
+}
+
 void SmdSat::state_load_kmac() {
 	TXTRACE("state_load_kmac: tick (pending_rconf=%u creds_written=%u explicit_kmac=%u poll=%u)",
 	        !m_pending_rconf.empty(), m_credentials_written, m_needs_explicit_kmac_load, m_state_counter);
@@ -762,12 +789,31 @@ void SmdSat::state_load_kmac() {
 		}
 
 		// Write LPM mode if not NONE — RAM register on STM32.
+		//
+		// TRANSLATED, not sent raw: the two enumerations do not agree and nothing
+		// in the tree said so. See smd_lpm_host_to_module() above.
 		if (m_lpm_mode != 0x01) {
+			uint8_t module_lpm = smd_lpm_host_to_module(m_lpm_mode);
+
+			// SHUTDOWN is compiled OUT of the module firmware unless it is built
+			// with LPM_SHUTDOWN_ENABLED; bMGR_SPI_CMD_WRITELPM_cmd then answers
+			// ERROR_FEATURE_NOT_AVAILABLE and the write fails. Say which mode is
+			// unreachable and what to use instead, rather than leaving a bare SPI
+			// error for someone to decode a month later.
+			if (m_lpm_mode & 0x10) {
+				DEBUG_WARN("SmdSat::%s: LPM asks for SHUTDOWN — the module refuses it unless its "
+				           "firmware is built with LPM_SHUTDOWN_ENABLED. STANDBY (ARP60=0x08) is the "
+				           "deepest mode this module can enter",
+				           __func__);
+			}
+
 			try {
-				m_cmd.write_lpm(&m_lpm_mode);
-				DEBUG_TRACE("SmdSat::%s: LPM mode written: 0x%02X", __func__, m_lpm_mode);
+				m_cmd.write_lpm(&module_lpm);
+				DEBUG_INFO("SmdSat::%s: LPM written — host 0x%02X -> module 0x%02X", __func__, m_lpm_mode,
+				           module_lpm);
 			} catch (...) {
-				DEBUG_WARN("SmdSat::%s: failed to write LPM mode", __func__);
+				DEBUG_WARN("SmdSat::%s: failed to write LPM mode (host 0x%02X -> module 0x%02X)", __func__,
+				           m_lpm_mode, module_lpm);
 			}
 		}
 
