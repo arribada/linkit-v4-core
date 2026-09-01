@@ -813,6 +813,27 @@ ScheduleDecision ArgosTxService::schedule_with_gnss(ArgosConfig &argos_config, s
 		m_scheduled_mode =
 		    argos_config.adaptive_modulation ? KineisModulation::LDA2 : resolve_non_adaptive_modulation();
 		m_scheduled_task = [this]() { process_time_sync_burst(); };
+
+		// The hour mask applies to this burst like any other. Returning run(0)
+		// unconditionally answered BEFORE the DUTY_CYCLE branch below was ever
+		// reached, so the single time-sync burst of each boot went out whatever
+		// the mask said. Measured 2026-09-01 on a linkit-v4-kim whose
+		// ARGOS_DUTY_CYCLE=FFE007 allows 21h-10h: "TX START - type=tsync" at
+		// 17:45:47, then the very next TX correctly deferred by 3 h 11 to 21:00.
+		// One frame per boot, three under BLIND -- bounded, but a mask that
+		// exists for regulatory reasons does not get one free frame per reset.
+		//
+		// Deferring is safe because the burst reads the clock when it FIRES, not
+		// when it is scheduled: process_time_sync_burst() calls
+		// retrieve_gps_latest() itself and dates the packet from that entry's
+		// schedTime. Three hours later it carries the newest fix in the pile,
+		// minutes old -- not the one that unlocked the TX.
+		if (argos_config.mode == BaseArgosMode::DUTY_CYCLE) {
+			return from_scheduler(
+			    report_duty_cycle_schedule(m_sched.schedule_duty_cycle(argos_config, now), argos_config),
+			    "time-sync burst (duty cycle)", "time-sync burst: no duty cycle slot computable");
+		}
+
 		m_sched.schedule_at(now);
 		return ScheduleDecision::run(0, "time-sync burst");
 	}
