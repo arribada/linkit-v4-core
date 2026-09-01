@@ -73,11 +73,18 @@ TEST_GROUP(M8) {
 	void expect_power_on() {
 		// Updated for 2026-05 M10Q reset-hold fix (analog of SAT_RESET BSP fix):
 		// NRST is now held LOW during VDD ramp, then released after stabilize.
-		// Sequence: init_pin(RST) → clear(RST) → delay → set(PWR_EN) → delay →
+		// Updated again 2026-09: EXTINT gets the same treatment, driven LOW
+		// before VDD rises so the pin has a defined level from the receiver's
+		// first powered instant and never floats while it is awake — PMREQ wakes
+		// on EITHER edge, so a floating line is a wake source.
+		// Sequence: init_pin(RST) → clear(RST) → init_pin(EXTINT) →
+		//           clear(EXTINT) → delay → set(PWR_EN) → delay →
 		//           set(RST) → delay → GPSEventPowerOn.
 		mock().expectOneCall("acquire_sensors_pwr");
 		mock().expectOneCall("init_pin").withParameter("pin", BSP::GPIO::GPIO_GPS_RST);
 		mock().expectOneCall("clear").withParameter("pin", BSP::GPIO::GPIO_GPS_RST);
+		mock().expectOneCall("init_pin").withParameter("pin", BSP::GPIO::GPIO_GPS_EXT_INT);
+		mock().expectOneCall("clear").withParameter("pin", BSP::GPIO::GPIO_GPS_EXT_INT);
 		mock().expectOneCall("delay_ms").ignoreOtherParameters();
 		mock().expectOneCall("set").withParameter("pin", BSP::GPIO::GPIO_GPS_PWR_EN);
 		mock().expectOneCall("delay_ms").ignoreOtherParameters();

@@ -19,16 +19,26 @@ echo -e "${BLUE}    LinkIt V4 Unit Tests Runner${NC}"
 echo -e "${BLUE}========================================${NC}"
 echo ""
 
-# Build tests if needed
-if [ ! -f "$BUILD_DIR/TrackerTests" ]; then
-    echo -e "${YELLOW}Building tests...${NC}"
-    mkdir -p "$BUILD_DIR"
-    cd "$BUILD_DIR"
-    rm -f CMakeCache.txt
+# Build tests. ALWAYS, not just when the binary is missing.
+#
+# This used to be `if [ ! -f TrackerTests ]`, which meant every run after the
+# first one tested whatever binary happened to be lying in tests/build — source
+# changes included. A green run then proved nothing about the code just written,
+# and said so in a reassuring voice. Caught 2026-09-01 after an EXTINT change
+# reported 772/772 while actually breaking 18 tests; ninja is incremental, so
+# always configuring and building costs nothing when nothing changed.
+echo -e "${YELLOW}Building tests...${NC}"
+mkdir -p "$BUILD_DIR"
+cd "$BUILD_DIR"
+if [ ! -f "$BUILD_DIR/CMakeCache.txt" ]; then
     cmake -GNinja ..
-    ninja
-    echo ""
 fi
+if ! ninja; then
+    echo -e "${RED}Test build FAILED — not running a stale binary${NC}"
+    exit 1
+fi
+echo ""
+cd "$PROJECT_DIR"
 
 cd "$BUILD_DIR"
 
