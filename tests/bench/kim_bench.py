@@ -482,9 +482,19 @@ class Suite:
         self.check("GPS injection (%GPS)", m is not None and logline is not None,
                    "injected -21.0097,55.2707")
         # Assert on an INFO/WARN log (task_process_gnss_data itself is TRACE-level,
-        # filtered at DEBUG_LEVEL=3). The fix being accepted as a PVT and the GNSS
-        # service completing are the visible, level-appropriate proofs.
-        pipeline = b.expect(r"(retry_counter: reset ntry.*PVT fix|service GNSS completed)",
+        # filtered at DEBUG_LEVEL=3).
+        #
+        # Les deux premiers motifs sont CIRCONSTANCIELS, et c est ce qui a fait
+        # rougir ce cas le 2026-08-31 sur une carte parfaitement saine:
+        # "retry_counter: reset ntry=N->0" n est emis que si des tentatives se
+        # sont accumulees (ntry>0), et "service GNSS completed" disparait sous
+        # GNSS_SESSION_SINGLE_FIX, qui ne replanifie pas apres le premier fix.
+        # La preuve DIRECTE que le fix a traverse le pipeline est son entree
+        # dans la pile de profondeur — elle ne depend d aucun reglage.
+        pipeline = b.expect(r"(DepthPileManager: GPS FIX stored"
+                            r"|first valid GPS fix this session"
+                            r"|retry_counter: reset ntry.*PVT fix"
+                            r"|service GNSS completed)",
                             8.0, from_idx=mk)
         self.check("fix accepted into pipeline (PVT)", pipeline is not None,
                    pipeline.group(0).split(']')[-1].strip() if pipeline else "no PVT-accept log")
