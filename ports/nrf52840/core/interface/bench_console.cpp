@@ -62,6 +62,96 @@ void reply(const std::string &s) {
 	UsbInterface::get_instance().write(s + "\r\n");
 }
 
+/// @brief Stream the satellite-slot UART to the console — the SMD module's own
+/// debug log.
+///
+/// On a SPI build nothing opens UART instance 1, so its peripheral is free and
+/// its pins are parked (nrf_gpio.cpp releases both to default). The slot is the
+/// one the KIM2 uses for AT, and on the SMD variant the nRF RECEIVES on P0.14
+/// (bsp.cpp) — which is where the module's LPUART1 TX (PA2) lands.
+///
+/// Driven straight at the UARTE1 registers rather than through libuarte or
+/// nrfx: NRFX_UARTE1_ENABLED is 0 and nothing else claims the peripheral on this
+/// build, so there is no driver to fight, and this way the probe cannot disturb
+/// the SPI path it exists to diagnose.
+///
+/// The module logs at 115200 in SPI mode (usart.c: 9600 is the STDLN/GUI-UART
+/// case only). Bench only.
+static void cmd_satlog(const std::string &line) {
+	unsigned int secs = 10;
+	unsigned int baud = 115200;
+	unsigned int a = 0, b = 0;
+	int argc = sscanf(line.c_str(), "%%SATLOG %u %u", &a, &b);
+	if (argc >= 1 && a > 0 && a <= 120) secs = a;
+	if (argc >= 2 && b) baud = b;
+
+	// Register values for the rates the module can be built at (usart.c: 115200
+	// in SPI mode, 9600 for STDLN/GUI-UART). The others are here so a sweep can
+	// settle the question without a reflash between tries.
+	uint32_t baud_reg;
+	switch (baud) {
+	case 9600: baud_reg = 0x00275000; break;
+	case 19200: baud_reg = 0x004EA000; break;
+	case 38400: baud_reg = 0x009D5000; break;
+	case 57600: baud_reg = 0x00EBF000; break;
+	default: baud = 115200; baud_reg = 0x01D7E000; break;
+	}
+
+	NRF_UARTE_Type *u = NRF_UARTE1;
+	const uint32_t rx_pin = BSP::UARTAsync_Inits[1].config.rx_pin;
+
+	nrf_gpio_cfg_input(rx_pin, NRF_GPIO_PIN_NOPULL);
+	u->PSEL.RXD = rx_pin;
+	u->PSEL.TXD = 0xFFFFFFFF;
+	u->PSEL.CTS = 0xFFFFFFFF;
+	u->PSEL.RTS = 0xFFFFFFFF;
+	u->BAUDRATE = baud_reg;
+	u->CONFIG = 0;             // 8N1, no flow control
+	u->ENABLE = 8;
+
+	reply("%SATLOG start (P0." + std::to_string(rx_pin) + " @" + std::to_string(baud) + ", " + std::to_string(secs)
+	      + "s)");
+
+	static uint8_t buf[64];
+	const uint64_t deadline = PMU::get_timestamp_ms() + (uint64_t)secs * 1000u;
+	unsigned int total = 0;
+
+	while (PMU::get_timestamp_ms() < deadline) {
+		PMU::kick_watchdog();
+		u->EVENTS_ENDRX = 0;
+		u->RXD.PTR = (uint32_t)buf;
+		u->RXD.MAXCNT = sizeof(buf);
+		u->TASKS_STARTRX = 1;
+
+		// Give the DMA a window, then close it so RXD.AMOUNT is valid even on a
+		// partial buffer — the module talks in short bursts, waiting for a full
+		// 64 bytes would hold most lines back until the next one arrived.
+		uint64_t slice = PMU::get_timestamp_ms() + 250;
+		while (!u->EVENTS_ENDRX && PMU::get_timestamp_ms() < slice) { /* spin */ }
+		if (!u->EVENTS_ENDRX) {
+			u->EVENTS_ENDRX = 0;
+			u->TASKS_STOPRX = 1;
+			uint64_t stop_deadline = PMU::get_timestamp_ms() + 20;
+			while (!u->EVENTS_ENDRX && PMU::get_timestamp_ms() < stop_deadline) { /* spin */ }
+		}
+
+		unsigned int n = u->RXD.AMOUNT;
+		if (n) {
+			total += n;
+			UsbInterface::get_instance().write(std::string((const char *)buf, n));
+		}
+	}
+
+	u->TASKS_STOPRX = 1;
+	u->ENABLE = 0;
+	u->PSEL.RXD = 0xFFFFFFFF;
+	nrf_gpio_cfg_default(rx_pin);
+
+	reply("");
+	reply("%SATLOG done bytes=" + std::to_string(total));
+}
+
+
 const char *state_name() {
 	if (GenTracker::is_in_state<ConfigurationState>()) return "CONFIG";
 	if (GenTracker::is_in_state<OperationalState>()) return "OPERATIONAL";
@@ -464,6 +554,8 @@ bool bench::handle_line(const std::string &raw) {
 		bench_i2c_scan(line);
 	} else if (cmd == "%OTA") {
 		bench_ota(line);
+	} else if (cmd == "%SATLOG") {
+		cmd_satlog(line);
 	} else if (cmd == "%LB") {
 		// Consistency of the two battery thresholds. The matching DEBUG_WARN goes
 		// to system.log (console logs are deliberately silent during a DTE
