@@ -732,6 +732,19 @@ void M10QAsyncReceiver::exit_shutdown() {
 	// release — clean POR on release, no marginal-voltage boot.
 	GPIOPins::init_pin(BSP::GPIO::GPIO_GPS_RST);  // reconfigure as OUTPUT (S0D1 open-drain)
 	GPIOPins::clear(BSP::GPIO::GPIO_GPS_RST);     // drive LOW → NRST asserted (reset held)
+	// Same treatment for EXTINT, and for the same reason: give the M10Q a
+	// DEFINED level from its very first powered instant. UBX-RXM-PMREQ wakes the
+	// receiver on "either a falling or a rising edge" (M10 SPG 5.20 interface
+	// description, UBX-RXM-PMREQ wakeupSources) — so the level matters far less
+	// than the transitions, and a line left floating produces transitions nobody
+	// asked for. The pin is NOPULL on our side (bsp.cpp), so high-Z really is
+	// undriven, not weakly held.
+	//
+	// Driving LOW into a rail that is not up yet is safe: back-powering happens
+	// when you drive a pin HIGH into an unpowered input, and NRST above already
+	// relies on exactly this.
+	GPIOPins::init_pin(BSP::GPIO::GPIO_GPS_EXT_INT);
+	GPIOPins::clear(BSP::GPIO::GPIO_GPS_EXT_INT);
 	PMU::delay_ms(2);                             // small settle for the drive
 	GPIOPins::set(BSP::GPIO::GPIO_GPS_PWR_EN);    // VDD ON with M10Q held in reset
 	PMU::delay_ms(20);                            // VDD ramp + stabilize while in reset
@@ -1552,17 +1565,27 @@ void M10QAsyncReceiver::send_pmreq_backup() {
 //  - M10Q is in PMREQ-backup state (state == backupidle).
 //  - Rail (GPIO_GPS_PWR_EN) is still ON (caller's responsibility).
 // The M10Q datasheet requires a pulse width >= ~100 µs to register. We
-// drive HIGH for 1 ms (10× minimum spec margin) then back to LOW, then
-// release to high-Z so the pin doesn't sink/source current while the
-// M10Q is awake and using EXTINT as a normal logic input.
+// drive HIGH for 1 ms (10× minimum spec margin) then back to LOW, and KEEP
+// driving LOW for the rest of the session.
+//
+// 2026-09: it used to release to high-Z here, "so the pin doesn't sink/source
+// current while the M10Q is awake and using EXTINT as a normal logic input".
+// Neither half of that holds on this board. EXTINT is not used as an input by
+// anything — it exists solely to wake the receiver — and driving a CMOS input
+// LOW sinks no meaningful current anyway. What releasing it DID buy was a
+// floating line, on a pin the receiver has been told to watch for edges.
+//
+// A statically driven LOW line produces no edges at all, which is the only
+// state that cannot wake the receiver by accident. The rail-cut paths still
+// release to high-Z — driving a pin into an unpowered chip is a different
+// problem, and that one is real.
 void M10QAsyncReceiver::pulse_extint_wake() {
 	DEBUG_TRACE("M10QAsyncReceiver::pulse_extint_wake");
 	VAL_GNSS("extint_pulse_wake from_state=%d", (int)m_state);
-	GPIOPins::init_pin(BSP::GPIO::GPIO_GPS_EXT_INT);          // ensure OUTPUT direction
-	GPIOPins::set(BSP::GPIO::GPIO_GPS_EXT_INT);               // edge rising → M10Q wakes
-	PMU::delay_ms(1);                                         // hold (>= 100 µs spec)
-	GPIOPins::clear(BSP::GPIO::GPIO_GPS_EXT_INT);             // back to LOW idle
-	GPIOPins::release_to_highz(BSP::GPIO::GPIO_GPS_EXT_INT);  // no leakage
+	GPIOPins::init_pin(BSP::GPIO::GPIO_GPS_EXT_INT);  // ensure OUTPUT direction
+	GPIOPins::set(BSP::GPIO::GPIO_GPS_EXT_INT);       // edge rising → M10Q wakes
+	PMU::delay_ms(1);                                 // hold (>= 100 µs spec)
+	GPIOPins::clear(BSP::GPIO::GPIO_GPS_EXT_INT);     // back to LOW, and STAY driven
 }
 
 void M10QAsyncReceiver::state_enterbackup_enter() {
@@ -1648,24 +1671,30 @@ void M10QAsyncReceiver::state_enterbackup() {
 				sync_baud_rate(baud);
 				break;
 			} else if (m_step == 2) {
-				// 2026-05-25 EXTINT fix: drive GPIO_GPS_EXT_INT LOW (OUTPUT)
-				// BEFORE sending PMREQ-backup.
+				// Re-assert EXTINT LOW before PMREQ-backup. Since 2026-09 the
+				// line is ALREADY driven LOW — from exit_shutdown, before VDD
+				// even rises, and held that way through the whole session — so
+				// this is an idempotent assertion, not a transition.
 				//
-				// Why: PMREQ-backup tells the M10Q to monitor EXTINT for wake
-				// edges (wakeupSources=EXTINT0). After the previous wake,
-				// `pulse_extint_wake` releases EXTINT to high-Z to avoid
-				// leakage while the M10Q is awake — correct for the awake
-				// state, but means EXTINT is floating when the next PMREQ-
-				// backup fires. Floating EXTINT can pick up ambient noise or
-				// settle at indeterminate levels, which the M10Q may interpret
-				// as wake edges → either refuses to stay in backup or wakes
-				// immediately after entering it.
+				// That distinction is the entire point, and getting it wrong is
+				// what this code did between 2026-05-25 and 2026-09. The 05-25
+				// fix correctly identified that a floating EXTINT is dangerous
+				// while the receiver is told to watch it (wakeupSources=EXTINT0)
+				// — but it fixed it by driving the line LOW HERE, one statement
+				// before send_pmreq_backup(), with no settling time.
 				//
-				// Driving LOW here gives the M10Q a clean stable idle state
-				// to observe across the entire backup duration. The next
-				// `pulse_extint_wake` already drives a clean LOW→HIGH→LOW
-				// pulse and releases to high-Z, so this is compatible with
-				// the existing wake path.
+				// If the floating line had drifted high, that drive IS a falling
+				// edge. And the M10 interface description is explicit that
+				// "the receiver wakes up if there is either a falling or a
+				// rising edge on one of the configured pins" — not rising only.
+				// So the remedy manufactured the exact wake event it was meant
+				// to prevent, immediately before asking the receiver to sleep on
+				// that pin. The tag then reported "M10Q replied to probe after
+				// PMREQ — backup refused" on most cycles, at ~2 mA instead of
+				// ~10 µA for the whole GNP52 window.
+				//
+				// Kept as a cheap guard against a future path that powers the
+				// receiver without going through exit_shutdown.
 				GPIOPins::init_pin(BSP::GPIO::GPIO_GPS_EXT_INT);
 				GPIOPins::clear(BSP::GPIO::GPIO_GPS_EXT_INT);
 
