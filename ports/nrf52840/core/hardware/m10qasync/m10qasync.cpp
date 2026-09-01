@@ -2154,9 +2154,18 @@ void M10QAsyncReceiver::state_configure() {
 				check_for_power_off();  // cf. state_poweron: ne pas dependre d'un abonne
 				break;
 			} else if (m_op_state == OpState::ERROR) {
-				// Restart receiver on comms error
+				// Restart receiver on comms error, at the rate the receiver is
+				// KNOWN to answer — not at MAX_BAUDRATE on principle.
+				//
+				// 2026-09 Cyprus field failure: framing+break errors (ERRORSRC
+				// 0x0c) mean the receiver is not on the rate we are talking at.
+				// Forcing MAX here retried the failing rate forever — six dead
+				// sessions from 06:05 to 07:20, and only the STUCK_THRESHOLD
+				// rail-cycle broke it. m_synced_baud is maintained for exactly
+				// this (see its declaration) and state_configure's fast-path
+				// abort already uses it; these sites contradicted it.
 				initiate_timeout();
-				m_ubx_comms.set_baudrate(MAX_BAUDRATE);
+				m_ubx_comms.set_baudrate(m_synced_baud);
 			}
 			m_op_state = OpState::IDLE;
 		}
@@ -2254,9 +2263,18 @@ void M10QAsyncReceiver::state_startreceive() {
 				check_for_power_off();  // cf. state_poweron: ne pas dependre d'un abonne
 				break;
 			} else if (m_op_state == OpState::ERROR) {
-				// Restart receiver on comms error
+				// Restart receiver on comms error, at the rate the receiver is
+				// KNOWN to answer — not at MAX_BAUDRATE on principle.
+				//
+				// 2026-09 Cyprus field failure: framing+break errors (ERRORSRC
+				// 0x0c) mean the receiver is not on the rate we are talking at.
+				// Forcing MAX here retried the failing rate forever — six dead
+				// sessions from 06:05 to 07:20, and only the STUCK_THRESHOLD
+				// rail-cycle broke it. m_synced_baud is maintained for exactly
+				// this (see its declaration) and state_configure's fast-path
+				// abort already uses it; these sites contradicted it.
 				initiate_timeout();
-				m_ubx_comms.set_baudrate(MAX_BAUDRATE);
+				m_ubx_comms.set_baudrate(m_synced_baud);
 			}
 			m_op_state = OpState::IDLE;
 		}
@@ -2278,8 +2296,9 @@ void M10QAsyncReceiver::state_receive_enter() {
 void M10QAsyncReceiver::state_receive() {
 	if (m_op_state == OpState::ERROR) {
 		if (m_retries > 0 && --m_retries) {
-			// CommsError try to restart the receiver
-			m_ubx_comms.set_baudrate(MAX_BAUDRATE);
+			// CommsError try to restart the receiver — on the rate it is known
+			// to answer at, not on MAX_BAUDRATE by assumption (2026-09).
+			m_ubx_comms.set_baudrate(m_synced_baud);
 			initiate_timeout(5000);
 			m_op_state = OpState::IDLE;
 		} else {
@@ -2354,9 +2373,18 @@ void M10QAsyncReceiver::state_stopreceive() {
 				STATE_CHANGE(stopreceive, poweroff);
 				break;
 			} else if (m_op_state == OpState::ERROR) {
-				// Restart receiver on comms error
+				// Restart receiver on comms error, at the rate the receiver is
+				// KNOWN to answer — not at MAX_BAUDRATE on principle.
+				//
+				// 2026-09 Cyprus field failure: framing+break errors (ERRORSRC
+				// 0x0c) mean the receiver is not on the rate we are talking at.
+				// Forcing MAX here retried the failing rate forever — six dead
+				// sessions from 06:05 to 07:20, and only the STUCK_THRESHOLD
+				// rail-cycle broke it. m_synced_baud is maintained for exactly
+				// this (see its declaration) and state_configure's fast-path
+				// abort already uses it; these sites contradicted it.
 				initiate_timeout();
-				m_ubx_comms.set_baudrate(MAX_BAUDRATE);
+				m_ubx_comms.set_baudrate(m_synced_baud);
 			}
 			m_op_state = OpState::IDLE;
 		}
@@ -2603,8 +2631,8 @@ void M10QAsyncReceiver::state_senddatabase() {
 		} else {
 			DEBUG_WARN("M10QAsyncReceiver::state_send_database: failed");
 			if (m_op_state == OpState::ERROR) {
-				// Restart receiver on comms error
-				m_ubx_comms.set_baudrate(MAX_BAUDRATE);
+				// Restart receiver on comms error — see state_configure (2026-09).
+				m_ubx_comms.set_baudrate(m_synced_baud);
 			}
 			STATE_CHANGE(senddatabase, startreceive);
 			break;
