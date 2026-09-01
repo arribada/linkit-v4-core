@@ -106,6 +106,17 @@ using buzz_handle = BuzzState;
 void ConfigurationState::entry() {
 	DEBUG_INFO("entry: ConfigurationState");
 
+	// Sealed-device recovery: reaching config mode is proof of a good boot, so
+	// it clears the boot-fail counter exactly as OperationalState does. The
+	// flash mounted, the config store parsed, the scheduler runs and the DTE is
+	// about to answer — everything the counter exists to test.
+	//
+	// Without this, a boot that goes straight to config mode (magnet held at
+	// power-up, USB session, a crash followed by a reconnect) counted as a
+	// FAILED boot and never cleared. Three of those in a row and BootState
+	// factory-resets a device that was working the whole time.
+	gentracker_bootfail_reset();
+
 	// Hold VSYS at 3.3 V for the whole session: the scheduler is idle here, so
 	// deep idle would otherwise drop the rail to 2.3 V under a live BLE/DTE
 	// exchange -- and an OTA write, dispatched from interrupt context, would

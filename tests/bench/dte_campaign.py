@@ -5219,16 +5219,19 @@ CASES_V22 = [
 # =====================================================================
 #  Vague 23 — le compte a rebours vers le brick
 #
-#  BOOT_RETRY_BEFORE_FACTORY = 3 (gentracker.cpp:252): trois demarrages
-#  consecutifs rates declenchent un reset usine, et le reset usine efface les
-#  identifiants Argos. Sur une balise scellee, c est definitif — plus aucun
-#  moyen de la reprogrammer sur le terrain.
+#  BOOT_RETRY_BEFORE_FACTORY = 5 (gentracker.cpp): cinq demarrages consecutifs
+#  rates declenchent un reset usine. Ce reset ne detruit PLUS les identifiants
+#  ni les secrets d approvisionnement — PROTECTED_PARAMS (config_store_fs.hpp)
+#  les repose apres le format: ARGOS_SECKEY, les RADIOCONF et les six clefs
+#  LoRaWAN. Ce qui est perdu, c est toute la config mission: modes, periodes,
+#  seuils. Une balise deployee repart en valeurs par defaut — recuperable, mais
+#  cher a distance.
 #
-#  Le compteur vit en .noinit et n est efface QUE par un demarrage reussi
-#  (bootfail_reset(), appele depuis OperationalState::entry). S il cessait de
-#  s effacer, rien ne le montrerait: le compte a rebours serait entierement
-#  silencieux jusqu au troisieme redemarrage. La sonde %BOOT est le seul point
-#  d observation.
+#  Le compteur vit en .noinit et n est efface que par un demarrage qui atteint
+#  OperationalState ou ConfigurationState (2026-09: le mode config compte, il
+#  prouve exactement les memes choses). S il cessait de s effacer, rien ne le
+#  montrerait: le compte a rebours serait entierement silencieux jusqu au
+#  cinquieme redemarrage. La sonde %BOOT est le seul point d observation.
 # =====================================================================
 
 def _boot(b, timeout=10.0, essais=4):

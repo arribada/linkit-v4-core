@@ -232,9 +232,20 @@ void GenTracker::exit(void) {};
 // resets it. When the counter is positive, ErrorState performs a soft
 // reset instead of going to OffState — letting the watchdog/reboot
 // cycle exercise recovery instead of going dark. At BOOT_RETRY_BEFORE_FACTORY
-// (3) we factory-reset the config store on next boot (preserves
-// DECID/HEXID/calibration) and reset again. Only if the factory_reset
-// retry also fails do we fall through to true OffState (real HW fault).
+// we factory-reset the config store on next boot and reset again. Only if the
+// factory_reset retry also fails do we fall through to true OffState (real HW
+// fault). What the factory_reset preserves is PROTECTED_PARAMS in
+// config_store_fs.hpp: identifiers, calibration AND the provisioning secrets
+// (ARGOS_SECKEY, the RADIOCONFs, the six LoRaWAN keys). What it loses is the
+// mission config — modes, periods, thresholds — which is what the recovery is
+// for.
+//
+// Reaching CONFIGURATION also clears the counter, not just OPERATIONAL. Both
+// states prove the same things: the flash mounted, the config store parsed,
+// the scheduler runs and the DTE answers. Counting a healthy config-mode boot
+// as a failure is how an operator doing three USB sessions in a row — without
+// ever letting the tag reach Operational in between — would walk it into a
+// factory reset it never earned.
 // =====================================================================
 
 struct BootFailNoinit {
@@ -251,7 +262,7 @@ static BootFailNoinit s_bootfail_noinit;
 #endif
 
 static constexpr uint8_t BOOT_RETRY_MAX = 5;             ///< Total reset retries before OffState
-static constexpr uint8_t BOOT_RETRY_BEFORE_FACTORY = 3;  ///< Retries before attempting factory_reset
+static constexpr uint8_t BOOT_RETRY_BEFORE_FACTORY = 5;  ///< Retries before attempting factory_reset
 
 static uint16_t bootfail_compute_crc() {
 	BootFailNoinit snapshot;
@@ -316,6 +327,15 @@ static void bootfail_reset() {
 	s_bootfail_noinit.consecutive_failures = 0;
 	s_bootfail_noinit.factory_reset_attempted = 0;
 	bootfail_save();
+}
+
+/// @brief Clear the boot-fail counter from another translation unit.
+///
+/// ConfigurationState lives in gentracker_config_state.cpp and needs the same
+/// clear as OperationalState. Kept as a thin wrapper so the counter and its
+/// CRC stay private to this file.
+void gentracker_bootfail_reset() {
+	bootfail_reset();
 }
 
 /// @brief Dispatch ErrorEvent with BAD_FILESYSTEM to trigger ErrorState.

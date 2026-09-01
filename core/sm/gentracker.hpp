@@ -25,6 +25,14 @@ struct ErrorEvent : tinyfsm::Event {
 	ErrorCode error_code;
 };
 
+/// @brief Clear the sealed-device boot-fail counter.
+///
+/// Defined in gentracker.cpp, where the counter and its CRC live in .noinit
+/// RAM. Declared here because ConfigurationState — split into
+/// gentracker_config_state.cpp — clears it too: reaching config mode proves a
+/// good boot just as reaching Operational does.
+void gentracker_bootfail_reset();
+
 /// @brief Main FSM base class — handles reed switch, watchdog, config flush.
 class GenTracker : public tinyfsm::Fsm<GenTracker> {
 public:
