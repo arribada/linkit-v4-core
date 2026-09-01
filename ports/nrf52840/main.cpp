@@ -309,6 +309,13 @@ FSM_INITIAL_STATE(GenTracker, BootState)
  * @param color    LED color identifying the fault type.
  * @param delay_ms Blink half-period in milliseconds (default 50 ms).
  */
+/// The Debug callers pair this with PMU::save_stack() first. That used to be a
+/// Release-only call, so a fault on a Debug build — the build that exists to be
+/// debugged — left the operator a blink count and nothing else: no backtrace, no
+/// reset, so no next boot to write one. save_stack() only fills a CRC-checked
+/// .noinit buffer, costs microseconds and touches no flash, so it is safe on
+/// this path; press RESET after counting and the next boot logs a backtrace that
+/// symbolises against the ELF.
 [[noreturn]] static void fault_blink_loop(unsigned int blink_count) {
 	constexpr unsigned int BLINK_ON_MS = 120;   // long enough to see, short enough to count
 	constexpr unsigned int BLINK_OFF_MS = 180;  // gap inside a burst
@@ -433,6 +440,7 @@ extern "C" void HardFault_Handler() {
 		PMU::reset(false);
 	}
 #else
+	PMU::save_stack(PMULogType::HARDFAULT);
 	fault_blink_loop(1);  // HardFault
 #endif
 }
@@ -444,6 +452,7 @@ extern "C" void MemoryManagement_Handler(void) {
 		PMU::reset(false);
 	}
 #else
+	PMU::save_stack(PMULogType::MMAN);
 	fault_blink_loop(2);  // MemManagement
 #endif
 }
@@ -457,6 +466,7 @@ void __wrap___stack_chk_fail(void) {
 	PMU::save_stack(PMULogType::STACK);
 	PMU::reset(false);
 #else
+	PMU::save_stack(PMULogType::STACK);
 	fault_blink_loop(3);  // Stack overflow
 #endif
 }
@@ -469,6 +479,7 @@ extern "C" void vApplicationMallocFailedHook() {
 		PMU::reset(false);
 	}
 #else
+	PMU::save_stack(PMULogType::MALLOC);
 	fault_blink_loop(4);  // Malloc failure
 #endif
 }
@@ -484,6 +495,7 @@ void etl_error_handler(const etl::exception &e) {
 		PMU::reset(false);
 	}
 #else
+	PMU::save_stack(PMULogType::ETL);
 	fault_blink_loop(5);  // ETL assertion
 #endif
 }
