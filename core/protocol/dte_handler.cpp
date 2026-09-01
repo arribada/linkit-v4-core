@@ -1515,7 +1515,12 @@ std::string DTEHandler::PWRON_REQ(int error_code, std::vector<BaseType> &arg_lis
 #elif defined(LORA_RAK3172) && (LORA_RAK3172 == 1)
 		GPIOPins::set(SAT_PWR_EN);
 #else
+		// KIM2: release NRST to its pull-up as the driver does on its own
+		// power-on path (kim2.cpp). Without it the module is powered but held
+		// in reset, so a DTE-driven power-on — which is how a KIM2 firmware
+		// update is staged — brings the rail up to a module that never boots.
 		GPIOPins::set(SAT_PWR_EN);
+		GPIOPins::release_to_pullup(SAT_RESET);
 		GPIOPins::set(SAT_EXTWAKEUP);
 #endif
 		break;
@@ -1559,8 +1564,15 @@ std::string DTEHandler::PWRON_REQ(int error_code, std::vector<BaseType> &arg_lis
 #elif defined(LORA_RAK3172) && (LORA_RAK3172 == 1)
 		GPIOPins::clear(SAT_PWR_EN);
 #else
-		GPIOPins::clear(SAT_PWR_EN);
+		// Mirror of the power-on branch, in the reverse order that matters:
+		// assert NRST BEFORE cutting the rail, so the module is held in reset
+		// through the decay rather than browning out mid-instruction. Leaving
+		// the pin at its pull-up while VDD collapses is what back-feeds a
+		// powered-down module through its protection diodes.
 		GPIOPins::clear(SAT_EXTWAKEUP);
+		GPIOPins::init_pin(SAT_RESET);
+		GPIOPins::clear(SAT_RESET);
+		GPIOPins::clear(SAT_PWR_EN);
 #endif
 		GPIOPins::release_sensors_pwr();
 		break;
