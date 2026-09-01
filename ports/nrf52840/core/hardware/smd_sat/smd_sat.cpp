@@ -964,10 +964,17 @@ void SmdSat::state_idle_exit() {
 #ifdef SAT_EXTWAKEUP
 	if (m_wkup_lowered) {
 		GPIOPins::set(SAT_EXTWAKEUP);
-		nrf_delay_ms(50);  // STM32 wakeup from STANDBY/SHUTDOWN takes ~50ms (STANDBY).
-		                   // SHUTDOWN needs more — user should not enable 0x10 without
-		                   // also increasing this and re-running state_load_kmac (TCXO/LPM
-		                   // are RAM registers lost on SHUTDOWN wake = full POR).
+		// Just enough for the wake edge to be seen. The real wait belongs to
+		// idle_pending's ping-with-retries loop, which is bounded by the module
+		// actually answering rather than by a guess.
+		//
+		// This used to be a blind 50 ms, with a comment blaming SHUTDOWN alone
+		// for needing more. The module firmware says otherwise: STANDBY exit is
+		// a cold reset too, so 50 ms was short for BOTH modes -- the module was
+		// still booting when we spoke, and its RAM registers were gone either
+		// way. state_idle() now routes back through idle_pending, which waits
+		// properly and re-runs the boot configuration.
+		nrf_delay_ms(10);
 		m_wkup_lowered = false;
 		DEBUG_TRACE("SmdSat::%s: WKUP HIGH (wakeup from LPM)", __func__);
 	}
@@ -977,6 +984,28 @@ void SmdSat::state_idle_exit() {
 
 void SmdSat::state_idle() {
 	if (m_packet_buffer.length()) {
+		// If we actually let the module sleep, it did not merely idle: STANDBY
+		// exit is a COLD RESET of the STM32. Its own firmware says so --
+		// LPM_standby_enter() runs GPIO_DisableAllToAnalogInput(), tearing the
+		// SPI pins down with everything else, and notes "STDBY exit leads to
+		// reset of the uC, all peripherals will be restarted through normal
+		// wake-up sequence". So on the way back there is no SPI slave for
+		// ~100-200 ms, and the TCXO / KMAC context we wrote is gone.
+		//
+		// Going straight to transmit_pending therefore talked to a module that
+		// was still booting: every command read back the master's own marker
+		// (AA AA ...), the ping failed, and the session ended in
+		// "failed to enter IDLE state". Measured on the bench 2026-09-01.
+		//
+		// idle_pending is exactly the path that handles this, and it already
+		// exists: it re-inits our SPI, pings with 10 retries, and routes to
+		// load_kmac when the profile is not loaded. Clear the flag and use it.
+		if (m_wkup_lowered) {
+			DEBUG_INFO("SmdSat::%s: module was in LPM — cold boot on wake, re-running boot config", __func__);
+			is_kmac_profil_loaded = false;
+			SMD_STATE_CHANGE(idle, idle_pending);
+			return;
+		}
 		TXTRACE("state_idle: packet pending -> transmit_pending");
 		m_tx_buffer = m_packet_buffer;
 		m_packet_buffer.clear();
