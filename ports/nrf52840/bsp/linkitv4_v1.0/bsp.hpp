@@ -100,7 +100,11 @@
 #define ADS1115_ADDRESS     0x48
 
 // Battery voltage ADC gain
+#if defined(BATTERY_CHEMISTRY) && BATTERY_CHEMISTRY == BATT_CHEM_ALKALINE_3S2P
+#define ADC_GAIN              (1.0f/6.0f)  // 1/6 gain
+#else
 #define ADC_GAIN              (1.0f/5.0f)  // 1/5 gain
+#endif
 #define V_DIV_GAIN            1.443f
 // #define RP506_ADC_GAIN        4.0f
 

@@ -29,7 +29,7 @@
 /// @name SOC hysteresis thresholds (percentage points)
 /// @{
 static constexpr uint8_t CRITICAL_SOC_HYSTERESIS = 3;
-static constexpr uint8_t LOW_BATT_THRESHOLD      = 5;
+static constexpr uint8_t LOW_BATT_SOC_THRESHOLD  = 5;
 /// @}
 
 /// @name ADC conversion constants
@@ -47,16 +47,21 @@ static constexpr unsigned int BATT_LUT_ENTRIES = 11;
 struct BatteryProfile {
 	uint16_t min_mv;
 	uint16_t max_mv;
+	uint16_t step_mv;
 	uint8_t  soc_lut[BATT_LUT_ENTRIES];
 };
 
 static constexpr BatteryProfile battery_profiles[] = {
 	// S18650_2600              — Li-ion 3.2-4.2 V
-	{ 3200, 4200, { 100, 91, 79, 62, 42, 12,  2,  0, 0, 0, 0 } },
+	{ 3200, 4200, 100, { 100, 91, 79, 62, 42, 12,  2,  0, 0, 0, 0 } },
 	// CGR18650_2250            — Li-ion 3.2-4.2 V
-	{ 3200, 4200, { 100, 93, 84, 75, 64, 52, 22,  9, 0, 0, 0 } },
+	{ 3200, 4200, 100, { 100, 93, 84, 75, 64, 52, 22,  9, 0, 0, 0 } },
 	// NCR18650_3100_3400       — Li-ion 3.2-4.2 V
-	{ 3200, 4200, { 100, 94, 83, 59, 50, 33, 15,  6, 0, 0, 0 } },
+	{ 3200, 4200, 100, { 100, 94, 83, 59, 50, 33, 15,  6, 0, 0, 0 } },
+	// ALKALINE_3S2P — 6x LR20 3S2P, 2.4-4.7 V, 230 mV step
+	// Index:        4700  4470  4240  4010  3780  3550  3320  3090  2860  2630  2400  mV
+	// (per cell)    1.567 1.490 1.413 1.337 1.260 1.183 1.107 1.030 0.953 0.877 0.800 V
+	{ 2400, 4700, 230, { 100, 89, 79, 63, 48, 34, 21, 13, 7, 3, 0 } },
 	// LS17500_2P (Li-SOCl2 plateau profile, 2 cells in parallel, 2.7-3.7 V).
 	// Index:        3700 3600 3500 3400 3300 3200 3100 3000 2900 2800 2700  mV
 	// Plateau 100 % until 3.55 V then progressive drop to the cliff at 3.0 V.
@@ -70,7 +75,7 @@ static constexpr BatteryProfile battery_profiles[] = {
 	//   of graceful-shutdown time at 50 µA sleep after the cells truly die.
 	// - Supercap recharge from cells takes ~6 min for a full 1 V refill (200 mA continuous,
 	//   2 cells) — don't burst TX too fast when SOC is low or the cap won't recover.
-	{ 2700, 3700, { 100, 99, 95, 80, 50, 20,  5,  1, 0, 0, 0 } },
+	{ 2700, 3700, 100, { 100, 99, 95, 80, 50, 20,  5,  1, 0, 0, 0 } },
 };
 
 static_assert(sizeof(battery_profiles) / sizeof(battery_profiles[0]) ==
@@ -83,16 +88,42 @@ static void nrfx_saadc_event_handler(nrfx_saadc_evt_t const *p_event)
 	(void)p_event;
 }
 
-/// @brief Filtered SOC values persisted in .noinit RAM to survive soft resets.
-///        Index 0 = voltage (mV), index 1 = SOC level (%).
-static __attribute__((section(".noinit"))) volatile uint16_t m_filtered_values[2];
+/// @name  Filtered SOC values persisted in .noinit RAM to survive soft resets.
+/// 	   Flags are set only after 3 consecutive readings below the thresholds.
+/// @{
+static constexpr unsigned int FILTER_DEPTH = 3;
 
-/// @brief CRC16 of m_filtered_values — detects uninitialised .noinit after power-on.
-static __attribute__((section(".noinit"))) volatile uint16_t m_crc;
+struct BatteryFilterState {
+	uint8_t  soc_history[FILTER_DEPTH];   ///< 3 last SOC values, from oldest to newest
+	uint8_t  is_low;                      ///< Memorized low flag
+	uint8_t  is_critical;                 ///< Memorized critical flag
+};
+/// @}
+
+static_assert(sizeof(BatteryFilterState) == FILTER_DEPTH + 2,
+              "BatteryFilterState must be tightly packed — CRC covers raw bytes");
+
+static __attribute__((section(".noinit"))) BatteryFilterState m_filter;
+static __attribute__((section(".noinit"))) uint16_t m_crc;
 
 /// @brief Maximum attempts for SAADC calibration busy-wait (each ~10 us).
 static constexpr uint32_t ADC_CAL_TIMEOUT = 10000;
 
+static bool all_below(const uint8_t *history, uint8_t threshold)
+{
+	for (unsigned int i = 0; i < FILTER_DEPTH; i++)
+		if (history[i] >= threshold)
+			return false;
+	return true;
+}
+
+static bool all_at_or_above(const uint8_t *history, uint8_t threshold)
+{
+	for (unsigned int i = 0; i < FILTER_DEPTH; i++)
+		if (history[i] < threshold)
+			return false;
+	return true;
+}
 
 NrfBatteryMonitor::NrfBatteryMonitor(uint8_t adc_channel,
 		BatteryChemistry chem,
@@ -157,6 +188,17 @@ float NrfBatteryMonitor::sample_adc()
 	return (static_cast<float>(raw)) / ((ADC_GAIN / ADC_REFERENCE) * ADC_MAX_VALUE) * 1000.0f;
 }
 
+bool NrfBatteryMonitor::is_plausible(uint16_t mv) const
+{
+	unsigned int chem = static_cast<unsigned int>(m_chem);
+	if (chem >= sizeof(battery_profiles) / sizeof(battery_profiles[0]))
+		chem = 0;
+
+	const BatteryProfile& p = battery_profiles[chem];
+	// Reject 0 mV (failed conversion) and non consistent values
+	return (mv >= (p.min_mv / 2)) && (mv <= (p.max_mv + 300));
+}
+
 /**
  * @brief Periodic update — sample ADC, apply SOC hysteresis, persist to .noinit RAM.
  *
@@ -166,39 +208,63 @@ float NrfBatteryMonitor::sample_adc()
  */
 void NrfBatteryMonitor::internal_update()
 {
-	uint16_t mv    = convert_voltage(sample_adc());
+	uint16_t mv = convert_voltage(sample_adc());
+	if (!is_plausible(mv)) {
+		DEBUG_WARN("Battery sample rejected: %u mV", mv);
+		return;
+	}
+
 	uint8_t  level = convert_level(mv);
 
 	// Check CRC of previously stored filtered values (.noinit RAM)
-	uint16_t crc = crc16_compute(reinterpret_cast<const uint8_t *>(const_cast<const uint16_t *>(m_filtered_values)), sizeof(m_filtered_values), nullptr);
-	if (crc == m_crc) {
-		// Previous values valid — apply hysteresis
-		m_filtered_values[0] = mv;
-		if (m_filtered_values[1] < m_critical_level) {
-			if (level >= (m_critical_level + CRITICAL_SOC_HYSTERESIS))
-				m_filtered_values[1] = level;
-		} else if (m_filtered_values[1] < m_low_level) {
-			if (level >= (m_low_level + LOW_BATT_THRESHOLD))
-				m_filtered_values[1] = level;
-		} else {
-			m_filtered_values[1] = level;
-		}
-	} else {
+	uint16_t crc = crc16_compute(reinterpret_cast<const uint8_t *>(&m_filter), sizeof(m_filter), nullptr);
+
+	if (crc != m_crc) {
 		// CRC mismatch (first boot or power-on) — seed with fresh values
-		m_filtered_values[0] = mv;
-		m_filtered_values[1] = level;
+		for (unsigned int i = 0; i < FILTER_DEPTH; i++)
+			m_filter.soc_history[i] = level;
+		m_filter.is_low      = 0;
+		m_filter.is_critical = 0;
+	} else {
+		// Previous values valid — shift history and append new reading
+		for (unsigned int i = 0; i < FILTER_DEPTH - 1; i++)
+			m_filter.soc_history[i] = m_filter.soc_history[i + 1];
+		m_filter.soc_history[FILTER_DEPTH - 1] = level;
+	}
+
+	// --- Critical ---
+	if (!m_filter.is_critical) {
+		if (all_below(m_filter.soc_history, m_critical_level))
+			m_filter.is_critical = 1;
+	} else {
+		if (all_at_or_above(m_filter.soc_history,
+		                    m_critical_level + CRITICAL_SOC_HYSTERESIS))
+			m_filter.is_critical = 0;
+	}
+
+	// --- Low ---
+	if (!m_filter.is_low) {
+		if (all_below(m_filter.soc_history, m_low_level))
+			m_filter.is_low = 1;
+	} else {
+		if (all_at_or_above(m_filter.soc_history,
+		                    m_low_level + LOW_BATT_SOC_THRESHOLD))
+			m_filter.is_low = 0;
 	}
 
 	// Update CRC
-	m_crc = crc16_compute(reinterpret_cast<const uint8_t *>(const_cast<const uint16_t *>(m_filtered_values)), sizeof(m_filtered_values), nullptr);
+	m_crc = crc16_compute(reinterpret_cast<const uint8_t *>(&m_filter), sizeof(m_filter), nullptr);
 
 	// Apply to base class members
 	m_last_voltage_mv = mv;
 	m_last_level = level;
 
 	// Set flags (both based on filtered SOC, not raw)
-	m_is_critical_voltage = m_filtered_values[1] < m_critical_level;
-	m_is_low_level = m_filtered_values[1] < m_low_level;
+	m_is_critical_voltage = (m_filter.is_critical != 0);
+	m_is_low_level = (m_filter.is_low != 0);
+
+	DEBUG_TRACE("Battery update: %u mV, %u%% SOC, low=%d, critical=%d",
+	           m_last_voltage_mv, m_last_level, m_filter.is_low, m_filter.is_critical);
 }
 
 /**
@@ -213,21 +279,17 @@ uint8_t NrfBatteryMonitor::convert_level(uint16_t mv)
 		chem = 0;
 
 	const BatteryProfile& profile = battery_profiles[chem];
-	int lut_index = (BATT_LUT_ENTRIES - 1) - ((mv / 100) - (profile.min_mv / 100));
 
-	if (lut_index <= 0) {
-		return profile.soc_lut[0];
-	} else if (lut_index > static_cast<int>(BATT_LUT_ENTRIES - 1)) {
-		return profile.soc_lut[BATT_LUT_ENTRIES - 1];
-	} else {
-		// Linear interpolation between adjacent LUT entries
-		uint8_t upper = profile.soc_lut[lut_index - 1];
-		uint8_t lower = profile.soc_lut[lut_index];
-		uint16_t upper_mv = profile.max_mv - ((lut_index - 1) * 100);
-		float t = static_cast<float>(upper_mv - mv) / 100.0f;
-		float result = static_cast<float>(upper) + (t * (static_cast<float>(lower) - static_cast<float>(upper)));
-		return static_cast<uint8_t>(result);
-	}
+	if (mv >= profile.max_mv) return profile.soc_lut[0];
+	if (mv <= profile.min_mv) return profile.soc_lut[BATT_LUT_ENTRIES - 1];
+
+	const unsigned idx 		= (profile.max_mv - mv) / profile.step_mv;
+	const uint8_t  upper    = profile.soc_lut[idx];
+	const uint8_t  lower    = profile.soc_lut[idx + 1];
+	const uint16_t upper_mv = profile.max_mv - (idx * profile.step_mv);
+	const float    t        = static_cast<float>(upper_mv - mv) / static_cast<float>(profile.step_mv);
+
+	return static_cast<uint8_t>(upper + t * (static_cast<float>(lower) - upper) + 0.5f);
 }
 
 /**

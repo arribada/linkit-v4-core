@@ -277,7 +277,11 @@ namespace BSP
                 // ADC_CHANNEL_0: Battery voltage on AIN1 (P0.03)
                 .resistor_p = NRF_SAADC_RESISTOR_DISABLED,
                 .resistor_n = NRF_SAADC_RESISTOR_DISABLED,
+#if defined(BATTERY_CHEMISTRY) && BATTERY_CHEMISTRY == BATT_CHEM_ALKALINE_3S2P
+                .gain = NRF_SAADC_GAIN1_6,
+#else
                 .gain = NRF_SAADC_GAIN1_5,
+#endif
                 .reference = NRF_SAADC_REFERENCE_INTERNAL,
                 .acq_time = NRF_SAADC_ACQTIME_40US,
                 .mode = NRF_SAADC_MODE_SINGLE_ENDED,
