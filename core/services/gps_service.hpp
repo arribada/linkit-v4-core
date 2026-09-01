@@ -200,6 +200,39 @@ private:
 	Scheduler::TaskHandle m_stuck_recovery_done_task;
 	static constexpr unsigned int STUCK_THRESHOLD = 20;
 
+	/// @brief Did the receiver report a DEVICE error during this session?
+	///
+	/// Set by react(GPSEventError), which the driver raises only when the
+	/// receiver could not be TALKED TO: baud sync exhausted, state_configure /
+	/// state_start_receive failed, repeated comms errors, or no NAV/SAT frame
+	/// at all within the receive window. A session where the receiver answered
+	/// normally and simply saw no satellites ends via GPSEventMaxSatSamples
+	/// instead, and leaves this false.
+	///
+	/// That distinction is the whole point: the two failures do not share a
+	/// remedy.
+	bool m_session_device_error = false;
+
+	/// @brief Consecutive dead sessions that ended in a DEVICE error.
+	///
+	/// 2026-09 Cyprus field failure. The escalation ladder had a single
+	/// counter, so a broken UART link was treated with GNSS_COLD_START_AFTER_NTRY
+	/// — and a cold start is a UBX command sent OVER THE BROKEN LINK. Six of
+	/// them were issued between 06:05 and 07:20 and none could arrive. Only the
+	/// rail-cycle at STUCK_THRESHOLD (20 dead sessions, 1 h 40) recovered it,
+	/// and it worked on the first attempt.
+	///
+	/// So: a link failure escalates on its own, much shorter, counter, straight
+	/// to the rail-cycle — the only remedy that does not travel over the link.
+	/// The BBR wipe stays reserved for the case it can actually fix, a receiver
+	/// that talks but cannot see satellites.
+	unsigned int m_consecutive_comms_failures = 0;
+
+	/// @brief Device errors before the hard rail-cycle. Deliberately small: a
+	/// link that failed three sessions running will not repair itself, and every
+	/// further session costs a full acquisition window for nothing.
+	static constexpr unsigned int COMMS_STUCK_THRESHOLD = 3;
+
 	// Safety net 3.5 — GPS Health WDT (no GPS event of any kind in N hours →
 	// soft reset). Catches the scenario where the GPS service silently dies
 	// while the scheduler is still alive (so the hardware WDT never fires).

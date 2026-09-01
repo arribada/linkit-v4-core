@@ -77,6 +77,7 @@ void GPSService::service_init() {
 	// Safety-net 3.2: reset stuck-recovery state on init (idempotent across
 	// service restart cycles — Service framework calls init/term in pairs).
 	m_consecutive_dead_sessions = 0;
+	m_consecutive_comms_failures = 0;
 	m_wdt_cold_start_tried = false;
 	m_stuck_recovery_in_flight = false;
 	m_stuck_recovery_arm_task = {};
@@ -508,6 +509,7 @@ void GPSService::service_term() {
 	system_scheduler->cancel_task(m_stuck_recovery_done_task);
 	m_stuck_recovery_in_flight = false;
 	m_consecutive_dead_sessions = 0;
+	m_consecutive_comms_failures = 0;
 	m_wdt_cold_start_tried = false;
 	// Safety-nets 3.5 + 3.6: cancel the health/no-PVT watchdogs on teardown.
 	// Service framework re-creates the service from scratch on next init, so
@@ -988,6 +990,7 @@ void GPSService::service_initiate() {
 	m_is_first_schedule = false;
 	m_wakeup_time = service_current_timer();
 	m_is_active = true;
+	m_session_device_error = false;
 	DEBUG_INFO("GPSService: M10Q on — nav_max=%u cold=%u cl=%u const=0x%02x",
 	           (unsigned int)nav_settings.max_nav_samples, (unsigned int)force_cold,
 	           (unsigned int)nav_settings.cloudlocate_enable, (unsigned int)nav_settings.constellation_mask);
@@ -1120,6 +1123,17 @@ GPSLogEntry GPSService::invalid_log_entry() {
 	} else {
 		m_consecutive_dead_sessions++;
 
+		// Split the escalation by CAUSE. react(GPSEventError) has already told
+		// us whether this session died because the receiver could not be talked
+		// to, or because it talked fine and saw nothing. The two need opposite
+		// remedies, and treating them alike is what cost 1 h 40 of blackout on
+		// the Cyprus tag (2026-09-01).
+		if (m_session_device_error) {
+			m_consecutive_comms_failures++;
+		} else {
+			m_consecutive_comms_failures = 0;
+		}
+
 		// Auto cold-start escalation (GNSS_COLD_START_AFTER_NTRY). When enabled
 		// (>0), every Nth consecutive dead session requests a TRUE cold start (BBR
 		// wipe) on the next acquisition — flushes stale/corrupt ephemeris/almanac
@@ -1127,8 +1141,16 @@ GPSLogEntry GPSService::invalid_log_entry() {
 		// Fires well before the heavier STUCK_THRESHOLD rail-cycle and re-fires
 		// every N sessions while still stuck. Counter resets on any fix, so healthy
 		// tags never reach N — no regression when the param is left at 0 (default).
+		//
+		// Skipped entirely when the link is down: a cold start is a UBX CFG-RST
+		// sent OVER that link. Issuing it against a receiver that cannot hear us
+		// achieves nothing, and it is not free — if the link then recovers, the
+		// receiver comes back with its ephemeris wiped and the next fix is
+		// HARDER than it needed to be.
 		unsigned int cold_after_ntry = service_read_param<unsigned int>(ParamID::GNSS_COLD_START_AFTER_NTRY);
-		if (cold_after_ntry > 0 && (m_consecutive_dead_sessions % cold_after_ntry) == 0) {
+		if (m_session_device_error) {
+			DEBUG_TRACE("GPSService: device error — cold start skipped (the command cannot reach the receiver)");
+		} else if (cold_after_ntry > 0 && (m_consecutive_dead_sessions % cold_after_ntry) == 0) {
 			m_force_cold_start = true;
 			DEBUG_WARN("GPSService: %u consecutive dead sessions >= NTRY %u — next acquisition COLD START (BBR wipe)",
 			           m_consecutive_dead_sessions, cold_after_ntry);
@@ -1136,11 +1158,23 @@ GPSLogEntry GPSService::invalid_log_entry() {
 			         cold_after_ntry);
 		}
 
-		if (m_consecutive_dead_sessions >= STUCK_THRESHOLD && !m_stuck_recovery_in_flight) {
+		// The rail-cycle is the only remedy that does not travel over the link,
+		// so a link failure reaches it on its own much shorter counter. A sky
+		// failure keeps the original budget: the receiver is healthy, and
+		// yanking its rail every three sessions would destroy the warm start
+		// for nothing.
+		const bool comms_stuck = m_consecutive_comms_failures >= COMMS_STUCK_THRESHOLD;
+		if ((comms_stuck || m_consecutive_dead_sessions >= STUCK_THRESHOLD) && !m_stuck_recovery_in_flight) {
 			m_stuck_recovery_in_flight = true;
-			VAL_GNSS("dispatch=stuck_recovery_armed sessions=%u", m_consecutive_dead_sessions);
-			DEBUG_WARN("GPSService: %u consecutive dead sessions — scheduling hard rail-cycle",
-			           m_consecutive_dead_sessions);
+			VAL_GNSS("dispatch=stuck_recovery_armed sessions=%u comms=%u", m_consecutive_dead_sessions,
+			         m_consecutive_comms_failures);
+			if (comms_stuck) {
+				DEBUG_WARN("GPSService: %u consecutive device errors — link is down, scheduling hard rail-cycle",
+				           m_consecutive_comms_failures);
+			} else {
+				DEBUG_WARN("GPSService: %u consecutive dead sessions — scheduling hard rail-cycle",
+				           m_consecutive_dead_sessions);
+			}
 			// Fire after current invalidate completes (~1 s), then 30 s rail-down
 			// for a clean M10Q hardware reset before normal scheduling resumes.
 			m_stuck_recovery_arm_task = system_scheduler->post_task_prio(
@@ -1162,6 +1196,7 @@ GPSLogEntry GPSService::invalid_log_entry() {
 					        DEBUG_INFO("GPSService: stuck recovery — rail-down complete, rescheduling");
 					        m_stuck_recovery_in_flight = false;
 					        m_consecutive_dead_sessions = 0;
+					        m_consecutive_comms_failures = 0;
 					        m_wdt_cold_start_tried = false;  // fresh chance after recovery
 					        service_reschedule(false);
 				        },
@@ -1170,6 +1205,12 @@ GPSLogEntry GPSService::invalid_log_entry() {
 			    "GPSStuckRecoveryArmed", Scheduler::DEFAULT_PRIORITY, 1 * MS_PER_SEC);
 		}
 	}
+
+	// Consume the flag here rather than only re-arming it at session start: this
+	// is the single point that reads it, and clearing it on the way out makes it
+	// impossible to charge one device error to two sessions — whatever the order
+	// in which service_cancel(), a late react() or bench_inject_nofix() land.
+	m_session_device_error = false;
 
 	GPSLogEntry gps_entry{};
 
@@ -1397,6 +1438,10 @@ void GPSService::react(const GPSEventMaxSatSamples &) {
 void GPSService::react(const GPSEventError &) {
 	if (!m_is_active) return;
 	DEBUG_WARN("GPSService::react(GPSEventError): GNSS device error — aborting session, logging NO_FIX");
+	// The receiver could not be talked to. Remembered until the end-of-session
+	// bookkeeping below decides which escalation applies — a broken link and an
+	// empty sky are not treated alike.
+	m_session_device_error = true;
 	m_is_active = false;
 	try_enter_deep_idle_or_poweroff();  // 2026-05 deep-idle dispatch
 	GPSLogEntry log_entry = invalid_log_entry();
@@ -1544,6 +1589,7 @@ void GPSService::gnss_data_callback(GNSSData data) {
 	m_is_first_fix_found = true;
 	// Safety-net 3.2: M10Q produced a PVT → reset stuck-recovery state.
 	m_consecutive_dead_sessions = 0;
+	m_consecutive_comms_failures = 0;
 	m_wdt_cold_start_tried = false;
 	m_stuck_recovery_in_flight = false;
 	system_scheduler->cancel_task(m_stuck_recovery_arm_task);
@@ -1676,6 +1722,7 @@ void GPSService::gnss_degraded_callback(GNSSData data) {
 	// Don't set m_is_first_fix_found — degraded fix should not change cold start behavior
 	// Safety-net 3.2: M10Q produced a degraded PVT → reset stuck-recovery state.
 	m_consecutive_dead_sessions = 0;
+	m_consecutive_comms_failures = 0;
 	m_wdt_cold_start_tried = false;
 	m_stuck_recovery_in_flight = false;
 	system_scheduler->cancel_task(m_stuck_recovery_arm_task);
@@ -1693,6 +1740,7 @@ void GPSService::gnss_cloudlocate_callback(GNSSRawMeasurement data) {
 	// Don't set m_is_first_fix_found — CloudLocate does not provide on-device position
 	// Safety-net 3.2: M10Q produced a raw measurement → reset stuck-recovery state.
 	m_consecutive_dead_sessions = 0;
+	m_consecutive_comms_failures = 0;
 	m_wdt_cold_start_tried = false;
 	m_stuck_recovery_in_flight = false;
 	system_scheduler->cancel_task(m_stuck_recovery_arm_task);
