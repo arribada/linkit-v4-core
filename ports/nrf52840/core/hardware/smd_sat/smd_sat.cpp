@@ -517,24 +517,7 @@ void SmdSat::state_stopped_enter() {
 
 	this->shutdown();
 	GPIOPins::release_sensors_pwr();
-
-	// Keep NRST ASSERTED for the whole off period instead of releasing the pin.
-	//
-	// It used to be nrf_gpio_cfg_default() here, leaving SAT_RESET high-Z while
-	// the module was down. The net has a pull-up on the module side, so the
-	// instant its rail carries any voltage -- a slow cap decay, the start of the
-	// next ramp -- NRST is pulled HIGH and the STM32 tries to boot at a marginal
-	// voltage. That is the same failure the M10Q has in exit_shutdown, where the
-	// fix is to hold NRST through the ramp.
-	//
-	// It matters more here because a module that slept in STANDBY draws only a
-	// few uA, so its decoupling drains slowly: exactly the window where a
-	// floating NRST lets it half-run, fail an init, and leave the STANDBY lock
-	// in BKP0R set -- which then makes every later boot skip Sram2_Init and
-	// replay the same broken state.
-	//
-	// Costs nothing: SAT_RESET is open-drain (S0D1), so "low" is an active pull
-	// to GND and the module-side pull-up it fights is dead while the rail is off.
+	nrf_gpio_cfg_default(BSP::GPIO_Inits[SAT_RESET].pin_number);
 
 	// Stamp power-off timestamp so the next state_powering_on can skip the
 	// redundant VDD discharge wait if the dive was long enough for natural
