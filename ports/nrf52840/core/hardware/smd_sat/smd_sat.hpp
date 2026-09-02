@@ -78,6 +78,11 @@ private:
 	/// autofallback engages at the same threshold as the ArgosTx session suspension. If
 	/// SmdSat threshold > ArgosTx threshold, ArgosTx stops calling send() and SmdSat
 	/// never reaches its own threshold, so the SAFE flag is never persisted.
+	/// @brief Set when the last error was "the module is still transmitting".
+	/// state_error_enter() then skips the consecutive-error accounting: a module
+	/// finishing a burst is healthy, not faulty, and counting it was enough to
+	/// buy a 30 min cooldown off the back of one overrun.
+	bool m_error_is_module_busy = false;
 	unsigned int m_error_count = 0;
 	static constexpr unsigned int SMD_MAX_CONSECUTIVE_ERRORS = 3;
 	static constexpr unsigned int SMD_ERROR_COOLDOWN_MS = 30 * 60 * 1000;  ///< 30 min cooldown
@@ -143,7 +148,15 @@ private:
 	double m_tx_freq;
 	bool m_is_first_tx;
 	uint32_t m_tcxo_warmup_time;
-	uint64_t m_tx_trace_start_ms = 0;  ///< Anchor for [TXTRACE +N ms] timing logs; reset in send()
+	uint64_t m_tx_trace_start_ms = 0;
+#ifdef BENCH_TEST
+	/// @brief Latency marks, in ms since m_tx_trace_start_ms, dumped as ONE log
+	/// line at TX start. TXTRACE cannot be used for optimisation work: its
+	/// twelve DEBUG_INFO lines each commit to LFS and added ~2.6 s to a 1.8 s
+	/// surface-to-air path -- more than the path itself.
+	uint16_t m_lat[12] = { 0 };
+	uint8_t m_lat_n = 0;
+#endif  ///< Anchor for [TXTRACE +N ms] timing logs; reset in send()
 	uint8_t m_lpm_mode;                // SMD LPM bitmap written at every boot
 	bool m_wkup_lowered = false;  // True if state_idle_enter dropped WKUP (=> idle_exit must re-raise + wait for wake)
 
@@ -196,6 +209,13 @@ private:
 	void state_idle_pending_enter();
 	void state_idle_pending_exit();
 	void state_idle();
+	void write_lpm_if_needed();
+	/// @brief True once the LPM bitmap has been pushed since the module last
+	/// came up on a cold rail. The module keeps lpm_config in .retentionRamData,
+	/// which survives STANDBY (SRAM retention is enabled in LPM_standby_enter),
+	/// so it only has to be written again after a real rail cut. Cleared in the
+	/// power-off paths.
+	bool m_lpm_written_since_power_on = false;
 	void state_idle_enter();
 	void state_idle_exit();
 	void state_transmit_pending();
