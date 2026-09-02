@@ -12,6 +12,7 @@
 #include "binascii.hpp"
 #include "error.hpp"  // ErrorCode (RESOURCE_NOT_AVAILABLE) thrown by the credential commands
 
+#include "bsp.hpp"  // BSP::UARTAsync_Inits -- application baud, restored after a DFU baud switch
 #include "nrf_delay.h"
 
 #include <cstring>
@@ -620,12 +621,43 @@ void SmdSatCmdAt::write_udate(const uint8_t *udate_data, uint16_t len) {
 // ============================================================================
 // Flow: AT+BOOT → reboot into bootloader → AT+DFU=<cmd_id>[,<hex_data>]
 
+bool SmdSatCmdAt::switch_baudrate(uint32_t nrf_baudrate) {
+	NrfUartAsync::deinit();
+	try {
+		NrfUartAsync::init(nrf_baudrate);
+	} catch (...) {
+		DEBUG_ERROR("SmdSatCmdAt::%s: re-init at 0x%08X failed", __func__, static_cast<unsigned>(nrf_baudrate));
+		return false;
+	}
+	nrf_delay_ms(50);
+	return true;
+}
+
 bool SmdSatCmdAt::dfu_enter() {
 	DEBUG_INFO("SmdSatCmdAt::%s: Sending AT+BOOT", __func__);
 
-	// Send AT+BOOT to reboot into bootloader
+	// Send AT+BOOT to reboot into bootloader.
+	//
+	// AT DFU is NOT universally available. The reference module firmware's AT
+	// table (argos-smd-at-kineis-firmware, MGR_AT_CMD/Src/mgr_at_cmd_list.c) has
+	// 17 entries and neither AT+BOOT nor AT+DFU is one of them -- that build has
+	// no AT DFU at all, and no retrying or baud probing can change it. Update
+	// such a module over SWD or SPI instead.
+	//
+	// Log which of the two failures happened, because they point in opposite
+	// directions: +ERROR= is the module answering, a timeout is consistent with
+	// it having rebooted into a bootloader that may be listening at a different
+	// baud (which the probe below covers). Measured on the bench 2026-09-02
+	// against a v1.0.0 module: a plain timeout, ~3.6 s, and the application was
+	// still answering AT+VERSION straight afterwards -- it never left the app.
 	if (!send_at("AT+BOOT=", 3000)) {
-		DEBUG_ERROR("SmdSatCmdAt::%s: AT+BOOT failed", __func__);
+		if (m_resp_error) {
+			DEBUG_ERROR("SmdSatCmdAt::%s: module refused AT+BOOT (+ERROR) — this module firmware has no AT "
+			            "DFU support; update it over SWD or SPI instead",
+			            __func__);
+		} else {
+			DEBUG_ERROR("SmdSatCmdAt::%s: AT+BOOT got no answer at all (timeout)", __func__);
+		}
 		return false;
 	}
 
@@ -633,19 +665,51 @@ bool SmdSatCmdAt::dfu_enter() {
 	nrf_delay_ms(1000);
 	PMU::kick_watchdog();
 
-	// PING bootloader
+	// The bootloader does not necessarily speak at the application's baud: the
+	// STM32WL one runs at 9600 only when built with BL_PROTOCOL_UART, otherwise
+	// 115200, while the application is always 9600 (argos-smd-driver-zephyr,
+	// argos_dfu_sync_bootloader_baud(); module Core/Src/usart.c sets LPUART1 to
+	// 9600). Measured on the bench 2026-09-02: AT+BOOT was accepted and every
+	// DFU PING then timed out, DTE reporting failure after ~10 s -- the symptom
+	// of pinging a bootloader that is listening at another speed. So probe the
+	// current baud first (cheap, no re-init, and the only path needed when the
+	// two match), then the alternate one.
+	static const uint32_t candidate_bauds[] = { NRF_UARTE_BAUDRATE_9600, NRF_UARTE_BAUDRATE_115200 };
+	const uint32_t app_baudrate = BSP::UARTAsync_Inits[m_uart_instance].config.baudrate;
+
 	std::string resp;
-	for (int attempt = 0; attempt < 10; attempt++) {
-		if (send_dfu_with_data(1, "", resp, 2000)) {  // DFU PING = cmd_id 1
-			DEBUG_INFO("SmdSatCmdAt::%s: Bootloader ready: %s", __func__, resp.c_str());
-			m_dfu_mode = true;
-			return true;
+	for (unsigned int pass = 0; pass < 1 + (sizeof(candidate_bauds) / sizeof(candidate_bauds[0])); pass++) {
+		uint32_t baud = app_baudrate;
+
+		if (pass > 0) {
+			baud = candidate_bauds[pass - 1];
+			// Pass 0 already covered the application baud.
+			if (baud == app_baudrate) continue;
+			DEBUG_INFO("SmdSatCmdAt::%s: probing bootloader at baud 0x%08X", __func__,
+			           static_cast<unsigned>(baud));
+			if (!switch_baudrate(baud)) continue;
 		}
-		nrf_delay_ms(500);
-		PMU::kick_watchdog();
+
+		// Fewer retries per baud than the original single-baud loop so the total
+		// wall time stays comparable: the DTE caller and the watchdog both see
+		// this as one blocking operation.
+		for (int attempt = 0; attempt < 4; attempt++) {
+			if (send_dfu_with_data(1, "", resp, 2000)) {  // DFU PING = cmd_id 1
+				DEBUG_INFO("SmdSatCmdAt::%s: Bootloader ready at baud 0x%08X: %s", __func__,
+				           static_cast<unsigned>(baud), resp.c_str());
+				m_dfu_baudrate = baud;
+				m_dfu_mode = true;
+				return true;
+			}
+			nrf_delay_ms(500);
+			PMU::kick_watchdog();
+		}
 	}
 
-	DEBUG_ERROR("SmdSatCmdAt::%s: Bootloader not responding", __func__);
+	// Leave the link the way the application expects it, whatever happened.
+	if (m_dfu_baudrate == 0) switch_baudrate(app_baudrate);
+
+	DEBUG_ERROR("SmdSatCmdAt::%s: Bootloader not responding at any known baud", __func__);
 	return false;
 }
 
@@ -656,6 +720,12 @@ bool SmdSatCmdAt::dfu_exit() {
 	if (send_dfu(8, "", 3000)) {
 		m_dfu_mode = false;
 		nrf_delay_ms(1000);
+		// The application runs at the BSP baud; if dfu_enter() had to move the
+		// link to reach the bootloader, move it back or every later AT command
+		// talks at the wrong speed.
+		const uint32_t app_baudrate = BSP::UARTAsync_Inits[m_uart_instance].config.baudrate;
+		if (m_dfu_baudrate != 0 && m_dfu_baudrate != app_baudrate) switch_baudrate(app_baudrate);
+		m_dfu_baudrate = 0;
 		return true;
 	}
 	return false;

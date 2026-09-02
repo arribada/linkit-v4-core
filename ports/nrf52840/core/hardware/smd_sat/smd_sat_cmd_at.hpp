@@ -105,6 +105,15 @@ protected:
 	void on_rx_error(unsigned int error_type) override;
 
 private:
+	/// @brief Re-open UART1 at @p nrf_baudrate (an NRF_UARTE_BAUDRATE_* value).
+	/// Used only by the DFU path: the STM32WL bootloader does not necessarily
+	/// run at the application's baud. Returns false if the re-init failed.
+	bool switch_baudrate(uint32_t nrf_baudrate);
+
+	/// @brief Baud the bootloader answered on, 0 when not in DFU. Lets dfu_exit()
+	/// put the link back to the application baud after the JUMP.
+	uint32_t m_dfu_baudrate = 0;
+
 	// Response state (set by on_rx_line, read by blocking send)
 	volatile bool m_resp_ok;
 	volatile bool m_resp_error;
