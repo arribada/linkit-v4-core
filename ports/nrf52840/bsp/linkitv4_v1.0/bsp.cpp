@@ -388,14 +388,25 @@ namespace BSP
         {
             .uart = &async_uarte_1,
             .config = {
-#if defined(LORA_RAK3172) && (LORA_RAK3172 == 1)
+#if (defined(LORA_RAK3172) && (LORA_RAK3172 == 1)) || (defined(SMD_UART) && (SMD_UART == 1))
                 // LinkIt V4 LoRa: PCB routes nRF P0.14 → RAK3172 UART_RX (PA10)
                 // and nRF P0.26 ← RAK3172 UART_TX (PA9). In Nordic async config,
                 // rx_pin = nRF RX input, tx_pin = nRF TX output.
+                //
+                // The SMD (STM32WL) shares this orientation: the satellite slot
+                // is wired like the LoRa one. Proven on the bench 2026-09-02 --
+                // with the KIM2 orientation below, every AT command timed out
+                // because we drove P0.26 (the module's own TX output) and
+                // listened on P0.14 (the module's RX input, silent by
+                // construction). Swapping them made PING, credentials, KMAC, LPM
+                // and TX all work first try. This is also why %SATLOG found the
+                // module's LPUART1 debug log silent on P0.14: wrong line.
                 .rx_pin = NRF_GPIO_PIN_MAP(0, 26),
                 .tx_pin = NRF_GPIO_PIN_MAP(0, 14),
 #else
-                // KIM2 / SMD UART variant on the same slot
+                // KIM2 on the same slot -- opposite orientation to the LoRa and
+                // SMD modules above. Do not "unify" these: the two are different
+                // modules and each is verified on hardware as it stands.
                 .rx_pin = NRF_GPIO_PIN_MAP(0, 14),
                 .tx_pin = NRF_GPIO_PIN_MAP(0, 26),
 #endif
