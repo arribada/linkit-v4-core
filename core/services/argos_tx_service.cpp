@@ -1390,6 +1390,13 @@ void ArgosTxService::notify_peer_event(ServiceEvent &e) {
 			}
 		} else {
 			// Device surfaced
+#ifdef BENCH_TEST
+			// Second stopwatch mark. %SURFACE stamps the console reply and SmdSat
+			// stamps TXSTART; this one splits the gap between them into "how long
+			// before the service even sees the event" and "how long it then takes
+			// to reach send()".
+			DEBUG_INFO("ArgosTxService: SURFACED uptime=%llu", (unsigned long long)PMU::get_timestamp_ms());
+#endif
 			m_is_underwater = false;
 			// Reset the session-suspension counter so a transient burst of
 			// failures earlier in the deployment can't permanently kill TX.

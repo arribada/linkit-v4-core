@@ -580,6 +580,54 @@ bool bench::handle_line(const std::string &raw) {
 #else
 		reply("%LPM ERR not-an-smd-build");
 #endif
+	} else if (cmd.rfind("%BLIND", 0) == 0) {
+		// Toggle BLIND without a configuration round trip -- same reason as %LPM.
+		// Needed to exercise the two halves of the message-counter policy: BLIND
+		// owns its repetitions and the host must not touch the MC, while without
+		// BLIND the host sends each repeat itself and pins them to one MC.
+		//   %BLIND        -> report
+		//   %BLIND 0|1
+#if defined(ARGOS_SMD) && (ARGOS_SMD == 1)
+		unsigned int v = 0;
+		char buf[128];
+		if (sscanf(line.c_str(), "%%BLIND %u", &v) == 1) {
+			if (v > 1) {
+				reply("%BLIND ERR usage: %BLIND <0|1>");
+				return true;
+			}
+			configuration_store->write_param(ParamID::ARGOS_BLIND_EN, v != 0);
+		}
+		ArgosConfig ac;
+		configuration_store->get_argos_configuration(ac);
+		snprintf(buf, sizeof(buf), "%%BLIND en=%u retx_nb=%u period=%us ntry=%u", ac.blind_en ? 1u : 0u,
+		         ac.blind_retx_nb, ac.blind_retx_period_s, ac.ntry_per_message);
+		reply(buf);
+#else
+		reply("%BLIND ERR not-an-smd-build");
+#endif
+	} else if (cmd.rfind("%SATKEEP", 0) == 0) {
+		// Hold the SMD powered (parked in its own LPM) for N seconds after a TX
+		// instead of cutting its rail. This is what a "wake and transmit"
+		// measurement needs: with the rail up and the module in STANDBY at
+		// ~0.93 uA, a surface event only has to raise WKUP and send AT+TX.
+		//   %SATKEEP <seconds>   (0 restores the 1 s default)
+#if defined(ARGOS_SMD) && (ARGOS_SMD == 1)
+		unsigned int sec = 0;
+		char buf[96];
+		if (sscanf(line.c_str(), "%%SATKEEP %u", &sec) != 1) {
+			reply("%SATKEEP ERR usage: %SATKEEP <seconds>");
+			return true;
+		}
+		if (!smd_sat_instance) {
+			reply("%SATKEEP ERR no-smd");
+			return true;
+		}
+		smd_sat_instance->set_idle_timeout(sec ? sec * 1000 : 1000);
+		snprintf(buf, sizeof(buf), "%%SATKEEP OK idle=%u ms", sec ? sec * 1000 : 1000);
+		reply(buf);
+#else
+		reply("%SATKEEP ERR not-an-smd-build");
+#endif
 	} else if (cmd == "%SCHEDQ") {
 		// Scheduler queue occupancy. It is what proves a self-rescheduling task
 		// does not clone itself: a round trip through configuration and back to
@@ -729,7 +777,15 @@ bool bench::handle_line(const std::string &raw) {
 		e.event_type = ServiceEventType::SERVICE_LOG_UPDATED;
 		e.event_data = (cmd == "%DIVE");  // true = underwater, false = surfaced
 		ServiceManager::notify_peer_event(e);
-		reply(cmd == "%DIVE" ? "%DIVE OK underwater" : "%SURFACE OK surfaced");
+		{
+			// Absolute uptime on both ends (here and in SmdSat's TXSTART) so a host
+			// stopwatch can split surface-to-air into service latency and driver
+			// latency without another firmware trace.
+			char b[80];
+			snprintf(b, sizeof(b), "%s uptime=%llu", cmd == "%DIVE" ? "%DIVE OK underwater" : "%SURFACE OK surfaced",
+			         (unsigned long long)PMU::get_timestamp_ms());
+			reply(b);
+		}
 	} else {
 		reply(std::string("%ERR unknown-cmd ") + cmd);
 	}
