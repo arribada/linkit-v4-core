@@ -177,23 +177,7 @@ BATTERY_CHEMISTRY=${BATTERY_CHEMISTRY:-BATT_CHEM_LS17500_2P}
 #   when SMDSAT_USE_SAFE_TIMINGS=OFF. Default ON: FAST latency with
 #   self-healing safety net — the recommended production profile.
 #   Set to OFF for pure-FAST bench builds (no runtime branch, no persistence).
-#
-# On an AT/UART build the default flips to SAFE. Measured 2026-09-02, LinkIt v4
-# + SMD v1.0.0 over UART, one variable changed at a time: with FAST the module
-# never signals the end of a BLIND burst -- state_transmitting gives up after
-# the full 180 s window and the next session finds the MAC still reporting
-# MAC_TX_IN_PROGRESS (0x0A). Four runs, zero completions, across LPM NONE and
-# STANDBY alike. Forcing SAFE on the same board and the same burst: completes.
-# The FAST reductions that matter here are module-readiness delays (boot 30 vs
-# 100 ms, rail 20 vs 50, KMAC pacing 50 vs 150) -- talk to the STM32WL that
-# early and the BLIND context does not take. Nothing about that is SPI-specific,
-# so the profile is not "an SPI thing" the AT transport can skip.
-# Override with SMDSAT_USE_SAFE_TIMINGS=OFF to retest FAST on UART.
-if [ "$SMD_UART" = "ON" ]; then
-  SMDSAT_USE_SAFE_TIMINGS=${SMDSAT_USE_SAFE_TIMINGS:-ON}
-else
-  SMDSAT_USE_SAFE_TIMINGS=${SMDSAT_USE_SAFE_TIMINGS:-OFF}
-fi
+SMDSAT_USE_SAFE_TIMINGS=${SMDSAT_USE_SAFE_TIMINGS:-OFF}
 SMDSAT_AUTOFALLBACK=${SMDSAT_AUTOFALLBACK:-ON}
 
 echo "Building LinkIt V4 SMD with configuration:"

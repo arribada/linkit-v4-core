@@ -1185,9 +1185,19 @@ void SmdSat::state_transmitting_enter() {
 	// reports +TX — extend the poll window to cover the whole burst.
 	unsigned int rn = 0, period = 0;
 	if (smd_blind_active(rn, period)) {
-		// uint64 intermediate: rn(<=127) * period(<=65535) * 1000 overflows uint32.
-		// Cap at 2 h so an extreme config can't park the service indefinitely.
-		uint64_t burst_ms = (uint64_t)rn * (uint64_t)period * 1000ULL;
+		// One period MORE than rn * period. retx_nb's exact meaning -- total
+		// transmissions, or retransmissions on top of the first -- is not
+		// documented anywhere we can read: the struct is handed to the closed
+		// Kineis stack (KNS_MAC_BLIND_usrCfg_t, kns_mac_prfl_cfg.h) and the
+		// header says nothing. Measured both readings on the same board and the
+		// same retx_nb=3/period=60s config: bursts completing at ~120-126 s (3
+		// transmissions) and bursts still running past 190 s (4). With the old
+		// rn * period the window was 180 s + warmup + 5 s = 190 s, so the second
+		// case lost by seconds -- the module was still emitting, the host gave
+		// up, and the next session found the MAC at MAC_TX_IN_PROGRESS. One
+		// extra period is the smallest margin that covers both readings; the 2 h
+		// cap below still bounds an extreme config.
+		uint64_t burst_ms = ((uint64_t)rn + 1ULL) * (uint64_t)period * 1000ULL;
 		if (burst_ms > 7200000ULL) burst_ms = 7200000ULL;
 		total_timeout_ms += (uint32_t)burst_ms;
 		DEBUG_INFO("SmdSat::%s: BLIND — TX poll window +%u ms (burst)", __func__, (uint32_t)burst_ms);
