@@ -78,13 +78,23 @@ static constexpr unsigned int SMD_SCHEDULER_PRIORITY = 4;
 // To re-enable: uncomment the body and choose between console-only (fast, RTT/UART)
 // or DEBUG_INFO (visible in system_log via DTE — but inflates total TX time by LFS commits;
 // ping_ms isolated measurements remain accurate since t0 is captured after any prior log).
+#ifndef SMDSAT_TXTRACE
+#define SMDSAT_TXTRACE 0
+#endif
+#if SMDSAT_TXTRACE
+#define TXTRACE(fmt, ...)                                                                                     \
+	do {                                                                                                      \
+		DEBUG_INFO("[TXTRACE +%u ms] " fmt,                                                                   \
+		           static_cast<unsigned>(m_tx_trace_start_ms ? (PMU::get_timestamp_ms() - m_tx_trace_start_ms) \
+		                                                     : 0),                                            \
+		           ##__VA_ARGS__);                                                                            \
+	} while (0)
+#else
 #define TXTRACE(fmt, ...)                        \
 	do {                                         \
 		(void)fmt;                               \
-		/* DEBUG_INFO("[TXTRACE +%u ms] " fmt, \
-            static_cast<unsigned>(m_tx_trace_start_ms ? (PMU::get_timestamp_ms() - m_tx_trace_start_ms) : 0), \
-            ##__VA_ARGS__); */ \
 	} while (0)
+#endif
 
 #define MODSWITCH_LOG(delta_ms, fmt, ...)                                                            \
 	do {                                                                                             \
@@ -638,6 +648,32 @@ static inline uint8_t smd_lpm_host_to_module(uint8_t host_bitmap) {
 	return static_cast<uint8_t>(host_bitmap >> 1);
 }
 
+/// @brief Widen a single module mode into the CUMULATIVE mask the module expects.
+///
+/// The module's field is an "allowed" mask that CAPS what its own stack asks
+/// for -- it is not a selector. MGR_LPM_enter() takes the mode the clients
+/// request and walks DOWN until it finds one the mask allows:
+///
+///     deepest = eMGR_LPM_clientRequest();
+///     while ((deepest & allowedLPMbitmap) == 0) {
+///             deepest >>= 1;
+///             if (deepest == 0) break;      // -> no low power at all
+///     }
+///
+/// (argos-smd-at-kineis-firmware, Kineis/Lpm/Src/mgr_lpm.c). So sending the
+/// single bit 0x04 means: enter STANDBY when the stack asks for STANDBY, and
+/// stay FULLY ACTIVE whenever it asks for anything shallower -- the shift walks
+/// past STOP and SLEEP, which the mask does not allow, down to zero. The
+/// module's own compile-time defaults show the intended shape, cumulative:
+///
+///     LPM_STANDBY_ENABLED -> SLEEP | STOP | STANDBY
+///
+/// So widen to every mode up to and including the requested one.
+static inline uint8_t smd_lpm_module_allowed_mask(uint8_t module_mode) {
+	if (module_mode == 0) return 0;  // NONE -- caller does not write it
+	return static_cast<uint8_t>((module_mode << 1) - 1);
+}
+
 void SmdSat::state_load_kmac() {
 	TXTRACE("state_load_kmac: tick (pending_rconf=%u creds_written=%u explicit_kmac=%u poll=%u)",
 	        !m_pending_rconf.empty(), m_credentials_written, m_needs_explicit_kmac_load, m_state_counter);
@@ -793,7 +829,7 @@ void SmdSat::state_load_kmac() {
 		// TRANSLATED, not sent raw: the two enumerations do not agree and nothing
 		// in the tree said so. See smd_lpm_host_to_module() above.
 		if (m_lpm_mode != 0x01) {
-			uint8_t module_lpm = smd_lpm_host_to_module(m_lpm_mode);
+			uint8_t module_lpm = smd_lpm_module_allowed_mask(smd_lpm_host_to_module(m_lpm_mode));
 
 			// SHUTDOWN is compiled OUT of the module firmware unless it is built
 			// with LPM_SHUTDOWN_ENABLED; bMGR_SPI_CMD_WRITELPM_cmd then answers
@@ -809,8 +845,8 @@ void SmdSat::state_load_kmac() {
 
 			try {
 				m_cmd.write_lpm(&module_lpm);
-				DEBUG_INFO("SmdSat::%s: LPM written — host 0x%02X -> module 0x%02X", __func__, m_lpm_mode,
-				           module_lpm);
+				DEBUG_INFO("SmdSat::%s: LPM written — host 0x%02X -> module mask 0x%02X (deepest 0x%02X)",
+				           __func__, m_lpm_mode, module_lpm, smd_lpm_host_to_module(m_lpm_mode));
 			} catch (...) {
 				DEBUG_WARN("SmdSat::%s: failed to write LPM mode (host 0x%02X -> module 0x%02X)", __func__,
 				           m_lpm_mode, module_lpm);
