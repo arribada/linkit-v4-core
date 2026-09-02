@@ -35,7 +35,10 @@ extern FileSystem *main_filesystem;
 static constexpr unsigned int DEFAULT_RETRIES = 3;         ///< Default retry budget for op_state machines
 static constexpr unsigned int BOOT_BAUD_SYNC_RETRIES = 6;  ///< Wider retry budget on initial baud sync
 static constexpr unsigned int PMREQ_VERIFY_RETRIES =
-    3;  ///< 2026-05-25: PMREQ-backup verification retries (ping M10Q after PMREQ, re-send if replies)
+    4;  ///< PMREQ-backup verification retries. The settling wait before the first probe is what should
+        ///< carry this now (see state_enterbackup); the retries are the net for the residual cases, not
+        ///< the mechanism. Raised 3->4 so a cycle that needs one more second still lands instead of
+        ///< cutting the rail and losing BBR.
 static constexpr unsigned int PMREQ_VERIFY_TIMEOUT_MS =
     200;  ///< Wait for verification poll response (TIMEOUT = backup confirmed, SUCCESS = M10Q still awake)
 static constexpr unsigned int EARLY_ABORT_SAT_REPORTS =
@@ -1701,15 +1704,37 @@ void M10QAsyncReceiver::state_enterbackup() {
 				send_pmreq_backup();
 				m_op_state = OpState::IDLE;
 				m_step++;
-				// 2026-05-25 Fix #6: propagate delay extended 100→500 ms. Field
-				// data showed M10Q routinely refusing PMREQ-backup on the first
-				// probe (3 attempts in <1 s all failed in 33 % of cycles).
-				// Successful cycles took 1-2 s of total settling, suggesting the
-				// M10Q needs >500 ms of stability to fully commit to backup mode
-				// before responding to UART. Giving the FIRST probe 500 ms head-
-				// start should land most cycles on attempt #1. Cost: +400 ms on
-				// the dive→backup path (non-critical, not surface→TX).
-				run_state_machine(500);
+				// Let the module go quiet before asking it anything.
+				//
+				// 2026-05-25 diagnosed this correctly -- "successful cycles took
+				// 1-2 s of total settling, the M10Q needs >500 ms of stability to
+				// fully commit to backup mode before responding to UART" -- and
+				// then applied the bottom of that range, predicting it "should
+				// land most cycles on attempt #1".
+				//
+				// It never did. Across two full field campaigns (LoRa and KIM,
+				// 01-02/09/2026, ~180 sessions) there is not ONE sequence where
+				// state_enterbackup_enter is followed directly by
+				// "PMREQ-backup verified": the first probe fails every single
+				// time. The 1-2 s the module actually needs was only ever reached
+				// by ACCUMULATING retries, each worth ~1 s (500 ms wait + 200 ms
+				// probe), which is why cycles typically pass on attempt 2 or 3 --
+				// and why a budget of 3 runs out often enough to cut the rail and
+				// lose BBR on ~19 % of sessions.
+				//
+				// So give it the settling time the original measurement asked
+				// for. This is not the same as retrying more: every retry sends
+				// another PMREQ AND another UART probe at a module that is trying
+				// to commit to backup, which is the one thing the comment above
+				// says it must not receive. What it needs is silence, not
+				// attempts.
+				//
+				// Not blocking: run_state_machine posts a scheduler task, so LoRa,
+				// Argos, the accelerometer and the DTE keep being served
+				// throughout. Only the M10Q state machine waits, and it has
+				// nothing else to do. Cost is +1 s on the dive->backup path, which
+				// is not the surface->TX critical path.
+				run_state_machine(1500);
 				break;
 			} else if (m_step == 3) {
 				// 2026-05-25 PMREQ-backup verification: send an invalid CFG-MSG
