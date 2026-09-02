@@ -159,6 +159,7 @@ SmdSat::SmdSat(SmdSatCmd &cmd, unsigned int idle_shutdown_ms) : m_cmd(cmd) {
 	m_is_first_tx = true;
 	this->shutdown();
 	is_kmac_profil_loaded = false;
+	m_kmac_pushed_this_session = false;
 }
 
 SmdSat::~SmdSat() {
@@ -352,6 +353,7 @@ void SmdSat::state_starting_exit() {}
 void SmdSat::state_starting() {
 	m_is_first_tx = true;
 	is_kmac_profil_loaded = false;  // Force entry to state_load_kmac for boot config (TCXO, LPM)
+	m_kmac_pushed_this_session = false;
 	// m_needs_explicit_kmac_load is NOT reset here — it persists across power cycles.
 	// Only set true when RCONF/credentials actually change (steps 1a/1b in load_kmac).
 	// When false, STM32 auto-initializes MAC from flash at POR — no SPI command needed.
@@ -370,6 +372,7 @@ void SmdSat::state_error_enter() {
 	// Do NOT attempt SPI commands here — the bus is likely desynchronized
 	// (INVALID_CMD cascade). Any command would fail and waste time.
 	is_kmac_profil_loaded = false;
+	m_kmac_pushed_this_session = false;
 	m_error_count++;
 
 	if (m_error_count >= SMD_MAX_CONSECUTIVE_ERRORS) {
@@ -539,6 +542,7 @@ void SmdSat::state_stopped_enter() {
 	// The explicit load_kmac_profil SPI command is only sent when RCONF changed
 	// (m_needs_explicit_kmac_load) — otherwise STM32 auto-inits MAC from flash at POR.
 	is_kmac_profil_loaded = false;
+	m_kmac_pushed_this_session = false;
 
 	m_packet_buffer.clear();
 
@@ -751,7 +755,7 @@ void SmdSat::state_load_kmac() {
 	// unchanged — backward-compatible with pre-blind firmware).
 	unsigned int rn = 0, period = 0;
 	bool blind_en = smd_blind_active(rn, period);
-	if (m_needs_explicit_kmac_load || blind_en || m_kmac_blind_pushed) {
+	if ((m_needs_explicit_kmac_load || blind_en || m_kmac_blind_pushed) && !m_kmac_pushed_this_session) {
 		try {
 			if (blind_en) {
 				// KNS_MAC_BLIND_usrCfg_t packed, little-endian:
@@ -778,6 +782,7 @@ void SmdSat::state_load_kmac() {
 				m_kmac_blind_pushed = false;
 			}
 			m_needs_explicit_kmac_load = false;
+			m_kmac_pushed_this_session = true;
 		} catch (...) {
 			DEBUG_ERROR("SmdSat::%s: KMAC load failed", __func__);
 			SMD_STATE_CHANGE(load_kmac, error);
@@ -890,6 +895,7 @@ void SmdSat::state_load_kmac() {
 					wait_cmd();
 					m_needs_explicit_kmac_load = true;  // Force KMAC reload after recovery
 					is_kmac_profil_loaded = false;
+					m_kmac_pushed_this_session = false;
 					m_state_counter = 10;               // Reset poll counter for MAC_OK after recovery
 					m_rconf_recovery_attempted = true;  // mark done only on success
 					DEBUG_INFO("SmdSat::%s: RCONF recovery written — retrying KMAC", __func__);
@@ -1039,6 +1045,7 @@ void SmdSat::state_idle() {
 		if (m_wkup_lowered) {
 			DEBUG_INFO("SmdSat::%s: module was in LPM — cold boot on wake, re-running boot config", __func__);
 			is_kmac_profil_loaded = false;
+			m_kmac_pushed_this_session = false;
 			SMD_STATE_CHANGE(idle, idle_pending);
 			return;
 		}
@@ -2053,6 +2060,7 @@ bool SmdSat::switch_modulation(KineisModulation mode, const std::string &rconf_h
 		// Force state_load_kmac on next boot so the deferred RCONF gets applied.
 		// Without this, idle_pending skips to idle and the RCONF is never written.
 		is_kmac_profil_loaded = false;
+		m_kmac_pushed_this_session = false;
 		return true;
 	}
 
