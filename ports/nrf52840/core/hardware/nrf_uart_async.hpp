@@ -57,6 +57,9 @@ public:
 	void isr_handle_error(unsigned int error_type);
 
 protected:
+	/// @brief Release m_is_send_busy when TX_DONE was lost. Returns true if it did.
+	bool clear_stale_send_busy();
+
 	/// @brief Called for each complete line received (stripped of CR/LF).
 	/// Runs in main context (safe for heap/string operations).
 	virtual void on_rx_line(std::string &line) = 0;
@@ -68,6 +71,8 @@ protected:
 	unsigned int m_uart_instance;
 	bool m_is_rx_started;
 	bool m_is_send_busy;
+	/// @brief When m_is_send_busy was raised, to recover a lost TX_DONE.
+	uint64_t m_tx_started_ms = 0;
 	std::string m_tx_buffer;
 
 private:

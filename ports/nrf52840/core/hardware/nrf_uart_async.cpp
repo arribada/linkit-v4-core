@@ -8,6 +8,7 @@
 #include "bsp.hpp"
 #include "error.hpp"
 #include "debug.hpp"
+#include "pmu.hpp"  // get_timestamp_ms -- stuck-busy recovery
 #include "interrupt_lock.hpp"
 #include "nrf_gpio.h"
 #include <cstring>
@@ -126,12 +127,37 @@ void NrfUartAsync::deinit() {
 // TX
 // ============================================================================
 
+
+/// @brief Release a busy flag that TX_DONE never came to clear.
+///
+/// m_is_send_busy is raised before nrf_libuarte_async_tx() and cleared only by
+/// the TX_DONE ISR or by deinit(). If that interrupt is ever missed the flag
+/// latches and EVERY later send fails with "already busy" until the next
+/// deinit() -- observed on the SMD AT path right after a BLIND burst
+/// completes, which killed the following TX with "initiate_tx failed".
+///
+/// A DMA transfer of at most m_tx_buffer.capacity() bytes at the slowest baud
+/// we use (9600 = ~1 ms/byte) cannot take anywhere near a second, so a flag
+/// still set after this long is lost, not in flight. Warn (this is never
+/// normal) and let the caller through rather than bricking the link.
+bool NrfUartAsync::clear_stale_send_busy() {
+	static constexpr uint64_t TX_DONE_LOST_MS = 1000;
+	if (!m_is_send_busy) return false;
+	uint64_t now = PMU::get_timestamp_ms();
+	if (m_tx_started_ms == 0 || (now - m_tx_started_ms) < TX_DONE_LOST_MS) return false;
+	DEBUG_WARN("NrfUartAsync: UART%u TX_DONE lost after %u ms — releasing the busy flag", m_uart_instance,
+	           static_cast<unsigned>(now - m_tx_started_ms));
+	m_is_send_busy = false;
+	return true;
+}
+
 bool NrfUartAsync::send_raw(const uint8_t *data, size_t len) {
 	if (!m_is_init || len == 0) return false;
 
 	// DMA TX is async: the peripheral keeps reading from the buffer after this
 	// returns. The caller typically passes a stack buffer, so we copy into
 	// m_tx_buffer which is held until TX_DONE clears m_is_send_busy.
+	clear_stale_send_busy();
 	if (m_is_send_busy) {
 		DEBUG_ERROR("NrfUartAsync::send_raw: UART%u already busy", m_uart_instance);
 		return false;
@@ -144,6 +170,7 @@ bool NrfUartAsync::send_raw(const uint8_t *data, size_t len) {
 
 	m_tx_buffer.assign(reinterpret_cast<const char *>(data), len);
 	m_is_send_busy = true;
+	m_tx_started_ms = PMU::get_timestamp_ms();
 
 	ret_code_t ret = nrf_libuarte_async_tx(BSP::UARTAsync_Inits[m_uart_instance].uart,
 	                                       reinterpret_cast<uint8_t *>(m_tx_buffer.data()), m_tx_buffer.length());
@@ -167,11 +194,13 @@ bool NrfUartAsync::send_string(const std::string &str) {
 		return false;
 	}
 
+	clear_stale_send_busy();
 	if (m_is_send_busy) {
 		DEBUG_ERROR("NrfUartAsync: UART%u already busy", m_uart_instance);
 		return false;
 	}
 	m_is_send_busy = true;
+	m_tx_started_ms = PMU::get_timestamp_ms();
 
 	if (!m_is_rx_started) {
 		nrf_libuarte_async_start_rx(BSP::UARTAsync_Inits[m_uart_instance].uart);
