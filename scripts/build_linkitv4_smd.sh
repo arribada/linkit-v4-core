@@ -87,6 +87,7 @@ for arg in "$@"; do
         # sharing LINKIT_SMD's CMake cache would keep whichever transport was
         # configured first, and the swap is a source-file swap, not a flag.
         --uart) SMD_UART=ON ;;
+    --txtrace) SMDSAT_TXTRACE=ON ;;
         --release) BUILD_TYPE=Release ;;
         --metrics) METRICS=ON ;;
         --no-metrics) METRICS=OFF ;;
@@ -205,6 +206,7 @@ cmake -DCMAKE_TOOLCHAIN_FILE=../../toolchain_arm_gcc_nrf52.cmake \
       -DSMDSAT_AUTOFALLBACK=${SMDSAT_AUTOFALLBACK} \
       -DSMD_FLASH_HOLD=${SMD_FLASH_HOLD:-OFF} \
       -DSMD_UART=${SMD_UART} \
+      -DSMDSAT_TXTRACE=${SMDSAT_TXTRACE:-OFF} \
       -DMETRIC_LATENCY_LOG_ENABLE=$([ "$METRICS" = "ON" ] && echo 1 || echo 0) \
       -DVALIDATION_LOG_ENABLE=$([ "$VALIDATION" = "ON" ] && echo 1 || echo 0) \
       -DBENCH_TEST=${BENCH} \

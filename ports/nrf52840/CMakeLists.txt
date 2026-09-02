@@ -60,7 +60,7 @@ set(BOOL_BUILD_FLAGS
     ENABLE_THERMISTOR_SENSOR ENABLE_MORTALITY_SENSOR ENABLE_SWS_LOG ENABLE_SWS_ANALOG
     GNSS_HAS_BACKUP_BATTERY GPS_FAKE_POSITION STC3117_MIXED_MODE
     ARGOS_SMD LORA_RAK3172 LORA_DCS_ENABLE LORA_POWER_OFF_UNDERWATER
-    SMDSAT_USE_SAFE_TIMINGS SMDSAT_AUTOFALLBACK
+    SMDSAT_USE_SAFE_TIMINGS SMDSAT_AUTOFALLBACK SMDSAT_TXTRACE
     BENCH_TEST BENCH_FORCE_LPM_NONE SMD_FLASH_HOLD SMD_UART KIM2_BLIND_WKUP_RELEASE
     CAM_ENABLE BUZZER_ENABLE
     METRIC_LATENCY_LOG_ENABLE VALIDATION_LOG_ENABLE RSPB_VSENSORS_FLOOR)
@@ -718,6 +718,13 @@ if(ARGOS_SMD)
             ${PROJ_DIR}/core/hardware/smd_sat/smd_sat_cmd_spi.cpp
         )
         target_compile_definitions(${TARGET_NAME} PRIVATE SMD_SPI=1)
+    endif()
+    # -DSMDSAT_TXTRACE=ON re-enables the per-state TX latency trace. Off by
+    # default: the DEBUG_INFO lines are written to system_log through LFS, which
+    # inflates the very latency being measured.
+    if(SMDSAT_TXTRACE)
+        message(STATUS "SMD TX latency trace: ON")
+        target_compile_definitions(${TARGET_NAME} PRIVATE SMDSAT_TXTRACE=1)
     endif()
     target_include_directories(${TARGET_NAME} SYSTEM PRIVATE
         ${PROJ_DIR}/core/hardware/smd_sat
