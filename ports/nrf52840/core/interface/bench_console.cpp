@@ -551,6 +551,35 @@ bool bench::handle_line(const std::string &raw) {
 		         (unsigned)ac.mode, ac.sensor_tx_enable, (unsigned)ac.depth_pile, ac.ntry_per_message, ac.tx_interval_s,
 		         ac.duty_cycle & 0xFFFFFF, ac.is_lb ? 1 : 0, ac.prepass_en ? 1 : 0);
 		reply(buf);
+	} else if (cmd.rfind("%LPM", 0) == 0) {
+		// Set/read the SMD low-power mode WITHOUT a configuration round trip.
+		// Going through DTE means %CFG then %OP, i.e. two reed-confirmation
+		// gesture sequences per mode; sweeping the five modes that way put the
+		// board into a state where the console went silent and only a debugger
+		// reset brought it back. This writes the same parameter and pushes it
+		// straight into the live driver.
+		//   %LPM        -> report
+		//   %LPM <host bitmap>  1=NONE 2=SLEEP 4=STOP 8=STANDBY 16=SHUTDOWN
+#if defined(ARGOS_SMD) && (ARGOS_SMD == 1)
+		unsigned int v = 0;
+		char buf[128];
+		if (sscanf(line.c_str(), "%%LPM %u", &v) == 1) {
+			if (v != 1 && v != 2 && v != 4 && v != 8 && v != 16) {
+				reply("%LPM ERR usage: %LPM <1=NONE|2=SLEEP|4=STOP|8=STANDBY|16=SHUTDOWN>");
+				return true;
+			}
+			configuration_store->write_param(ParamID::SMD_LPM_MODE, v);
+			if (smd_sat_instance) smd_sat_instance->set_lpm_mode(static_cast<uint8_t>(v));
+		}
+		unsigned int cur = configuration_store->read_param<unsigned int>(ParamID::SMD_LPM_MODE);
+		unsigned int mod = cur >> 1;
+		snprintf(buf, sizeof(buf), "%%LPM host=0x%02X module=0x%02X mask=0x%02X degraded=%u", cur, mod,
+		         mod ? ((mod << 1) - 1) : 0,
+		         configuration_store->read_param<unsigned int>(ParamID::SMD_DEGRADED_MODE));
+		reply(buf);
+#else
+		reply("%LPM ERR not-an-smd-build");
+#endif
 	} else if (cmd == "%SCHEDQ") {
 		// Scheduler queue occupancy. It is what proves a self-rescheduling task
 		// does not clone itself: a round trip through configuration and back to
