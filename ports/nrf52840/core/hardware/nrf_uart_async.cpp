@@ -156,6 +156,17 @@ bool NrfUartAsync::send_raw(const uint8_t *data, size_t len) {
 }
 
 bool NrfUartAsync::send_string(const std::string &str) {
+	// Same guard as send_raw(). Without it, a send on a deinit'd instance sets
+	// m_is_send_busy, then nrf_libuarte_async_tx no-ops so TX_DONE never fires
+	// and the flag stays latched: every later send returns "already busy" until
+	// the next deinit(). Observed on the SMD AT path, second TX cycle -- the LPM
+	// write failed after the KMAC write. Same defect already fixed for LoRa
+	// (see lora_rak3172.cpp start_device()).
+	if (!m_is_init) {
+		DEBUG_ERROR("NrfUartAsync: UART%u send on uninitialised instance", m_uart_instance);
+		return false;
+	}
+
 	if (m_is_send_busy) {
 		DEBUG_ERROR("NrfUartAsync: UART%u already busy", m_uart_instance);
 		return false;
