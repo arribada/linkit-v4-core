@@ -1164,7 +1164,16 @@ unsigned int ArgosTxService::service_next_timeout() {
 	configuration_store->get_argos_configuration(cfg);
 	if (cfg.blind_en) {
 		unsigned int rn = (cfg.blind_retx_nb < 1) ? 1 : cfg.blind_retx_nb;
-		uint64_t burst_ms = (uint64_t)rn * (uint64_t)cfg.blind_retx_period_s * 1000ULL;
+		// (rn + 1), matching SmdSat::state_transmitting_enter(). These are two
+		// independent timeouts over the SAME burst and the shorter one wins, so
+		// they have to be derived the same way or the outer net cancels a TX the
+		// driver is still legitimately waiting on. Measured on the bench
+		// 2026-09-02 before this was aligned: the driver's window was widened to
+		// 250 s, this one stayed at 30 + 3*60 = 210 s, and the burst died at
+		// "TX cancelled after 4213/5001 failed polls" -- 209 s. The service must
+		// stay the LONGER of the two: its base is 30 s against the driver's
+		// warmup + 5 s, which holds for any TCXO warmup under 25 s.
+		uint64_t burst_ms = ((uint64_t)rn + 1ULL) * (uint64_t)cfg.blind_retx_period_s * 1000ULL;
 		if (burst_ms > 7200000ULL) burst_ms = 7200000ULL;
 		timeout_ms += (unsigned int)burst_ms;
 	}
