@@ -70,12 +70,30 @@ std::string DTEHandler::read_params_by_filter(int error_code, std::vector<ParamI
 
 	// Check special case where params is zero length => retrieve all matching key types
 	if (params.size() == 0) {
+		params.reserve(param_map_size);
 		for (unsigned int i = 0; i < param_map_size; i++) {
 			if (param_map[i].is_implemented && param_map[i].key[2] == filter_char) params.push_back((ParamID)i);
 		}
 	}
 
+	// Reserve before filling. This is what makes a bulk read survive a fragmented
+	// heap, and it is not a micro-optimisation:
+	//
+	// ParamValue holds a variant that can carry a std::string, so the vector is
+	// tens of bytes per entry and a full read is 163 of them. Growing it by
+	// push_back doubles the capacity repeatedly, and at the moment of each
+	// reallocation the OLD block and the NEW one are both live -- the allocator
+	// is asked for a single contiguous block roughly twice the size of one it
+	// already cannot place. Reserving asks once, for exactly what is needed.
+	//
+	// Measured on the Cyprus board 2026-09-02: after ~17 h in Operational the
+	// heap held 25632 free bytes in FIVE blocks (417 live allocations), and the
+	// first bulk PARMR from the GUI on entering configuration mode failed here --
+	// "PMU reset type: MALLOC", backtrace pvPortMalloc <- PARMR_REQ <-
+	// handle_dte_message. The reboot defragmented the heap, so the same request
+	// succeeded on the second attempt: reset once, then fine, every time.
 	std::vector<ParamValue> param_values;
+	param_values.reserve(params.size());
 	for (unsigned int i = 0; i < params.size(); i++) {
 		try {
 			BaseType x = configuration_store->read_param<BaseType>(params[i]);
