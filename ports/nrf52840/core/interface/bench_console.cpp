@@ -628,6 +628,22 @@ bool bench::handle_line(const std::string &raw) {
 #else
 		reply("%SATKEEP ERR not-an-smd-build");
 #endif
+	} else if (cmd.rfind("%DRY", 0) == 0) {
+		// DRY_TIME_BEFORE_TX without a configuration round trip. It is not just an
+		// antenna-drying delay: ArgosTxScheduler::schedule_periodic takes
+		// m_earliest_schedule as the TX time when it is in the FUTURE, and falls
+		// back to the periodic grid when it is not. set_earliest_schedule() is fed
+		// now + dry_time in whole seconds, so dry=0 always lands in the past and
+		// the first TX after surfacing waits for the next grid slot -- up to a
+		// full TR_NOM. Any non-zero value pins it instead.
+		//   %DRY <seconds>
+		unsigned int v = 0;
+		char buf[96];
+		if (sscanf(line.c_str(), "%%DRY %u", &v) == 1)
+			configuration_store->write_param(ParamID::DRY_TIME_BEFORE_TX, v);
+		snprintf(buf, sizeof(buf), "%%DRY dry_time_before_tx=%u s",
+		         configuration_store->read_param<unsigned int>(ParamID::DRY_TIME_BEFORE_TX));
+		reply(buf);
 	} else if (cmd == "%SCHEDQ") {
 		// Scheduler queue occupancy. It is what proves a self-rescheduling task
 		// does not clone itself: a round trip through configuration and back to

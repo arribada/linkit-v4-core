@@ -936,6 +936,12 @@ ScheduleDecision ArgosTxService::schedule_with_gnss(ArgosConfig &argos_config, s
 /// @brief Execute scheduled TX — run the prepared burst task (cert/gnss/sensor/doppler).
 /// Called by ServiceManager when the scheduled time arrives.
 void ArgosTxService::service_initiate() {
+#ifdef BENCH_TEST
+	// Third stopwatch mark: splits the gap between the surfaced event and
+	// SmdSat's TXSTART into "waiting for the scheduler" and "preparing the
+	// packet" (ADC read, depth-pile retrieve, encode).
+	DEBUG_INFO("ArgosTxService: INITIATE uptime=%llu", (unsigned long long)PMU::get_timestamp_ms());
+#endif
 	DEBUG_TRACE("ArgosTxService::service_initiate");
 
 	// Skip TX if the device has failed too many consecutive times this session.
