@@ -1269,7 +1269,7 @@ void SmdSat::state_transmit_pending() {
 			for (uint8_t i = 0; i < m_lat_n && o > 0 && o < (int)sizeof(lb); i++)
 				o += snprintf(lb + o, sizeof(lb) - o, "%u%s", (unsigned)m_lat[i],
 				              (i + 1 < m_lat_n) ? "," : "");
-			DEBUG_INFO("%s uptime=%llu (power_on,pwrseq,reset,idle_pending,mac,initiate,txstart)", lb,
+			DEBUG_ERROR("%s uptime=%llu (power_on,pwrseq,reset,idle_pending,mac,initiate,txstart)", lb,
 			           (unsigned long long)PMU::get_timestamp_ms());
 			m_lat_n = 0;
 		}

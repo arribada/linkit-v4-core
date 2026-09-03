@@ -207,6 +207,7 @@ cmake -DCMAKE_TOOLCHAIN_FILE=../../toolchain_arm_gcc_nrf52.cmake \
       -DSMD_FLASH_HOLD=${SMD_FLASH_HOLD:-OFF} \
       -DSMD_UART=${SMD_UART} \
       -DSMDSAT_TXTRACE=${SMDSAT_TXTRACE:-OFF} \
+      -DDEBUG_NO_SYSTEMLOG=${DEBUG_NO_SYSTEMLOG:-OFF} \
       -DMETRIC_LATENCY_LOG_ENABLE=$([ "$METRICS" = "ON" ] && echo 1 || echo 0) \
       -DVALIDATION_LOG_ENABLE=$([ "$VALIDATION" = "ON" ] && echo 1 || echo 0) \
       -DBENCH_TEST=${BENCH} \
