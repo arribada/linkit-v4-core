@@ -1422,6 +1422,14 @@ void ArgosTxService::notify_peer_event(ServiceEvent &e) {
 			}
 			ArgosConfig argos_config;
 			configuration_store->get_argos_configuration(argos_config);
+			// Seconds, deliberately: schedule_periodic() compares this against
+			// now_epoch_seconds * 1000 (schedule_duty_cycle / schedule_legacy), so
+			// the whole scheduler is second-granular and a millisecond bound taken
+			// from the uptime clock would sit far in the past and send every first
+			// surface TX to the periodic grid. Measured that mistake on the bench
+			// 2026-09-03: 13.6 to 28.9 s of scheduling latency instead of ~1.7 s.
+			// Sub-second precision here needs the RTC and the scheduler re-based
+			// on epoch milliseconds, not a cast at the call site.
 			std::time_t earliest_schedule = service_current_time() + argos_config.dry_time_before_tx;
 			m_sched.set_earliest_schedule(earliest_schedule);
 
@@ -2009,6 +2017,9 @@ void ArgosTxService::process_gnss_burst() {
 	// here and m_kineis.send() -- a CloudLocate sentinel, a payload that will not
 	// fit the modulation -- leaves the credits spent too, and this is the one spot
 	// that sees them all. Same placement as process_sensor_burst and LoRaTxService.
+#ifdef BENCH_TEST
+	DEBUG_INFO("ArgosTxService: RETRIEVED uptime=%llu", (unsigned long long)PMU::get_timestamp_ms());
+#endif
 	m_inflight_gps = v;
 	m_inflight_reached_air = false;
 	m_inflight_evictions = m_depth_pile_manager.gps_evictions();
@@ -2162,6 +2173,9 @@ void ArgosTxService::process_gnss_burst() {
 		// fastloc fallback uses LDA2 + 96-bit packet → still attribute as "gnss"
 		// at this site; the inner fastloc branch above already tagged "fastloc".
 		m_last_val_tx_type = (v.back()->info.event_type == GPSEventType::FASTLOC) ? "fastloc" : "gnss";
+#ifdef BENCH_TEST
+		DEBUG_INFO("ArgosTxService: BUILT uptime=%llu", (unsigned long long)PMU::get_timestamp_ms());
+#endif
 		m_kineis.send(m_scheduled_mode, packet, size_bits);
 	} else {
 		DEBUG_WARN("ArgosTxService::process_gnss_burst: no entries eligible in depth pile");
