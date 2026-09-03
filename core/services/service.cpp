@@ -362,6 +362,11 @@ void Service::service_log(ServiceEventData *event_data, void *entry) {
 /// @param entry            Optional raw log entry for persistent logger.
 /// @param shall_reschedule true to reschedule after completion.
 void Service::service_complete(ServiceEventData *event_data, void *entry, bool shall_reschedule) {
+	// Safety net for the system-log hold window (DebugLogger::hold, opened on the
+	// first surfacing TX). Every abort between opening it and the send lands
+	// here, and a window left open would silence the log for good -- a far worse
+	// failure than the latency it buys. Harmless when nothing is held.
+	DebugLogger::release();
 	DEBUG_TRACE("Service::service_complete: service %s", m_name);
 	if (!m_is_initiated) {
 		if (!m_is_started) {

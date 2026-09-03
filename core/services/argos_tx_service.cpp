@@ -1404,7 +1404,19 @@ void ArgosTxService::notify_peer_event(ServiceEvent &e) {
 				}
 			}
 		} else {
-			// Device surfaced
+			// Device surfaced.
+			//
+			// Hold the system log for the first surfacing transmission, and only
+			// for it. Every DEBUG_* line commits to LittleFS, which measured 0.6
+			// to 0.9 s of a 1.7 s surface-to-air path -- the one transmission
+			// where latency is the whole point. The lines are buffered, not lost:
+			// release() replays them once the message is away. Later messages of
+			// the burst have time to spare and keep logging normally.
+			{
+				ArgosConfig hold_cfg;
+				configuration_store->get_argos_configuration(hold_cfg);
+				if (hold_cfg.mode == BaseArgosMode::SURFACING_BURST) DebugLogger::hold();
+			}
 #if defined(BENCH_TEST) && defined(BENCH_LAT_VERBOSE)
 			// Second stopwatch mark. %SURFACE stamps the console reply and SmdSat
 			// stamps TXSTART; this one splits the gap between them into "how long
@@ -2698,6 +2710,14 @@ void ArgosTxService::process_doppler_burst() {
 
 /// @brief TX started event — notify service manager that TX is in progress.
 void ArgosTxService::react(KineisEventTxStarted const &) {
+	// THE release point, and not one line earlier. m_kineis.send() only starts
+	// the driver's state machine -- power-on, ping, MAC poll, TCXO, AT+TX all
+	// happen after it returns. Releasing there dumped the replay straight into
+	// that path: measured on the bench, the driver's own share went from
+	// 219-320 ms to 874-1954 ms and the total got worse than doing nothing.
+	// TxStarted means the module has accepted the transmission; the flash is
+	// free to be slow now.
+	DebugLogger::release();
 	DEBUG_TRACE("ArgosTxService::react: KineisEventTxStarted");
 	// The frame is on the air: the try is genuinely used, nothing to give back.
 	m_inflight_reached_air = true;

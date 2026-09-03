@@ -601,6 +601,7 @@ target_sources(${TARGET_NAME} PRIVATE
     $<$<BOOL:${ENABLE_SWS_ANALOG}>:${CORE_DIR}/services/sws_analog_calibration.cpp>
     $<$<BOOL:${ENABLE_SWS_ANALOG}>:${CORE_DIR}/services/sws_analog_detection.cpp>
     ${CORE_DIR}/logging/logger.cpp
+    ${CORE_DIR}/logging/debug.cpp
     ${CORE_DIR}/util/haversine.cpp
     ${CORE_DIR}/filesystem/ota_flash_file_updater.cpp
     ${CORE_DIR}/protocol/dte_commands.cpp
