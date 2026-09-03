@@ -1269,7 +1269,11 @@ void SmdSat::state_transmit_pending() {
 			for (uint8_t i = 0; i < m_lat_n && o > 0 && o < (int)sizeof(lb); i++)
 				o += snprintf(lb + o, sizeof(lb) - o, "%u%s", (unsigned)m_lat[i],
 				              (i + 1 < m_lat_n) ? "," : "");
-			DEBUG_ERROR("%s uptime=%llu (power_on,pwrseq,reset,idle_pending,mac,initiate,txstart)", lb,
+			// INFO, not ERROR: this is a bench marker, and the console half is
+			// never held, so a stopwatch still sees it the instant it happens.
+			// It was briefly an ERROR for a DEBUG_LEVEL=1 experiment that never
+			// built (is25_flash.cpp trips -Werror=empty-body at that level).
+			DEBUG_INFO("%s uptime=%llu (power_on,pwrseq,reset,idle_pending,mac,initiate,txstart)", lb,
 			           (unsigned long long)PMU::get_timestamp_ms());
 			m_lat_n = 0;
 		}
