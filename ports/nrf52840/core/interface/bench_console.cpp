@@ -644,6 +644,22 @@ bool bench::handle_line(const std::string &raw) {
 		snprintf(buf, sizeof(buf), "%%DRY dry_time_before_tx=%u s",
 		         configuration_store->read_param<unsigned int>(ParamID::DRY_TIME_BEFORE_TX));
 		reply(buf);
+	} else if (cmd.rfind("%AMODE", 0) == 0) {
+		// ARGOS_MODE without a configuration round trip.
+		//   %AMODE <0=OFF 1=PASS_PREDICTION 2=LEGACY 3=DUTY_CYCLE 4=DOPPLER 5=SURFACING_BURST>
+		unsigned int v = 0;
+		char buf[96];
+		if (sscanf(line.c_str(), "%%AMODE %u", &v) == 1) {
+			if (v > 5) {
+				reply("%AMODE ERR usage: %AMODE <0..5>");
+				return true;
+			}
+			configuration_store->write_param(ParamID::ARGOS_MODE, static_cast<BaseArgosMode>(v));
+		}
+		ArgosConfig ac;
+		configuration_store->get_argos_configuration(ac);
+		snprintf(buf, sizeof(buf), "%%AMODE mode=%u burst_max=%u s", (unsigned)ac.mode, ac.surfacing_burst_max_s);
+		reply(buf);
 	} else if (cmd == "%SCHEDQ") {
 		// Scheduler queue occupancy. It is what proves a self-rescheduling task
 		// does not clone itself: a round trip through configuration and back to

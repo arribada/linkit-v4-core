@@ -149,7 +149,18 @@ private:
 	unsigned int m_prepared_doppler_size_bits = 0;
 	KineisModulation m_prepared_doppler_mode = KineisModulation::LDA2;
 	uint64_t m_prepared_at_ms = 0;
-	static constexpr uint64_t PREPARED_DOPPLER_REFRESH_MS = 3600000ULL;  ///< 1 hour
+	static constexpr uint64_t PREPARED_DOPPLER_REFRESH_MS = 3600000ULL;  ///< 1 hour backstop
+	/// @brief Payload inputs the prepared Doppler packet was built from, so a
+	/// change can rebuild it WHILE STILL UNDERWATER instead of waiting for the
+	/// hourly backstop. Reading them back costs nothing: service_get_voltage()
+	/// and friends return the battery monitor's cached sample, which other
+	/// services refresh on their own schedule -- so the value can move under a
+	/// prepared packet and leave it stale, and the surface would then either
+	/// send an hour-old reading or fall through to the slow build.
+	uint16_t m_prepared_voltage = 0;
+	bool m_prepared_batt_low = false;
+	uint8_t m_prepared_level = 0;
+	bool prepared_doppler_inputs_changed();
 
 	void react(KineisEventTxStarted const &) override;
 	void react(KineisEventTxComplete const &) override;

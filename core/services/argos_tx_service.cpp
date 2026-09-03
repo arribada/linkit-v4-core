@@ -1208,8 +1208,17 @@ void ArgosTxService::notify_peer_event(ServiceEvent &e) {
 	// Skipped if we never prepared one (boot underwater, non-SURFACING_BURST).
 	if (m_is_underwater && m_prepared_at_ms != 0) {
 		uint64_t now_ms = PMU::get_timestamp_ms();
+		// Rebuild on a CHANGE, not only on the hourly backstop. The whole point
+		// of the pre-warm is that the surface event sends a ready packet; an
+		// input that moved underwater would otherwise either ship an hour-old
+		// reading or, once the prep aged out, drop the surface back onto the slow
+		// build path -- measured at 435 ms of battery ADC plus the encode.
+		// Underwater there is no latency to protect, so rebuilding early is free.
 		if (now_ms - m_prepared_at_ms >= PREPARED_DOPPLER_REFRESH_MS) {
 			DEBUG_TRACE("ArgosTxService::notify_peer_event: refreshing pre-warmed Doppler packet (>1h underwater)");
+			prepare_doppler_packet();
+		} else if (prepared_doppler_inputs_changed()) {
+			DEBUG_INFO("ArgosTxService: pre-warmed Doppler packet rebuilt underwater — payload inputs changed");
 			prepare_doppler_packet();
 		}
 	}
@@ -2269,6 +2278,14 @@ void ArgosTxService::process_gnss_burst_from_cached() {
 /// Samples the battery and builds the Doppler payload now so the first TX at
 /// surface skips the ADC read + packet build on its critical path. Only acts in
 /// SURFACING_BURST mode; on other modes the prepared state is cleared.
+/// @brief Has anything the prepared Doppler packet encodes moved since it was
+/// built? Compares the battery monitor's CACHED values -- no ADC, no I/O -- so
+/// this is free to call on every peer event while underwater.
+bool ArgosTxService::prepared_doppler_inputs_changed() {
+	return service_get_voltage() != m_prepared_voltage || service_is_battery_level_low() != m_prepared_batt_low
+	       || service_get_level() != m_prepared_level;
+}
+
 void ArgosTxService::prepare_doppler_packet() {
 	ArgosConfig argos_config;
 	configuration_store->get_argos_configuration(argos_config);
@@ -2296,6 +2313,9 @@ void ArgosTxService::prepare_doppler_packet() {
 
 	m_prepared_doppler_packet = packet;
 	m_prepared_doppler_size_bits = size_bits;
+	m_prepared_voltage = service_get_voltage();
+	m_prepared_batt_low = service_is_battery_level_low();
+	m_prepared_level = service_get_level();
 	// 2026-05-25 modulation fix (companion to argos_tx_service.cpp:225):
 	// non-adaptive path was hardcoded to LDA2. The prewarm send (line 1369)
 	// deliberately SKIPS ensure_modulation() to keep the surfacing first-TX
@@ -2344,9 +2364,9 @@ void ArgosTxService::process_doppler_burst() {
 					tx_mode = m_kineis.get_current_modulation();
 				}
 			}
-			DEBUG_TRACE("ArgosTxService::process_doppler_burst: PREWARM mode=%s sz=%u age=%lu ms",
-			            argos_modulation_to_string((BaseArgosModulation)tx_mode), m_prepared_doppler_size_bits,
-			            static_cast<unsigned long>(prep_age_ms));
+			DEBUG_INFO("ArgosTxService::process_doppler_burst: PREWARM mode=%s sz=%u age=%lu ms",
+			           argos_modulation_to_string((BaseArgosModulation)tx_mode), m_prepared_doppler_size_bits,
+			           static_cast<unsigned long>(prep_age_ms));
 			m_last_tx_had_gps = false;
 			KineisPacket prepared = m_prepared_doppler_packet;
 			unsigned int prepared_bits = m_prepared_doppler_size_bits;
@@ -2359,6 +2379,15 @@ void ArgosTxService::process_doppler_burst() {
 		}
 	}
 
+#ifdef BENCH_TEST
+	{
+		ArgosConfig why_cfg;
+		configuration_store->get_argos_configuration(why_cfg);
+		DEBUG_INFO("ArgosTxService: NO-PREWARM burst=%u count=%u mode=%u empty=%u at_ms=%u",
+		           m_is_surfacing_burst ? 1u : 0u, m_doppler_burst_count, (unsigned)why_cfg.mode,
+		           m_prepared_doppler_packet.empty() ? 1u : 0u, m_prepared_at_ms != 0 ? 1u : 0u);
+	}
+#endif
 	service_update_battery();
 	ArgosConfig argos_config;
 	configuration_store->get_argos_configuration(argos_config);
