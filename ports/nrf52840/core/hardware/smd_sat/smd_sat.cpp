@@ -861,6 +861,14 @@ void SmdSat::state_load_kmac() {
 		try {
 			m_cmd.write_tcxo_warmup(warmup_ms);
 			DEBUG_TRACE("SmdSat::%s: TCXO warmup written: %u ms (first_tx=%u)", __func__, warmup_ms, m_is_first_tx);
+#ifdef BENCH_TEST
+			// The warmup runs INSIDE the module, after AT+TX is accepted -- so it
+			// delays the RF, not the command, and no host-side stopwatch that
+			// stops at "accepted" can see it. Make the value that actually went
+			// out visible: 0 only on the first TX of a power-on and only above
+			// TCXO_SKIP_TEMP_THRESHOLD_C, the configured value on every other.
+			DEBUG_INFO("SmdSat: TCXO=%u ms first_tx=%u die=%d C", warmup_ms, m_is_first_tx, die_temp_c);
+#endif
 		} catch (...) {
 			DEBUG_WARN("SmdSat::%s: failed to write TCXO warmup", __func__);
 		}

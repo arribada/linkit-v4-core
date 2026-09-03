@@ -936,7 +936,7 @@ ScheduleDecision ArgosTxService::schedule_with_gnss(ArgosConfig &argos_config, s
 /// @brief Execute scheduled TX — run the prepared burst task (cert/gnss/sensor/doppler).
 /// Called by ServiceManager when the scheduled time arrives.
 void ArgosTxService::service_initiate() {
-#ifdef BENCH_TEST
+#if defined(BENCH_TEST) && defined(BENCH_LAT_VERBOSE)
 	// Third stopwatch mark: splits the gap between the surfaced event and
 	// SmdSat's TXSTART into "waiting for the scheduler" and "preparing the
 	// packet" (ADC read, depth-pile retrieve, encode).
@@ -1405,7 +1405,7 @@ void ArgosTxService::notify_peer_event(ServiceEvent &e) {
 			}
 		} else {
 			// Device surfaced
-#ifdef BENCH_TEST
+#if defined(BENCH_TEST) && defined(BENCH_LAT_VERBOSE)
 			// Second stopwatch mark. %SURFACE stamps the console reply and SmdSat
 			// stamps TXSTART; this one splits the gap between them into "how long
 			// before the service even sees the event" and "how long it then takes
@@ -2026,7 +2026,7 @@ void ArgosTxService::process_gnss_burst() {
 	// here and m_kineis.send() -- a CloudLocate sentinel, a payload that will not
 	// fit the modulation -- leaves the credits spent too, and this is the one spot
 	// that sees them all. Same placement as process_sensor_burst and LoRaTxService.
-#ifdef BENCH_TEST
+#if defined(BENCH_TEST) && defined(BENCH_LAT_VERBOSE)
 	DEBUG_INFO("ArgosTxService: RETRIEVED uptime=%llu", (unsigned long long)PMU::get_timestamp_ms());
 #endif
 	m_inflight_gps = v;
@@ -2182,7 +2182,7 @@ void ArgosTxService::process_gnss_burst() {
 		// fastloc fallback uses LDA2 + 96-bit packet → still attribute as "gnss"
 		// at this site; the inner fastloc branch above already tagged "fastloc".
 		m_last_val_tx_type = (v.back()->info.event_type == GPSEventType::FASTLOC) ? "fastloc" : "gnss";
-#ifdef BENCH_TEST
+#if defined(BENCH_TEST) && defined(BENCH_LAT_VERBOSE)
 		DEBUG_INFO("ArgosTxService: BUILT uptime=%llu", (unsigned long long)PMU::get_timestamp_ms());
 #endif
 		m_kineis.send(m_scheduled_mode, packet, size_bits);
@@ -2379,7 +2379,7 @@ void ArgosTxService::process_doppler_burst() {
 		}
 	}
 
-#ifdef BENCH_TEST
+#if defined(BENCH_TEST) && defined(BENCH_LAT_VERBOSE)
 	{
 		ArgosConfig why_cfg;
 		configuration_store->get_argos_configuration(why_cfg);
