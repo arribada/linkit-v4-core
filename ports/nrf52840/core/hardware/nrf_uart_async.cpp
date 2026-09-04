@@ -123,6 +123,25 @@ void NrfUartAsync::deinit() {
 	             NRF_GPIO_PIN_NOSENSE);
 }
 
+void NrfUartAsync::park_tx_for_power_off() {
+	// The counterpart to the TX-park-HIGH above, for the case that park cannot
+	// serve: the peer is about to lose its rail.
+	//
+	// An input held at 3.3 V on an unpowered part is not inert. It forward-biases
+	// the ESD clamp between the pin and VDD and feeds the rail through it, so the
+	// part sits in a half-powered limbo instead of resetting. On the SMD module
+	// this kept a wedged MAC state alive across rail cuts of 14 s, 90 s, 240 s and
+	// 300 s -- it cleared only when the residual charge finally drained. Driving
+	// LOW removes the source; the peer is losing its rail, so there is no longer a
+	// receiver to confuse with a low line.
+	//
+	// Same intent as the powerdown bus-park in nrf_i2c.cpp.
+	uint32_t tx_pin = BSP::UARTAsync_Inits[m_uart_instance].config.tx_pin;
+	nrf_gpio_cfg(tx_pin, NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_NOPULL,
+	             NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE);
+	nrf_gpio_pin_clear(tx_pin);
+}
+
 // ============================================================================
 // TX
 // ============================================================================

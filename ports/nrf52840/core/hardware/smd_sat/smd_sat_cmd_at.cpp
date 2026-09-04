@@ -44,6 +44,28 @@ SmdSatCmdAt::~SmdSatCmdAt() {
 void SmdSatCmdAt::init() {
 	NrfUartAsync::init();  // Uses BSP default baudrate
 	m_dfu_mode = false;
+
+	// Clear the async TX state. init() runs on a module that has just been powered
+	// on, so no transmission can still be in flight and no earlier verdict is worth
+	// keeping.
+	//
+	// This is not housekeeping. m_tx_in_progress is set when AT+TX is sent (:478)
+	// and cleared ONLY by a parsed +TX= (:131), a parsed +ERROR= (:89) or a send
+	// failure (:486) -- never by init() or deinit(). Cut the rail before the reply
+	// lands, as every dive does, and it stays true for the life of the firmware:
+	// the object is a function-local static (main.cpp:1122) that outlives every
+	// power cycle. read_spimac_state() then synthesises MAC_TX_IN_PROGRESS from it
+	// WITHOUT ASKING THE MODULE (:516), so every later session sees a busy MAC and
+	// refuses to transmit.
+	//
+	// That is the "module backlog surviving 300 s of rail cut" chased on the bench
+	// 02-04/09/2026 -- it survived because it was never in the module. It looked
+	// module-side because SPI never shows it: read_spimac_state() there reads the
+	// real register over the wire (smd_sat_cmd_spi.cpp). And it "cleared on its
+	// own" whenever some later command happened to parse an +ERROR=.
+	m_tx_in_progress = false;
+	m_tx_complete = false;
+	m_tx_status = 0;
 }
 
 void SmdSatCmdAt::deinit() {

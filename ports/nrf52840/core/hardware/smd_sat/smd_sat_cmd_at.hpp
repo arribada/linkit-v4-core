@@ -23,6 +23,7 @@ public:
 	// Transport lifecycle
 	void init() override;
 	void deinit() override;
+	void prepare_power_off() override { park_tx_for_power_off(); }
 
 	// Basic communication
 	bool ping() override;

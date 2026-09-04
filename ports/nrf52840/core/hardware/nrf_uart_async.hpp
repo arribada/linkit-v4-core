@@ -37,6 +37,17 @@ public:
 	/// @brief Uninit UART peripheral + Nordic SDK POWER register workaround.
 	void deinit();
 
+	/**
+	 * @brief Stop driving TX, for use when the PEER'S RAIL IS ABOUT TO BE CUT.
+	 *
+	 * deinit() parks TX as an output driven HIGH, which is right while the peer is
+	 * powered. It is wrong across a power cut: with the peer's VDD at 0 V and its RX
+	 * input held at 3.3 V, current flows through the peer's ESD clamp into its rail
+	 * and back-powers it, so it never sees a power-on reset. Call this between
+	 * deinit() and cutting the rail.
+	 */
+	void park_tx_for_power_off();
+
 	/// @brief Check if UART is initialized.
 	bool is_init() const { return m_is_init; }
 

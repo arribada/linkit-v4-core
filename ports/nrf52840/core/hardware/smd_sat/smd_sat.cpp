@@ -553,6 +553,18 @@ void SmdSat::state_stopped_enter() {
 	GPIOPins::clear(SAT_EXTWAKEUP);
 #endif
 
+	// Stop driving the module's RX line BEFORE shutdown() cuts SAT_PWR_EN, not
+	// after it -- an earlier version of this call sat below shutdown() and so fired
+	// once the rail was already down, which is the one moment it cannot help.
+	//
+	// deinit() above parks TX HIGH, which is right while the module is powered but
+	// wrong across the cut: 3.3 V into an unpowered input is a current path through
+	// its ESD clamp. Hygiene, on the same principle as the powerdown bus-park in
+	// nrf_i2c.cpp -- NOT a fix for anything measured. The bench defect it was first
+	// written for turned out to be a host-side latch (see SmdSatCmdAt::init), and
+	// parking LOW did not change that symptom at all. No-op on SPI, which idles LOW.
+	m_cmd.prepare_power_off();
+
 	this->shutdown();
 	GPIOPins::release_sensors_pwr();
 	nrf_gpio_cfg_default(BSP::GPIO_Inits[SAT_RESET].pin_number);
