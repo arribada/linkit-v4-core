@@ -1179,7 +1179,11 @@ unsigned int ArgosTxService::service_next_timeout() {
 		// "TX cancelled after 4213/5001 failed polls" -- 209 s. The service must
 		// stay the LONGER of the two: its base is 30 s against the driver's
 		// warmup + 5 s, which holds for any TCXO warmup under 25 s.
-		uint64_t burst_ms = ((uint64_t)rn + 1ULL) * (uint64_t)cfg.blind_retx_period_s * 1000ULL;
+		// Must track the driver's poll window (smd_sat.cpp) exactly. That window went
+		// from rn+1 to rn+2 periods on 2026-09-05; leaving this one at rn+1 would put
+		// the shorter timeout back on top and silently win the race -- the defect
+		// 11701d72 exists to prevent.
+		uint64_t burst_ms = ((uint64_t)rn + 2ULL) * (uint64_t)cfg.blind_retx_period_s * 1000ULL;
 		if (burst_ms > 7200000ULL) burst_ms = 7200000ULL;
 		timeout_ms += (unsigned int)burst_ms;
 	}

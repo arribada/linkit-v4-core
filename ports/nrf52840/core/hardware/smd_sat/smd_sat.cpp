@@ -1319,7 +1319,15 @@ void SmdSat::state_transmitting_enter() {
 		// up, and the next session found the MAC at MAC_TX_IN_PROGRESS. One
 		// extra period is the smallest margin that covers both readings; the 2 h
 		// cap below still bounds an extreme config.
-		uint64_t burst_ms = ((uint64_t)rn + 1ULL) * (uint64_t)period * 1000ULL;
+		// 2026-09-05: one extra period is NOT enough. The margin above was set on a
+		// reading of bursts "still running past 190 s"; measured again on the same
+		// board and config, the 4-transmission case completes at 243-246 s -- three
+		// independent timeouts (SLEEP twice, NONE once) all landing just past a
+		// 240 s window, with the raw trace showing state_transmitting_enter at t=0
+		// and "TX timeout after polling" at t+243. The last copy leaves at t=180
+		// and its completion needs more than the 60 s that remained. Two periods of
+		// margin covers it; the 2 h cap below still bounds an extreme config.
+		uint64_t burst_ms = ((uint64_t)rn + 2ULL) * (uint64_t)period * 1000ULL;
 		if (burst_ms > 7200000ULL) burst_ms = 7200000ULL;
 		total_timeout_ms += (uint32_t)burst_ms;
 		DEBUG_INFO("SmdSat::%s: BLIND — TX poll window +%u ms (burst)", __func__, (uint32_t)burst_ms);
