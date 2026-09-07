@@ -39,6 +39,19 @@ static constexpr unsigned int PMREQ_VERIFY_RETRIES =
         ///< carry this now (see state_enterbackup); the retries are the net for the residual cases, not
         ///< the mechanism. Raised 3->4 so a cycle that needs one more second still lands instead of
         ///< cutting the rail and losing BBR.
+static constexpr unsigned int PMREQ_SETTLE_MS =
+    1500;  ///< Silence laisse au recepteur entre le PMREQ et le probe de verification.
+           ///< Valeur heritee du correctif 1a34c664 (500 -> 1500 ms), dont la mesure
+           ///< terrain a montre qu'il n'avait AUCUN effet sur le taux d'echec : la
+           ///< variable n'etait pas le temps mais le flag FORCE manquant.
+           ///< Retente a la baisse une fois FORCE en place (banc 2026-09-07, meme
+           ///< carte) : a 1500 ms, 11 sequences, 11 probes, 11 validees au premier
+           ///< probe, aucun abandon ; a 300 ms, 2 sequences validees au premier probe
+           ///< puis le cycle GNSS s'est arrete (console toujours repondante, aucun
+           ///< redemarrage). Lecture probable, non confirmee : le probe conclut au
+           ///< backup sur un TIMEOUT de 200 ms, donc un module simplement lent a
+           ///< repondre est compte comme endormi -- raccourcir la temporisation
+           ///< affaiblit le test au lieu de gagner du temps. On garde 1500 ms.
 static constexpr unsigned int PMREQ_VERIFY_TIMEOUT_MS =
     200;  ///< Wait for verification poll response (TIMEOUT = backup confirmed, SUCCESS = M10Q still awake)
 static constexpr unsigned int EARLY_ABORT_SAT_REPORTS =
@@ -663,6 +676,11 @@ void M10QAsyncReceiver::exit_backup_charge_mode() {
 	// power_on (state == idle on return).
 	GPIOPins::clear(BSP::GPIO::GPIO_GPS_PWR_EN);
 	GPIOPins::release_to_highz(BSP::GPIO::GPIO_GPS_RST);
+	// Conformite SAM-M10Q (UBX-22020019 Table 20) : « Do not drive IO pins when
+	// VCC and V_IO are not supplied. Otherwise permanent damage may result. »
+	// Les trois autres chemins de coupure relachent EXTINT ; celui-ci l'oubliait
+	// et laissait la broche pilotee sur un module hors tension.
+	GPIOPins::release_to_highz(BSP::GPIO::GPIO_GPS_EXT_INT);
 	GPIOPins::release_sensors_pwr();
 	m_state = State::idle;
 	notify(GPSEventPowerOff(false));
@@ -1544,13 +1562,37 @@ void M10QAsyncReceiver::state_poweroff() {
 
 void M10QAsyncReceiver::state_poweroff_exit() {}
 
+#ifdef BENCH_TEST
+uint32_t M10QAsyncReceiver::bench_pmreq_flags = RXM::PMREQFlags::BACKUP | RXM::PMREQFlags::FORCE;  // defaut = valeur corrigee
+unsigned int M10QAsyncReceiver::bench_pmreq_seq = 0;
+unsigned int M10QAsyncReceiver::bench_pmreq_probes = 0;
+unsigned int M10QAsyncReceiver::bench_pmreq_first_ok = 0;
+unsigned int M10QAsyncReceiver::bench_pmreq_giveup = 0;
+unsigned int M10QAsyncReceiver::bench_pmreq_settle_ms = PMREQ_SETTLE_MS;
+#endif
+
 void M10QAsyncReceiver::send_pmreq_backup() {
 	DEBUG_TRACE("M10QAsyncReceiver::send_pmreq_backup: UBX-RXM-PMREQ backup ->");
 	RXM::MSG_PMREQ pmreq = {
 		.version = 0,
 		.reserved1 = { 0, 0, 0 },
 		.duration = 0,                     // sleep until wakeup event
-		.flags = RXM::PMREQFlags::BACKUP,  // 0x02
+#ifdef BENCH_TEST
+		.flags = M10QAsyncReceiver::bench_pmreq_flags,
+#else
+		// SAM-M10Q Integration Manual UBX-22020019 §2.6.3.2, verbatim :
+		//   « The "force" flag must be set in UBX-RXM-PMREQ to enter software
+		//     standby mode. »
+		// Le bit FORCE n'avait jamais ete pose. Sans lui l'entree en standby est
+		// hors contrat et le SPG 5.10 honore ou jette chaque requete selon son
+		// etat instantane : mesure banc 2026-09-07, 19 sequences a 0x02 ->
+		// 3,74 probes/sequence, 0/19 validees au premier probe, 2 coupures de
+		// rail ; 12 sequences a 0x06 -> 1,00 probe/sequence, 12/12 validees au
+		// premier probe, 0 coupure. Terrain avant correctif : 0/198.
+		// ATTENTION : sur M10 la semantique de FORCE a change vs M8 (ce n'etait
+		// que « backup malgre USB »), d'ou l'omission d'origine.
+		.flags = RXM::PMREQFlags::BACKUP | RXM::PMREQFlags::FORCE,  // 0x06
+#endif
 		// 2026-05 deep-idle refactor: wake source is EXTINT0 (deepest sleep
 		// mode — ~10-12 µA vs ~15 µA with UARTRX since the UART block can
 		// be fully powered down). The nRF drives the EXTINT pin via
@@ -1600,6 +1642,9 @@ void M10QAsyncReceiver::state_enterbackup_enter() {
 	// verification step can retry PMREQ up to PMREQ_VERIFY_RETRIES times if
 	// the M10Q refuses backup on first attempt.
 	m_pmreq_verify_retries = PMREQ_VERIFY_RETRIES;
+#ifdef BENCH_TEST
+	bench_pmreq_seq++;
+#endif
 	DEBUG_INFO("M10QAsyncReceiver::state_enterbackup_enter");
 
 	// HIGH GNSS-AUDIT #1 fix: two entry paths reach enterbackup:
@@ -1734,7 +1779,11 @@ void M10QAsyncReceiver::state_enterbackup() {
 				// throughout. Only the M10Q state machine waits, and it has
 				// nothing else to do. Cost is +1 s on the dive->backup path, which
 				// is not the surface->TX critical path.
-				run_state_machine(1500);
+#ifdef BENCH_TEST
+				run_state_machine(M10QAsyncReceiver::bench_pmreq_settle_ms);
+#else
+				run_state_machine(PMREQ_SETTLE_MS);
+#endif
 				break;
 			} else if (m_step == 3) {
 				// 2026-05-25 PMREQ-backup verification: send an invalid CFG-MSG
@@ -1755,6 +1804,9 @@ void M10QAsyncReceiver::state_enterbackup() {
 						.msgClass = MessageClass::MSG_CLASS_BAD,
 						.msgID = 0,
 					};
+#ifdef BENCH_TEST
+					bench_pmreq_probes++;
+#endif
 					initiate_timeout(PMREQ_VERIFY_TIMEOUT_MS);
 					m_ubx_comms.send_packet_with_expect(MessageClass::MSG_CLASS_CFG, CFG::ID_MSG, probe,
 					                                    MessageClass::MSG_CLASS_ACK, ACK::ID_NACK);
@@ -1812,6 +1864,9 @@ void M10QAsyncReceiver::state_enterbackup() {
 					            "cutting rail (true poweroff, BBR lost) instead of leaking ~2 mA for the GNP52 window",
 					            (unsigned)PMREQ_VERIFY_RETRIES);
 					VAL_GNSS("pmreq_verify_giveup_rail_cycle");
+#ifdef BENCH_TEST
+					bench_pmreq_giveup++;
+#endif
 					m_powering_off = true;
 					m_num_power_on = 0;
 					STATE_CHANGE(enterbackup, poweroff);
@@ -1831,6 +1886,10 @@ void M10QAsyncReceiver::state_enterbackup() {
 			// confirmed. Skip the normal baud-sync retry path; advance to
 			// step 4 (UART deinit + backupidle transition).
 			if (m_step == 3) {
+#ifdef BENCH_TEST
+				// Aucun retry consomme => le TOUT PREMIER probe a vu le module muet.
+				if (m_pmreq_verify_retries == PMREQ_VERIFY_RETRIES) bench_pmreq_first_ok++;
+#endif
 				DEBUG_INFO("M10QAsyncReceiver: PMREQ-backup verified (M10Q silent to probe)");
 				VAL_GNSS("pmreq_verify_ok");
 				m_step++;

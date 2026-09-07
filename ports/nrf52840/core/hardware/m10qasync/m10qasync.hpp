@@ -383,6 +383,27 @@ public:
 	bool bridge_send(const uint8_t *data, size_t len) override;
 	void bridge_process_rx() override;
 
+#ifdef BENCH_TEST
+	// ---- Banc uniquement : A/B du flag FORCE de UBX-RXM-PMREQ ----------------
+	// Le manuel d'integration SAM-M10Q (UBX-22020019 §2.6.3.2) exige verbatim
+	// « The "force" flag must be set in UBX-RXM-PMREQ to enter software standby
+	// mode ». Le firmware n'a jamais pose ce bit. Ces accesseurs permettent de
+	// commuter la valeur A CHAUD et de compter les issues, pour trancher par la
+	// mesure sur une seule carte, sans reflashage entre les deux bras.
+	static uint32_t bench_pmreq_flags;       ///< valeur envoyee dans MSG_PMREQ.flags
+	static unsigned int bench_pmreq_seq;     ///< sequences enterbackup demarrees
+	static unsigned int bench_pmreq_probes;  ///< probes de verification envoyes
+	static unsigned int bench_pmreq_first_ok;///< sequences validees des le probe #1
+	static unsigned int bench_pmreq_giveup;  ///< abandons -> coupure du rail
+	static unsigned int bench_pmreq_settle_ms;///< silence entre PMREQ et probe (ms)
+	static void bench_pmreq_reset_stats() {
+		bench_pmreq_seq = 0;
+		bench_pmreq_probes = 0;
+		bench_pmreq_first_ok = 0;
+		bench_pmreq_giveup = 0;
+	}
+#endif
+
 private:
 	bool m_bridge_active = false;
 };
