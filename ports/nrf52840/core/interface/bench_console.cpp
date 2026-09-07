@@ -28,6 +28,7 @@ extern ArgosTxService *argos_tx_service_instance;
 #include "moored_mode_service.hpp"
 #include "hauled_mode_service.hpp"
 #include "rtc.hpp"
+#include "m10qasync.hpp"
 #include "ota_file_updater.hpp"
 #include "crc32.hpp"
 #include "nrf_i2c.hpp"
@@ -46,6 +47,7 @@ extern SmdSat *smd_sat_instance;
 #include <cstdlib>
 
 extern Scheduler *system_scheduler;
+extern Timer *system_timer;
 extern GPSService *gps_service;
 extern RTC *rtc;
 #ifdef BENCH_TEST
@@ -460,6 +462,16 @@ bool bench::handle_line(const std::string &raw) {
 		reply(std::string("%BENCH OK state=") + state_name());
 	} else if (cmd == "%STATE") {
 		reply(std::string("%STATE ") + state_name());
+	} else if (cmd == "%BOOT") {
+		// Motif du dernier reset + temps de fonctionnement, pour distinguer une
+		// perte de lien USB (l'hote reconnecte, uptime continue de croitre) d'un
+		// vrai redemarrage (uptime repart de zero, et le motif dit pourquoi).
+		// Les compteurs %PMREQ etant des statiques, seul un redemarrage les
+		// remet a zero : %BOOT donne la cause quand cela arrive.
+		char buf[96];
+		snprintf(buf, sizeof(buf), "%%BOOT cause=%s uptime_ms=%llu", PMU::reset_cause_str(),
+		         system_timer ? (unsigned long long)system_timer->get_counter() : 0ULL);
+		reply(buf);
 	} else if (cmd == "%BLE") {
 		// %BLE        -> advertising state
 		// %BLE DISC   -> replays a BLE disconnection (with no phone)
@@ -788,6 +800,32 @@ bool bench::handle_line(const std::string &raw) {
 		else {
 			gps_service->bench_inject_cloudlocate();
 			reply("%GPSCL OK cloudlocate injected");
+		}
+	} else if (cmd == "%PMREQ") {
+		// A/B a chaud du flag FORCE de UBX-RXM-PMREQ (SAM-M10Q IM §2.6.3.2 :
+		// « The "force" flag must be set ... to enter software standby mode »).
+		//   %PMREQ            -> etat + compteurs
+		//   %PMREQ <n>        -> pose flags=n ET remet les compteurs a zero
+		// BACKUP=2 (valeur historique), BACKUP|FORCE=6 (valeur exigee par le manuel).
+		unsigned int f = 0;
+		char buf[190];
+		if (sscanf(line.c_str(), "%%PMREQ SETTLE %u", &f) == 1) {
+			M10QAsyncReceiver::bench_pmreq_settle_ms = f;
+			M10QAsyncReceiver::bench_pmreq_reset_stats();
+			snprintf(buf, sizeof(buf), "%%PMREQ OK settle=%u ms stats-remis-a-zero", f);
+			reply(buf);
+		} else if (sscanf(line.c_str(), "%%PMREQ %u", &f) == 1) {
+			M10QAsyncReceiver::bench_pmreq_flags = f;
+			M10QAsyncReceiver::bench_pmreq_reset_stats();
+			snprintf(buf, sizeof(buf), "%%PMREQ OK flags=%u stats-remis-a-zero", f);
+			reply(buf);
+		} else {
+			snprintf(buf, sizeof(buf),
+			         "%%PMREQ flags=%u settle=%u seq=%u probes=%u first_ok=%u giveup=%u",
+			         (unsigned)M10QAsyncReceiver::bench_pmreq_flags,
+			         M10QAsyncReceiver::bench_pmreq_settle_ms, M10QAsyncReceiver::bench_pmreq_seq, M10QAsyncReceiver::bench_pmreq_probes,
+			         M10QAsyncReceiver::bench_pmreq_first_ok, M10QAsyncReceiver::bench_pmreq_giveup);
+			reply(buf);
 		}
 	} else if (cmd == "%NOFIX") {
 		if (!GenTracker::is_in_state<OperationalState>())
