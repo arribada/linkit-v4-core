@@ -51,6 +51,19 @@ public:
 	/// @brief Print saved callstack if CRC is valid, then invalidate.
 	static void print_stack();
 
+	/// @brief Type of the crash that preceded this boot, latched by print_stack()
+	/// before it invalidates the trace, plus the faulting PC.
+	///
+	/// print_stack() consumes the .noinit trace: it logs it once at boot then
+	/// clears it. A board that crashes with no host attached — the ordinary case
+	/// on the bench, since USB re-enumerates after the reset — therefore left
+	/// nothing to interrogate afterwards, and RESETREAS alone cannot tell a
+	/// HardFault from any other soft reset (both report SREQ). This keeps the
+	/// verdict readable for the rest of the boot.
+	///
+	/// @return "none" if this boot followed no recorded crash.
+	static const char *last_crash_str();
+
 	static uint64_t get_timestamp_ms();
 	static bool was_firmware_updated();
 

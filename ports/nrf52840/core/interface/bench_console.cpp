@@ -469,7 +469,8 @@ bool bench::handle_line(const std::string &raw) {
 		// Les compteurs %PMREQ etant des statiques, seul un redemarrage les
 		// remet a zero : %BOOT donne la cause quand cela arrive.
 		char buf[96];
-		snprintf(buf, sizeof(buf), "%%BOOT cause=%s uptime_ms=%llu", PMU::reset_cause_str(),
+		snprintf(buf, sizeof(buf), "%%BOOT cause=%s crash=%s uptime_ms=%llu", PMU::reset_cause_str(),
+		         PMU::last_crash_str(),
 		         system_timer ? (unsigned long long)system_timer->get_counter() : 0ULL);
 		reply(buf);
 	} else if (cmd == "%BLE") {

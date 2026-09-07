@@ -41,6 +41,10 @@ void PMU::kick_watchdog() {
 
 void PMU::print_stack() {}
 
+const char *PMU::last_crash_str() {
+	return "none";
+}
+
 void PMU::save_stack(PMULogType type) {
 	// No-op in host tests — real PMU logs the crash type to .noinit RAM
 	// for post-mortem retrieval; not useful when the test process is short-

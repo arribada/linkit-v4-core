@@ -3,6 +3,7 @@
  * @brief nRF52840 PMU — watchdog, reset cause, power-down, deep idle, crash trace.
  */
 
+#include <cstdio>
 #include <cstring>
 #include "bsp.hpp"
 #include "pmu.hpp"
@@ -480,6 +481,14 @@ int PMU::get_die_temperature_c() {
 	return raw / 4;
 }
 
+/// Latched copy of the crash verdict, in ordinary .bss so it is zeroed on a
+/// clean boot and survives print_stack() invalidating the .noinit trace.
+static char m_last_crash[32] = "none";
+
+const char *PMU::last_crash_str() {
+	return m_last_crash;
+}
+
 /// @brief Print saved crash trace if CRC is valid, then invalidate to avoid re-printing.
 void PMU::print_stack() {
 	// Check CRC matches
@@ -488,6 +497,8 @@ void PMU::print_stack() {
 	                     sizeof(m_callstack), nullptr)) {
 		DEBUG_INFO("PMU post-reset trace available");
 		DEBUG_INFO("PMU reset type: %s", reset_type_to_string(m_type));
+		snprintf(m_last_crash, sizeof(m_last_crash), "%s@%08x", reset_type_to_string(m_type),
+		         static_cast<unsigned int>(m_callstack[0]));
 		for (unsigned int i = 0; i < (sizeof(m_callstack) / sizeof(m_callstack[0])); i++)
 			DEBUG_INFO("PMU PC[%u] = %08x", i, static_cast<unsigned int>(m_callstack[i]));
 	} else {
