@@ -150,7 +150,14 @@ class Board:
 
     def dte(self, cmd, payload=""):
         """Commande DTE `$CMD#LEN;payload`."""
-        self.send(f"${cmd}#{len(payload):03d};{payload}" if payload
+        # Le champ longueur est HEXADECIMAL : le firmware l'encode en "%03X"
+        # (dte_protocol.hpp:880) et le decode en "%3zX" (dte_protocol.hpp:1727).
+        # Ecrit en decimal, il coincide avec l'hexa jusqu'a 9 caracteres de
+        # charge utile et diverge au-dela : toute trame de 10 caracteres ou plus
+        # revenait en $N;...;4 (DATA_LENGTH_MISMATCH), pas en erreur de valeur.
+        # Mesure 2026-09-07 : "GNP52=4294967295" (16 o) envoye en "#016" etait lu
+        # 0x016 = 22 par la balise. Aucun parametre long n'etait ecrivable au banc.
+        self.send(f"${cmd}#{len(payload):03X};{payload}" if payload
                   else f"${cmd}#000;")
 
     # ---- observation ------------------------------------------------------
