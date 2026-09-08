@@ -481,8 +481,13 @@ int PMU::get_die_temperature_c() {
 	return raw / 4;
 }
 
-/// Latched copy of the crash verdict, in ordinary .bss so it is zeroed on a
-/// clean boot and survives print_stack() invalidating the .noinit trace.
+/// Latched copy of the crash verdict. The initialiser puts this in .data, not
+/// .bss (verified: arm-none-eabi-nm rends `d _ZL12m_last_crash`, contre `b` pour
+/// m_callstack), which is what the contract needs -- startup copies "none" in,
+/// so a clean boot reports "none" rather than an empty string. It survives
+/// print_stack() invalidating the .noinit trace, but NOT a power cut: on a
+/// TPL5111 board every wake reloads it from flash, so this only ever reports a
+/// reset that kept the rail up (WDT, SREQ, HardFault).
 static char m_last_crash[32] = "none";
 
 const char *PMU::last_crash_str() {

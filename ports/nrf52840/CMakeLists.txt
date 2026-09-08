@@ -311,7 +311,14 @@ if(${BOARD} MATCHES RSPB)
     set(ENABLE_SWS_ANALOG 0)
     # TPL5111 external wakeup timer support (hardware, not overridable)
     set(EXTERNAL_WAKEUP 1)
-    # TPL5111 configured for 1H45 = 6300 seconds wakeup period (physical config with resistor)
+    # Periode du TPL5111, fixee par la resistance montee sur la carte.
+    # ATTENTION, ce repli n'est PAS ce que produisent les builds reels :
+    # scripts/build_rspb.sh passe -DWAKEUP_PERIOD_DEFAULT=3600 sans condition et
+    # l'ecrase (build_rspb.sh:172, 2026-07-01), et le wiki documente 3600 s.
+    # Le 6300 ci-dessous date du 2026-02-11 et n'a jamais ete resynchronise : il
+    # ne s'applique qu'a un build lance sans le script, ou il ferait avancer la
+    # pseudo-RTC de 2700 s de trop par cycle. A trancher sur la carte (valeur de
+    # la resistance) puis aligner les deux endroits.
     if(NOT DEFINED WAKEUP_PERIOD)
         set(WAKEUP_PERIOD 6300)
     endif()
