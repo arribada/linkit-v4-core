@@ -232,6 +232,65 @@
 			"group": "build"
 		},
 		// =====================================================================
+		// LINKIT Board Tasks for Buoys application
+		// =====================================================================
+		{
+			"type": "shell",
+			"label": "WOODBUOY: build",
+			"command": "./scripts/build_woodbuoy.sh",
+			"args": [],
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"problemMatcher": [
+				"$gcc"
+			],
+			"group": {
+				"kind": "build",
+			}
+		},
+		{
+			"type": "shell",
+			"label": "WOODBUOY: build (Debug)",
+			"command": "./scripts/build_woodbuoy.sh --debug",
+			"args": [],
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"problemMatcher": [
+				"$gcc"
+			],
+			"group": {
+				"kind": "build",
+			}
+		},
+		{
+			"type": "shell",
+			"label": "WOODBUOY: clean build",
+			"command": "rm -rf ports/nrf52840/build/WOODBUOY && ./scripts/build_woodbuoy.sh",
+			"args": [],
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"problemMatcher": [
+				"$gcc"
+			],
+			"group": "build"
+		},
+		{
+			"type": "shell",
+			"label": "WOODBUOY: flash",
+			"command": "nrfjprog --recover && nrfjprog -f nrf52 --program ports/nrf52840/build/WOODBUOY/LinkIt_board_merged-*.hex --sectorerase && nrfjprog -f nrf52 --reset",
+			"args": [],
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"problemMatcher": [
+				"$gcc"
+			],
+			"group": "build"
+		},
+		// =====================================================================
 		// Bootloader Tasks
 		// =====================================================================
 		{
