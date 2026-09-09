@@ -32,7 +32,21 @@
 			],
 			"group": {
 				"kind": "build",
-				"isDefault": true
+			}
+		},
+		{
+			"type": "shell",
+			"label": "LINKIT: build (Debug)",
+			"command": "./scripts/build_linkitv4_kim.sh --debug",
+			"args": [],
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"problemMatcher": [
+				"$gcc"
+			],
+			"group": {
+				"kind": "build",
 			}
 		},
 		{
