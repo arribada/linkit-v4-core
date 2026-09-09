@@ -2594,11 +2594,23 @@ void M10QAsyncReceiver::state_fetchdatabase_enter() {
 }
 
 void M10QAsyncReceiver::state_fetchdatabase() {
-	if (!m_nav_settings.assistnow_autonomous_enable) {
-		DEBUG_TRACE("M10QAsyncReceiver: fetchdatabase: ANA not enabled");
-		STATE_CHANGE(fetchdatabase, poweroff);
-		return;
-	}
+	// 2026-09 — le vidage MGA-DBD n'est PLUS conditionne au drapeau ANA
+	// (GNSS_ASSISTNOW_EN). Le DBD est la base de navigation du recepteur
+	// (ephemerides, almanach, sante, iono, UTC — et les predictions ANA quand il
+	// y en a) : c'est un vecteur de PERSISTANCE, distinct de l'ANA (le recepteur
+	// calcule ses orbites) comme de l'ANO (fichier telecharge). Sur une carte
+	// sans pile V_BCKP il est le SEUL demarrage a chaud qui survive a une coupure
+	// de rail (cf. DBD_MAX_AGE_NO_BBR_S). Couper l'ANA faisait aussi perdre ce
+	// chemin — le fichier restait intact mais n'etait plus ni rafraichi ici, ni
+	// relu ni rejoue dans senddatabase — alors que l'almanach (semaines) et les
+	// ephemerides (4 h, que le recepteur ecarte lui-meme si perimees) valent
+	// autant sans ANA.
+	// Le DBD est donc INCONDITIONNEL plutot que gouverne par "ANA || ANO" :
+	// l'ANO est faux par defaut, et le suspendre a une AUTRE source d'assistance
+	// reproduirait exactement le couplage que l'on retire. Le cout (un poll
+	// MGA-DBD + une ecriture LittleFS si fix) est celui que toute unite ANA=true
+	// paye deja aujourd'hui. Quand ANA=true rien ne change ici : la garde
+	// retiree n'etait jamais prise.
 	// 2026-08 (A2) — the fetch is NO LONGER skipped when the ANO served this
 	// session. That was the only reason gnss_dbd.dat was never refreshed on an ANO
 	// unit: past the age cap the flash copy was rejected and the unit lost BOTH of
@@ -2696,8 +2708,14 @@ void M10QAsyncReceiver::state_senddatabase_enter() {
 	m_op_state = OpState::IDLE;
 	m_mga_ack_count = 0;
 
-	// If no ANA data in RAM and ANO is not in use, try loading persisted DBD from flash
-	if (m_ana_database_len == 0 && m_ano_database_len == 0 && m_nav_settings.assistnow_autonomous_enable) {
+	// Pas de DBD en RAM et pas d'ANO servi cette session : relire la copie
+	// persistee. La condition m_ano_database_len == 0 RESTE : elle empeche
+	// d'ecraser un buffer ANO deja rempli (m_navigation_database est partage,
+	// voir state_sendofflinedatabase_enter). 2026-09 — la condition sur le
+	// drapeau ANA a ete retiree, voir state_fetchdatabase : le DBD est un
+	// vecteur de persistance, pas une fonction de l'ANA. Quand ANA=true le terme
+	// retire valait true et le predicat est inchange.
+	if (m_ana_database_len == 0 && m_ano_database_len == 0) {
 		load_dbd_from_flash();
 	}
 
@@ -2710,11 +2728,11 @@ void M10QAsyncReceiver::state_senddatabase_enter() {
 }
 
 void M10QAsyncReceiver::state_senddatabase() {
-	if (!m_nav_settings.assistnow_autonomous_enable) {
-		DEBUG_TRACE("M10QAsyncReceiver: senddatabase: ANA not enabled");
-		STATE_CHANGE(senddatabase, startreceive);
-		return;
-	}
+	// 2026-09 — plus de garde ANA ici non plus (voir state_fetchdatabase) : sans
+	// elle, la relecture faite dans _enter etait du travail perdu. Sans DBD
+	// (m_ana_database_len == 0) la boucle passe directement a startreceive, comme
+	// elle le fait deja pour une unite ANA=true dont le fichier est absent ou
+	// perime.
 	while (true) {
 		if (m_op_state == OpState::IDLE) {
 			m_op_state = OpState::PENDING;
