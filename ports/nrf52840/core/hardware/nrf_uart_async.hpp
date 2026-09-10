@@ -37,6 +37,17 @@ public:
 	/// @brief Uninit UART peripheral + Nordic SDK POWER register workaround.
 	void deinit();
 
+	/**
+	 * @brief Stop driving TX, for use when the PEER'S RAIL IS ABOUT TO BE CUT.
+	 *
+	 * deinit() parks TX as an output driven HIGH, which is right while the peer is
+	 * powered. It is wrong across a power cut: with the peer's VDD at 0 V and its RX
+	 * input held at 3.3 V, current flows through the peer's ESD clamp into its rail
+	 * and back-powers it, so it never sees a power-on reset. Call this between
+	 * deinit() and cutting the rail.
+	 */
+	void park_tx_for_power_off();
+
 	/// @brief Check if UART is initialized.
 	bool is_init() const { return m_is_init; }
 
@@ -57,6 +68,9 @@ public:
 	void isr_handle_error(unsigned int error_type);
 
 protected:
+	/// @brief Release m_is_send_busy when TX_DONE was lost. Returns true if it did.
+	bool clear_stale_send_busy();
+
 	/// @brief Called for each complete line received (stripped of CR/LF).
 	/// Runs in main context (safe for heap/string operations).
 	virtual void on_rx_line(std::string &line) = 0;
@@ -68,6 +82,8 @@ protected:
 	unsigned int m_uart_instance;
 	bool m_is_rx_started;
 	bool m_is_send_busy;
+	/// @brief When m_is_send_busy was raised, to recover a lost TX_DONE.
+	uint64_t m_tx_started_ms = 0;
 	std::string m_tx_buffer;
 
 private:

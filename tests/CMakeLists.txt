@@ -240,6 +240,7 @@ target_sources(${PROJECT_NAME} PRIVATE
     "${ROOT_DIR}/core/sm/gentracker_config_state.cpp"
     "${ROOT_DIR}/core/sm/ledsm.cpp"
     "${ROOT_DIR}/core/logging/logger.cpp"
+    "${ROOT_DIR}/core/logging/debug.cpp"
     "${LINUX_DIR}/interrupt_lock.cpp"
     "${NRF_DIR}/core/hardware/nrf_switch.cpp"
     # nrf_battery_mon.cpp excluded: depends on nrf_delay.h (Nordic SDK, not available in test builds)
@@ -448,6 +449,7 @@ target_sources(${TURTLE_SIM_NAME} PRIVATE
     "${ROOT_DIR}/core/sm/gentracker_config_state.cpp"
     "${ROOT_DIR}/core/sm/ledsm.cpp"
     "${ROOT_DIR}/core/logging/logger.cpp"
+    "${ROOT_DIR}/core/logging/debug.cpp"
     "${LINUX_DIR}/interrupt_lock.cpp"
     "${NRF_DIR}/core/hardware/nrf_switch.cpp"
     # nrf_battery_mon.cpp excluded: depends on nrf_delay.h (Nordic SDK, not available in test builds)
@@ -459,6 +461,7 @@ target_sources(${TURTLE_SIM_NAME} PRIVATE
     "${NRF_DIR}/core/hardware/lora_rak3172/lora_rak3172_comm.cpp"
     "${NRF_DIR}/core/hardware/cdt/cdt.cpp"
     "src/turtle_simulation_test.cpp"
+    "src/turtle_mission_sim.cpp"
     "src/turtle_simulation_1year.cpp"
     "src/turtle_simulation_shortsurface.cpp"
     "src/turtle_main.cpp"
@@ -617,6 +620,7 @@ target_sources(${RSPB_SIM_NAME} PRIVATE
     "${ROOT_DIR}/core/sm/gentracker_config_state.cpp"
     "${ROOT_DIR}/core/sm/ledsm.cpp"
     "${ROOT_DIR}/core/logging/logger.cpp"
+    "${ROOT_DIR}/core/logging/debug.cpp"
     "${LINUX_DIR}/interrupt_lock.cpp"
     "${NRF_DIR}/core/hardware/nrf_switch.cpp"
     "${NRF_DIR}/core/hardware/m10qasync/m10qasync.cpp"

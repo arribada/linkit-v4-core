@@ -3,6 +3,7 @@
  * @brief nRF52840 PMU — watchdog, reset cause, power-down, deep idle, crash trace.
  */
 
+#include <cstdio>
 #include <cstring>
 #include "bsp.hpp"
 #include "pmu.hpp"
@@ -480,6 +481,19 @@ int PMU::get_die_temperature_c() {
 	return raw / 4;
 }
 
+/// Latched copy of the crash verdict. The initialiser puts this in .data, not
+/// .bss (verified: arm-none-eabi-nm rends `d _ZL12m_last_crash`, contre `b` pour
+/// m_callstack), which is what the contract needs -- startup copies "none" in,
+/// so a clean boot reports "none" rather than an empty string. It survives
+/// print_stack() invalidating the .noinit trace, but NOT a power cut: on a
+/// TPL5111 board every wake reloads it from flash, so this only ever reports a
+/// reset that kept the rail up (WDT, SREQ, HardFault).
+static char m_last_crash[32] = "none";
+
+const char *PMU::last_crash_str() {
+	return m_last_crash;
+}
+
 /// @brief Print saved crash trace if CRC is valid, then invalidate to avoid re-printing.
 void PMU::print_stack() {
 	// Check CRC matches
@@ -488,6 +502,8 @@ void PMU::print_stack() {
 	                     sizeof(m_callstack), nullptr)) {
 		DEBUG_INFO("PMU post-reset trace available");
 		DEBUG_INFO("PMU reset type: %s", reset_type_to_string(m_type));
+		snprintf(m_last_crash, sizeof(m_last_crash), "%s@%08x", reset_type_to_string(m_type),
+		         static_cast<unsigned int>(m_callstack[0]));
 		for (unsigned int i = 0; i < (sizeof(m_callstack) / sizeof(m_callstack[0])); i++)
 			DEBUG_INFO("PMU PC[%u] = %08x", i, static_cast<unsigned int>(m_callstack[i]));
 	} else {
@@ -547,8 +563,8 @@ void PMU::reduce_power_rails() {
 	//     there, so the whole operator session -- DTE commands, BLE OTA writes --
 	//     ran at 2.3 V. See GPIOPins::set_config_mode_active.
 	if (!GPIOPins::get_sensors_pwr_state() && !GPIOPins::is_gnss_uart_active() && !GPIOPins::is_flash_busy()
-	    && !GPIOPins::is_config_mode_active() && status_led
-	    && status_led->get_state() == RGBLedColor::BLACK && !status_led->is_flashing()) {
+	    && !GPIOPins::is_config_mode_active() && status_led && status_led->get_state() == RGBLedColor::BLACK
+	    && !status_led->is_flashing()) {
 		// Lower the POF brownout threshold BELOW the idle rail BEFORE dropping VSYS:
 		// POFCON is armed at 2.7V, but the idle rail is 2.3V, so at 2.7V the comparator
 		// would assert POFWARN continuously in deep idle (CPU wakes / cooldown-save churn,

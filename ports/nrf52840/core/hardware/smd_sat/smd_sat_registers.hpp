@@ -148,6 +148,17 @@ static inline uint32_t spi_crc32_mpeg2(const uint8_t *data, size_t len) {
 // retest under controlled conditions.
 #define SMDSAT_TIMING_TX_POLL_FAST_MS      200
 #define SMDSAT_TIMING_TX_POLL_SAFE_MS      200
+// The 200 ms above is an SPI figure and only an SPI figure. On SPI,
+// is_tx_finished() issues a READ_SPIMAC_STATE transaction (with retries) on a
+// bus the STM32 is struggling to serve while its radio is emitting -- that is
+// the cascade the comment above records. On UART nothing is sent to the module
+// at all: initiate_tx() fires AT+TX non-blocking, the module PUSHES +TX=<status>
+// when it is done, and is_tx_finished() just drains the local RX buffer and
+// reads a flag. The interval is therefore pure detection granularity, not load
+// on the module, so the SPI rationale does not carry over. 50 ms costs a
+// process_rx() on an otherwise idle scheduler tick and cuts the worst-case
+// completion-detection lag 4x.
+#define SMDSAT_TIMING_TX_POLL_UART_MS      50
 // First-TX TCXO settle when warmup forced to 0 (state_transmit_pending_exit).
 // 2026-05 cold-reboot bisect: 100 ms broke (STM not finished at first poll);
 // 150 ms under retest.
@@ -226,7 +237,11 @@ static inline unsigned int smdsat_vdd_discharge_ms() {
 #endif
 }
 static inline unsigned int smdsat_timing_tx_poll_ms() {
-#if SMDSAT_USE_SAFE_TIMINGS
+#if defined(SMD_UART) && (SMD_UART == 1)
+	// Transport-specific, and deliberately outside the SAFE/FAST pair: the
+	// degraded profile exists to relieve a bus this transport does not use.
+	return SMDSAT_TIMING_TX_POLL_UART_MS;
+#elif SMDSAT_USE_SAFE_TIMINGS
 	return SMDSAT_TIMING_TX_POLL_SAFE_MS;
 #elif SMDSAT_AUTOFALLBACK_ENABLED && (SMDSAT_TIMING_TX_POLL_FAST_MS != SMDSAT_TIMING_TX_POLL_SAFE_MS)
 	return g_smdsat_use_safe_timings ? SMDSAT_TIMING_TX_POLL_SAFE_MS : SMDSAT_TIMING_TX_POLL_FAST_MS;

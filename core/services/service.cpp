@@ -362,6 +362,11 @@ void Service::service_log(ServiceEventData *event_data, void *entry) {
 /// @param entry            Optional raw log entry for persistent logger.
 /// @param shall_reschedule true to reschedule after completion.
 void Service::service_complete(ServiceEventData *event_data, void *entry, bool shall_reschedule) {
+	// Safety net for the system-log hold window (DebugLogger::hold, opened on the
+	// first surfacing TX). Every abort between opening it and the send lands
+	// here, and a window left open would silence the log for good -- a far worse
+	// failure than the latency it buys. Harmless when nothing is held.
+	DebugLogger::release();
 	DEBUG_TRACE("Service::service_complete: service %s", m_name);
 	if (!m_is_initiated) {
 		if (!m_is_started) {
@@ -428,24 +433,28 @@ bool Service::service_is_battery_level_low() {
 	return battery_monitor->is_battery_low();
 }
 
+bool Service::service_is_battery_critical() {
+	return battery_monitor->is_battery_critical();
+}
+
 #ifdef BENCH_TEST
 /// Record the scheduling decision for the bench console. Deliberately placed on
 /// EVERY branch of reschedule(), including those that plan nothing: a test that
 /// only sees the success path cannot tell "this mode scheduled an emission" from
 /// "this mode scheduled nothing and I am reading the previous mode's value".
-#define BENCH_SCHED_NOTE(ms, why)     \
-	do {                              \
-		m_bench_sched_ms = (ms);      \
-		m_bench_sched_why = (why);    \
-		m_bench_sched_hold_s = 0;     \
+#define BENCH_SCHED_NOTE(ms, why)  \
+	do {                           \
+		m_bench_sched_ms = (ms);   \
+		m_bench_sched_why = (why); \
+		m_bench_sched_hold_s = 0;  \
 	} while (0)
 
 /// @brief A hold: no deadline to run, but a deadline to think again.
-#define BENCH_SCHED_HOLD(hold_s, why)        \
-	do {                                     \
+#define BENCH_SCHED_HOLD(hold_s, why)         \
+	do {                                      \
 		m_bench_sched_ms = SCHEDULE_DISABLED; \
-		m_bench_sched_why = (why);           \
-		m_bench_sched_hold_s = (hold_s);     \
+		m_bench_sched_why = (why);            \
+		m_bench_sched_hold_s = (hold_s);      \
 	} while (0)
 
 /// @brief Bench-only: one-line schedule report over ALL registered services.
@@ -455,8 +464,7 @@ std::string ServiceManager::bench_schedule_report() {
 		Service &s = kv.second;
 		char buf[96];
 		if (s.bench_sched_hold_s())
-			snprintf(buf, sizeof(buf), "%s=hold%us(%s) ", s.bench_name(), s.bench_sched_hold_s(),
-			         s.bench_sched_why());
+			snprintf(buf, sizeof(buf), "%s=hold%us(%s) ", s.bench_name(), s.bench_sched_hold_s(), s.bench_sched_why());
 		else if (s.bench_sched_ms() == Service::SCHEDULE_DISABLED)
 			snprintf(buf, sizeof(buf), "%s=none(%s) ", s.bench_name(), s.bench_sched_why());
 		else

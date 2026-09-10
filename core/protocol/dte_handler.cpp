@@ -70,12 +70,30 @@ std::string DTEHandler::read_params_by_filter(int error_code, std::vector<ParamI
 
 	// Check special case where params is zero length => retrieve all matching key types
 	if (params.size() == 0) {
+		params.reserve(param_map_size);
 		for (unsigned int i = 0; i < param_map_size; i++) {
 			if (param_map[i].is_implemented && param_map[i].key[2] == filter_char) params.push_back((ParamID)i);
 		}
 	}
 
+	// Reserve before filling. This is what makes a bulk read survive a fragmented
+	// heap, and it is not a micro-optimisation:
+	//
+	// ParamValue holds a variant that can carry a std::string, so the vector is
+	// tens of bytes per entry and a full read is 163 of them. Growing it by
+	// push_back doubles the capacity repeatedly, and at the moment of each
+	// reallocation the OLD block and the NEW one are both live -- the allocator
+	// is asked for a single contiguous block roughly twice the size of one it
+	// already cannot place. Reserving asks once, for exactly what is needed.
+	//
+	// Measured on the Cyprus board 2026-09-02: after ~17 h in Operational the
+	// heap held 25632 free bytes in FIVE blocks (417 live allocations), and the
+	// first bulk PARMR from the GUI on entering configuration mode failed here --
+	// "PMU reset type: MALLOC", backtrace pvPortMalloc <- PARMR_REQ <-
+	// handle_dte_message. The reboot defragmented the heap, so the same request
+	// succeeded on the second attempt: reset once, then fine, every time.
 	std::vector<ParamValue> param_values;
+	param_values.reserve(params.size());
 	for (unsigned int i = 0; i < params.size(); i++) {
 		try {
 			BaseType x = configuration_store->read_param<BaseType>(params[i]);
@@ -1511,7 +1529,19 @@ std::string DTEHandler::PWRON_REQ(int error_code, std::vector<BaseType> &arg_lis
 		DEBUG_TRACE("PWRON: Powering ON satellite module");
 		GPIOPins::acquire_sensors_pwr();
 #if defined(ARGOS_SMD) && (ARGOS_SMD == 1)
+		// Release NRST to high-Z as well, so the STM32WL actually boots and an
+		// external SWD probe owns its reset line. Without it, PWRON raised the
+		// rail on a module the nRF was still holding in reset:
+		// SmdSat::shutdown() drives SAT_RESET LOW before every rail cut, and a
+		// board looping on TX errors passes through it constantly. Powering the
+		// module from the DTE to flash it therefore did nothing.
+		//
+		// High-Z rather than a pull-up: the net has a pull-up on the module side,
+		// so the STM32WL still boots, and the probe drives the line without
+		// fighting us. Same treatment SMD_FLASH_HOLD applies in main.cpp, and the
+		// gap the KIM2 branch below had until 969d28c8.
 		GPIOPins::set(SAT_PWR_EN);
+		GPIOPins::release_to_highz(SAT_RESET);
 #elif defined(LORA_RAK3172) && (LORA_RAK3172 == 1)
 		GPIOPins::set(SAT_PWR_EN);
 #else
@@ -1821,16 +1851,13 @@ std::string DTEHandler::GNSSI_REQ(int error_code) {
 	// n obtenait rien, et ne pouvait pas distinguer un recepteur muet d une
 	// commande non supportee. Un diagnostic qui se tait quand l organe
 	// diagnostique va mal ne sert a rien.
-	DEBUG_INFO("DTEHandler::GNSSI_REQ: arming a %u ms deadline on the device-info wait",
-	           GNSSI_TIMEOUT_MS);
+	DEBUG_INFO("DTEHandler::GNSSI_REQ: arming a %u ms deadline on the device-info wait", GNSSI_TIMEOUT_MS);
 	m_gnssi_timeout = system_scheduler->post_task_prio(
 	    [this]() {
 		    if (!m_gnssi_pending) return;
 		    m_gnssi_pending = false;
-		    DEBUG_WARN("DTEHandler: GNSSI timed out after %u ms — receiver gave no device info",
-		               GNSSI_TIMEOUT_MS);
-		    if (m_async_write)
-			    m_async_write(DTEEncoder::encode(DTECommand::GNSSI_RESP, (int)DTEError::INCORRECT_DATA));
+		    DEBUG_WARN("DTEHandler: GNSSI timed out after %u ms — receiver gave no device info", GNSSI_TIMEOUT_MS);
+		    if (m_async_write) m_async_write(DTEEncoder::encode(DTECommand::GNSSI_RESP, (int)DTEError::INCORRECT_DATA));
 		    if (gps_device) gps_device->power_off();
 	    },
 	    "DTEHandlerGNSSITimeout", Scheduler::DEFAULT_PRIORITY, GNSSI_TIMEOUT_MS);
@@ -2065,8 +2092,8 @@ DTEAction DTEHandler::handle_dte_message(const std::string &req, std::string &re
 		DEBUG_ERROR("DTEHandler: unexpected exception in the handler for command %u — answering INCORRECT_DATA",
 		            (unsigned int)command);
 		try {
-			resp = DTEEncoder::encode((DTECommand)((unsigned int)command + RESP_CMD_BASE),
-			                          (int)DTEError::INCORRECT_DATA);
+			resp =
+			    DTEEncoder::encode((DTECommand)((unsigned int)command + RESP_CMD_BASE), (int)DTEError::INCORRECT_DATA);
 		} catch (...) {
 			// The encoder itself failed: nothing left to say, and a throw out of
 			// here would take the main loop down with it.

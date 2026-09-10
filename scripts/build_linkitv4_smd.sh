@@ -76,12 +76,18 @@ BUILD_TYPE=Release
 METRICS=OFF
 VALIDATION=OFF
 BENCH=OFF
+SMD_UART=OFF
 for arg in "$@"; do
     case $arg in
         --clean) CLEAN=true ;;
         --recover) RECOVER=true ;;
         --debug) BUILD_TYPE=Debug ;;
         --bench) BENCH=ON; BUILD_TYPE=Debug ;;
+        # AT/UART transport instead of the default SPI. Own build directory:
+        # sharing LINKIT_SMD's CMake cache would keep whichever transport was
+        # configured first, and the swap is a source-file swap, not a flag.
+        --uart) SMD_UART=ON ;;
+    --txtrace) SMDSAT_TXTRACE=ON ;;
         --release) BUILD_TYPE=Release ;;
         --metrics) METRICS=ON ;;
         --no-metrics) METRICS=OFF ;;
@@ -117,7 +123,8 @@ printf '\033[1;36m   Optional log flags:  METRIC_LATENCY=%s   VALIDATION=%s\033[
 echo ""
 
 cd "$PROJECT_ROOT"
-BUILD_DIR="ports/nrf52840/build/LINKIT_SMD"
+if [ "$SMD_UART" = "ON" ]; then BUILD_SUBDIR=LINKIT_SMD_UART; else BUILD_SUBDIR=LINKIT_SMD; fi
+BUILD_DIR="ports/nrf52840/build/${BUILD_SUBDIR}"
 if [ "$CLEAN" = true ]; then
     echo "Cleaning build directory..."
     rm -rf "$BUILD_DIR"
@@ -198,6 +205,9 @@ cmake -DCMAKE_TOOLCHAIN_FILE=../../toolchain_arm_gcc_nrf52.cmake \
       -DSMDSAT_USE_SAFE_TIMINGS=${SMDSAT_USE_SAFE_TIMINGS} \
       -DSMDSAT_AUTOFALLBACK=${SMDSAT_AUTOFALLBACK} \
       -DSMD_FLASH_HOLD=${SMD_FLASH_HOLD:-OFF} \
+      -DSMD_UART=${SMD_UART} \
+      -DSMDSAT_TXTRACE=${SMDSAT_TXTRACE:-OFF} \
+      -DDEBUG_NO_SYSTEMLOG=${DEBUG_NO_SYSTEMLOG:-OFF} \
       -DMETRIC_LATENCY_LOG_ENABLE=$([ "$METRICS" = "ON" ] && echo 1 || echo 0) \
       -DVALIDATION_LOG_ENABLE=$([ "$VALIDATION" = "ON" ] && echo 1 || echo 0) \
       -DBENCH_TEST=${BENCH} \
@@ -305,7 +315,7 @@ fi
 
 echo ""
 echo "Build complete!"
-echo "Output files in: ports/nrf52840/build/LINKIT_SMD/"
+echo "Output files in: ports/nrf52840/build/${BUILD_SUBDIR}/"
 echo ""
 echo "Files generated:"
 ls -la ${TARGET_NAME}-* 2>/dev/null || true
@@ -320,7 +330,8 @@ fi
 
 # Show flash command
 TAG=$(cat TAG_NAME)
-BUILD_DIR="ports/nrf52840/build/LINKIT_SMD"
+if [ "$SMD_UART" = "ON" ]; then BUILD_SUBDIR=LINKIT_SMD_UART; else BUILD_SUBDIR=LINKIT_SMD; fi
+BUILD_DIR="ports/nrf52840/build/${BUILD_SUBDIR}"
 echo ""
 echo "Flash commands:"
 echo "  NOTE: If flashing fails with 'Access protection enabled', the device has"

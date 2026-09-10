@@ -351,8 +351,7 @@ TEST(DTEHandler, DUMPM_REQ) {
 	             resp.c_str());
 }
 
-TEST(DTEHandler, DUMPM_REQ_OutOfRangeAddressIsRefusedNotIgnored)
-{
+TEST(DTEHandler, DUMPM_REQ_OutOfRangeAddressIsRefusedNotIgnored) {
 	/*
 	 * DUMPM must ANSWER an address it will not read.
 	 *
@@ -677,6 +676,35 @@ TEST(DTEHandler, WritingOutOfRangeValue) {
 	STRCMP_EQUAL("$N;PARMW#005;PPP01\r", resp.c_str());
 }
 
+
+TEST(DTEHandler, LengthFieldIsHexadecimalNotDecimal) {
+	/*
+	 * Le champ longueur d'une trame DTE est HEXADECIMAL (encode "%03X",
+	 * decode "%3zX"). Decimal et hexadecimal coincident tant que la charge
+	 * utile tient sur 9 caracteres, et divergent des 10 — ce qui rendait le
+	 * piege invisible : tous les parametres courts passaient.
+	 *
+	 * Mesure au banc le 2026-09-07 : la sentinelle "never poweroff"
+	 * GNP52=4294967295 (16 caracteres) envoyee avec "#016" (16 en decimal)
+	 * etait relue 0x016 = 22 par la balise, qui repondait $N;PARMW#001;4
+	 * (DATA_LENGTH_MISMATCH). Le refus a d'abord ete pris pour un defaut de
+	 * plage du firmware alors que la plage 0..0xFFFFFFFF est bien declaree ;
+	 * ce test fige la distinction.
+	 */
+	std::string resp;
+
+	// 16 caracteres de charge utile, longueur en hexadecimal (0x010) : accepte.
+	std::string req = "$PARMW#010;GNP52=4294967295\r";
+	CHECK_TRUE(DTEAction::CONFIG_UPDATED == dte_handler->handle_dte_message(req, resp));
+	STRCMP_EQUAL("$O;PARMW#000;\r", resp.c_str());
+	CHECK_EQUAL(0xFFFFFFFFU, configuration_store->read_param<unsigned int>(ParamID::GNSS_DEEP_IDLE_AFTER_OFF_S));
+
+	// Meme trame, longueur ecrite en decimal ("016" = 0x016 = 22) : rejetee
+	// pour incoherence de longueur, PAS pour valeur hors plage.
+	std::string req_dec = "$PARMW#016;GNP52=4294967295\r";
+	dte_handler->handle_dte_message(req_dec, resp);
+	STRCMP_EQUAL("$N;PARMW#001;4\r", resp.c_str());
+}
 
 TEST(DTEHandler, GenerateDefaultPassPredictFile) {
 	/*

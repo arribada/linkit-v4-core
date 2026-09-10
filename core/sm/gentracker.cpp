@@ -856,9 +856,23 @@ void BatteryCriticalState::entry() {
 #else
 	led_handle::dispatch<SetLEDBatteryCritical>({});
 	buzz_handle::dispatch<SetBuzzOff>({});
-	m_transit_task =
-	    system_scheduler->post_task_prio([this]() { transit<OffState>(); }, "GenTrackerBatteryCriticalTransitOffState",
-		                                 Scheduler::DEFAULT_PRIORITY, BATTERY_CRITICAL_TIMEOUT_MS);
+	// Re-sample before committing. OffState is a one-way door on a sealed device
+	// -- the reed under the glue can never restart it -- and the reading that put
+	// us here may have been a transient: an Argos TX current spike, or a sample
+	// taken before the pack recovered. battery_monitor->is_battery_critical() is
+	// the CONFIRMED verdict (3 consecutive samples, nrf_battery_mon.cpp:349), so
+	// if it has cleared during these two minutes the tag goes back to work
+	// instead of ending its mission on one bad reading.
+	m_transit_task = system_scheduler->post_task_prio(
+	    [this]() {
+		    if (battery_monitor && !battery_monitor->is_battery_critical()) {
+			    DEBUG_INFO("BatteryCriticalState: battery no longer critical on re-check — resuming operation");
+			    transit<OperationalState>();
+			    return;
+		    }
+		    transit<OffState>();
+	    },
+	    "GenTrackerBatteryCriticalTransitOffState", Scheduler::DEFAULT_PRIORITY, BATTERY_CRITICAL_TIMEOUT_MS);
 #endif
 }
 

@@ -78,13 +78,35 @@ static constexpr unsigned int SMD_SCHEDULER_PRIORITY = 4;
 // To re-enable: uncomment the body and choose between console-only (fast, RTT/UART)
 // or DEBUG_INFO (visible in system_log via DTE — but inflates total TX time by LFS commits;
 // ping_ms isolated measurements remain accurate since t0 is captured after any prior log).
-#define TXTRACE(fmt, ...)                        \
-	do {                                         \
-		(void)fmt;                               \
-		/* DEBUG_INFO("[TXTRACE +%u ms] " fmt, \
-            static_cast<unsigned>(m_tx_trace_start_ms ? (PMU::get_timestamp_ms() - m_tx_trace_start_ms) : 0), \
-            ##__VA_ARGS__); */ \
+#ifndef SMDSAT_TXTRACE
+#define SMDSAT_TXTRACE 0
+#endif
+#if SMDSAT_TXTRACE
+#define TXTRACE(fmt, ...)                                                                                                     \
+	do {                                                                                                                      \
+		DEBUG_INFO(                                                                                                           \
+		    "[TXTRACE +%u ms] " fmt,                                                                                          \
+		    static_cast<unsigned>(m_tx_trace_start_ms ? (PMU::get_timestamp_ms() - m_tx_trace_start_ms) : 0), ##__VA_ARGS__); \
 	} while (0)
+#else
+#define TXTRACE(fmt, ...) \
+	do {                  \
+		(void)fmt;        \
+	} while (0)
+#endif
+
+#ifdef BENCH_TEST
+// Record one latency mark (ms since send()). Cheap: a subtraction and a store.
+#define LATMARK()                                                                                                     \
+	do {                                                                                                              \
+		if (m_lat_n < (sizeof(m_lat) / sizeof(m_lat[0])))                                                             \
+			m_lat[m_lat_n++] = (uint16_t)(m_tx_trace_start_ms ? (PMU::get_timestamp_ms() - m_tx_trace_start_ms) : 0); \
+	} while (0)
+#else
+#define LATMARK() \
+	do {          \
+	} while (0)
+#endif
 
 #define MODSWITCH_LOG(delta_ms, fmt, ...)                                                            \
 	do {                                                                                             \
@@ -149,6 +171,7 @@ SmdSat::SmdSat(SmdSatCmd &cmd, unsigned int idle_shutdown_ms) : m_cmd(cmd) {
 	m_is_first_tx = true;
 	this->shutdown();
 	is_kmac_profil_loaded = false;
+	m_kmac_pushed_this_session = false;
 }
 
 SmdSat::~SmdSat() {
@@ -268,6 +291,7 @@ void SmdSat::power_on() {
 
 	m_stopping = false;
 	TXTRACE("power_on(): cold start, entering state machine");
+	LATMARK();
 	SMD_STATE_CHANGE(stopped, starting);
 	state_machine();
 }
@@ -342,6 +366,7 @@ void SmdSat::state_starting_exit() {}
 void SmdSat::state_starting() {
 	m_is_first_tx = true;
 	is_kmac_profil_loaded = false;  // Force entry to state_load_kmac for boot config (TCXO, LPM)
+	m_kmac_pushed_this_session = false;
 	// m_needs_explicit_kmac_load is NOT reset here — it persists across power cycles.
 	// Only set true when RCONF/credentials actually change (steps 1a/1b in load_kmac).
 	// When false, STM32 auto-initializes MAC from flash at POR — no SPI command needed.
@@ -360,6 +385,18 @@ void SmdSat::state_error_enter() {
 	// Do NOT attempt SPI commands here — the bus is likely desynchronized
 	// (INVALID_CMD cascade). Any command would fail and waste time.
 	is_kmac_profil_loaded = false;
+	m_kmac_pushed_this_session = false;
+
+	// A module busy finishing its own burst is not a failing module. Counting it
+	// toward the cooldown / autofallback thresholds turns one overrun into a
+	// 30 min blackout.
+	if (m_error_is_module_busy) {
+		m_error_is_module_busy = false;
+		notify(KineisEventDeviceError({}));
+		SMD_STATE_CHANGE(error, stopped);
+		return;
+	}
+
 	m_error_count++;
 
 	if (m_error_count >= SMD_MAX_CONSECUTIVE_ERRORS) {
@@ -515,6 +552,18 @@ void SmdSat::state_stopped_enter() {
 	GPIOPins::clear(SAT_EXTWAKEUP);
 #endif
 
+	// Stop driving the module's RX line BEFORE shutdown() cuts SAT_PWR_EN, not
+	// after it -- an earlier version of this call sat below shutdown() and so fired
+	// once the rail was already down, which is the one moment it cannot help.
+	//
+	// deinit() above parks TX HIGH, which is right while the module is powered but
+	// wrong across the cut: 3.3 V into an unpowered input is a current path through
+	// its ESD clamp. Hygiene, on the same principle as the powerdown bus-park in
+	// nrf_i2c.cpp -- NOT a fix for anything measured. The bench defect it was first
+	// written for turned out to be a host-side latch (see SmdSatCmdAt::init), and
+	// parking LOW did not change that symptom at all. No-op on SPI, which idles LOW.
+	m_cmd.prepare_power_off();
+
 	this->shutdown();
 	GPIOPins::release_sensors_pwr();
 	nrf_gpio_cfg_default(BSP::GPIO_Inits[SAT_RESET].pin_number);
@@ -524,11 +573,13 @@ void SmdSat::state_stopped_enter() {
 	// decay. Saves 50 ms (FAST) / 100 ms (SAFE) on the first Doppler at
 	// surface for the sealed turtle case (dive duration minutes).
 	m_last_power_off_ms = PMU::get_timestamp_ms();
+	m_lpm_written_since_power_on = false;
 
 	// Force entry to state_load_kmac on next boot for TCXO/LPM writes (RAM registers).
 	// The explicit load_kmac_profil SPI command is only sent when RCONF changed
 	// (m_needs_explicit_kmac_load) — otherwise STM32 auto-inits MAC from flash at POR.
 	is_kmac_profil_loaded = false;
+	m_kmac_pushed_this_session = false;
 
 	m_packet_buffer.clear();
 
@@ -546,6 +597,14 @@ void SmdSat::state_powering_on_exit() {
 
 void SmdSat::state_powering_on() {
 	TXTRACE("state_powering_on: starting power sequence (100ms discharge + %u ms VDD)", smdsat_delay_power_on_ms());
+	LATMARK();
+
+	// Cold start: the rail goes down, so the module loses .retentionRamData and
+	// with it lpm_config. Everything the warm path is allowed to skip has to be
+	// re-armed once here. A wake out of STANDBY never reaches this function --
+	// power_on() rides the existing session -- which is exactly what makes
+	// skipping the LPM write on that path correct.
+	m_lpm_written_since_power_on = false;
 
 	GPIOPins::acquire_sensors_pwr();
 
@@ -600,6 +659,7 @@ void SmdSat::state_powering_on() {
 	DEBUG_TRACE("SmdSat::%s: RESET released, VPA held LOW until ping OK", __func__);
 
 	TXTRACE("state_powering_on: RESET released, scheduling idle_pending in %u ms", smdsat_spi_boot_delay_ms());
+	LATMARK();
 	SMD_STATE_CHANGE(powering_on, idle_pending);
 }
 
@@ -610,6 +670,59 @@ void SmdSat::state_load_kmac_enter() {
 	                       // is only appropriate for MAC polling retries (step 3) and is set there.
 }
 void SmdSat::state_load_kmac_exit() {}
+
+/// @brief Translate the host LPM bitmap into the module's.
+///
+/// The two enumerations do not agree, and nothing in the tree said so until a
+/// bench session went looking for why LPM never worked.
+///
+///   host   (base_types.hpp, ParamID::SMD_LPM_MODE, and ARP60 over DTE)
+///          0x01 NONE | 0x02 SLEEP | 0x04 STOP | 0x08 STANDBY | 0x10 SHUTDOWN
+///   module (mgr_lpm.h in argos-smd-at-kineis-firmware)
+///          0x00 NONE | 0x01 SLEEP | 0x02 STOP | 0x04 STANDBY | 0x08 SHUTDOWN
+///
+/// Ours is the module's shifted one bit left — it spends a bit naming NONE,
+/// which the module encodes as the absence of every other bit. So a plain >> 1
+/// maps the whole bitmap, NONE included.
+///
+/// Sending the host value raw is why the feature could never work.
+/// bMGR_SPI_CMD_WRITELPM_cmd refuses any bit outside 0x0F, so host SHUTDOWN
+/// (0x10) was rejected outright as a bad parameter, and host STANDBY (0x08)
+/// arrived as the module's SHUTDOWN, which that firmware does not compile in and
+/// also refuses. The only two values that arm the WKUP drop in
+/// state_idle_enter() were exactly the two the module would not accept.
+///
+/// Measured on the bench 2026-09-01: ARP60=16 answers a WRITE 0x13 failure,
+/// ARP60=4 (module STANDBY) is accepted silently.
+static inline uint8_t smd_lpm_host_to_module(uint8_t host_bitmap) {
+	return static_cast<uint8_t>(host_bitmap >> 1);
+}
+
+/// @brief Widen a single module mode into the CUMULATIVE mask the module expects.
+///
+/// The module's field is an "allowed" mask that CAPS what its own stack asks
+/// for -- it is not a selector. MGR_LPM_enter() takes the mode the clients
+/// request and walks DOWN until it finds one the mask allows:
+///
+///     deepest = eMGR_LPM_clientRequest();
+///     while ((deepest & allowedLPMbitmap) == 0) {
+///             deepest >>= 1;
+///             if (deepest == 0) break;      // -> no low power at all
+///     }
+///
+/// (argos-smd-at-kineis-firmware, Kineis/Lpm/Src/mgr_lpm.c). So sending the
+/// single bit 0x04 means: enter STANDBY when the stack asks for STANDBY, and
+/// stay FULLY ACTIVE whenever it asks for anything shallower -- the shift walks
+/// past STOP and SLEEP, which the mask does not allow, down to zero. The
+/// module's own compile-time defaults show the intended shape, cumulative:
+///
+///     LPM_STANDBY_ENABLED -> SLEEP | STOP | STANDBY
+///
+/// So widen to every mode up to and including the requested one.
+static inline uint8_t smd_lpm_module_allowed_mask(uint8_t module_mode) {
+	if (module_mode == 0) return 0;  // NONE -- caller does not write it
+	return static_cast<uint8_t>((module_mode << 1) - 1);
+}
 
 void SmdSat::state_load_kmac() {
 	TXTRACE("state_load_kmac: tick (pending_rconf=%u creds_written=%u explicit_kmac=%u poll=%u)",
@@ -688,7 +801,7 @@ void SmdSat::state_load_kmac() {
 	// unchanged — backward-compatible with pre-blind firmware).
 	unsigned int rn = 0, period = 0;
 	bool blind_en = smd_blind_active(rn, period);
-	if (m_needs_explicit_kmac_load || blind_en || m_kmac_blind_pushed) {
+	if ((m_needs_explicit_kmac_load || blind_en || m_kmac_blind_pushed) && !m_kmac_pushed_this_session) {
 		try {
 			if (blind_en) {
 				// KNS_MAC_BLIND_usrCfg_t packed, little-endian:
@@ -715,6 +828,7 @@ void SmdSat::state_load_kmac() {
 				m_kmac_blind_pushed = false;
 			}
 			m_needs_explicit_kmac_load = false;
+			m_kmac_pushed_this_session = true;
 		} catch (...) {
 			DEBUG_ERROR("SmdSat::%s: KMAC load failed", __func__);
 			SMD_STATE_CHANGE(load_kmac, error);
@@ -738,6 +852,7 @@ void SmdSat::state_load_kmac() {
 	if (mac_ready) {
 		is_kmac_profil_loaded = true;
 		TXTRACE("state_load_kmac: MAC READY (mac=%u spi=%u) -> writing TCXO+LPM, then idle", mac_st, spi_st);
+		LATMARK();
 		DEBUG_TRACE("SmdSat::%s: MAC ready (mac=%u, explicit_load=%u)", __func__, mac_st, m_needs_explicit_kmac_load);
 
 		// Step 4: Write TCXO warmup — RAM register on STM32, lost on power cycle.
@@ -757,19 +872,21 @@ void SmdSat::state_load_kmac() {
 		try {
 			m_cmd.write_tcxo_warmup(warmup_ms);
 			DEBUG_TRACE("SmdSat::%s: TCXO warmup written: %u ms (first_tx=%u)", __func__, warmup_ms, m_is_first_tx);
+#ifdef BENCH_TEST
+			// The warmup runs INSIDE the module, after AT+TX is accepted -- so it
+			// delays the RF, not the command, and no host-side stopwatch that
+			// stops at "accepted" can see it. Make the value that actually went
+			// out visible: 0 only on the first TX of a power-on and only above
+			// TCXO_SKIP_TEMP_THRESHOLD_C, the configured value on every other.
+			DEBUG_INFO("SmdSat: TCXO=%u ms first_tx=%u die=%d C", warmup_ms, m_is_first_tx, die_temp_c);
+#endif
 		} catch (...) {
 			DEBUG_WARN("SmdSat::%s: failed to write TCXO warmup", __func__);
 		}
 
-		// Write LPM mode if not NONE — RAM register on STM32.
-		if (m_lpm_mode != 0x01) {
-			try {
-				m_cmd.write_lpm(&m_lpm_mode);
-				DEBUG_TRACE("SmdSat::%s: LPM mode written: 0x%02X", __func__, m_lpm_mode);
-			} catch (...) {
-				DEBUG_WARN("SmdSat::%s: failed to write LPM mode", __func__);
-			}
-		}
+		// Arm the idle mode once per rail-up. It is a no-op on every later TX of
+		// the same session -- the module keeps it in retained RAM across STANDBY.
+		write_lpm_if_needed();
 
 		// First-TX shortcut (2026-05 optim Cible #2): if a packet is already
 		// queued (typical surfacing-burst path where send() set m_packet_buffer
@@ -808,6 +925,7 @@ void SmdSat::state_load_kmac() {
 					wait_cmd();
 					m_needs_explicit_kmac_load = true;  // Force KMAC reload after recovery
 					is_kmac_profil_loaded = false;
+					m_kmac_pushed_this_session = false;
 					m_state_counter = 10;               // Reset poll counter for MAC_OK after recovery
 					m_rconf_recovery_attempted = true;  // mark done only on success
 					DEBUG_INFO("SmdSat::%s: RCONF recovery written — retrying KMAC", __func__);
@@ -821,12 +939,28 @@ void SmdSat::state_load_kmac() {
 		SMD_STATE_CHANGE(load_kmac, error);
 	} else {
 		if (--m_state_counter == 0) {
-			DEBUG_ERROR("SmdSat::%s: MAC not OK after KMAC load (spi=%u mac=%u)", __func__, spi_st, mac_st);
-			// Auto-init failed — force explicit KMAC load on next boot to recover.
-			// Without this, m_needs_explicit_kmac_load stays false and we'd loop
-			// through the same timeout on every subsequent boot attempt.
-			m_needs_explicit_kmac_load = true;
-			SMD_STATE_CHANGE(load_kmac, error);
+			if (mac_st == MAC_TX_IN_PROGRESS) {
+				// Not a fault: the module is still emitting a previous burst, and
+				// a BLIND burst legitimately runs for (retx_nb + 1) * period --
+				// minutes, far beyond this poll budget. Give the attempt up
+				// without touching the KMAC state or the error count, and let
+				// ArgosTxService retry on its normal backoff by which time the
+				// module is free. Counting this was what made one overrun
+				// self-sustaining: the cancelled burst left the MAC busy, the
+				// next two sessions were logged as device errors, three bought a
+				// 30 min cooldown, and every measurement after that was blind.
+				DEBUG_WARN("SmdSat::%s: module still transmitting a previous burst — deferring, not an error",
+				           __func__);
+				m_error_is_module_busy = true;
+				SMD_STATE_CHANGE(load_kmac, error);
+			} else {
+				DEBUG_ERROR("SmdSat::%s: MAC not OK after KMAC load (spi=%u mac=%u)", __func__, spi_st, mac_st);
+				// Auto-init failed — force explicit KMAC load on next boot to recover.
+				// Without this, m_needs_explicit_kmac_load stays false and we'd loop
+				// through the same timeout on every subsequent boot attempt.
+				m_needs_explicit_kmac_load = true;
+				SMD_STATE_CHANGE(load_kmac, error);
+			}
 		} else {
 			TXTRACE("state_load_kmac: MAC NOT ready (mac=%u spi=%u) retry in %u ms (left=%u)", mac_st, spi_st,
 			        smdsat_delay_load_kmac_ms(), m_state_counter);
@@ -837,6 +971,7 @@ void SmdSat::state_load_kmac() {
 
 void SmdSat::state_idle_pending_enter() {
 	TXTRACE("state_idle_pending_enter: init SPI, will ping STM32");
+	LATMARK();
 	// Init SPI here (after power-on + reset release) to avoid MISO backfeed.
 	// STM32WL has booted and its GPIOs are in a defined state now.
 	m_cmd.init();
@@ -879,6 +1014,43 @@ void SmdSat::state_idle_pending() {
 	}
 }
 
+
+/// @brief Push the LPM mode to the module, right before it is left to sleep.
+///
+/// Deliberately NOT on the TX critical path. It is a RAM register that only
+/// decides how the module idles, so it changes nothing for a transmission --
+/// and if the host cuts the rail afterwards (the common case) it never mattered
+/// at all. Measured on the bench 2026-09-02, surface-to-air without BLIND: the
+/// TCXO and LPM writes together were 660 ms of an 840 ms driver path, each AT
+/// command costing ~330 ms of module response time. Moving this one out is a
+/// straight 40% cut with nothing given up.
+void SmdSat::write_lpm_if_needed() {
+	if (m_lpm_mode == 0x01) return;            // NONE -- nothing to arm
+	if (m_lpm_written_since_power_on) return;  // still in the module's retained RAM
+
+	uint8_t module_lpm = smd_lpm_module_allowed_mask(smd_lpm_host_to_module(m_lpm_mode));
+
+	// SHUTDOWN is compiled OUT of the module firmware unless it is built with
+	// LPM_SHUTDOWN_ENABLED; the write then fails. Say which mode is unreachable
+	// and what to use instead, rather than leaving a bare error to decode later.
+	// The cumulative mask means the module still has STANDBY to fall back on.
+	if (m_lpm_mode & 0x10) {
+		DEBUG_WARN("SmdSat::%s: LPM asks for SHUTDOWN — the module refuses it unless its firmware is built "
+		           "with LPM_SHUTDOWN_ENABLED. STANDBY (ARP60=0x08) is the deepest mode this module can enter",
+		           __func__);
+	}
+
+	try {
+		m_cmd.write_lpm(&module_lpm);
+		m_lpm_written_since_power_on = true;
+		DEBUG_INFO("SmdSat::%s: LPM written — host 0x%02X -> module mask 0x%02X (deepest 0x%02X)", __func__, m_lpm_mode,
+		           module_lpm, smd_lpm_host_to_module(m_lpm_mode));
+	} catch (...) {
+		DEBUG_WARN("SmdSat::%s: failed to write LPM mode (host 0x%02X -> module mask 0x%02X)", __func__, m_lpm_mode,
+		           module_lpm);
+	}
+}
+
 void SmdSat::state_idle_enter() {
 	m_next_delay = SMDSAT_DELAY_TICK_INTERRUPT_MS;
 	// Clamp ≥1: integer division of m_idle_timeout_ms / TICK_MS gives 0 when
@@ -901,6 +1073,9 @@ void SmdSat::state_idle_enter() {
 	// (reset + firmware re-init ~100-200 ms) while we send SPI TX REQ
 	// immediately → TX REQ fails. So only drop WKUP if the buffer is empty,
 	// i.e. a real idle period (warm_up_for_tx-style pre-boot).
+	// The module is about to be left alone: now is when its idle mode matters.
+	write_lpm_if_needed();
+
 #ifdef SAT_EXTWAKEUP
 	m_wkup_lowered = false;
 	if ((m_lpm_mode & 0x18) && !m_packet_buffer.length()) {
@@ -918,10 +1093,17 @@ void SmdSat::state_idle_exit() {
 #ifdef SAT_EXTWAKEUP
 	if (m_wkup_lowered) {
 		GPIOPins::set(SAT_EXTWAKEUP);
-		nrf_delay_ms(50);  // STM32 wakeup from STANDBY/SHUTDOWN takes ~50ms (STANDBY).
-		                   // SHUTDOWN needs more — user should not enable 0x10 without
-		                   // also increasing this and re-running state_load_kmac (TCXO/LPM
-		                   // are RAM registers lost on SHUTDOWN wake = full POR).
+		// Just enough for the wake edge to be seen. The real wait belongs to
+		// idle_pending's ping-with-retries loop, which is bounded by the module
+		// actually answering rather than by a guess.
+		//
+		// This used to be a blind 50 ms, with a comment blaming SHUTDOWN alone
+		// for needing more. The module firmware says otherwise: STANDBY exit is
+		// a cold reset too, so 50 ms was short for BOTH modes -- the module was
+		// still booting when we spoke, and its RAM registers were gone either
+		// way. state_idle() now routes back through idle_pending, which waits
+		// properly and re-runs the boot configuration.
+		nrf_delay_ms(10);
 		m_wkup_lowered = false;
 		DEBUG_TRACE("SmdSat::%s: WKUP HIGH (wakeup from LPM)", __func__);
 	}
@@ -931,6 +1113,29 @@ void SmdSat::state_idle_exit() {
 
 void SmdSat::state_idle() {
 	if (m_packet_buffer.length()) {
+		// If we actually let the module sleep, it did not merely idle: STANDBY
+		// exit is a COLD RESET of the STM32. Its own firmware says so --
+		// LPM_standby_enter() runs GPIO_DisableAllToAnalogInput(), tearing the
+		// SPI pins down with everything else, and notes "STDBY exit leads to
+		// reset of the uC, all peripherals will be restarted through normal
+		// wake-up sequence". So on the way back there is no SPI slave for
+		// ~100-200 ms, and the TCXO / KMAC context we wrote is gone.
+		//
+		// Going straight to transmit_pending therefore talked to a module that
+		// was still booting: every command read back the master's own marker
+		// (AA AA ...), the ping failed, and the session ended in
+		// "failed to enter IDLE state". Measured on the bench 2026-09-01.
+		//
+		// idle_pending is exactly the path that handles this, and it already
+		// exists: it re-inits our SPI, pings with 10 retries, and routes to
+		// load_kmac when the profile is not loaded. Clear the flag and use it.
+		if (m_wkup_lowered) {
+			DEBUG_INFO("SmdSat::%s: module was in LPM — cold boot on wake, re-running boot config", __func__);
+			is_kmac_profil_loaded = false;
+			m_kmac_pushed_this_session = false;
+			SMD_STATE_CHANGE(idle, idle_pending);
+			return;
+		}
 		TXTRACE("state_idle: packet pending -> transmit_pending");
 		m_tx_buffer = m_packet_buffer;
 		m_packet_buffer.clear();
@@ -986,6 +1191,18 @@ void SmdSat::state_transmit_pending_exit() {
 void SmdSat::apply_message_counter_hold() {
 	if (m_mc_support == McSupport::NO) return;  // module lacks the MC command — leave the SMD's MC auto-managed
 
+	// BLIND owns its own repetitions, so the host must keep its hands off the
+	// counter. We hand the module ONE payload and it emits retx_nb + 1 copies on
+	// its own schedule, numbering them itself; every AT+TX the host issues in
+	// BLIND is therefore a genuinely NEW message. Decrementing here would either
+	// do nothing (the module renumbers anyway) or collide with its numbering.
+	// The hold exists for the opposite case: without BLIND the host itself sends
+	// the same payload once per NTRY round, each one a separate transmission the
+	// module would number afresh -- that is where repeats must be pinned to one
+	// MC.
+	unsigned int blind_rn = 0, blind_period = 0;
+	if (smd_blind_active(blind_rn, blind_period)) return;
+
 	const bool is_repeat = !m_mc_last_payload.empty() && (m_tx_buffer == m_mc_last_payload);
 
 	if (!is_repeat) {
@@ -1016,6 +1233,7 @@ void SmdSat::apply_message_counter_hold() {
 void SmdSat::state_transmit_pending() {
 	if (m_tx_buffer.size()) {
 		TXTRACE("state_transmit_pending: calling initiate_tx (%u bytes)", static_cast<unsigned>(m_tx_buffer.size()));
+		LATMARK();
 		// Release VPA just before TX — PA regulator needs to be enabled for RF output
 #ifdef SMD_VPA_PIN
 		GPIOPins::release_to_highz(SMD_VPA_PIN);
@@ -1050,6 +1268,26 @@ void SmdSat::state_transmit_pending() {
 			return;
 		}
 		TXTRACE("state_transmit_pending: initiate_tx OK, TX started on STM32");
+#ifdef BENCH_TEST
+		// One marker, not the twelve TXTRACE lines: each of those is a DEBUG_INFO
+		// committed to LFS, which inflates the very latency being measured. This
+		// single line is what a surface-to-air stopwatch keys on; the marks are
+		// the breakdown, recorded in RAM along the way and printed only here.
+		LATMARK();
+		{
+			char lb[128];
+			int o = snprintf(lb, sizeof(lb), "SmdSat: TXSTART ms=");
+			for (uint8_t i = 0; i < m_lat_n && o > 0 && o < (int)sizeof(lb); i++)
+				o += snprintf(lb + o, sizeof(lb) - o, "%u%s", (unsigned)m_lat[i], (i + 1 < m_lat_n) ? "," : "");
+			// INFO, not ERROR: this is a bench marker, and the console half is
+			// never held, so a stopwatch still sees it the instant it happens.
+			// It was briefly an ERROR for a DEBUG_LEVEL=1 experiment that never
+			// built (is25_flash.cpp trips -Werror=empty-body at that level).
+			DEBUG_INFO("%s uptime=%llu (power_on,pwrseq,reset,idle_pending,mac,initiate,txstart)", lb,
+			           (unsigned long long)PMU::get_timestamp_ms());
+			m_lat_n = 0;
+		}
+#endif
 		notify(KineisEventTxStarted({}));
 		SMD_STATE_CHANGE(transmit_pending, transmitting);
 	} else if (--m_state_counter == 0) {
@@ -1067,9 +1305,27 @@ void SmdSat::state_transmitting_enter() {
 	// reports +TX — extend the poll window to cover the whole burst.
 	unsigned int rn = 0, period = 0;
 	if (smd_blind_active(rn, period)) {
-		// uint64 intermediate: rn(<=127) * period(<=65535) * 1000 overflows uint32.
-		// Cap at 2 h so an extreme config can't park the service indefinitely.
-		uint64_t burst_ms = (uint64_t)rn * (uint64_t)period * 1000ULL;
+		// One period MORE than rn * period. retx_nb's exact meaning -- total
+		// transmissions, or retransmissions on top of the first -- is not
+		// documented anywhere we can read: the struct is handed to the closed
+		// Kineis stack (KNS_MAC_BLIND_usrCfg_t, kns_mac_prfl_cfg.h) and the
+		// header says nothing. Measured both readings on the same board and the
+		// same retx_nb=3/period=60s config: bursts completing at ~120-126 s (3
+		// transmissions) and bursts still running past 190 s (4). With the old
+		// rn * period the window was 180 s + warmup + 5 s = 190 s, so the second
+		// case lost by seconds -- the module was still emitting, the host gave
+		// up, and the next session found the MAC at MAC_TX_IN_PROGRESS. One
+		// extra period is the smallest margin that covers both readings; the 2 h
+		// cap below still bounds an extreme config.
+		// 2026-09-05: one extra period is NOT enough. The margin above was set on a
+		// reading of bursts "still running past 190 s"; measured again on the same
+		// board and config, the 4-transmission case completes at 243-246 s -- three
+		// independent timeouts (SLEEP twice, NONE once) all landing just past a
+		// 240 s window, with the raw trace showing state_transmitting_enter at t=0
+		// and "TX timeout after polling" at t+243. The last copy leaves at t=180
+		// and its completion needs more than the 60 s that remained. Two periods of
+		// margin covers it; the 2 h cap below still bounds an extreme config.
+		uint64_t burst_ms = ((uint64_t)rn + 2ULL) * (uint64_t)period * 1000ULL;
 		if (burst_ms > 7200000ULL) burst_ms = 7200000ULL;
 		total_timeout_ms += (uint32_t)burst_ms;
 		DEBUG_INFO("SmdSat::%s: BLIND — TX poll window +%u ms (burst)", __func__, (uint32_t)burst_ms);
@@ -1667,10 +1923,10 @@ cleanup:
 }
 
 #ifdef BENCH_TEST
-void SmdSat::bench_parallel_probe(unsigned int nb_parallel, unsigned int retx_nb, unsigned int retx_period_s,
-                                  char *out, unsigned int out_len) {
+void SmdSat::bench_parallel_probe(unsigned int nb_parallel, unsigned int retx_nb, unsigned int retx_period_s, char *out,
+                                  unsigned int out_len) {
 	if (nb_parallel < 1) nb_parallel = 1;
-	if (nb_parallel > 4) nb_parallel = 4;   // enough to answer the question, bounded airtime
+	if (nb_parallel > 4) nb_parallel = 4;  // enough to answer the question, bounded airtime
 	if (retx_nb < 1) retx_nb = 1;
 	if (retx_nb > 127) retx_nb = 127;
 	// The module's own default config documents the pairing:
@@ -1710,12 +1966,12 @@ void SmdSat::bench_parallel_probe(unsigned int nb_parallel, unsigned int retx_nb
 		// BLIND context with the requested nb_parallel — the one byte the
 		// production path pins to 1.
 		uint8_t ctx[7] = { (uint8_t)retx_nb,
-			               (uint8_t)nb_parallel,
-			               (uint8_t)(retx_period_s & 0xFF),
-			               (uint8_t)((retx_period_s >> 8) & 0xFF),
-			               (uint8_t)((retx_period_s >> 16) & 0xFF),
-			               (uint8_t)((retx_period_s >> 24) & 0xFF),
-			               0 };
+		                   (uint8_t)nb_parallel,
+		                   (uint8_t)(retx_period_s & 0xFF),
+		                   (uint8_t)((retx_period_s >> 8) & 0xFF),
+		                   (uint8_t)((retx_period_s >> 16) & 0xFF),
+		                   (uint8_t)((retx_period_s >> 24) & 0xFF),
+		                   0 };
 		try {
 			m_cmd.load_kmac_profil(2, ctx, sizeof(ctx));
 			nrf_delay_ms(smdsat_delay_load_kmac_ms());
@@ -1793,9 +2049,8 @@ void SmdSat::bench_parallel_probe(unsigned int nb_parallel, unsigned int retx_nb
 				refused++;
 
 			DEBUG_INFO("SmdSat::bench_parallel_probe: msg %u/%u t+%u ms -> %s | mac %u->%u spi %u->%u", i + 1,
-			           nb_parallel, (unsigned int)dt,
-			           exception ? "THREW" : (ok ? "ACCEPTED" : "REFUSED"), mac_before, mac_after, spi_before,
-			           spi_after);
+			           nb_parallel, (unsigned int)dt, exception ? "THREW" : (ok ? "ACCEPTED" : "REFUSED"), mac_before,
+			           mac_after, spi_before, spi_after);
 			PMU::kick_watchdog();
 		}
 
@@ -1942,6 +2197,7 @@ bool SmdSat::switch_modulation(KineisModulation mode, const std::string &rconf_h
 		// Force state_load_kmac on next boot so the deferred RCONF gets applied.
 		// Without this, idle_pending skips to idle and the RCONF is never written.
 		is_kmac_profil_loaded = false;
+		m_kmac_pushed_this_session = false;
 		return true;
 	}
 

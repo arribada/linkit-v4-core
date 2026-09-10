@@ -8,6 +8,7 @@
 #include "bsp.hpp"
 #include "error.hpp"
 #include "debug.hpp"
+#include "pmu.hpp"  // get_timestamp_ms -- stuck-busy recovery
 #include "interrupt_lock.hpp"
 #include "nrf_gpio.h"
 #include <cstring>
@@ -122,9 +123,52 @@ void NrfUartAsync::deinit() {
 	             NRF_GPIO_PIN_NOSENSE);
 }
 
+void NrfUartAsync::park_tx_for_power_off() {
+	// The counterpart to the TX-park-HIGH above, for the case that park cannot
+	// serve: the peer is about to lose its rail.
+	//
+	// An input held at 3.3 V on an unpowered part is not inert. It forward-biases
+	// the ESD clamp between the pin and VDD and feeds the rail through it, so the
+	// part sits in a half-powered limbo instead of resetting. On the SMD module
+	// this kept a wedged MAC state alive across rail cuts of 14 s, 90 s, 240 s and
+	// 300 s -- it cleared only when the residual charge finally drained. Driving
+	// LOW removes the source; the peer is losing its rail, so there is no longer a
+	// receiver to confuse with a low line.
+	//
+	// Same intent as the powerdown bus-park in nrf_i2c.cpp.
+	uint32_t tx_pin = BSP::UARTAsync_Inits[m_uart_instance].config.tx_pin;
+	nrf_gpio_cfg(tx_pin, NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_S0S1,
+	             NRF_GPIO_PIN_NOSENSE);
+	nrf_gpio_pin_clear(tx_pin);
+}
+
 // ============================================================================
 // TX
 // ============================================================================
+
+
+/// @brief Release a busy flag that TX_DONE never came to clear.
+///
+/// m_is_send_busy is raised before nrf_libuarte_async_tx() and cleared only by
+/// the TX_DONE ISR or by deinit(). If that interrupt is ever missed the flag
+/// latches and EVERY later send fails with "already busy" until the next
+/// deinit() -- observed on the SMD AT path right after a BLIND burst
+/// completes, which killed the following TX with "initiate_tx failed".
+///
+/// A DMA transfer of at most m_tx_buffer.capacity() bytes at the slowest baud
+/// we use (9600 = ~1 ms/byte) cannot take anywhere near a second, so a flag
+/// still set after this long is lost, not in flight. Warn (this is never
+/// normal) and let the caller through rather than bricking the link.
+bool NrfUartAsync::clear_stale_send_busy() {
+	static constexpr uint64_t TX_DONE_LOST_MS = 1000;
+	if (!m_is_send_busy) return false;
+	uint64_t now = PMU::get_timestamp_ms();
+	if (m_tx_started_ms == 0 || (now - m_tx_started_ms) < TX_DONE_LOST_MS) return false;
+	DEBUG_WARN("NrfUartAsync: UART%u TX_DONE lost after %u ms — releasing the busy flag", m_uart_instance,
+	           static_cast<unsigned>(now - m_tx_started_ms));
+	m_is_send_busy = false;
+	return true;
+}
 
 bool NrfUartAsync::send_raw(const uint8_t *data, size_t len) {
 	if (!m_is_init || len == 0) return false;
@@ -132,6 +176,7 @@ bool NrfUartAsync::send_raw(const uint8_t *data, size_t len) {
 	// DMA TX is async: the peripheral keeps reading from the buffer after this
 	// returns. The caller typically passes a stack buffer, so we copy into
 	// m_tx_buffer which is held until TX_DONE clears m_is_send_busy.
+	clear_stale_send_busy();
 	if (m_is_send_busy) {
 		DEBUG_ERROR("NrfUartAsync::send_raw: UART%u already busy", m_uart_instance);
 		return false;
@@ -144,6 +189,7 @@ bool NrfUartAsync::send_raw(const uint8_t *data, size_t len) {
 
 	m_tx_buffer.assign(reinterpret_cast<const char *>(data), len);
 	m_is_send_busy = true;
+	m_tx_started_ms = PMU::get_timestamp_ms();
 
 	ret_code_t ret = nrf_libuarte_async_tx(BSP::UARTAsync_Inits[m_uart_instance].uart,
 	                                       reinterpret_cast<uint8_t *>(m_tx_buffer.data()), m_tx_buffer.length());
@@ -156,11 +202,24 @@ bool NrfUartAsync::send_raw(const uint8_t *data, size_t len) {
 }
 
 bool NrfUartAsync::send_string(const std::string &str) {
+	// Same guard as send_raw(). Without it, a send on a deinit'd instance sets
+	// m_is_send_busy, then nrf_libuarte_async_tx no-ops so TX_DONE never fires
+	// and the flag stays latched: every later send returns "already busy" until
+	// the next deinit(). Observed on the SMD AT path, second TX cycle -- the LPM
+	// write failed after the KMAC write. Same defect already fixed for LoRa
+	// (see lora_rak3172.cpp start_device()).
+	if (!m_is_init) {
+		DEBUG_ERROR("NrfUartAsync: UART%u send on uninitialised instance", m_uart_instance);
+		return false;
+	}
+
+	clear_stale_send_busy();
 	if (m_is_send_busy) {
 		DEBUG_ERROR("NrfUartAsync: UART%u already busy", m_uart_instance);
 		return false;
 	}
 	m_is_send_busy = true;
+	m_tx_started_ms = PMU::get_timestamp_ms();
 
 	if (!m_is_rx_started) {
 		nrf_libuarte_async_start_rx(BSP::UARTAsync_Inits[m_uart_instance].uart);

@@ -35,7 +35,23 @@ extern FileSystem *main_filesystem;
 static constexpr unsigned int DEFAULT_RETRIES = 3;         ///< Default retry budget for op_state machines
 static constexpr unsigned int BOOT_BAUD_SYNC_RETRIES = 6;  ///< Wider retry budget on initial baud sync
 static constexpr unsigned int PMREQ_VERIFY_RETRIES =
-    3;  ///< 2026-05-25: PMREQ-backup verification retries (ping M10Q after PMREQ, re-send if replies)
+    4;  ///< PMREQ-backup verification retries. The settling wait before the first probe is what should
+        ///< carry this now (see state_enterbackup); the retries are the net for the residual cases, not
+        ///< the mechanism. Raised 3->4 so a cycle that needs one more second still lands instead of
+        ///< cutting the rail and losing BBR.
+static constexpr unsigned int PMREQ_SETTLE_MS =
+    1500;  ///< Silence laisse au recepteur entre le PMREQ et le probe de verification.
+           ///< Valeur heritee du correctif 1a34c664 (500 -> 1500 ms), dont la mesure
+           ///< terrain a montre qu'il n'avait AUCUN effet sur le taux d'echec : la
+           ///< variable n'etait pas le temps mais le flag FORCE manquant.
+           ///< Retente a la baisse une fois FORCE en place (banc 2026-09-07, meme
+           ///< carte) : a 1500 ms, 11 sequences, 11 probes, 11 validees au premier
+           ///< probe, aucun abandon ; a 300 ms, 2 sequences validees au premier probe
+           ///< puis le cycle GNSS s'est arrete (console toujours repondante, aucun
+           ///< redemarrage). Lecture probable, non confirmee : le probe conclut au
+           ///< backup sur un TIMEOUT de 200 ms, donc un module simplement lent a
+           ///< repondre est compte comme endormi -- raccourcir la temporisation
+           ///< affaiblit le test au lieu de gagner du temps. On garde 1500 ms.
 static constexpr unsigned int PMREQ_VERIFY_TIMEOUT_MS =
     200;  ///< Wait for verification poll response (TIMEOUT = backup confirmed, SUCCESS = M10Q still awake)
 static constexpr unsigned int EARLY_ABORT_SAT_REPORTS =
@@ -660,6 +676,11 @@ void M10QAsyncReceiver::exit_backup_charge_mode() {
 	// power_on (state == idle on return).
 	GPIOPins::clear(BSP::GPIO::GPIO_GPS_PWR_EN);
 	GPIOPins::release_to_highz(BSP::GPIO::GPIO_GPS_RST);
+	// Conformite SAM-M10Q (UBX-22020019 Table 20) : « Do not drive IO pins when
+	// VCC and V_IO are not supplied. Otherwise permanent damage may result. »
+	// Les trois autres chemins de coupure relachent EXTINT ; celui-ci l'oubliait
+	// et laissait la broche pilotee sur un module hors tension.
+	GPIOPins::release_to_highz(BSP::GPIO::GPIO_GPS_EXT_INT);
 	GPIOPins::release_sensors_pwr();
 	m_state = State::idle;
 	notify(GPSEventPowerOff(false));
@@ -745,11 +766,11 @@ void M10QAsyncReceiver::exit_shutdown() {
 	// relies on exactly this.
 	GPIOPins::init_pin(BSP::GPIO::GPIO_GPS_EXT_INT);
 	GPIOPins::clear(BSP::GPIO::GPIO_GPS_EXT_INT);
-	PMU::delay_ms(2);                             // small settle for the drive
-	GPIOPins::set(BSP::GPIO::GPIO_GPS_PWR_EN);    // VDD ON with M10Q held in reset
-	PMU::delay_ms(20);                            // VDD ramp + stabilize while in reset
-	GPIOPins::set(BSP::GPIO::GPIO_GPS_RST);       // high-Z → ext pull-up → NRST released → POR
-	PMU::delay_ms(80);                            // M10Q boot ~30ms, 80ms margin (sync_baud_rate has retries)
+	PMU::delay_ms(2);                           // small settle for the drive
+	GPIOPins::set(BSP::GPIO::GPIO_GPS_PWR_EN);  // VDD ON with M10Q held in reset
+	PMU::delay_ms(20);                          // VDD ramp + stabilize while in reset
+	GPIOPins::set(BSP::GPIO::GPIO_GPS_RST);     // high-Z → ext pull-up → NRST released → POR
+	PMU::delay_ms(80);                          // M10Q boot ~30ms, 80ms margin (sync_baud_rate has retries)
 }
 
 void M10QAsyncReceiver::state_machine() {
@@ -1027,8 +1048,8 @@ void M10QAsyncReceiver::react(const UBXCommsEventNavReport &n) {
 			    // while the operator believed he had disabled the filter. Nothing
 			    // was logged -- the beacon simply stopped reporting positions.
 			    // Same class as the rate-limiter `* 1000` fixed in 2026-08.
-			    if (m_nav_settings.hacc_filter_en &&
-			        ((uint64_t)m_nav_settings.hacc_filter_threshold * 1000u) < nav.pvt.hAcc) {
+			    if (m_nav_settings.hacc_filter_en
+			        && ((uint64_t)m_nav_settings.hacc_filter_threshold * 1000u) < nav.pvt.hAcc) {
 				    // Fix exists but fails hAcc filter — store as degraded if best so far
 				    if (!m_has_degraded_pvt || nav.pvt.hAcc < m_degraded_pvt.hAcc) {
 					    m_degraded_pvt = { .iTOW = nav.pvt.iTow,
@@ -1541,13 +1562,38 @@ void M10QAsyncReceiver::state_poweroff() {
 
 void M10QAsyncReceiver::state_poweroff_exit() {}
 
+#ifdef BENCH_TEST
+uint32_t M10QAsyncReceiver::bench_pmreq_flags =
+    RXM::PMREQFlags::BACKUP | RXM::PMREQFlags::FORCE;  // defaut = valeur corrigee
+unsigned int M10QAsyncReceiver::bench_pmreq_seq = 0;
+unsigned int M10QAsyncReceiver::bench_pmreq_probes = 0;
+unsigned int M10QAsyncReceiver::bench_pmreq_first_ok = 0;
+unsigned int M10QAsyncReceiver::bench_pmreq_giveup = 0;
+unsigned int M10QAsyncReceiver::bench_pmreq_settle_ms = PMREQ_SETTLE_MS;
+#endif
+
 void M10QAsyncReceiver::send_pmreq_backup() {
 	DEBUG_TRACE("M10QAsyncReceiver::send_pmreq_backup: UBX-RXM-PMREQ backup ->");
 	RXM::MSG_PMREQ pmreq = {
 		.version = 0,
 		.reserved1 = { 0, 0, 0 },
-		.duration = 0,                     // sleep until wakeup event
-		.flags = RXM::PMREQFlags::BACKUP,  // 0x02
+		.duration = 0,  // sleep until wakeup event
+#ifdef BENCH_TEST
+		.flags = M10QAsyncReceiver::bench_pmreq_flags,
+#else
+		// SAM-M10Q Integration Manual UBX-22020019 §2.6.3.2, verbatim :
+		//   « The "force" flag must be set in UBX-RXM-PMREQ to enter software
+		//     standby mode. »
+		// Le bit FORCE n'avait jamais ete pose. Sans lui l'entree en standby est
+		// hors contrat et le SPG 5.10 honore ou jette chaque requete selon son
+		// etat instantane : mesure banc 2026-09-07, 19 sequences a 0x02 ->
+		// 3,74 probes/sequence, 0/19 validees au premier probe, 2 coupures de
+		// rail ; 12 sequences a 0x06 -> 1,00 probe/sequence, 12/12 validees au
+		// premier probe, 0 coupure. Terrain avant correctif : 0/198.
+		// ATTENTION : sur M10 la semantique de FORCE a change vs M8 (ce n'etait
+		// que « backup malgre USB »), d'ou l'omission d'origine.
+		.flags = RXM::PMREQFlags::BACKUP | RXM::PMREQFlags::FORCE,  // 0x06
+#endif
 		// 2026-05 deep-idle refactor: wake source is EXTINT0 (deepest sleep
 		// mode — ~10-12 µA vs ~15 µA with UARTRX since the UART block can
 		// be fully powered down). The nRF drives the EXTINT pin via
@@ -1597,6 +1643,9 @@ void M10QAsyncReceiver::state_enterbackup_enter() {
 	// verification step can retry PMREQ up to PMREQ_VERIFY_RETRIES times if
 	// the M10Q refuses backup on first attempt.
 	m_pmreq_verify_retries = PMREQ_VERIFY_RETRIES;
+#ifdef BENCH_TEST
+	bench_pmreq_seq++;
+#endif
 	DEBUG_INFO("M10QAsyncReceiver::state_enterbackup_enter");
 
 	// HIGH GNSS-AUDIT #1 fix: two entry paths reach enterbackup:
@@ -1701,15 +1750,41 @@ void M10QAsyncReceiver::state_enterbackup() {
 				send_pmreq_backup();
 				m_op_state = OpState::IDLE;
 				m_step++;
-				// 2026-05-25 Fix #6: propagate delay extended 100→500 ms. Field
-				// data showed M10Q routinely refusing PMREQ-backup on the first
-				// probe (3 attempts in <1 s all failed in 33 % of cycles).
-				// Successful cycles took 1-2 s of total settling, suggesting the
-				// M10Q needs >500 ms of stability to fully commit to backup mode
-				// before responding to UART. Giving the FIRST probe 500 ms head-
-				// start should land most cycles on attempt #1. Cost: +400 ms on
-				// the dive→backup path (non-critical, not surface→TX).
-				run_state_machine(500);
+				// Let the module go quiet before asking it anything.
+				//
+				// 2026-05-25 diagnosed this correctly -- "successful cycles took
+				// 1-2 s of total settling, the M10Q needs >500 ms of stability to
+				// fully commit to backup mode before responding to UART" -- and
+				// then applied the bottom of that range, predicting it "should
+				// land most cycles on attempt #1".
+				//
+				// It never did. Across two full field campaigns (LoRa and KIM,
+				// 01-02/09/2026, ~180 sessions) there is not ONE sequence where
+				// state_enterbackup_enter is followed directly by
+				// "PMREQ-backup verified": the first probe fails every single
+				// time. The 1-2 s the module actually needs was only ever reached
+				// by ACCUMULATING retries, each worth ~1 s (500 ms wait + 200 ms
+				// probe), which is why cycles typically pass on attempt 2 or 3 --
+				// and why a budget of 3 runs out often enough to cut the rail and
+				// lose BBR on ~19 % of sessions.
+				//
+				// So give it the settling time the original measurement asked
+				// for. This is not the same as retrying more: every retry sends
+				// another PMREQ AND another UART probe at a module that is trying
+				// to commit to backup, which is the one thing the comment above
+				// says it must not receive. What it needs is silence, not
+				// attempts.
+				//
+				// Not blocking: run_state_machine posts a scheduler task, so LoRa,
+				// Argos, the accelerometer and the DTE keep being served
+				// throughout. Only the M10Q state machine waits, and it has
+				// nothing else to do. Cost is +1 s on the dive->backup path, which
+				// is not the surface->TX critical path.
+#ifdef BENCH_TEST
+				run_state_machine(M10QAsyncReceiver::bench_pmreq_settle_ms);
+#else
+				run_state_machine(PMREQ_SETTLE_MS);
+#endif
 				break;
 			} else if (m_step == 3) {
 				// 2026-05-25 PMREQ-backup verification: send an invalid CFG-MSG
@@ -1730,6 +1805,9 @@ void M10QAsyncReceiver::state_enterbackup() {
 						.msgClass = MessageClass::MSG_CLASS_BAD,
 						.msgID = 0,
 					};
+#ifdef BENCH_TEST
+					bench_pmreq_probes++;
+#endif
 					initiate_timeout(PMREQ_VERIFY_TIMEOUT_MS);
 					m_ubx_comms.send_packet_with_expect(MessageClass::MSG_CLASS_CFG, CFG::ID_MSG, probe,
 					                                    MessageClass::MSG_CLASS_ACK, ACK::ID_NACK);
@@ -1787,6 +1865,9 @@ void M10QAsyncReceiver::state_enterbackup() {
 					            "cutting rail (true poweroff, BBR lost) instead of leaking ~2 mA for the GNP52 window",
 					            (unsigned)PMREQ_VERIFY_RETRIES);
 					VAL_GNSS("pmreq_verify_giveup_rail_cycle");
+#ifdef BENCH_TEST
+					bench_pmreq_giveup++;
+#endif
 					m_powering_off = true;
 					m_num_power_on = 0;
 					STATE_CHANGE(enterbackup, poweroff);
@@ -1806,6 +1887,10 @@ void M10QAsyncReceiver::state_enterbackup() {
 			// confirmed. Skip the normal baud-sync retry path; advance to
 			// step 4 (UART deinit + backupidle transition).
 			if (m_step == 3) {
+#ifdef BENCH_TEST
+				// Aucun retry consomme => le TOUT PREMIER probe a vu le module muet.
+				if (m_pmreq_verify_retries == PMREQ_VERIFY_RETRIES) bench_pmreq_first_ok++;
+#endif
 				DEBUG_INFO("M10QAsyncReceiver: PMREQ-backup verified (M10Q silent to probe)");
 				VAL_GNSS("pmreq_verify_ok");
 				m_step++;
@@ -2510,11 +2595,23 @@ void M10QAsyncReceiver::state_fetchdatabase_enter() {
 }
 
 void M10QAsyncReceiver::state_fetchdatabase() {
-	if (!m_nav_settings.assistnow_autonomous_enable) {
-		DEBUG_TRACE("M10QAsyncReceiver: fetchdatabase: ANA not enabled");
-		STATE_CHANGE(fetchdatabase, poweroff);
-		return;
-	}
+	// 2026-09 — le vidage MGA-DBD n'est PLUS conditionne au drapeau ANA
+	// (GNSS_ASSISTNOW_EN). Le DBD est la base de navigation du recepteur
+	// (ephemerides, almanach, sante, iono, UTC — et les predictions ANA quand il
+	// y en a) : c'est un vecteur de PERSISTANCE, distinct de l'ANA (le recepteur
+	// calcule ses orbites) comme de l'ANO (fichier telecharge). Sur une carte
+	// sans pile V_BCKP il est le SEUL demarrage a chaud qui survive a une coupure
+	// de rail (cf. DBD_MAX_AGE_NO_BBR_S). Couper l'ANA faisait aussi perdre ce
+	// chemin — le fichier restait intact mais n'etait plus ni rafraichi ici, ni
+	// relu ni rejoue dans senddatabase — alors que l'almanach (semaines) et les
+	// ephemerides (4 h, que le recepteur ecarte lui-meme si perimees) valent
+	// autant sans ANA.
+	// Le DBD est donc INCONDITIONNEL plutot que gouverne par "ANA || ANO" :
+	// l'ANO est faux par defaut, et le suspendre a une AUTRE source d'assistance
+	// reproduirait exactement le couplage que l'on retire. Le cout (un poll
+	// MGA-DBD + une ecriture LittleFS si fix) est celui que toute unite ANA=true
+	// paye deja aujourd'hui. Quand ANA=true rien ne change ici : la garde
+	// retiree n'etait jamais prise.
 	// 2026-08 (A2) — the fetch is NO LONGER skipped when the ANO served this
 	// session. That was the only reason gnss_dbd.dat was never refreshed on an ANO
 	// unit: past the age cap the flash copy was rejected and the unit lost BOTH of
@@ -2612,8 +2709,14 @@ void M10QAsyncReceiver::state_senddatabase_enter() {
 	m_op_state = OpState::IDLE;
 	m_mga_ack_count = 0;
 
-	// If no ANA data in RAM and ANO is not in use, try loading persisted DBD from flash
-	if (m_ana_database_len == 0 && m_ano_database_len == 0 && m_nav_settings.assistnow_autonomous_enable) {
+	// Pas de DBD en RAM et pas d'ANO servi cette session : relire la copie
+	// persistee. La condition m_ano_database_len == 0 RESTE : elle empeche
+	// d'ecraser un buffer ANO deja rempli (m_navigation_database est partage,
+	// voir state_sendofflinedatabase_enter). 2026-09 — la condition sur le
+	// drapeau ANA a ete retiree, voir state_fetchdatabase : le DBD est un
+	// vecteur de persistance, pas une fonction de l'ANA. Quand ANA=true le terme
+	// retire valait true et le predicat est inchange.
+	if (m_ana_database_len == 0 && m_ano_database_len == 0) {
 		load_dbd_from_flash();
 	}
 
@@ -2626,11 +2729,11 @@ void M10QAsyncReceiver::state_senddatabase_enter() {
 }
 
 void M10QAsyncReceiver::state_senddatabase() {
-	if (!m_nav_settings.assistnow_autonomous_enable) {
-		DEBUG_TRACE("M10QAsyncReceiver: senddatabase: ANA not enabled");
-		STATE_CHANGE(senddatabase, startreceive);
-		return;
-	}
+	// 2026-09 — plus de garde ANA ici non plus (voir state_fetchdatabase) : sans
+	// elle, la relecture faite dans _enter etait du travail perdu. Sans DBD
+	// (m_ana_database_len == 0) la boucle passe directement a startreceive, comme
+	// elle le fait deja pour une unite ANA=true dont le fichier est absent ou
+	// perime.
 	while (true) {
 		if (m_op_state == OpState::IDLE) {
 			m_op_state = OpState::PENDING;

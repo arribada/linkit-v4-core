@@ -28,6 +28,7 @@ extern ArgosTxService *argos_tx_service_instance;
 #include "moored_mode_service.hpp"
 #include "hauled_mode_service.hpp"
 #include "rtc.hpp"
+#include "m10qasync.hpp"
 #include "ota_file_updater.hpp"
 #include "crc32.hpp"
 #include "nrf_i2c.hpp"
@@ -46,6 +47,7 @@ extern SmdSat *smd_sat_instance;
 #include <cstdlib>
 
 extern Scheduler *system_scheduler;
+extern Timer *system_timer;
 extern GPSService *gps_service;
 extern RTC *rtc;
 #ifdef BENCH_TEST
@@ -61,6 +63,113 @@ Scheduler::TaskHandle s_poll_task;
 void reply(const std::string &s) {
 	UsbInterface::get_instance().write(s + "\r\n");
 }
+
+/// @brief Stream the satellite-slot UART to the console — the SMD module's own
+/// debug log.
+///
+/// On a SPI build nothing opens UART instance 1, so its peripheral is free and
+/// its pins are parked (nrf_gpio.cpp releases both to default). The slot is the
+/// one the KIM2 uses for AT, and on the SMD variant the nRF RECEIVES on P0.14
+/// (bsp.cpp) — which is where the module's LPUART1 TX (PA2) lands.
+///
+/// Driven straight at the UARTE1 registers rather than through libuarte or
+/// nrfx: NRFX_UARTE1_ENABLED is 0 and nothing else claims the peripheral on this
+/// build, so there is no driver to fight, and this way the probe cannot disturb
+/// the SPI path it exists to diagnose.
+///
+/// The module logs at 115200 in SPI mode (usart.c: 9600 is the STDLN/GUI-UART
+/// case only). Bench only.
+static void cmd_satlog(const std::string &line) {
+	unsigned int secs = 10;
+	unsigned int baud = 115200;
+	unsigned int a = 0, b = 0, c = 0;
+	int argc = sscanf(line.c_str(), "%%SATLOG %u %u %u", &a, &b, &c);
+	if (argc >= 1 && a > 0 && a <= 120) secs = a;
+	if (argc >= 2 && b) baud = b;
+
+	// Register values for the rates the module can be built at (usart.c: 115200
+	// in SPI mode, 9600 for STDLN/GUI-UART). The others are here so a sweep can
+	// settle the question without a reflash between tries.
+	uint32_t baud_reg;
+	switch (baud) {
+	case 9600: baud_reg = 0x00275000; break;
+	case 19200: baud_reg = 0x004EA000; break;
+	case 38400: baud_reg = 0x009D5000; break;
+	case 57600: baud_reg = 0x00EBF000; break;
+	case 460800: baud_reg = 0x03AFB000; break;  // the M10Q's rate, for checking the probe itself
+	default:
+		baud = 115200;
+		baud_reg = 0x01D7E000;
+		break;
+	}
+
+	NRF_UARTE_Type *u = NRF_UARTE1;
+	// Default to the BSP's RX for this build, but let the caller name a pin: the
+	// satellite slot is P0.14 / P0.26 and the BSP assigns the direction per
+	// variant (LoRa receives on 26, KIM2/SMD on 14). Which way a given module
+	// drives it is a board fact, not a build fact, so the probe should be able to
+	// listen to either without a reflash.
+	uint32_t rx_pin = BSP::UARTAsync_Inits[1].config.rx_pin;
+	// PSEL encoding is port * 32 + pin, so 0..31 is P0 and 32..63 is P1. Being
+	// able to name a P1 pin is what makes the probe checkable: pointed at the
+	// GNSS UART RX (P1.08 = 40) while the M10Q is running, it must return
+	// bytes. A probe that has only ever returned zero proves nothing about the
+	// line it was pointed at.
+	if (argc >= 3 && c <= 63) rx_pin = c;
+
+	nrf_gpio_cfg_input(rx_pin, NRF_GPIO_PIN_NOPULL);
+	u->PSEL.RXD = rx_pin;
+	u->PSEL.TXD = 0xFFFFFFFF;
+	u->PSEL.CTS = 0xFFFFFFFF;
+	u->PSEL.RTS = 0xFFFFFFFF;
+	u->BAUDRATE = baud_reg;
+	u->CONFIG = 0;  // 8N1, no flow control
+	u->ENABLE = 8;
+
+	reply("%SATLOG start (P" + std::to_string(rx_pin / 32) + "." + std::to_string(rx_pin % 32) + " @"
+	      + std::to_string(baud) + ", " + std::to_string(secs) + "s)");
+
+	static uint8_t buf[64];
+	const uint64_t deadline = PMU::get_timestamp_ms() + (uint64_t)secs * 1000u;
+	unsigned int total = 0;
+
+	while (PMU::get_timestamp_ms() < deadline) {
+		PMU::kick_watchdog();
+		u->EVENTS_ENDRX = 0;
+		u->RXD.PTR = (uint32_t)buf;
+		u->RXD.MAXCNT = sizeof(buf);
+		u->TASKS_STARTRX = 1;
+
+		// Give the DMA a window, then close it so RXD.AMOUNT is valid even on a
+		// partial buffer — the module talks in short bursts, waiting for a full
+		// 64 bytes would hold most lines back until the next one arrived.
+		uint64_t slice = PMU::get_timestamp_ms() + 250;
+		while (!u->EVENTS_ENDRX && PMU::get_timestamp_ms() < slice) { /* spin */
+		}
+		if (!u->EVENTS_ENDRX) {
+			u->EVENTS_ENDRX = 0;
+			u->TASKS_STOPRX = 1;
+			uint64_t stop_deadline = PMU::get_timestamp_ms() + 20;
+			while (!u->EVENTS_ENDRX && PMU::get_timestamp_ms() < stop_deadline) { /* spin */
+			}
+		}
+
+		unsigned int n = u->RXD.AMOUNT;
+		if (n) {
+			total += n;
+			UsbInterface::get_instance().write(std::string((const char *)buf, n));
+		}
+	}
+
+	u->TASKS_STOPRX = 1;
+	u->ENABLE = 0;
+	u->PSEL.RXD = 0xFFFFFFFF;
+	nrf_gpio_cfg_default(rx_pin);
+
+	reply("");
+	reply("%SATLOG done bytes=" + std::to_string(total));
+}
+
 
 const char *state_name() {
 	if (GenTracker::is_in_state<ConfigurationState>()) return "CONFIG";
@@ -358,6 +467,16 @@ bool bench::handle_line(const std::string &raw) {
 		reply(std::string("%BENCH OK state=") + state_name());
 	} else if (cmd == "%STATE") {
 		reply(std::string("%STATE ") + state_name());
+	} else if (cmd == "%BOOT") {
+		// Motif du dernier reset + temps de fonctionnement, pour distinguer une
+		// perte de lien USB (l'hote reconnecte, uptime continue de croitre) d'un
+		// vrai redemarrage (uptime repart de zero, et le motif dit pourquoi).
+		// Les compteurs %PMREQ etant des statiques, seul un redemarrage les
+		// remet a zero : %BOOT donne la cause quand cela arrive.
+		char buf[96];
+		snprintf(buf, sizeof(buf), "%%BOOT cause=%s crash=%s uptime_ms=%llu", PMU::reset_cause_str(),
+		         PMU::last_crash_str(), system_timer ? (unsigned long long)system_timer->get_counter() : 0ULL);
+		reply(buf);
 	} else if (cmd == "%BLE") {
 		// %BLE        -> advertising state
 		// %BLE DISC   -> replays a BLE disconnection (with no phone)
@@ -449,6 +568,113 @@ bool bench::handle_line(const std::string &raw) {
 		         (unsigned)ac.mode, ac.sensor_tx_enable, (unsigned)ac.depth_pile, ac.ntry_per_message, ac.tx_interval_s,
 		         ac.duty_cycle & 0xFFFFFF, ac.is_lb ? 1 : 0, ac.prepass_en ? 1 : 0);
 		reply(buf);
+	} else if (cmd.rfind("%LPM", 0) == 0) {
+		// Set/read the SMD low-power mode WITHOUT a configuration round trip.
+		// Going through DTE means %CFG then %OP, i.e. two reed-confirmation
+		// gesture sequences per mode; sweeping the five modes that way put the
+		// board into a state where the console went silent and only a debugger
+		// reset brought it back. This writes the same parameter and pushes it
+		// straight into the live driver.
+		//   %LPM        -> report
+		//   %LPM <host bitmap>  1=NONE 2=SLEEP 4=STOP 8=STANDBY 16=SHUTDOWN
+#if defined(ARGOS_SMD) && (ARGOS_SMD == 1)
+		unsigned int v = 0;
+		char buf[128];
+		if (sscanf(line.c_str(), "%%LPM %u", &v) == 1) {
+			if (v != 1 && v != 2 && v != 4 && v != 8 && v != 16) {
+				reply("%LPM ERR usage: %LPM <1=NONE|2=SLEEP|4=STOP|8=STANDBY|16=SHUTDOWN>");
+				return true;
+			}
+			configuration_store->write_param(ParamID::SMD_LPM_MODE, v);
+			if (smd_sat_instance) smd_sat_instance->set_lpm_mode(static_cast<uint8_t>(v));
+		}
+		unsigned int cur = configuration_store->read_param<unsigned int>(ParamID::SMD_LPM_MODE);
+		unsigned int mod = cur >> 1;
+		snprintf(buf, sizeof(buf), "%%LPM host=0x%02X module=0x%02X mask=0x%02X degraded=%u", cur, mod,
+		         mod ? ((mod << 1) - 1) : 0, configuration_store->read_param<unsigned int>(ParamID::SMD_DEGRADED_MODE));
+		reply(buf);
+#else
+		reply("%LPM ERR not-an-smd-build");
+#endif
+	} else if (cmd.rfind("%BLIND", 0) == 0) {
+		// Toggle BLIND without a configuration round trip -- same reason as %LPM.
+		// Needed to exercise the two halves of the message-counter policy: BLIND
+		// owns its repetitions and the host must not touch the MC, while without
+		// BLIND the host sends each repeat itself and pins them to one MC.
+		//   %BLIND        -> report
+		//   %BLIND 0|1
+#if defined(ARGOS_SMD) && (ARGOS_SMD == 1)
+		unsigned int v = 0;
+		char buf[128];
+		if (sscanf(line.c_str(), "%%BLIND %u", &v) == 1) {
+			if (v > 1) {
+				reply("%BLIND ERR usage: %BLIND <0|1>");
+				return true;
+			}
+			configuration_store->write_param(ParamID::ARGOS_BLIND_EN, v != 0);
+		}
+		ArgosConfig ac;
+		configuration_store->get_argos_configuration(ac);
+		snprintf(buf, sizeof(buf), "%%BLIND en=%u retx_nb=%u period=%us ntry=%u", ac.blind_en ? 1u : 0u,
+		         ac.blind_retx_nb, ac.blind_retx_period_s, ac.ntry_per_message);
+		reply(buf);
+#else
+		reply("%BLIND ERR not-an-smd-build");
+#endif
+	} else if (cmd.rfind("%SATKEEP", 0) == 0) {
+		// Hold the SMD powered (parked in its own LPM) for N seconds after a TX
+		// instead of cutting its rail. This is what a "wake and transmit"
+		// measurement needs: with the rail up and the module in STANDBY at
+		// ~0.93 uA, a surface event only has to raise WKUP and send AT+TX.
+		//   %SATKEEP <seconds>   (0 restores the 1 s default)
+#if defined(ARGOS_SMD) && (ARGOS_SMD == 1)
+		unsigned int sec = 0;
+		char buf[96];
+		if (sscanf(line.c_str(), "%%SATKEEP %u", &sec) != 1) {
+			reply("%SATKEEP ERR usage: %SATKEEP <seconds>");
+			return true;
+		}
+		if (!smd_sat_instance) {
+			reply("%SATKEEP ERR no-smd");
+			return true;
+		}
+		smd_sat_instance->set_idle_timeout(sec ? sec * 1000 : 1000);
+		snprintf(buf, sizeof(buf), "%%SATKEEP OK idle=%u ms", sec ? sec * 1000 : 1000);
+		reply(buf);
+#else
+		reply("%SATKEEP ERR not-an-smd-build");
+#endif
+	} else if (cmd.rfind("%DRY", 0) == 0) {
+		// DRY_TIME_BEFORE_TX without a configuration round trip. It is not just an
+		// antenna-drying delay: ArgosTxScheduler::schedule_periodic takes
+		// m_earliest_schedule as the TX time when it is in the FUTURE, and falls
+		// back to the periodic grid when it is not. set_earliest_schedule() is fed
+		// now + dry_time in whole seconds, so dry=0 always lands in the past and
+		// the first TX after surfacing waits for the next grid slot -- up to a
+		// full TR_NOM. Any non-zero value pins it instead.
+		//   %DRY <seconds>
+		unsigned int v = 0;
+		char buf[96];
+		if (sscanf(line.c_str(), "%%DRY %u", &v) == 1) configuration_store->write_param(ParamID::DRY_TIME_BEFORE_TX, v);
+		snprintf(buf, sizeof(buf), "%%DRY dry_time_before_tx=%u s",
+		         configuration_store->read_param<unsigned int>(ParamID::DRY_TIME_BEFORE_TX));
+		reply(buf);
+	} else if (cmd.rfind("%AMODE", 0) == 0) {
+		// ARGOS_MODE without a configuration round trip.
+		//   %AMODE <0=OFF 1=PASS_PREDICTION 2=LEGACY 3=DUTY_CYCLE 4=DOPPLER 5=SURFACING_BURST>
+		unsigned int v = 0;
+		char buf[96];
+		if (sscanf(line.c_str(), "%%AMODE %u", &v) == 1) {
+			if (v > 5) {
+				reply("%AMODE ERR usage: %AMODE <0..5>");
+				return true;
+			}
+			configuration_store->write_param(ParamID::ARGOS_MODE, static_cast<BaseArgosMode>(v));
+		}
+		ArgosConfig ac;
+		configuration_store->get_argos_configuration(ac);
+		snprintf(buf, sizeof(buf), "%%AMODE mode=%u burst_max=%u s", (unsigned)ac.mode, ac.surfacing_burst_max_s);
+		reply(buf);
 	} else if (cmd == "%SCHEDQ") {
 		// Scheduler queue occupancy. It is what proves a self-rescheduling task
 		// does not clone itself: a round trip through configuration and back to
@@ -464,6 +690,8 @@ bool bench::handle_line(const std::string &raw) {
 		bench_i2c_scan(line);
 	} else if (cmd == "%OTA") {
 		bench_ota(line);
+	} else if (cmd == "%SATLOG") {
+		cmd_satlog(line);
 	} else if (cmd == "%LB") {
 		// Consistency of the two battery thresholds. The matching DEBUG_WARN goes
 		// to system.log (console logs are deliberately silent during a DTE
@@ -576,6 +804,31 @@ bool bench::handle_line(const std::string &raw) {
 			gps_service->bench_inject_cloudlocate();
 			reply("%GPSCL OK cloudlocate injected");
 		}
+	} else if (cmd == "%PMREQ") {
+		// A/B a chaud du flag FORCE de UBX-RXM-PMREQ (SAM-M10Q IM §2.6.3.2 :
+		// « The "force" flag must be set ... to enter software standby mode »).
+		//   %PMREQ            -> etat + compteurs
+		//   %PMREQ <n>        -> pose flags=n ET remet les compteurs a zero
+		// BACKUP=2 (valeur historique), BACKUP|FORCE=6 (valeur exigee par le manuel).
+		unsigned int f = 0;
+		char buf[190];
+		if (sscanf(line.c_str(), "%%PMREQ SETTLE %u", &f) == 1) {
+			M10QAsyncReceiver::bench_pmreq_settle_ms = f;
+			M10QAsyncReceiver::bench_pmreq_reset_stats();
+			snprintf(buf, sizeof(buf), "%%PMREQ OK settle=%u ms stats-remis-a-zero", f);
+			reply(buf);
+		} else if (sscanf(line.c_str(), "%%PMREQ %u", &f) == 1) {
+			M10QAsyncReceiver::bench_pmreq_flags = f;
+			M10QAsyncReceiver::bench_pmreq_reset_stats();
+			snprintf(buf, sizeof(buf), "%%PMREQ OK flags=%u stats-remis-a-zero", f);
+			reply(buf);
+		} else {
+			snprintf(buf, sizeof(buf), "%%PMREQ flags=%u settle=%u seq=%u probes=%u first_ok=%u giveup=%u",
+			         (unsigned)M10QAsyncReceiver::bench_pmreq_flags, M10QAsyncReceiver::bench_pmreq_settle_ms,
+			         M10QAsyncReceiver::bench_pmreq_seq, M10QAsyncReceiver::bench_pmreq_probes,
+			         M10QAsyncReceiver::bench_pmreq_first_ok, M10QAsyncReceiver::bench_pmreq_giveup);
+			reply(buf);
+		}
 	} else if (cmd == "%NOFIX") {
 		if (!GenTracker::is_in_state<OperationalState>())
 			reply("%NOFIX ERR not-operational (use %OP first)");
@@ -596,7 +849,15 @@ bool bench::handle_line(const std::string &raw) {
 		e.event_type = ServiceEventType::SERVICE_LOG_UPDATED;
 		e.event_data = (cmd == "%DIVE");  // true = underwater, false = surfaced
 		ServiceManager::notify_peer_event(e);
-		reply(cmd == "%DIVE" ? "%DIVE OK underwater" : "%SURFACE OK surfaced");
+		{
+			// Absolute uptime on both ends (here and in SmdSat's TXSTART) so a host
+			// stopwatch can split surface-to-air into service latency and driver
+			// latency without another firmware trace.
+			char b[80];
+			snprintf(b, sizeof(b), "%s uptime=%llu", cmd == "%DIVE" ? "%DIVE OK underwater" : "%SURFACE OK surfaced",
+			         (unsigned long long)PMU::get_timestamp_ms());
+			reply(b);
+		}
 	} else {
 		reply(std::string("%ERR unknown-cmd ") + cmd);
 	}

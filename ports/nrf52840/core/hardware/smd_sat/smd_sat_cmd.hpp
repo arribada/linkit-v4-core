@@ -26,6 +26,15 @@ public:
 	virtual void init() = 0;
 	virtual void deinit() = 0;
 
+	/**
+	 * @brief Last call before the module's rail is cut. Default: nothing.
+	 *
+	 * Only the AT/UART transport needs this. Its TX line is left driven HIGH by
+	 * deinit(), which back-powers the module through its ESD clamp once the rail
+	 * drops. SPI idles its lines LOW and has no such path, so it keeps the default.
+	 */
+	virtual void prepare_power_off() {}
+
 	// ========================================================================
 	// Basic communication
 	// ========================================================================

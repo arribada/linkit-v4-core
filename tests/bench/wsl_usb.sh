@@ -46,7 +46,10 @@ case "$cmd" in
         echo ">> auto-attach $busid to WSL (survives flash resets; Ctrl-C to stop)…"
         # --auto-attach re-attaches automatically whenever the device re-enumerates
         # (every flash resets the nRF USB). Device must already be 'Shared' (bound).
-        exec "$USBIPD" attach --wsl --busid "$busid" --auto-attach
+        # --unplugged arms the loop even while the device is momentarily absent,
+        # which is exactly the state right after a flash. Without it the command
+        # refuses to start in the window where it is most needed.
+        exec "$USBIPD" attach --wsl --busid "$busid" --auto-attach --unplugged
         ;;
     auto)
         echo ">> scanning for J-Link / nRF CDC devices…"

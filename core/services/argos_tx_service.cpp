@@ -195,7 +195,7 @@ void ArgosTxService::service_init() {
 			           argos_config.mode == BaseArgosMode::DOPPLER
 			               ? " (aligned on SURFACING_BURST_MAX_S, not ARGOS_BLIND_RETX_PERIOD_S; the "
 			                 "Doppler sequence uses that same FIXED interval instead of ramping)"
-			               : "");
+						   : "");
 		}
 	}
 
@@ -378,13 +378,23 @@ ScheduleDecision ArgosTxService::service_next_schedule() {
 	// the last cycle. Cheap (3 string-length checks); only logs on change.
 	refresh_modulation_availability();
 
-	// Critical battery check: immediate powerdown, no transmission
+	// Critical battery check: immediate powerdown, no transmission.
+	//
+	// Gate on the monitor's CONFIRMED verdict, not on one raw reading. The
+	// monitor only sets m_is_critical_voltage after BATT_CONFIRM_SAMPLES=3
+	// consecutive samples below the threshold (nrf_battery_mon.cpp:349), which is
+	// what makes it safe to act on: a single sample taken during an Argos TX
+	// current spike, or right after a cold boot, reads far below the true state
+	// of charge. This branch calls PMU::powerdown(), and on a sealed tag that is
+	// the end of the mission -- the reed under the glue can never restart it. It
+	// must not fire on a transient.
 	if (argos_config.is_lb) {
 		service_update_battery();
 		unsigned int critical_level = configuration_store->read_param<unsigned int>(ParamID::LB_CRITICAL_THRESH);
 		unsigned int current_soc = service_get_level();
-		if (current_soc < critical_level) {
-			DEBUG_INFO("ArgosTxService: CRITICAL battery SOC %u%% < %u%% - shutdown", current_soc, critical_level);
+		if (current_soc < critical_level && service_is_battery_critical()) {
+			DEBUG_INFO("ArgosTxService: CRITICAL battery SOC %u%% < %u%% (confirmed) - shutdown", current_soc,
+			           critical_level);
 			configuration_store->save_params();
 			PMU::powerdown();
 			return ScheduleDecision::off("battery critical — powering down");
@@ -480,7 +490,8 @@ ScheduleDecision ArgosTxService::schedule_doppler(ArgosConfig &argos_config, std
 	} else {
 		m_scheduled_task = [this]() { process_doppler_burst(); };
 	}
-	m_scheduled_mode = argos_config.adaptive_modulation ? adaptive_doppler_modulation() : resolve_non_adaptive_modulation();
+	m_scheduled_mode =
+	    argos_config.adaptive_modulation ? adaptive_doppler_modulation() : resolve_non_adaptive_modulation();
 
 	// Inter-sequence pause guard. If a reschedule fires while we are
 	// supposed to be paused (e.g., UW surfaced event, GPS log update),
@@ -936,6 +947,12 @@ ScheduleDecision ArgosTxService::schedule_with_gnss(ArgosConfig &argos_config, s
 /// @brief Execute scheduled TX — run the prepared burst task (cert/gnss/sensor/doppler).
 /// Called by ServiceManager when the scheduled time arrives.
 void ArgosTxService::service_initiate() {
+#if defined(BENCH_TEST) && defined(BENCH_LAT_VERBOSE)
+	// Third stopwatch mark: splits the gap between the surfaced event and
+	// SmdSat's TXSTART into "waiting for the scheduler" and "preparing the
+	// packet" (ADC read, depth-pile retrieve, encode).
+	DEBUG_INFO("ArgosTxService: INITIATE uptime=%llu", (unsigned long long)PMU::get_timestamp_ms());
+#endif
 	DEBUG_TRACE("ArgosTxService::service_initiate");
 
 	// Skip TX if the device has failed too many consecutive times this session.
@@ -1164,7 +1181,20 @@ unsigned int ArgosTxService::service_next_timeout() {
 	configuration_store->get_argos_configuration(cfg);
 	if (cfg.blind_en) {
 		unsigned int rn = (cfg.blind_retx_nb < 1) ? 1 : cfg.blind_retx_nb;
-		uint64_t burst_ms = (uint64_t)rn * (uint64_t)cfg.blind_retx_period_s * 1000ULL;
+		// (rn + 1), matching SmdSat::state_transmitting_enter(). These are two
+		// independent timeouts over the SAME burst and the shorter one wins, so
+		// they have to be derived the same way or the outer net cancels a TX the
+		// driver is still legitimately waiting on. Measured on the bench
+		// 2026-09-02 before this was aligned: the driver's window was widened to
+		// 250 s, this one stayed at 30 + 3*60 = 210 s, and the burst died at
+		// "TX cancelled after 4213/5001 failed polls" -- 209 s. The service must
+		// stay the LONGER of the two: its base is 30 s against the driver's
+		// warmup + 5 s, which holds for any TCXO warmup under 25 s.
+		// Must track the driver's poll window (smd_sat.cpp) exactly. That window went
+		// from rn+1 to rn+2 periods on 2026-09-05; leaving this one at rn+1 would put
+		// the shorter timeout back on top and silently win the race -- the defect
+		// 11701d72 exists to prevent.
+		uint64_t burst_ms = ((uint64_t)rn + 2ULL) * (uint64_t)cfg.blind_retx_period_s * 1000ULL;
 		if (burst_ms > 7200000ULL) burst_ms = 7200000ULL;
 		timeout_ms += (unsigned int)burst_ms;
 	}
@@ -1193,8 +1223,17 @@ void ArgosTxService::notify_peer_event(ServiceEvent &e) {
 	// Skipped if we never prepared one (boot underwater, non-SURFACING_BURST).
 	if (m_is_underwater && m_prepared_at_ms != 0) {
 		uint64_t now_ms = PMU::get_timestamp_ms();
+		// Rebuild on a CHANGE, not only on the hourly backstop. The whole point
+		// of the pre-warm is that the surface event sends a ready packet; an
+		// input that moved underwater would otherwise either ship an hour-old
+		// reading or, once the prep aged out, drop the surface back onto the slow
+		// build path -- measured at 435 ms of battery ADC plus the encode.
+		// Underwater there is no latency to protect, so rebuilding early is free.
 		if (now_ms - m_prepared_at_ms >= PREPARED_DOPPLER_REFRESH_MS) {
 			DEBUG_TRACE("ArgosTxService::notify_peer_event: refreshing pre-warmed Doppler packet (>1h underwater)");
+			prepare_doppler_packet();
+		} else if (prepared_doppler_inputs_changed()) {
+			DEBUG_INFO("ArgosTxService: pre-warmed Doppler packet rebuilt underwater — payload inputs changed");
 			prepare_doppler_packet();
 		}
 	}
@@ -1380,7 +1419,26 @@ void ArgosTxService::notify_peer_event(ServiceEvent &e) {
 				}
 			}
 		} else {
-			// Device surfaced
+			// Device surfaced.
+			//
+			// Hold the system log for the first surfacing transmission, and only
+			// for it. Every DEBUG_* line commits to LittleFS, which measured 0.6
+			// to 0.9 s of a 1.7 s surface-to-air path -- the one transmission
+			// where latency is the whole point. The lines are buffered, not lost:
+			// release() replays them once the message is away. Later messages of
+			// the burst have time to spare and keep logging normally.
+			{
+				ArgosConfig hold_cfg;
+				configuration_store->get_argos_configuration(hold_cfg);
+				if (hold_cfg.mode == BaseArgosMode::SURFACING_BURST) DebugLogger::hold();
+			}
+#if defined(BENCH_TEST) && defined(BENCH_LAT_VERBOSE)
+			// Second stopwatch mark. %SURFACE stamps the console reply and SmdSat
+			// stamps TXSTART; this one splits the gap between them into "how long
+			// before the service even sees the event" and "how long it then takes
+			// to reach send()".
+			DEBUG_INFO("ArgosTxService: SURFACED uptime=%llu", (unsigned long long)PMU::get_timestamp_ms());
+#endif
 			m_is_underwater = false;
 			// Reset the session-suspension counter so a transient burst of
 			// failures earlier in the deployment can't permanently kill TX.
@@ -1400,6 +1458,14 @@ void ArgosTxService::notify_peer_event(ServiceEvent &e) {
 			}
 			ArgosConfig argos_config;
 			configuration_store->get_argos_configuration(argos_config);
+			// Seconds, deliberately: schedule_periodic() compares this against
+			// now_epoch_seconds * 1000 (schedule_duty_cycle / schedule_legacy), so
+			// the whole scheduler is second-granular and a millisecond bound taken
+			// from the uptime clock would sit far in the past and send every first
+			// surface TX to the periodic grid. Measured that mistake on the bench
+			// 2026-09-03: 13.6 to 28.9 s of scheduling latency instead of ~1.7 s.
+			// Sub-second precision here needs the RTC and the scheduler re-based
+			// on epoch milliseconds, not a cast at the call site.
 			std::time_t earliest_schedule = service_current_time() + argos_config.dry_time_before_tx;
 			m_sched.set_earliest_schedule(earliest_schedule);
 
@@ -1435,8 +1501,8 @@ void ArgosTxService::notify_peer_event(ServiceEvent &e) {
 				// Outside adaptive mode the modulation comes from the master RCONF, as
 				// on the scheduling path of the same mode further up. An LDA2 hardcoded
 				// here cancelled the operator's setting.
-				m_scheduled_mode =
-				    argos_config.adaptive_modulation ? adaptive_doppler_modulation() : resolve_non_adaptive_modulation();
+				m_scheduled_mode = argos_config.adaptive_modulation ? adaptive_doppler_modulation()
+				                                                    : resolve_non_adaptive_modulation();
 				// Demoted to TRACE: the canonical state-change marker is
 				// "UWDetectorService: state changed: state=0" emitted in the same
 				// broadcast cascade. This log added ~50-300 ms LFS commit on the
@@ -1681,8 +1747,7 @@ void ArgosTxService::process_time_sync_burst() {
 			// (e.g. VLDA4 master = 24 b), fall back to LDA2 if provisioned, else a
 			// clean skip rather than a silent KIM2 oversize drop.
 			if (!can_transmit_on(m_scheduled_mode, size_bits)) {
-				if (can_transmit_on(KineisModulation::LDA2, size_bits)
-				    && ensure_modulation(KineisModulation::LDA2)) {
+				if (can_transmit_on(KineisModulation::LDA2, size_bits) && ensure_modulation(KineisModulation::LDA2)) {
 					DEBUG_WARN("ArgosTxService::process_time_sync_burst: %u bits don't fit master mod %d — falling "
 					           "back to LDA2",
 					           size_bits, (int)m_scheduled_mode);
@@ -1925,8 +1990,7 @@ void ArgosTxService::process_sensor_burst() {
 			// prevails, and we escalate to LDA2 only if the packet does not fit it.
 			m_scheduled_mode = resolve_non_adaptive_modulation();
 			if (!can_transmit_on(m_scheduled_mode, size_bits)) {
-				if (can_transmit_on(KineisModulation::LDA2, size_bits)
-				    && ensure_modulation(KineisModulation::LDA2)) {
+				if (can_transmit_on(KineisModulation::LDA2, size_bits) && ensure_modulation(KineisModulation::LDA2)) {
 					DEBUG_WARN(
 					    "ArgosTxService::process_sensor_burst: %u bits don't fit master mod %d — falling back to LDA2",
 					    size_bits, (int)m_scheduled_mode);
@@ -1987,6 +2051,9 @@ void ArgosTxService::process_gnss_burst() {
 	// here and m_kineis.send() -- a CloudLocate sentinel, a payload that will not
 	// fit the modulation -- leaves the credits spent too, and this is the one spot
 	// that sees them all. Same placement as process_sensor_burst and LoRaTxService.
+#if defined(BENCH_TEST) && defined(BENCH_LAT_VERBOSE)
+	DEBUG_INFO("ArgosTxService: RETRIEVED uptime=%llu", (unsigned long long)PMU::get_timestamp_ms());
+#endif
 	m_inflight_gps = v;
 	m_inflight_reached_air = false;
 	m_inflight_evictions = m_depth_pile_manager.gps_evictions();
@@ -2116,8 +2183,7 @@ void ArgosTxService::process_gnss_burst() {
 			// this TX cleanly rather than letting KIM2 send() drop it silently.
 			// User policy 2026-06-17: keep master modulation; on overflow → LDA2.
 			if (!can_transmit_on(m_scheduled_mode, size_bits)) {
-				if (can_transmit_on(KineisModulation::LDA2, size_bits)
-				    && ensure_modulation(KineisModulation::LDA2)) {
+				if (can_transmit_on(KineisModulation::LDA2, size_bits) && ensure_modulation(KineisModulation::LDA2)) {
 					DEBUG_WARN(
 					    "ArgosTxService::process_gnss_burst: %u bits don't fit master mod %d — falling back to LDA2",
 					    size_bits, (int)m_scheduled_mode);
@@ -2140,6 +2206,9 @@ void ArgosTxService::process_gnss_burst() {
 		// fastloc fallback uses LDA2 + 96-bit packet → still attribute as "gnss"
 		// at this site; the inner fastloc branch above already tagged "fastloc".
 		m_last_val_tx_type = (v.back()->info.event_type == GPSEventType::FASTLOC) ? "fastloc" : "gnss";
+#if defined(BENCH_TEST) && defined(BENCH_LAT_VERBOSE)
+		DEBUG_INFO("ArgosTxService: BUILT uptime=%llu", (unsigned long long)PMU::get_timestamp_ms());
+#endif
 		m_kineis.send(m_scheduled_mode, packet, size_bits);
 	} else {
 		DEBUG_WARN("ArgosTxService::process_gnss_burst: no entries eligible in depth pile");
@@ -2233,6 +2302,14 @@ void ArgosTxService::process_gnss_burst_from_cached() {
 /// Samples the battery and builds the Doppler payload now so the first TX at
 /// surface skips the ADC read + packet build on its critical path. Only acts in
 /// SURFACING_BURST mode; on other modes the prepared state is cleared.
+/// @brief Has anything the prepared Doppler packet encodes moved since it was
+/// built? Compares the battery monitor's CACHED values -- no ADC, no I/O -- so
+/// this is free to call on every peer event while underwater.
+bool ArgosTxService::prepared_doppler_inputs_changed() {
+	return service_get_voltage() != m_prepared_voltage || service_is_battery_level_low() != m_prepared_batt_low
+	       || service_get_level() != m_prepared_level;
+}
+
 void ArgosTxService::prepare_doppler_packet() {
 	ArgosConfig argos_config;
 	configuration_store->get_argos_configuration(argos_config);
@@ -2260,6 +2337,9 @@ void ArgosTxService::prepare_doppler_packet() {
 
 	m_prepared_doppler_packet = packet;
 	m_prepared_doppler_size_bits = size_bits;
+	m_prepared_voltage = service_get_voltage();
+	m_prepared_batt_low = service_is_battery_level_low();
+	m_prepared_level = service_get_level();
 	// 2026-05-25 modulation fix (companion to argos_tx_service.cpp:225):
 	// non-adaptive path was hardcoded to LDA2. The prewarm send (line 1369)
 	// deliberately SKIPS ensure_modulation() to keep the surfacing first-TX
@@ -2308,9 +2388,9 @@ void ArgosTxService::process_doppler_burst() {
 					tx_mode = m_kineis.get_current_modulation();
 				}
 			}
-			DEBUG_TRACE("ArgosTxService::process_doppler_burst: PREWARM mode=%s sz=%u age=%lu ms",
-			            argos_modulation_to_string((BaseArgosModulation)tx_mode), m_prepared_doppler_size_bits,
-			            static_cast<unsigned long>(prep_age_ms));
+			DEBUG_INFO("ArgosTxService::process_doppler_burst: PREWARM mode=%s sz=%u age=%lu ms",
+			           argos_modulation_to_string((BaseArgosModulation)tx_mode), m_prepared_doppler_size_bits,
+			           static_cast<unsigned long>(prep_age_ms));
 			m_last_tx_had_gps = false;
 			KineisPacket prepared = m_prepared_doppler_packet;
 			unsigned int prepared_bits = m_prepared_doppler_size_bits;
@@ -2323,6 +2403,15 @@ void ArgosTxService::process_doppler_burst() {
 		}
 	}
 
+#if defined(BENCH_TEST) && defined(BENCH_LAT_VERBOSE)
+	{
+		ArgosConfig why_cfg;
+		configuration_store->get_argos_configuration(why_cfg);
+		DEBUG_INFO("ArgosTxService: NO-PREWARM burst=%u count=%u mode=%u empty=%u at_ms=%u",
+		           m_is_surfacing_burst ? 1u : 0u, m_doppler_burst_count, (unsigned)why_cfg.mode,
+		           m_prepared_doppler_packet.empty() ? 1u : 0u, m_prepared_at_ms != 0 ? 1u : 0u);
+	}
+#endif
 	service_update_battery();
 	ArgosConfig argos_config;
 	configuration_store->get_argos_configuration(argos_config);
@@ -2633,6 +2722,14 @@ void ArgosTxService::process_doppler_burst() {
 
 /// @brief TX started event — notify service manager that TX is in progress.
 void ArgosTxService::react(KineisEventTxStarted const &) {
+	// THE release point, and not one line earlier. m_kineis.send() only starts
+	// the driver's state machine -- power-on, ping, MAC poll, TCXO, AT+TX all
+	// happen after it returns. Releasing there dumped the replay straight into
+	// that path: measured on the bench, the driver's own share went from
+	// 219-320 ms to 874-1954 ms and the total got worse than doing nothing.
+	// TxStarted means the module has accepted the transmission; the flash is
+	// free to be slow now.
+	DebugLogger::release();
 	DEBUG_TRACE("ArgosTxService::react: KineisEventTxStarted");
 	// The frame is on the air: the try is genuinely used, nothing to give back.
 	m_inflight_reached_air = true;
@@ -2703,8 +2800,7 @@ void ArgosTxService::react(KineisEventTxComplete const &) {
 	// snapshot guards the address matching exactly as the refund path does; if the
 	// pile moved under us we leave the counters alone rather than charge the wrong
 	// position.
-	if (tx_copies > 1 && !m_inflight_gps.empty()
-	    && m_depth_pile_manager.gps_evictions() == m_inflight_evictions) {
+	if (tx_copies > 1 && !m_inflight_gps.empty() && m_depth_pile_manager.gps_evictions() == m_inflight_evictions) {
 		const unsigned int n = m_depth_pile_manager.debit_gps_extra(m_inflight_gps, tx_copies - 1);
 		if (n) {
 			DEBUG_INFO("ArgosTxService: BLIND burst sent %u copies — charged %u extra credit(s) to %u entry(ies)",
@@ -2931,7 +3027,8 @@ void ArgosTxService::react(KineisEventDeviceError const &) {
 		ArgosConfig ac;
 		configuration_store->get_argos_configuration(ac);
 		if (ac.adaptive_modulation && ac.mode == BaseArgosMode::SURFACING_BURST) {
-			KineisModulation target = m_has_gnss_fix_since_surfacing ? KineisModulation::LDK : adaptive_doppler_modulation();
+			KineisModulation target =
+			    m_has_gnss_fix_since_surfacing ? KineisModulation::LDK : adaptive_doppler_modulation();
 			m_modulation_preconfig = target;
 			DEBUG_INFO("ArgosTxService::react: error recovery — caching RCONF for modulation %d", (int)target);
 		}

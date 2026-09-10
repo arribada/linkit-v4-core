@@ -60,7 +60,7 @@ set(BOOL_BUILD_FLAGS
     ENABLE_THERMISTOR_SENSOR ENABLE_MORTALITY_SENSOR ENABLE_SWS_LOG ENABLE_SWS_ANALOG
     GNSS_HAS_BACKUP_BATTERY GPS_FAKE_POSITION STC3117_MIXED_MODE
     ARGOS_SMD LORA_RAK3172 LORA_DCS_ENABLE LORA_POWER_OFF_UNDERWATER
-    SMDSAT_USE_SAFE_TIMINGS SMDSAT_AUTOFALLBACK
+    SMDSAT_USE_SAFE_TIMINGS SMDSAT_AUTOFALLBACK SMDSAT_TXTRACE DEBUG_NO_SYSTEMLOG
     BENCH_TEST BENCH_FORCE_LPM_NONE SMD_FLASH_HOLD SMD_UART KIM2_BLIND_WKUP_RELEASE
     CAM_ENABLE BUZZER_ENABLE
     METRIC_LATENCY_LOG_ENABLE VALIDATION_LOG_ENABLE RSPB_VSENSORS_FLOOR)
@@ -311,7 +311,14 @@ if(${BOARD} MATCHES RSPB)
     set(ENABLE_SWS_ANALOG 0)
     # TPL5111 external wakeup timer support (hardware, not overridable)
     set(EXTERNAL_WAKEUP 1)
-    # TPL5111 configured for 1H45 = 6300 seconds wakeup period (physical config with resistor)
+    # Periode du TPL5111, fixee par la resistance montee sur la carte.
+    # ATTENTION, ce repli n'est PAS ce que produisent les builds reels :
+    # scripts/build_rspb.sh passe -DWAKEUP_PERIOD_DEFAULT=3600 sans condition et
+    # l'ecrase (build_rspb.sh:172, 2026-07-01), et le wiki documente 3600 s.
+    # Le 6300 ci-dessous date du 2026-02-11 et n'a jamais ete resynchronise : il
+    # ne s'applique qu'a un build lance sans le script, ou il ferait avancer la
+    # pseudo-RTC de 2700 s de trop par cycle. A trancher sur la carte (valeur de
+    # la resistance) puis aligner les deux endroits.
     if(NOT DEFINED WAKEUP_PERIOD)
         set(WAKEUP_PERIOD 6300)
     endif()
@@ -601,6 +608,7 @@ target_sources(${TARGET_NAME} PRIVATE
     $<$<BOOL:${ENABLE_SWS_ANALOG}>:${CORE_DIR}/services/sws_analog_calibration.cpp>
     $<$<BOOL:${ENABLE_SWS_ANALOG}>:${CORE_DIR}/services/sws_analog_detection.cpp>
     ${CORE_DIR}/logging/logger.cpp
+    ${CORE_DIR}/logging/debug.cpp
     ${CORE_DIR}/util/haversine.cpp
     ${CORE_DIR}/filesystem/ota_flash_file_updater.cpp
     ${CORE_DIR}/protocol/dte_commands.cpp
@@ -718,6 +726,13 @@ if(ARGOS_SMD)
             ${PROJ_DIR}/core/hardware/smd_sat/smd_sat_cmd_spi.cpp
         )
         target_compile_definitions(${TARGET_NAME} PRIVATE SMD_SPI=1)
+    endif()
+    # -DSMDSAT_TXTRACE=ON re-enables the per-state TX latency trace. Off by
+    # default: the DEBUG_INFO lines are written to system_log through LFS, which
+    # inflates the very latency being measured.
+    if(SMDSAT_TXTRACE)
+        message(STATUS "SMD TX latency trace: ON")
+        target_compile_definitions(${TARGET_NAME} PRIVATE SMDSAT_TXTRACE=1)
     endif()
     target_include_directories(${TARGET_NAME} SYSTEM PRIVATE
         ${PROJ_DIR}/core/hardware/smd_sat
@@ -842,7 +857,10 @@ target_compile_definitions(${TARGET_NAME} PRIVATE
     #BATTERY_NOT_FITTED
     #DUMMY_PRESSURE_SENSOR
     #DEBUG_AD5933
-    DEBUG_TO_SYSTEMLOG
+    # -DDEBUG_NO_SYSTEMLOG=ON drops the LittleFS half of every DEBUG_* line,
+    # keeping the console half. Every log on a latency-critical path is a flash
+    # commit; this is how you measure the path without them.
+    $<$<NOT:$<BOOL:${DEBUG_NO_SYSTEMLOG}>>:DEBUG_TO_SYSTEMLOG>
     ETL_LOG_ERRORS
     ARGOS_USE_CRC8
     PREPASS_EMBEDDED

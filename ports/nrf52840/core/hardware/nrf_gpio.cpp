@@ -44,6 +44,21 @@ void GPIOPins::initialise() {
 	// Ensure power-off state for peripherals controlling power rails
 	clear(GPS_POWER);
 	release_to_highz(GPS_RST);  // Disconnect (ext pull-up, GPS off)
+	// Meme regle pour EXTINT : la boucle ci-dessus vient de la reconfigurer en
+	// OUTPUT (direction BSP) donc pilotee a 0, alors que le rail GNSS est coupe.
+	// main() pose deja cette broche en haute impedance avant init_peripherals
+	// (voir le bloc R1 en tete de main), et la boucle BSP defaisait cet
+	// invariant quelques instructions plus loin ; on le retablit ici.
+	// Portee exacte, pour ne pas surestimer : la Table 20 du manuel SAM-M10Q
+	// interdit categoriquement de piloter une IO sans VCC/V_IO, mais le
+	// mecanisme de degat -- la re-alimentation par la diode ESD -- demande de
+	// piloter AU-DESSUS de VCC. A 0 V il ne s'applique pas, et le pilote s'appuie
+	// d'ailleurs dessus deliberement (voir m10qasync.cpp, exit_shutdown : « driving
+	// LOW into a rail that is not up yet is safe »). C'est donc de la conformite
+	// et de la coherence, pas un correctif contre une destruction.
+	// On garde la direction BSP intacte (init_pin doit toujours rendre la broche
+	// pilotable) et on la relache ici seulement.
+	release_to_highz(BSP::GPIO::GPIO_GPS_EXT_INT);
 
 	// SMD satellite module — force OFF at init.
 	// Hold RESET LOW before cutting power to prevent STM32WL boot on residual VDD.

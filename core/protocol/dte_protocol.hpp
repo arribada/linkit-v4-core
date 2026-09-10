@@ -959,6 +959,13 @@ public:
 		const std::string &command_name = command_map[(unsigned int)command & ~RESP_CMD_BASE].name;
 		unsigned int expected_args = param_values.size();
 
+		// Size the payload up front for the same reason the caller reserves its
+		// vector: appended in a loop it doubles its capacity, holding the old and
+		// new blocks at once. A full read is ~1548 bytes over 163 params, so 16
+		// bytes per entry covers the usual "KEY=VALUE," and stays one allocation.
+		// It is a hint, not a bound -- a longer value still grows normally.
+		payload.reserve(expected_args * 16);
+
 		// Ignore additional arguments if an error was indicated or expected number of args does match
 		for (unsigned int arg_index = 0; arg_index < expected_args; arg_index++) {
 			const BaseMap &map = param_map[(unsigned int)param_values[arg_index].param];

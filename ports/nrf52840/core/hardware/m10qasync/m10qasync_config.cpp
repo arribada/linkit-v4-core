@@ -134,6 +134,17 @@ void M10QAsyncReceiver::soft_reset() {
 	if (m_nav_settings.cold_start) {
 		DEBUG_INFO("M10QAsyncReceiver: COLD START applique (BBR effacee) — demande consommee");
 		m_nav_settings.cold_start = false;
+		// 2026-09 : la BBR vient d'etre effacee, donc l'etat « BBR retenue » etabli
+		// au moment de la synchro baud est desormais FAUX. Sans cette ligne, les
+		// deux sorties anticipees de supply_time_assistance (etape 13) et
+		// supply_position_assistance (etape 14) se declenchaient sur une BBR vide
+		// et le recepteur repartait sans heure NI position — l'exact contraire de
+		// ce que le commentaire ci-dessus promet. Le defaut existait deja pour
+		// l'heure ; l'alignement de la position l'aurait double.
+		// Effet de bord voulu : load_dbd_from_flash retombe sur le plafond d'age
+		// « sans BBR » (14 j au lieu de 72 h), ce qui est correct puisque le
+		// recepteur n'a effectivement plus rien.
+		m_bbr_retained = false;
 	}
 }
 
@@ -386,10 +397,37 @@ void M10QAsyncReceiver::supply_time_assistance() {
 	                                    MessageClass::MSG_CLASS_MGA, MGA::ID_ACK);
 }
 
+// Every early exit here MUST advance the configure FSM itself, exactly as
+// supply_time_assistance() does above. The caller (m10qasync.cpp, configure step
+// 14) sets m_op_state = PENDING and breaks, and the PENDING arm of the state
+// machine is also a bare break: a plain `return` leaves the FSM parked forever
+// with no timeout armed and nothing to wake it. Configuration then stops at step
+// 14 -- no ANO, no DBD, NAV-PVT never enabled -- and every later session hangs
+// the same way. On a sealed tag nothing recovers it: the Argos presence
+// heartbeat keeps LAST_TX fresh, beacon_is_transmitting() therefore holds off
+// both GNSS watchdogs' reset branch, and each NO_FIX re-arms the 24 h watchdog
+// it should have tripped.
 void M10QAsyncReceiver::supply_position_assistance() {
+	// Meme sortie anticipee que supply_time_assistance() : un recepteur qui a
+	// garde sa BBR y tient deja sa derniere position, calculee par lui-meme et
+	// forcement meilleure que l'entree de journal que nous lui rejouerions. On
+	// sautait deja l'heure dans ce cas mais on poussait quand meme la position :
+	// un aller-retour UBX pour rien, et une incoherence entre les deux etapes.
+	if (m_bbr_retained) {
+		DEBUG_INFO("M10QAsyncReceiver::supply_position_assistance: BBR retained — the receiver has its own position, "
+		           "injection unnecessary");
+		m_step++;
+		m_op_state = OpState::IDLE;
+		run_state_machine();
+		return;
+	}
+
 	const auto &last_gps = configuration_store->get_last_gps_entry();
 	if (!last_gps.info.valid) {
 		DEBUG_TRACE("M10QAsyncReceiver::supply_position_assistance: no valid last position");
+		m_step++;
+		m_op_state = OpState::IDLE;
+		run_state_machine();
 		return;
 	}
 
@@ -399,6 +437,9 @@ void M10QAsyncReceiver::supply_position_assistance() {
 	if (rtc->time_accuracy_s() == 0) {
 		DEBUG_INFO("M10QAsyncReceiver::supply_position_assistance: time unreliable — position age not computable, "
 		           "no injection");
+		m_step++;
+		m_op_state = OpState::IDLE;
+		run_state_machine();
 		return;
 	}
 
@@ -427,6 +468,9 @@ void M10QAsyncReceiver::supply_position_assistance() {
 		DEBUG_INFO("M10QAsyncReceiver::supply_position_assistance: position too old (age %lu s, radius %lu km) — "
 		           "no injection",
 		           age_s, acc_cm / 100000UL);
+		m_step++;
+		m_op_state = OpState::IDLE;
+		run_state_machine();
 		return;
 	}
 
