@@ -1780,6 +1780,31 @@ TEST(DTEHandler, PARMW_REQ_UnknownParamKey) {
 // serialize_config() always writes the complete in-RAM table to config.dat. The
 // test pins that contract: nothing in a later batch may clear an earlier one,
 // and everything must survive a reload from flash.
+TEST(DTEHandler, PARMR_AllKeysUnknownIsNotAWholeConfigDump) {
+	// Le defaut d'origine : une liste dont TOUTES les clefs sont inconnues
+	// arrivait vide au handler, indiscernable d'une requete vide -- qui veut dire
+	// « rends-moi tout ». La balise repondait sa configuration ENTIERE a une faute
+	// de frappe, et une clef assez longue suffisait a forcer une reponse enorme.
+	//
+	// Le decodeur enregistre les clefs rejetees pour que le handler distingue les
+	// deux cas. Ce test tient ce contrat -- et il le tient TOUJOURS apres
+	// l'agregation des avertissements du 2026-09-10, qui ne devait changer que la
+	// journalisation, jamais le fait que chaque clef rejetee remonte a l'appelant.
+	std::string resp;
+
+	// "XXXXX,YYYYY" = 11 caracteres = 0x00B
+	std::string req = "$PARMR#00B;XXXXX,YYYYY\r";
+	dte_handler->handle_dte_message(req, resp);
+
+	// Refus explicite, pas un dump.
+	std::string expected = "$N;PARMR#001;" + std::to_string((unsigned int)DTEError::PARAM_KEY_UNRECOGNISED) + "\r";
+	STRCMP_EQUAL(expected.c_str(), resp.c_str());
+
+	// Et surtout : la reponse est courte. Un dump complet ferait des centaines
+	// d'octets ; c'est la propriete qui protege du deni de service.
+	CHECK(resp.size() < 32);
+}
+
 TEST(DTEHandler, PARMW_BatchedWritesDoNotClobberEachOther) {
 	std::string resp;
 

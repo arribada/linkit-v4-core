@@ -1060,7 +1060,14 @@ private:
 				return true;
 			}
 		}
-		DEBUG_WARN("Unknown parameter key \"%s\" - skipping", key.c_str());
+		// TRACE et non WARN : cette ligne partait dans le journal FLASH, une par
+		// clef inconnue, et l'appelant en emettait une SECONDE pour la meme clef.
+		// Une application de configuration qui interroge toutes les clefs qu'elle
+		// connait en heurte des dizaines sur un build ou les capteurs
+		// correspondants ne sont pas compiles -- ce qui est normal et attendu.
+		// Le detail par clef reste disponible en build debug ; la synthese part
+		// en WARN une fois par requete (voir log_unknown_keys).
+		DEBUG_TRACE("Unknown parameter key \"%s\" - skipping", key.c_str());
 		return false;
 	}
 
@@ -1386,8 +1393,47 @@ private:
 		}
 	}
 
+	/// @brief Emet UNE ligne pour toutes les clefs inconnues d'une requete.
+	///
+	/// Un DEBUG_WARN n'ecrit pas que sur la console : il part aussi dans le
+	/// journal systeme en FLASH. Mesure sur carte le 2026-09-10, lecture de
+	/// configuration depuis l'application par BLE : ~170 ms par ligne, deux
+	/// lignes par clef inconnue, une soixantaine de clefs inconnues -- soit une
+	/// vingtaine de secondes ajoutees a une session qui en a dure vingt-deux.
+	/// Les clefs inconnues sont pourtant le cas NORMAL : l'application demande
+	/// tout ce qu'elle connait, le firmware ne compile que les familles de
+	/// parametres dont les capteurs sont presents dans le build.
+	///
+	/// La ligne de log est bornee (MAX_LOG_SIZE) et vsnprintf tronquerait en
+	/// silence, potentiellement au milieu d'une clef. On s'arrete donc AVANT la
+	/// limite et on annonce explicitement le reste par un compte.
+	static void log_unknown_keys(const std::vector<std::string> &unknown) {
+		if (unknown.empty()) return;
+		constexpr size_t LIST_BUDGET = 72;
+		std::string list;
+		size_t shown = 0;
+		for (const auto &k : unknown) {
+			if (list.size() + k.size() + 1 > LIST_BUDGET) break;
+			if (shown) list += ",";
+			list += k;
+			shown++;
+		}
+		if (shown < unknown.size())
+			DEBUG_WARN("DTEDecoder: %u unknown keys ignored: %s (+%u more)", (unsigned int)unknown.size(), list.c_str(),
+			           (unsigned int)(unknown.size() - shown));
+		else
+			DEBUG_WARN("DTEDecoder: %u unknown keys ignored: %s", (unsigned int)unknown.size(), list.c_str());
+	}
+
 	static size_t decode(const std::string &s, std::vector<ParamID> &val, std::vector<std::string> &rejected_keys) {
 		constexpr std::string_view delim = ",";
+
+		// Collecte locale pour la synthese. Distincte de rejected_keys, que
+		// l'appelant utilise pour distinguer « rien demande » de « rien reconnu »
+		// et qui peut aussi recevoir des clefs refusees pour une VALEUR invalide
+		// -- celles-la gardent leur propre avertissement, elles sont rares et
+		// chacune merite d'etre vue.
+		std::vector<std::string> unknown;
 
 		// Iterate over comma seperated values
 		size_t prev = 0;
@@ -1421,20 +1467,25 @@ private:
 					// answered with its ENTIRE configuration to a typo, and a long
 					// enough key was enough to force a huge response. We record them
 					// so that the caller can tell the difference.
-					DEBUG_WARN("DTEDecoder: unknown key \"%s\" ignored", key.c_str());
+					DEBUG_TRACE("DTEDecoder: unknown key \"%s\" ignored", key.c_str());
 					rejected_keys.push_back(key);
+					unknown.push_back(key);
 				}
 			}
 
 			prev = pos + delim.size();
 		} while (pos < s.length() && prev < s.length());
 
+		log_unknown_keys(unknown);
 		return s.size();
 	}
 
 	static size_t decode(std::string &s, std::vector<ParamValue> &val, std::vector<std::string> &rejected_keys) {
 		// Iterate over comma seperated values
 		constexpr std::string_view delim = ",";
+
+		// Meme collecte locale que le decodeur de listes de clefs ci-dessus.
+		std::vector<std::string> unknown;
 
 		size_t prev = 0;
 		size_t pos = 0;
@@ -1451,9 +1502,10 @@ private:
 					std::string key = key_str.substr(0, equals_loc);
 					std::string value = key_str.substr(equals_loc + 1, std::string::npos);
 
-					// Skip unknown parameters (logs warning but continues processing)
+					// Skip unknown parameters (traced per key, summarised once below)
 					if (!try_lookup_key(key, key_value.param)) {
 						rejected_keys.push_back(key);
+						unknown.push_back(key);
 						prev = pos + delim.size();
 						continue;
 					}
@@ -1642,6 +1694,7 @@ private:
 			prev = pos + delim.size();
 		} while (pos < s.length() && prev < s.length());
 
+		log_unknown_keys(unknown);
 		return s.size();
 	}
 
