@@ -378,13 +378,23 @@ ScheduleDecision ArgosTxService::service_next_schedule() {
 	// the last cycle. Cheap (3 string-length checks); only logs on change.
 	refresh_modulation_availability();
 
-	// Critical battery check: immediate powerdown, no transmission
+	// Critical battery check: immediate powerdown, no transmission.
+	//
+	// Gate on the monitor's CONFIRMED verdict, not on one raw reading. The
+	// monitor only sets m_is_critical_voltage after BATT_CONFIRM_SAMPLES=3
+	// consecutive samples below the threshold (nrf_battery_mon.cpp:349), which is
+	// what makes it safe to act on: a single sample taken during an Argos TX
+	// current spike, or right after a cold boot, reads far below the true state
+	// of charge. This branch calls PMU::powerdown(), and on a sealed tag that is
+	// the end of the mission -- the reed under the glue can never restart it. It
+	// must not fire on a transient.
 	if (argos_config.is_lb) {
 		service_update_battery();
 		unsigned int critical_level = configuration_store->read_param<unsigned int>(ParamID::LB_CRITICAL_THRESH);
 		unsigned int current_soc = service_get_level();
-		if (current_soc < critical_level) {
-			DEBUG_INFO("ArgosTxService: CRITICAL battery SOC %u%% < %u%% - shutdown", current_soc, critical_level);
+		if (current_soc < critical_level && service_is_battery_critical()) {
+			DEBUG_INFO("ArgosTxService: CRITICAL battery SOC %u%% < %u%% (confirmed) - shutdown", current_soc,
+			           critical_level);
 			configuration_store->save_params();
 			PMU::powerdown();
 			return ScheduleDecision::off("battery critical — powering down");

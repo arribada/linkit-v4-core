@@ -403,7 +403,7 @@ Is25Flash *bench_flash = nullptr;
 ArgosTxService *argos_tx_service_instance = nullptr;
 #endif
 
-[[noreturn]] static void flash_init_failed() {
+[[noreturn]] static void storage_unusable(const char *what) {
 	if (s_flashfail.magic != FLASHFAIL_MAGIC) {
 		s_flashfail.magic = FLASHFAIL_MAGIC;
 		s_flashfail.count = 0;
@@ -412,14 +412,14 @@ ArgosTxService *argos_tx_service_instance = nullptr;
 	const uint32_t fails = s_flashfail.count;
 
 	if (fails <= FLASH_INIT_MAX_RESETS) {
-		DEBUG_ERROR("IS25 flash init failed (%lu/%lu) — explicit reset to retry recovery", (unsigned long)fails,
+		DEBUG_ERROR("%s failed (%lu/%lu) — explicit reset to retry recovery", what, (unsigned long)fails,
 		            (unsigned long)FLASH_INIT_MAX_RESETS);
 		blink_bounded(RGBLedColor::RED, 2000, 100, true);
 		PMU::reset(false);
 		for (;;) {}  // PMU::reset does not return
 	}
 
-	DEBUG_ERROR("IS25 flash init failed (%lu) — unrecoverable, deferring to the watchdog", (unsigned long)fails);
+	DEBUG_ERROR("%s failed (%lu) — unrecoverable, deferring to the watchdog", what, (unsigned long)fails);
 #ifdef DEBUG_NO_WATCHDOG
 	// No watchdog to reclaim us on this build: keep rebooting on our own, slowly.
 	blink_bounded(RGBLedColor::RED, 30000, 100, false);
@@ -692,7 +692,7 @@ static InitContext init_peripherals() {
 
 	DEBUG_TRACE("IS25 flash...");
 	static Is25Flash is25_flash;
-	if (!is25_flash.init()) flash_init_failed();  // never returns
+	if (!is25_flash.init()) storage_unusable("IS25 flash init");  // never returns
 
 	// The flash is up: forget any past bring-up failures so a transient fault
 	// months from now gets the full retry budget again rather than dropping
@@ -867,16 +867,20 @@ static LFSFileSystem &init_storage(NrfSwitch &nrf_reed_switch, Is25Flash &is25_f
 	DEBUG_TRACE("Mount LFS filesystem...");
 #ifdef FORCE_FORMAT_FILESYSTEM
 	DEBUG_WARN("FORCE_FORMAT_FILESYSTEM enabled - formatting filesystem!");
+	// Never PMU::powerdown() here. That is SYSTEMOFF with the reed as the only
+	// wake source, and on a sealed tag the reed is under the glue: the mission
+	// ends on one bad mount. Use the same bounded policy the flash path already
+	// uses -- a few announced reboots, then defer to the watchdog, which keeps
+	// retrying every 15 min. A filesystem that failed once may well mount on the
+	// next boot; a tag that switched itself off never gets the chance.
 	if (main_filesystem->format() < 0 || main_filesystem->mount() < 0) {
-		DEBUG_ERROR("Failed to format LFS filesystem");
-		PMU::powerdown();
+		storage_unusable("LFS format");
 	}
 #else
 	if (main_filesystem->mount() < 0) {
 		DEBUG_TRACE("Format LFS filesystem...");
 		if (main_filesystem->format() < 0 || main_filesystem->mount() < 0) {
-			DEBUG_ERROR("Failed to format LFS filesystem");
-			PMU::powerdown();
+			storage_unusable("LFS mount+format");
 		}
 	}
 #endif

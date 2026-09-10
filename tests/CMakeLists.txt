@@ -461,6 +461,7 @@ target_sources(${TURTLE_SIM_NAME} PRIVATE
     "${NRF_DIR}/core/hardware/lora_rak3172/lora_rak3172_comm.cpp"
     "${NRF_DIR}/core/hardware/cdt/cdt.cpp"
     "src/turtle_simulation_test.cpp"
+    "src/turtle_mission_sim.cpp"
     "src/turtle_simulation_1year.cpp"
     "src/turtle_simulation_shortsurface.cpp"
     "src/turtle_main.cpp"

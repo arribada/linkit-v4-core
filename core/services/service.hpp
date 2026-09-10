@@ -257,6 +257,10 @@ protected:
 	uint8_t service_get_level();
 	/// @brief Check if battery is below low threshold.
 	bool service_is_battery_level_low();
+	/// @brief Battery critical, CONFIRMED over BATT_CONFIRM_SAMPLES consecutive
+	/// readings. Use this, never a single service_get_level(), before any action
+	/// that cannot be undone on a sealed device.
+	bool service_is_battery_critical();
 	/// @brief Get current hardware timer counter (ms).
 	uint64_t service_current_timer();
 	template <typename T> T &service_read_param(ParamID param_id) {

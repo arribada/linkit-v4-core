@@ -433,6 +433,10 @@ bool Service::service_is_battery_level_low() {
 	return battery_monitor->is_battery_low();
 }
 
+bool Service::service_is_battery_critical() {
+	return battery_monitor->is_battery_critical();
+}
+
 #ifdef BENCH_TEST
 /// Record the scheduling decision for the bench console. Deliberately placed on
 /// EVERY branch of reschedule(), including those that plan nothing: a test that
