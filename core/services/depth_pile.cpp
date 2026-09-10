@@ -75,14 +75,30 @@ void DepthPileManager::notify_peer_event(ServiceEvent &e) {
 	           && e.event_type == ServiceEventType::SERVICE_LOG_UPDATED) {
 		DEBUG_TRACE("DepthPileManager::notify_peer_event: SEA_TEMP cache set");
 		ServiceSensorData &entry = std::get<ServiceSensorData>(e.event_data);
-		// Encoding: (°C + 126) × 100, same step (0.01°C) and pattern as
-		// pressure_temp / AXL temp / thermistor. The offset +126 °C reflects the
-		// EZO-RTD valid range floor (-126 °C, cf ezo_rtd.cpp). Multiplier × 100
-		// keeps the result inside the 14-bit field (max 16383) for typical
-		// marine temps; a previous × 1000 truncated silently via PACK_BITS for
-		// every value > -109.6 °C — i.e. all real sea readings. Decoder:
-		//   °C = encoded / 100 − 126.
-		m_sea_temp_cache.port[0] = (unsigned int)((entry.port[0] + 126.0) * 100U);
+		// Encodage: (°C + 126) × 1000, pas de 0,001 °C. L'offset +126 °C est le
+		// plancher de plage de l'EZO-RTD (-126 °C, cf ezo_rtd.cpp).
+		//
+		// Ce cache alimente DEUX champs de largeurs differentes, et c'est toute
+		// l'histoire de cette ligne :
+		//   - Argos, paquet capteur generique : 21 bits. × 1000 y tient (20 °C
+		//     -> 146 000 < 2 097 151) et c'est la resolution pour laquelle ces
+		//     21 bits ont ete prevus.
+		//   - LoRa : 14 bits. × 1000 y debordait et PACK_BITS tronquait EN
+		//     SILENCE des -109,6 °C, donc pour toute temperature de mer reelle.
+		//
+		// Le correctif 5e566e07 (2026-05-13) avait ramene ce cache a × 100 pour
+		// tenir dans les 14 bits de LoRa. LoRa a ete repare, mais Argos, qui
+		// n'avait aucun probleme, y a perdu un facteur 10 de resolution, 7 de ses
+		// 21 bits sont devenus des zeros permanents, et son decodeur documente
+		// (/1000 - 126) est devenu faux : un relevé de 20 °C se decodait -111,4 °C.
+		// Le correctif visait le bon defaut mais au mauvais etage.
+		//
+		// 2026-09 : l'echelle revient donc ici a celle du champ LE PLUS LARGE, et
+		// c'est le constructeur LoRa qui divise par 10 pour son champ etroit (cf
+		// lora_packet_builder.cpp). Sur le fil, LoRa emet exactement ce qu'il
+		// emettait ; Argos retrouve ses 0,001 °C et son decodeur documente.
+		// Decodeur Argos : °C = encoded / 1000 - 126.
+		m_sea_temp_cache.port[0] = (unsigned int)((entry.port[0] + 126.0) * 1000U);
 		m_sensor_tx_current |= (1 << (int)ServiceIdentifier::SEA_TEMP_SENSOR);
 #if ENABLE_THERMISTOR_SENSOR
 	} else if (e.event_source == ServiceIdentifier::THERMISTOR_SENSOR

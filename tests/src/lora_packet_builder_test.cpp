@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "lora_packet_builder.hpp"
+#include "argos_packet_builder.hpp"
 #include "depth_pile.hpp"
 #include "messages.hpp"
 #include "bitpack.hpp"
@@ -279,6 +280,63 @@ TEST(LoRaPacketBuilder, TrimToPayloadCapacity) {
 // their burst_counter is still non-zero.
 // ===========================================================================
 TEST_GROUP(BoundedDepthPile){};
+
+TEST_GROUP(SeaTempEncoding){};
+
+// ---------------------------------------------------------------------------
+// Temperature de mer : UNE valeur en cache, DEUX largeurs de champ.
+//
+// depth_pile cache (°C + 126) × 1000, l'echelle du champ Argos (21 bits). Le
+// champ LoRa n'en fait que 14 : le constructeur LoRa divise donc par 10.
+//
+// Ces deux tests figent le contrat des deux cotes. Il a deja ete casse une
+// fois : le correctif 5e566e07 avait ramene le cache a × 100 pour tenir dans
+// les 14 bits de LoRa, ce qui a fait perdre a Argos un facteur 10 de
+// resolution et rendu FAUX son decodeur documente (un relevé de 20 °C se
+// decodait -111,4 °C au sol).
+// ---------------------------------------------------------------------------
+TEST(SeaTempEncoding, LoRaNarrowsTheCachedValueToFourteenBits) {
+	ServiceSensorData st{};
+	st.port[0] = (20.0 + 126.0) * 1000.0;  // ce que depth_pile met en cache
+
+	unsigned int size_bits = 0;
+	KineisPacket pkt =
+	    LPB::build_sensor_packet(nullptr, nullptr, nullptr, nullptr, &st, nullptr, false, false, size_bits);
+
+	unsigned int pos = LPB::BITS_HEADER + LPB::BITS_SENSOR_MASK;
+	unsigned int raw = 0;
+	EXTRACT_BITS(raw, pkt, pos, LPB::BITS_SEA_TEMP);
+
+	// Sur le fil LoRa : (°C + 126) × 100, inchange depuis toujours.
+	CHECK_EQUAL(14600U, raw);
+	DOUBLES_EQUAL(20.0, raw / 100.0 - 126.0, 0.005);
+
+	// Et la raison d'etre de la division : la valeur du cache ne tiendrait pas.
+	CHECK(146000U > ((1U << LPB::BITS_SEA_TEMP) - 1U));
+}
+
+TEST(SeaTempEncoding, ArgosKeepsTheFullThousandthScale) {
+	// Entree sans fix : le bloc position occupe la meme largeur (21+22+7+1) que
+	// pour un fix valide, donc l'offset du champ mer ne change pas.
+	GPSLogEntry e{};
+	e.info.valid = false;
+	ServiceSensorData st{};
+	st.port[0] = (20.0 + 126.0) * 1000.0;
+
+	unsigned int size_bits = 0;
+	KineisPacket pkt =
+	    ArgosPacketBuilder::build_sensor_packet(&e, nullptr, nullptr, nullptr, &st, nullptr, false, false, size_bits);
+
+	// Prefixe fixe du paquet capteur Argos : en-tete 3 + date 16 + position 51
+	// + batterie 8 + masque 5 = 83 bits, puis la mer sur 21 bits (ni ALS, ni pH,
+	// ni pression ici).
+	unsigned int pos = 83;
+	unsigned int raw = 0;
+	EXTRACT_BITS(raw, pkt, pos, 21);
+
+	CHECK_EQUAL(146000U, raw);
+	DOUBLES_EQUAL(20.0, raw / 1000.0 - 126.0, 0.0005);
+}
 
 TEST(BoundedDepthPile, EvictsOldestRegardlessOfBurstCounter) {
 	DepthPile<GPSLogEntry> dp;

@@ -317,9 +317,29 @@ KineisPacket LoRaPacketBuilder::build_sensor_packet(GPSLogEntry *gps, ServiceSen
 		PACK_BITS((unsigned int)pressure->port[1], packet, base_pos, BITS_PRESS_TEMP);
 	}
 
-	// Sea temperature / Thermistor
+	// Sea temperature / Thermistor — emplacement partage, deux encodages.
+	//
+	// Le cache depth_pile porte la temperature de mer en (°C + 126) × 1000, qui
+	// est l'echelle du champ Argos (21 bits). Ce champ-ci n'en fait que 14 : on
+	// divise donc par 10 pour emettre (°C + 126) × 100, ce que LoRa a toujours
+	// emis. Sans cette division, PACK_BITS tronquerait EN SILENCE des -109,6 °C,
+	// soit pour toute temperature de mer reelle.
+	//
+	// La division est sous drapeau de compilation, et c'est ce qui la rend sure :
+	// le CMake INTERDIT d'activer THERMISTOR et SEA_TEMP ensemble (FATAL_ERROR),
+	// donc le build sait toujours lequel des deux alimente cet emplacement. Sur
+	// un build thermistance le cache porte (°C + 40) × 100, deja a l'echelle de
+	// ce champ, et cette division n'existe pas.
+	//
+	// Decodeur, selon le capteur COMPILE :
+	//   mer          : °C = encoded / 100 - 126
+	//   thermistance : °C = encoded / 100 - 40
 	if (sea_temp) {
+#if ENABLE_SEA_TEMP_SENSOR
+		PACK_BITS((unsigned int)(sea_temp->port[0] / 10), packet, base_pos, BITS_SEA_TEMP);
+#else
 		PACK_BITS((unsigned int)sea_temp->port[0], packet, base_pos, BITS_SEA_TEMP);
+#endif
 	}
 
 	// Accelerometer

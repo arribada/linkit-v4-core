@@ -2368,12 +2368,21 @@ TEST(ArgosTxService, DepthPileManagerTestSensorValueConversion) {
 	CHECK_EQUAL(200, (unsigned int)converted->port[1]);
 	converted = man.retrieve_sensor_single(1, ServiceIdentifier::SEA_TEMP_SENSOR);
 	CHECK_FALSE(nullptr == converted);
-	// Encoding: (°C + 126) × 100, dropped from × 1000 because the 14-bit field
-	// truncated silently via PACK_BITS for every value > -109.6 °C (see comment
-	// in depth_pile.cpp). For -12.343 °C: (-12.343 + 126) × 100 = 11365 (uint
-	// truncation of 11365.7). Previous expected value 113657 matched the old
-	// × 1000 formula and is now stale.
-	CHECK_EQUAL(11365, (unsigned int)converted->port[0]);
+	// Encodage: (°C + 126) × 1000. Pour -12,343 °C : 113657.
+	//
+	// Cette ligne a deja fait l'aller-retour, et c'est instructif. En mai
+	// (5e566e07) le cache est passe a × 100 pour tenir dans les 14 bits du champ
+	// LoRa, et CE TEST A ETE MIS A JOUR POUR SUIVRE -- 113657 est devenu 11365.
+	// Le test a donc entérine la regression au lieu de la signaler : le champ
+	// Argos fait 21 bits, × 1000 y tenait, et c'est lui qui a perdu un facteur 10
+	// de resolution pendant que son decodeur documente devenait faux.
+	//
+	// Depuis 2026-09, l'echelle du cache est celle du champ LE PLUS LARGE et
+	// c'est le constructeur LoRa qui divise par 10 pour son champ etroit. Si ce
+	// nombre doit rechanger un jour, verifier d'abord les DEUX largeurs de champ
+	// (Argos 21 bits, LoRa 14 bits) avant de toucher a la valeur attendue.
+	// Voir aussi les tests du groupe SeaTempEncoding, qui figent les deux cotes.
+	CHECK_EQUAL(113657, (unsigned int)converted->port[0]);
 }
 
 // Helper: verify a built LDA2 sensor packet has the right size, the expected data prefix,
@@ -4479,8 +4488,8 @@ TEST(ArgosTxService, BuildCertificationPacketSizedToVlda4) {
 TEST(ArgosTxService, BuildCertificationPacketSizedToLdk) {
 	unsigned int size_bits;
 	// 20 bytes offered, LDK carries 12.
-	std::string x = ArgosPacketBuilder::build_certification_packet(
-	    "AABBCCDDEEFF00112233445566778899AABBCCDDEEFF", KineisModulation::LDK, size_bits);
+	std::string x = ArgosPacketBuilder::build_certification_packet("AABBCCDDEEFF00112233445566778899AABBCCDDEEFF",
+	                                                               KineisModulation::LDK, size_bits);
 	CHECK_EQUAL(ArgosPacketBuilder::SHORT_PACKET_BITS, size_bits);
 	CHECK_EQUAL(ArgosPacketBuilder::SHORT_PACKET_BYTES, x.size());
 }
