@@ -326,6 +326,18 @@ void PMU::powerdown() {
 #endif
 
 #ifdef VSYS_SEL
+	// 2026-09 : descendre le seuil de brownout AVANT de baisser le rail, comme le
+	// font deja storage_off_check() et reduce_power_rails(). POFCON est arme a
+	// 2,7 V alors que le rail bascule a 2,3 V : sans cela le comparateur assere
+	// POFWARN en continu pendant toute la fin de la sequence d'extinction, soit
+	// jusqu'a ~1 s d'attente du POWER_CONTROL ci-dessous, et l'observateur SoC de
+	// l'application y repond par des sauvegardes a repetition. Pire si le
+	// SYSTEMOFF final est refuse (sonde attachee, champ NFC) : on reste alors
+	// dans la boucle WFI avec l'alarme collee. C'etait le dernier chemin qui
+	// baissait le rail sans preparer le seuil.
+#ifdef SOFTDEVICE_PRESENT
+	if (nrf_sdh_is_enabled()) sd_power_pof_threshold_set(NRF_POWER_THRESHOLD_V20);  // 2,0 V < 2,3 V du rail
+#endif
 	GPIOPins::clear(VSYS_SEL);
 #endif
 

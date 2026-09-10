@@ -970,10 +970,16 @@ void SmdSat::state_load_kmac() {
 }
 
 void SmdSat::state_idle_pending_enter() {
-	TXTRACE("state_idle_pending_enter: init SPI, will ping STM32");
+	TXTRACE("state_idle_pending_enter: init transport, will ping STM32");
 	LATMARK();
-	// Init SPI here (after power-on + reset release) to avoid MISO backfeed.
-	// STM32WL has booted and its GPIOs are in a defined state now.
+	// Init the transport here (after power-on + reset release) to avoid MISO
+	// backfeed on the SPI build. STM32WL has booted and its GPIOs are in a
+	// defined state now.
+	//
+	// 2026-09 : le libelle disait « init SPI ». Cette machine a etats est
+	// AGNOSTIQUE du transport -- m_cmd est l'interface, et le build SMD_UART y
+	// branche la variante AT. Lire « SPI » dans une trace prise sur un build UART
+	// fait douter de la mesure elle-meme ; c'est arrive.
 	m_cmd.init();
 	m_next_delay = SMDSAT_DELAY_STATE_TICK_MS;
 	m_state_counter = 10;

@@ -109,13 +109,24 @@ ScheduleDecision LoRaTxService::service_next_schedule() {
 
 	DEBUG_TRACE("LoRaTxService::service_next_schedule_in_ms");
 
-	// Critical battery check
+	// Critical battery check: immediate powerdown, no transmission.
+	//
+	// Meme garde que ArgosTxService : on consulte le verdict CONFIRME du
+	// moniteur, pas un relevé brut. m_is_critical_voltage n'est pose qu'apres
+	// BATT_CONFIRM_SAMPLES = 3 echantillons consecutifs sous le seuil, ce qui est
+	// ce qui rend l'action sure : un echantillon isole, pris pendant une pointe de
+	// courant d'emission ou juste apres un demarrage a froid, lit tres au-dessous
+	// de l'etat reel. Cette branche appelle PMU::powerdown(), et sur une balise
+	// scellee c'est la fin de la mission -- le reed est sous la colle.
+	// Ce chemin avait ete oublie lors du durcissement d'ArgosTxService : une
+	// balise LoRa s'eteignait encore sur un transitoire.
 	if (argos_config.is_lb) {
 		service_update_battery();
 		unsigned int critical_level = configuration_store->read_param<unsigned int>(ParamID::LB_CRITICAL_THRESH);
 		unsigned int current_soc = service_get_level();
-		if (current_soc < critical_level) {
-			DEBUG_INFO("LoRaTxService: CRITICAL battery SOC %u%% < %u%% - shutdown", current_soc, critical_level);
+		if (current_soc < critical_level && service_is_battery_critical()) {
+			DEBUG_INFO("LoRaTxService: CRITICAL battery SOC %u%% < %u%% (confirmed) - shutdown", current_soc,
+			           critical_level);
 			configuration_store->save_params();
 			PMU::powerdown();
 			return ScheduleDecision::off("critical battery — powering down");
