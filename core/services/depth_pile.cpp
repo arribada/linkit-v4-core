@@ -75,14 +75,9 @@ void DepthPileManager::notify_peer_event(ServiceEvent &e) {
 	           && e.event_type == ServiceEventType::SERVICE_LOG_UPDATED) {
 		DEBUG_TRACE("DepthPileManager::notify_peer_event: SEA_TEMP cache set");
 		ServiceSensorData &entry = std::get<ServiceSensorData>(e.event_data);
-		// Encoding: (°C + 126) × 100, same step (0.01°C) and pattern as
-		// pressure_temp / AXL temp / thermistor. The offset +126 °C reflects the
-		// EZO-RTD valid range floor (-126 °C, cf ezo_rtd.cpp). Multiplier × 100
-		// keeps the result inside the 14-bit field (max 16383) for typical
-		// marine temps; a previous × 1000 truncated silently via PACK_BITS for
-		// every value > -109.6 °C — i.e. all real sea readings. Decoder:
-		//   °C = encoded / 100 − 126.
-		m_sea_temp_cache.port[0] = (unsigned int)((entry.port[0] + 126.0) * 100U);
+		// Encoding: (°C + 126) × 1000
+		// The offset +126 °C reflects the EZO-RTD valid range floor (-126 °C, cf ezo_rtd.cpp).
+		m_sea_temp_cache.port[0] = (unsigned int)((entry.port[0] + 126.0) * 1000U);
 		m_sensor_tx_current |= (1 << (int)ServiceIdentifier::SEA_TEMP_SENSOR);
 #if ENABLE_THERMISTOR_SENSOR
 	} else if (e.event_source == ServiceIdentifier::THERMISTOR_SENSOR
