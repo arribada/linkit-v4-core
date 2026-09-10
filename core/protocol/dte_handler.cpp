@@ -1426,8 +1426,25 @@ std::string DTEHandler::SENSR_REQ(int error_code, std::vector<BaseType> &arg_lis
 	if (sensors_mask & 0x20) {
 #if ENABLE_SEA_TEMP_SENSOR
 		try {
-			Sensor &sea = SensorManager::find_by_name("SEA_TEMP");
-			sea_temp_c = sea.read(0);
+			// La cle du registre est le nom du CAPTEUR, pas celui du service.
+			// Sensor::Sensor(name) s'enregistre lui-meme, et les trois sondes de
+			// mer possibles se nomment "RTD" (EZO-RTD et OEM-RTD) ou "TSYS01".
+			// "SEA_TEMP" est le nom du SERVICE (SeaTempSensorService) et n'a
+			// jamais ete une cle de registre : find_by_name("SEA_TEMP") faisait
+			// donc un .at() sur une clef absente et levait A TOUS LES COUPS,
+			// sonde presente et fonctionnelle ou non. $SENSR n'a jamais pu lire
+			// la temperature de mer, sur aucun build. Le reste du firmware
+			// utilise bien "RTD" (cf config_store.hpp, la table d'etalonnage et
+			// les tables de vidange de journaux) -- c'est pourquoi on corrige la
+			// recherche ici plutot que de renommer le capteur, ce qui
+			// orphelinerait l'etalonnage persiste.
+			Sensor *sea = nullptr;
+			try {
+				sea = &SensorManager::find_by_name("RTD");
+			} catch (...) {
+				sea = &SensorManager::find_by_name("TSYS01");
+			}
+			sea_temp_c = sea->read(0);
 			sensor_status |= (1 << 5);  // Sea temp OK
 			DEBUG_TRACE("SENSR: Sea temp %.3f C", sea_temp_c);
 		} catch (...) {

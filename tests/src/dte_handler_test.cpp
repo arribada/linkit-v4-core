@@ -954,6 +954,36 @@ TEST(DTEHandler, SENSR_REQ_PressureOnly) {
 	CHECK(std::get<double>(arg_list[4]) != 0.0);                  // altitude (computed)
 }
 
+TEST(DTEHandler, SENSR_REQ_SeaTempUsesTheSensorRegistryName) {
+	DTECommand command;
+	std::string req;
+	std::string resp;
+	std::vector<ParamID> params;
+	std::vector<ParamValue> param_values;
+	std::vector<BaseType> arg_list;
+	unsigned int error_code;
+
+	// La cle du registre est le nom du CAPTEUR. Les sondes de mer se nomment
+	// "RTD" (EZO-RTD et OEM-RTD) ou "TSYS01" ; "SEA_TEMP" est le nom du SERVICE
+	// et n'a jamais ete une cle. SENSR cherchait "SEA_TEMP" et levait donc a tous
+	// les coups, sonde presente et fonctionnelle ou non -- la temperature de mer
+	// n'a jamais pu etre lue par cette commande, sur aucun build. Ce test tient
+	// les deux bouts : la valeur arrive bien en 16e champ, ET le bit 5 du statut
+	// est pose, ce qui distingue une lecture reussie d'un 0.0 par defaut.
+	MockSensor rtd("RTD");
+	mock().expectOneCall("read").onObject(&rtd).withUnsignedIntParameter("port", 0).andReturnValue(18.75);
+
+	// Demande la temperature de mer seule (masque 0x20 = 32, timeout 10 s)
+	req = DTEEncoder::encode(DTECommand::SENSR_REQ, 32U, 10U);
+	CHECK_TRUE(DTEAction::NONE == dte_handler->handle_dte_message(req, resp));
+	DTEDecoder::decode(resp, command, error_code, arg_list, params, param_values);
+	CHECK_TRUE(DTECommand::SENSR_RESP == command);
+	CHECK_TRUE((unsigned int)DTEError::OK == error_code);
+
+	DOUBLES_EQUAL(18.75, std::get<double>(arg_list[15]), 0.01);       // champ 16 = sea_temp
+	CHECK((std::get<unsigned int>(arg_list[18]) & (1U << 5)) != 0U);  // champ 19, bit 5 = lecture OK
+}
+
 TEST(DTEHandler, SENSR_REQ_GNSS_NoFix) {
 	DTECommand command;
 	std::string req;
