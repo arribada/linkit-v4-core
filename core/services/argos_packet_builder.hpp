@@ -105,6 +105,12 @@ public:
 	static constexpr unsigned int RSPB_SHORT_PACKET_BITS = 122;
 	static constexpr unsigned int RSPB_SHORT_PACKET_BYTES = 16;
 
+    // WOODBUOY sensor packet
+	static constexpr unsigned int WOODBUOY_SENSOR_PACKET_BYTES = 16;
+	static constexpr unsigned int WOODBUOY_SENSOR_PACKET_MAX_BITS = WOODBUOY_SENSOR_PACKET_BYTES * 8;
+	static constexpr unsigned int SENSOR_TEMP_PACKET_HEADER = 0b001;  // Type 5 (001) for temperature
+	//static constexpr unsigned int SENSOR_TEMP_BARO_PACKET_HEADER = 0b101;  // Type 5 (101) for temperature + barometer
+
 	// === Encoding constants ===
 
 	static constexpr unsigned int FIXTYPE_3D = 3;
