@@ -563,8 +563,8 @@ void PMU::reduce_power_rails() {
 	//     there, so the whole operator session -- DTE commands, BLE OTA writes --
 	//     ran at 2.3 V. See GPIOPins::set_config_mode_active.
 	if (!GPIOPins::get_sensors_pwr_state() && !GPIOPins::is_gnss_uart_active() && !GPIOPins::is_flash_busy()
-	    && !GPIOPins::is_config_mode_active() && status_led
-	    && status_led->get_state() == RGBLedColor::BLACK && !status_led->is_flashing()) {
+	    && !GPIOPins::is_config_mode_active() && status_led && status_led->get_state() == RGBLedColor::BLACK
+	    && !status_led->is_flashing()) {
 		// Lower the POF brownout threshold BELOW the idle rail BEFORE dropping VSYS:
 		// POFCON is armed at 2.7V, but the idle rail is 2.3V, so at 2.7V the comparator
 		// would assert POFWARN continuously in deep idle (CPU wakes / cooldown-save churn,

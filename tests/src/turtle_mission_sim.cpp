@@ -106,7 +106,7 @@ public:
 				break;
 			}
 		const bool carries_pos = (size_bits >= 40) && !lat_all_ones;
-		frames.push_back({rtc ? rtc->gettime() : 0, size_bits, carries_pos});
+		frames.push_back({ rtc ? rtc->gettime() : 0, size_bits, carries_pos });
 	}
 	void stop_send() override {}
 	void power_off_immediate() override { powered_off_immediately = true; }
@@ -136,8 +136,8 @@ private:
 /// an acquisition timeout -- the two outcomes GPSService has to cope with.
 class SimGPSDevice : public GPSDevice {
 public:
-	unsigned int ttff_s = 30;      ///< set by the environment before each session
-	bool will_fix = true;          ///< false => the session times out
+	unsigned int ttff_s = 30;  ///< set by the environment before each session
+	bool will_fix = true;      ///< false => the session times out
 	unsigned int sessions = 0;
 	unsigned int fixes = 0;
 	unsigned int nofix = 0;
@@ -316,8 +316,8 @@ static MissionStats run_mission(unsigned int days, RecordingKineisDevice *kineis
 				underwater = false;
 				phase_left = env.surface_s;
 				gps_dev->ttff_s = 20 + (sec % 40);          // 20-59 s, as at sea
-				gps_dev->will_fix = ((sec / 60) % 5) != 0;   // one session in five fails
-			} else {  // diving
+				gps_dev->will_fix = ((sec / 60) % 5) != 0;  // one session in five fails
+			} else {                                        // diving
 				bool got_position = false;
 				for (size_t i = frames_at_surface_start; i < kineis->frames.size(); i++)
 					if (kineis->frames[i].carries_position) got_position = true;

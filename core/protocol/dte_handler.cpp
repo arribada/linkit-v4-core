@@ -1851,16 +1851,13 @@ std::string DTEHandler::GNSSI_REQ(int error_code) {
 	// n obtenait rien, et ne pouvait pas distinguer un recepteur muet d une
 	// commande non supportee. Un diagnostic qui se tait quand l organe
 	// diagnostique va mal ne sert a rien.
-	DEBUG_INFO("DTEHandler::GNSSI_REQ: arming a %u ms deadline on the device-info wait",
-	           GNSSI_TIMEOUT_MS);
+	DEBUG_INFO("DTEHandler::GNSSI_REQ: arming a %u ms deadline on the device-info wait", GNSSI_TIMEOUT_MS);
 	m_gnssi_timeout = system_scheduler->post_task_prio(
 	    [this]() {
 		    if (!m_gnssi_pending) return;
 		    m_gnssi_pending = false;
-		    DEBUG_WARN("DTEHandler: GNSSI timed out after %u ms — receiver gave no device info",
-		               GNSSI_TIMEOUT_MS);
-		    if (m_async_write)
-			    m_async_write(DTEEncoder::encode(DTECommand::GNSSI_RESP, (int)DTEError::INCORRECT_DATA));
+		    DEBUG_WARN("DTEHandler: GNSSI timed out after %u ms — receiver gave no device info", GNSSI_TIMEOUT_MS);
+		    if (m_async_write) m_async_write(DTEEncoder::encode(DTECommand::GNSSI_RESP, (int)DTEError::INCORRECT_DATA));
 		    if (gps_device) gps_device->power_off();
 	    },
 	    "DTEHandlerGNSSITimeout", Scheduler::DEFAULT_PRIORITY, GNSSI_TIMEOUT_MS);
@@ -2095,8 +2092,8 @@ DTEAction DTEHandler::handle_dte_message(const std::string &req, std::string &re
 		DEBUG_ERROR("DTEHandler: unexpected exception in the handler for command %u — answering INCORRECT_DATA",
 		            (unsigned int)command);
 		try {
-			resp = DTEEncoder::encode((DTECommand)((unsigned int)command + RESP_CMD_BASE),
-			                          (int)DTEError::INCORRECT_DATA);
+			resp =
+			    DTEEncoder::encode((DTECommand)((unsigned int)command + RESP_CMD_BASE), (int)DTEError::INCORRECT_DATA);
 		} catch (...) {
 			// The encoder itself failed: nothing left to say, and a throw out of
 			// here would take the main loop down with it.

@@ -156,8 +156,8 @@ private:
 	/// surface-to-air path -- more than the path itself.
 	uint16_t m_lat[12] = { 0 };
 	uint8_t m_lat_n = 0;
-#endif  ///< Anchor for [TXTRACE +N ms] timing logs; reset in send()
-	uint8_t m_lpm_mode;                // SMD LPM bitmap written at every boot
+#endif                            ///< Anchor for [TXTRACE +N ms] timing logs; reset in send()
+	uint8_t m_lpm_mode;           // SMD LPM bitmap written at every boot
 	bool m_wkup_lowered = false;  // True if state_idle_enter dropped WKUP (=> idle_exit must re-raise + wait for wake)
 
 	/// @brief Timestamp (ms) of the last full power-off (shutdown). Used by

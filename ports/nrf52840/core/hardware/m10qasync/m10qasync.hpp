@@ -390,12 +390,12 @@ public:
 	// mode ». Le firmware n'a jamais pose ce bit. Ces accesseurs permettent de
 	// commuter la valeur A CHAUD et de compter les issues, pour trancher par la
 	// mesure sur une seule carte, sans reflashage entre les deux bras.
-	static uint32_t bench_pmreq_flags;       ///< valeur envoyee dans MSG_PMREQ.flags
-	static unsigned int bench_pmreq_seq;     ///< sequences enterbackup demarrees
-	static unsigned int bench_pmreq_probes;  ///< probes de verification envoyes
-	static unsigned int bench_pmreq_first_ok;///< sequences validees des le probe #1
-	static unsigned int bench_pmreq_giveup;  ///< abandons -> coupure du rail
-	static unsigned int bench_pmreq_settle_ms;///< silence entre PMREQ et probe (ms)
+	static uint32_t bench_pmreq_flags;          ///< valeur envoyee dans MSG_PMREQ.flags
+	static unsigned int bench_pmreq_seq;        ///< sequences enterbackup demarrees
+	static unsigned int bench_pmreq_probes;     ///< probes de verification envoyes
+	static unsigned int bench_pmreq_first_ok;   ///< sequences validees des le probe #1
+	static unsigned int bench_pmreq_giveup;     ///< abandons -> coupure du rail
+	static unsigned int bench_pmreq_settle_ms;  ///< silence entre PMREQ et probe (ms)
 	static void bench_pmreq_reset_stats() {
 		bench_pmreq_seq = 0;
 		bench_pmreq_probes = 0;

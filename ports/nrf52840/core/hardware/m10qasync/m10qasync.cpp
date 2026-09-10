@@ -766,11 +766,11 @@ void M10QAsyncReceiver::exit_shutdown() {
 	// relies on exactly this.
 	GPIOPins::init_pin(BSP::GPIO::GPIO_GPS_EXT_INT);
 	GPIOPins::clear(BSP::GPIO::GPIO_GPS_EXT_INT);
-	PMU::delay_ms(2);                             // small settle for the drive
-	GPIOPins::set(BSP::GPIO::GPIO_GPS_PWR_EN);    // VDD ON with M10Q held in reset
-	PMU::delay_ms(20);                            // VDD ramp + stabilize while in reset
-	GPIOPins::set(BSP::GPIO::GPIO_GPS_RST);       // high-Z → ext pull-up → NRST released → POR
-	PMU::delay_ms(80);                            // M10Q boot ~30ms, 80ms margin (sync_baud_rate has retries)
+	PMU::delay_ms(2);                           // small settle for the drive
+	GPIOPins::set(BSP::GPIO::GPIO_GPS_PWR_EN);  // VDD ON with M10Q held in reset
+	PMU::delay_ms(20);                          // VDD ramp + stabilize while in reset
+	GPIOPins::set(BSP::GPIO::GPIO_GPS_RST);     // high-Z → ext pull-up → NRST released → POR
+	PMU::delay_ms(80);                          // M10Q boot ~30ms, 80ms margin (sync_baud_rate has retries)
 }
 
 void M10QAsyncReceiver::state_machine() {
@@ -1048,8 +1048,8 @@ void M10QAsyncReceiver::react(const UBXCommsEventNavReport &n) {
 			    // while the operator believed he had disabled the filter. Nothing
 			    // was logged -- the beacon simply stopped reporting positions.
 			    // Same class as the rate-limiter `* 1000` fixed in 2026-08.
-			    if (m_nav_settings.hacc_filter_en &&
-			        ((uint64_t)m_nav_settings.hacc_filter_threshold * 1000u) < nav.pvt.hAcc) {
+			    if (m_nav_settings.hacc_filter_en
+			        && ((uint64_t)m_nav_settings.hacc_filter_threshold * 1000u) < nav.pvt.hAcc) {
 				    // Fix exists but fails hAcc filter — store as degraded if best so far
 				    if (!m_has_degraded_pvt || nav.pvt.hAcc < m_degraded_pvt.hAcc) {
 					    m_degraded_pvt = { .iTOW = nav.pvt.iTow,
@@ -1563,7 +1563,8 @@ void M10QAsyncReceiver::state_poweroff() {
 void M10QAsyncReceiver::state_poweroff_exit() {}
 
 #ifdef BENCH_TEST
-uint32_t M10QAsyncReceiver::bench_pmreq_flags = RXM::PMREQFlags::BACKUP | RXM::PMREQFlags::FORCE;  // defaut = valeur corrigee
+uint32_t M10QAsyncReceiver::bench_pmreq_flags =
+    RXM::PMREQFlags::BACKUP | RXM::PMREQFlags::FORCE;  // defaut = valeur corrigee
 unsigned int M10QAsyncReceiver::bench_pmreq_seq = 0;
 unsigned int M10QAsyncReceiver::bench_pmreq_probes = 0;
 unsigned int M10QAsyncReceiver::bench_pmreq_first_ok = 0;
@@ -1576,7 +1577,7 @@ void M10QAsyncReceiver::send_pmreq_backup() {
 	RXM::MSG_PMREQ pmreq = {
 		.version = 0,
 		.reserved1 = { 0, 0, 0 },
-		.duration = 0,                     // sleep until wakeup event
+		.duration = 0,  // sleep until wakeup event
 #ifdef BENCH_TEST
 		.flags = M10QAsyncReceiver::bench_pmreq_flags,
 #else

@@ -43,15 +43,9 @@ void DebugLogger::release() {
 		// "%s" and not the buffer as a format string: the held text is already
 		// expanded and may well contain a stray % from a payload dump.
 		switch (m_hold_level[i]) {
-		case 'E':
-			system_log->error("%s", m_hold_buf[i]);
-			break;
-		case 'W':
-			system_log->warn("%s", m_hold_buf[i]);
-			break;
-		default:
-			system_log->info("%s", m_hold_buf[i]);
-			break;
+		case 'E': system_log->error("%s", m_hold_buf[i]); break;
+		case 'W': system_log->warn("%s", m_hold_buf[i]); break;
+		default: system_log->info("%s", m_hold_buf[i]); break;
 		}
 	}
 

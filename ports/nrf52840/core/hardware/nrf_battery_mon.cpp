@@ -117,7 +117,8 @@ static constexpr bool battery_profiles_are_consistent() {
 	for (const auto &p : battery_profiles) {
 		if (p.step_mv == 0) return false;
 		if (p.max_mv <= p.min_mv) return false;
-		if (static_cast<unsigned int>(p.max_mv - p.min_mv) != (BATT_LUT_ENTRIES - 1) * static_cast<unsigned int>(p.step_mv))
+		if (static_cast<unsigned int>(p.max_mv - p.min_mv)
+		    != (BATT_LUT_ENTRIES - 1) * static_cast<unsigned int>(p.step_mv))
 			return false;
 	}
 	return true;

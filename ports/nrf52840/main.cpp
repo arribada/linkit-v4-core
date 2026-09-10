@@ -324,7 +324,7 @@ FSM_INITIAL_STATE(GenTracker, BootState)
 	for (;;) {
 		for (unsigned int i = 0; i < blink_count; i++) {
 #ifdef GPIO_LED_REG
-		GPIOPins::set(GPIO_LED_REG);
+			GPIOPins::set(GPIO_LED_REG);
 #endif
 			NrfRGBLed::set_color_raw(BSP::GPIO::GPIO_LED_RED, BSP::GPIO::GPIO_LED_GREEN, BSP::GPIO::GPIO_LED_BLUE,
 			                         color);

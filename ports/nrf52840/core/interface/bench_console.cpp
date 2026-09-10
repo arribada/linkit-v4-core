@@ -97,7 +97,10 @@ static void cmd_satlog(const std::string &line) {
 	case 38400: baud_reg = 0x009D5000; break;
 	case 57600: baud_reg = 0x00EBF000; break;
 	case 460800: baud_reg = 0x03AFB000; break;  // the M10Q's rate, for checking the probe itself
-	default: baud = 115200; baud_reg = 0x01D7E000; break;
+	default:
+		baud = 115200;
+		baud_reg = 0x01D7E000;
+		break;
 	}
 
 	NRF_UARTE_Type *u = NRF_UARTE1;
@@ -120,7 +123,7 @@ static void cmd_satlog(const std::string &line) {
 	u->PSEL.CTS = 0xFFFFFFFF;
 	u->PSEL.RTS = 0xFFFFFFFF;
 	u->BAUDRATE = baud_reg;
-	u->CONFIG = 0;             // 8N1, no flow control
+	u->CONFIG = 0;  // 8N1, no flow control
 	u->ENABLE = 8;
 
 	reply("%SATLOG start (P" + std::to_string(rx_pin / 32) + "." + std::to_string(rx_pin % 32) + " @"
@@ -141,12 +144,14 @@ static void cmd_satlog(const std::string &line) {
 		// partial buffer — the module talks in short bursts, waiting for a full
 		// 64 bytes would hold most lines back until the next one arrived.
 		uint64_t slice = PMU::get_timestamp_ms() + 250;
-		while (!u->EVENTS_ENDRX && PMU::get_timestamp_ms() < slice) { /* spin */ }
+		while (!u->EVENTS_ENDRX && PMU::get_timestamp_ms() < slice) { /* spin */
+		}
 		if (!u->EVENTS_ENDRX) {
 			u->EVENTS_ENDRX = 0;
 			u->TASKS_STOPRX = 1;
 			uint64_t stop_deadline = PMU::get_timestamp_ms() + 20;
-			while (!u->EVENTS_ENDRX && PMU::get_timestamp_ms() < stop_deadline) { /* spin */ }
+			while (!u->EVENTS_ENDRX && PMU::get_timestamp_ms() < stop_deadline) { /* spin */
+			}
 		}
 
 		unsigned int n = u->RXD.AMOUNT;
@@ -470,8 +475,7 @@ bool bench::handle_line(const std::string &raw) {
 		// remet a zero : %BOOT donne la cause quand cela arrive.
 		char buf[96];
 		snprintf(buf, sizeof(buf), "%%BOOT cause=%s crash=%s uptime_ms=%llu", PMU::reset_cause_str(),
-		         PMU::last_crash_str(),
-		         system_timer ? (unsigned long long)system_timer->get_counter() : 0ULL);
+		         PMU::last_crash_str(), system_timer ? (unsigned long long)system_timer->get_counter() : 0ULL);
 		reply(buf);
 	} else if (cmd == "%BLE") {
 		// %BLE        -> advertising state
@@ -587,8 +591,7 @@ bool bench::handle_line(const std::string &raw) {
 		unsigned int cur = configuration_store->read_param<unsigned int>(ParamID::SMD_LPM_MODE);
 		unsigned int mod = cur >> 1;
 		snprintf(buf, sizeof(buf), "%%LPM host=0x%02X module=0x%02X mask=0x%02X degraded=%u", cur, mod,
-		         mod ? ((mod << 1) - 1) : 0,
-		         configuration_store->read_param<unsigned int>(ParamID::SMD_DEGRADED_MODE));
+		         mod ? ((mod << 1) - 1) : 0, configuration_store->read_param<unsigned int>(ParamID::SMD_DEGRADED_MODE));
 		reply(buf);
 #else
 		reply("%LPM ERR not-an-smd-build");
@@ -652,8 +655,7 @@ bool bench::handle_line(const std::string &raw) {
 		//   %DRY <seconds>
 		unsigned int v = 0;
 		char buf[96];
-		if (sscanf(line.c_str(), "%%DRY %u", &v) == 1)
-			configuration_store->write_param(ParamID::DRY_TIME_BEFORE_TX, v);
+		if (sscanf(line.c_str(), "%%DRY %u", &v) == 1) configuration_store->write_param(ParamID::DRY_TIME_BEFORE_TX, v);
 		snprintf(buf, sizeof(buf), "%%DRY dry_time_before_tx=%u s",
 		         configuration_store->read_param<unsigned int>(ParamID::DRY_TIME_BEFORE_TX));
 		reply(buf);
@@ -821,10 +823,9 @@ bool bench::handle_line(const std::string &raw) {
 			snprintf(buf, sizeof(buf), "%%PMREQ OK flags=%u stats-remis-a-zero", f);
 			reply(buf);
 		} else {
-			snprintf(buf, sizeof(buf),
-			         "%%PMREQ flags=%u settle=%u seq=%u probes=%u first_ok=%u giveup=%u",
-			         (unsigned)M10QAsyncReceiver::bench_pmreq_flags,
-			         M10QAsyncReceiver::bench_pmreq_settle_ms, M10QAsyncReceiver::bench_pmreq_seq, M10QAsyncReceiver::bench_pmreq_probes,
+			snprintf(buf, sizeof(buf), "%%PMREQ flags=%u settle=%u seq=%u probes=%u first_ok=%u giveup=%u",
+			         (unsigned)M10QAsyncReceiver::bench_pmreq_flags, M10QAsyncReceiver::bench_pmreq_settle_ms,
+			         M10QAsyncReceiver::bench_pmreq_seq, M10QAsyncReceiver::bench_pmreq_probes,
 			         M10QAsyncReceiver::bench_pmreq_first_ok, M10QAsyncReceiver::bench_pmreq_giveup);
 			reply(buf);
 		}

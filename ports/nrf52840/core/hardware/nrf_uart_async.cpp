@@ -137,8 +137,8 @@ void NrfUartAsync::park_tx_for_power_off() {
 	//
 	// Same intent as the powerdown bus-park in nrf_i2c.cpp.
 	uint32_t tx_pin = BSP::UARTAsync_Inits[m_uart_instance].config.tx_pin;
-	nrf_gpio_cfg(tx_pin, NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_NOPULL,
-	             NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE);
+	nrf_gpio_cfg(tx_pin, NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_S0S1,
+	             NRF_GPIO_PIN_NOSENSE);
 	nrf_gpio_pin_clear(tx_pin);
 }
 

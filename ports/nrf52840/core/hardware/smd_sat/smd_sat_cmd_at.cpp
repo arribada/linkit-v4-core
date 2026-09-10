@@ -707,8 +707,7 @@ bool SmdSatCmdAt::dfu_enter() {
 			baud = candidate_bauds[pass - 1];
 			// Pass 0 already covered the application baud.
 			if (baud == app_baudrate) continue;
-			DEBUG_INFO("SmdSatCmdAt::%s: probing bootloader at baud 0x%08X", __func__,
-			           static_cast<unsigned>(baud));
+			DEBUG_INFO("SmdSatCmdAt::%s: probing bootloader at baud 0x%08X", __func__, static_cast<unsigned>(baud));
 			if (!switch_baudrate(baud)) continue;
 		}
 

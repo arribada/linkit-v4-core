@@ -49,10 +49,10 @@ private:
 		if (DebugLogger::console_log) DebugLogger::console_log->error(fmt, ##__VA_ARGS__); \
 		if (DebugLogger::system_log && DebugLogger::system_log->is_ready()) {              \
 			if (DebugLogger::is_held())                                                    \
-				DebugLogger::hold_line('E', fmt, ##__VA_ARGS__);                            \
+				DebugLogger::hold_line('E', fmt, ##__VA_ARGS__);                           \
 			else                                                                           \
-				DebugLogger::system_log->error(fmt, ##__VA_ARGS__);                             \
-		}                                                                                \
+				DebugLogger::system_log->error(fmt, ##__VA_ARGS__);                        \
+		}                                                                                  \
 	} while (0)
 #else
 #define DEBUG_ERROR(fmt, ...)                                                              \
@@ -69,12 +69,12 @@ private:
 #define DEBUG_WARN(fmt, ...)                                                              \
 	do {                                                                                  \
 		if (DebugLogger::console_log) DebugLogger::console_log->warn(fmt, ##__VA_ARGS__); \
-		if (DebugLogger::system_log && DebugLogger::system_log->is_ready()) {              \
-			if (DebugLogger::is_held())                                                    \
-				DebugLogger::hold_line('W', fmt, ##__VA_ARGS__);                            \
-			else                                                                           \
-				DebugLogger::system_log->warn(fmt, ##__VA_ARGS__);                             \
-		}                                                                                \
+		if (DebugLogger::system_log && DebugLogger::system_log->is_ready()) {             \
+			if (DebugLogger::is_held())                                                   \
+				DebugLogger::hold_line('W', fmt, ##__VA_ARGS__);                          \
+			else                                                                          \
+				DebugLogger::system_log->warn(fmt, ##__VA_ARGS__);                        \
+		}                                                                                 \
 	} while (0)
 #else
 #define DEBUG_WARN(fmt, ...)                                                              \
@@ -91,12 +91,12 @@ private:
 #define DEBUG_INFO(fmt, ...)                                                              \
 	do {                                                                                  \
 		if (DebugLogger::console_log) DebugLogger::console_log->info(fmt, ##__VA_ARGS__); \
-		if (DebugLogger::system_log && DebugLogger::system_log->is_ready()) {              \
-			if (DebugLogger::is_held())                                                    \
-				DebugLogger::hold_line('I', fmt, ##__VA_ARGS__);                            \
-			else                                                                           \
-				DebugLogger::system_log->info(fmt, ##__VA_ARGS__);                             \
-		}                                                                                \
+		if (DebugLogger::system_log && DebugLogger::system_log->is_ready()) {             \
+			if (DebugLogger::is_held())                                                   \
+				DebugLogger::hold_line('I', fmt, ##__VA_ARGS__);                          \
+			else                                                                          \
+				DebugLogger::system_log->info(fmt, ##__VA_ARGS__);                        \
+		}                                                                                 \
 	} while (0)
 #else
 #define DEBUG_INFO(fmt, ...)                                                              \

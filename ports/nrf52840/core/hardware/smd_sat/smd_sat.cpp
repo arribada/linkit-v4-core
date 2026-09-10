@@ -82,25 +82,24 @@ static constexpr unsigned int SMD_SCHEDULER_PRIORITY = 4;
 #define SMDSAT_TXTRACE 0
 #endif
 #if SMDSAT_TXTRACE
-#define TXTRACE(fmt, ...)                                                                                     \
-	do {                                                                                                      \
-		DEBUG_INFO("[TXTRACE +%u ms] " fmt,                                                                   \
-		           static_cast<unsigned>(m_tx_trace_start_ms ? (PMU::get_timestamp_ms() - m_tx_trace_start_ms) \
-		                                                     : 0),                                            \
-		           ##__VA_ARGS__);                                                                            \
+#define TXTRACE(fmt, ...)                                                                                                     \
+	do {                                                                                                                      \
+		DEBUG_INFO(                                                                                                           \
+		    "[TXTRACE +%u ms] " fmt,                                                                                          \
+		    static_cast<unsigned>(m_tx_trace_start_ms ? (PMU::get_timestamp_ms() - m_tx_trace_start_ms) : 0), ##__VA_ARGS__); \
 	} while (0)
 #else
-#define TXTRACE(fmt, ...)                        \
-	do {                                         \
-		(void)fmt;                               \
+#define TXTRACE(fmt, ...) \
+	do {                  \
+		(void)fmt;        \
 	} while (0)
 #endif
 
 #ifdef BENCH_TEST
 // Record one latency mark (ms since send()). Cheap: a subtraction and a store.
-#define LATMARK()                                                                                    \
-	do {                                                                                             \
-		if (m_lat_n < (sizeof(m_lat) / sizeof(m_lat[0])))                                            \
+#define LATMARK()                                                                                                     \
+	do {                                                                                                              \
+		if (m_lat_n < (sizeof(m_lat) / sizeof(m_lat[0])))                                                             \
 			m_lat[m_lat_n++] = (uint16_t)(m_tx_trace_start_ms ? (PMU::get_timestamp_ms() - m_tx_trace_start_ms) : 0); \
 	} while (0)
 #else
@@ -1026,7 +1025,7 @@ void SmdSat::state_idle_pending() {
 /// command costing ~330 ms of module response time. Moving this one out is a
 /// straight 40% cut with nothing given up.
 void SmdSat::write_lpm_if_needed() {
-	if (m_lpm_mode == 0x01) return;         // NONE -- nothing to arm
+	if (m_lpm_mode == 0x01) return;            // NONE -- nothing to arm
 	if (m_lpm_written_since_power_on) return;  // still in the module's retained RAM
 
 	uint8_t module_lpm = smd_lpm_module_allowed_mask(smd_lpm_host_to_module(m_lpm_mode));
@@ -1044,11 +1043,11 @@ void SmdSat::write_lpm_if_needed() {
 	try {
 		m_cmd.write_lpm(&module_lpm);
 		m_lpm_written_since_power_on = true;
-		DEBUG_INFO("SmdSat::%s: LPM written — host 0x%02X -> module mask 0x%02X (deepest 0x%02X)", __func__,
-		           m_lpm_mode, module_lpm, smd_lpm_host_to_module(m_lpm_mode));
+		DEBUG_INFO("SmdSat::%s: LPM written — host 0x%02X -> module mask 0x%02X (deepest 0x%02X)", __func__, m_lpm_mode,
+		           module_lpm, smd_lpm_host_to_module(m_lpm_mode));
 	} catch (...) {
-		DEBUG_WARN("SmdSat::%s: failed to write LPM mode (host 0x%02X -> module mask 0x%02X)", __func__,
-		           m_lpm_mode, module_lpm);
+		DEBUG_WARN("SmdSat::%s: failed to write LPM mode (host 0x%02X -> module mask 0x%02X)", __func__, m_lpm_mode,
+		           module_lpm);
 	}
 }
 
@@ -1279,8 +1278,7 @@ void SmdSat::state_transmit_pending() {
 			char lb[128];
 			int o = snprintf(lb, sizeof(lb), "SmdSat: TXSTART ms=");
 			for (uint8_t i = 0; i < m_lat_n && o > 0 && o < (int)sizeof(lb); i++)
-				o += snprintf(lb + o, sizeof(lb) - o, "%u%s", (unsigned)m_lat[i],
-				              (i + 1 < m_lat_n) ? "," : "");
+				o += snprintf(lb + o, sizeof(lb) - o, "%u%s", (unsigned)m_lat[i], (i + 1 < m_lat_n) ? "," : "");
 			// INFO, not ERROR: this is a bench marker, and the console half is
 			// never held, so a stopwatch still sees it the instant it happens.
 			// It was briefly an ERROR for a DEBUG_LEVEL=1 experiment that never
@@ -1925,10 +1923,10 @@ cleanup:
 }
 
 #ifdef BENCH_TEST
-void SmdSat::bench_parallel_probe(unsigned int nb_parallel, unsigned int retx_nb, unsigned int retx_period_s,
-                                  char *out, unsigned int out_len) {
+void SmdSat::bench_parallel_probe(unsigned int nb_parallel, unsigned int retx_nb, unsigned int retx_period_s, char *out,
+                                  unsigned int out_len) {
 	if (nb_parallel < 1) nb_parallel = 1;
-	if (nb_parallel > 4) nb_parallel = 4;   // enough to answer the question, bounded airtime
+	if (nb_parallel > 4) nb_parallel = 4;  // enough to answer the question, bounded airtime
 	if (retx_nb < 1) retx_nb = 1;
 	if (retx_nb > 127) retx_nb = 127;
 	// The module's own default config documents the pairing:
@@ -1968,12 +1966,12 @@ void SmdSat::bench_parallel_probe(unsigned int nb_parallel, unsigned int retx_nb
 		// BLIND context with the requested nb_parallel — the one byte the
 		// production path pins to 1.
 		uint8_t ctx[7] = { (uint8_t)retx_nb,
-			               (uint8_t)nb_parallel,
-			               (uint8_t)(retx_period_s & 0xFF),
-			               (uint8_t)((retx_period_s >> 8) & 0xFF),
-			               (uint8_t)((retx_period_s >> 16) & 0xFF),
-			               (uint8_t)((retx_period_s >> 24) & 0xFF),
-			               0 };
+		                   (uint8_t)nb_parallel,
+		                   (uint8_t)(retx_period_s & 0xFF),
+		                   (uint8_t)((retx_period_s >> 8) & 0xFF),
+		                   (uint8_t)((retx_period_s >> 16) & 0xFF),
+		                   (uint8_t)((retx_period_s >> 24) & 0xFF),
+		                   0 };
 		try {
 			m_cmd.load_kmac_profil(2, ctx, sizeof(ctx));
 			nrf_delay_ms(smdsat_delay_load_kmac_ms());
@@ -2051,9 +2049,8 @@ void SmdSat::bench_parallel_probe(unsigned int nb_parallel, unsigned int retx_nb
 				refused++;
 
 			DEBUG_INFO("SmdSat::bench_parallel_probe: msg %u/%u t+%u ms -> %s | mac %u->%u spi %u->%u", i + 1,
-			           nb_parallel, (unsigned int)dt,
-			           exception ? "THREW" : (ok ? "ACCEPTED" : "REFUSED"), mac_before, mac_after, spi_before,
-			           spi_after);
+			           nb_parallel, (unsigned int)dt, exception ? "THREW" : (ok ? "ACCEPTED" : "REFUSED"), mac_before,
+			           mac_after, spi_before, spi_after);
 			PMU::kick_watchdog();
 		}
 

@@ -195,7 +195,7 @@ void ArgosTxService::service_init() {
 			           argos_config.mode == BaseArgosMode::DOPPLER
 			               ? " (aligned on SURFACING_BURST_MAX_S, not ARGOS_BLIND_RETX_PERIOD_S; the "
 			                 "Doppler sequence uses that same FIXED interval instead of ramping)"
-			               : "");
+						   : "");
 		}
 	}
 
@@ -490,7 +490,8 @@ ScheduleDecision ArgosTxService::schedule_doppler(ArgosConfig &argos_config, std
 	} else {
 		m_scheduled_task = [this]() { process_doppler_burst(); };
 	}
-	m_scheduled_mode = argos_config.adaptive_modulation ? adaptive_doppler_modulation() : resolve_non_adaptive_modulation();
+	m_scheduled_mode =
+	    argos_config.adaptive_modulation ? adaptive_doppler_modulation() : resolve_non_adaptive_modulation();
 
 	// Inter-sequence pause guard. If a reschedule fires while we are
 	// supposed to be paused (e.g., UW surfaced event, GPS log update),
@@ -1500,8 +1501,8 @@ void ArgosTxService::notify_peer_event(ServiceEvent &e) {
 				// Outside adaptive mode the modulation comes from the master RCONF, as
 				// on the scheduling path of the same mode further up. An LDA2 hardcoded
 				// here cancelled the operator's setting.
-				m_scheduled_mode =
-				    argos_config.adaptive_modulation ? adaptive_doppler_modulation() : resolve_non_adaptive_modulation();
+				m_scheduled_mode = argos_config.adaptive_modulation ? adaptive_doppler_modulation()
+				                                                    : resolve_non_adaptive_modulation();
 				// Demoted to TRACE: the canonical state-change marker is
 				// "UWDetectorService: state changed: state=0" emitted in the same
 				// broadcast cascade. This log added ~50-300 ms LFS commit on the
@@ -1746,8 +1747,7 @@ void ArgosTxService::process_time_sync_burst() {
 			// (e.g. VLDA4 master = 24 b), fall back to LDA2 if provisioned, else a
 			// clean skip rather than a silent KIM2 oversize drop.
 			if (!can_transmit_on(m_scheduled_mode, size_bits)) {
-				if (can_transmit_on(KineisModulation::LDA2, size_bits)
-				    && ensure_modulation(KineisModulation::LDA2)) {
+				if (can_transmit_on(KineisModulation::LDA2, size_bits) && ensure_modulation(KineisModulation::LDA2)) {
 					DEBUG_WARN("ArgosTxService::process_time_sync_burst: %u bits don't fit master mod %d — falling "
 					           "back to LDA2",
 					           size_bits, (int)m_scheduled_mode);
@@ -1990,8 +1990,7 @@ void ArgosTxService::process_sensor_burst() {
 			// prevails, and we escalate to LDA2 only if the packet does not fit it.
 			m_scheduled_mode = resolve_non_adaptive_modulation();
 			if (!can_transmit_on(m_scheduled_mode, size_bits)) {
-				if (can_transmit_on(KineisModulation::LDA2, size_bits)
-				    && ensure_modulation(KineisModulation::LDA2)) {
+				if (can_transmit_on(KineisModulation::LDA2, size_bits) && ensure_modulation(KineisModulation::LDA2)) {
 					DEBUG_WARN(
 					    "ArgosTxService::process_sensor_burst: %u bits don't fit master mod %d — falling back to LDA2",
 					    size_bits, (int)m_scheduled_mode);
@@ -2184,8 +2183,7 @@ void ArgosTxService::process_gnss_burst() {
 			// this TX cleanly rather than letting KIM2 send() drop it silently.
 			// User policy 2026-06-17: keep master modulation; on overflow → LDA2.
 			if (!can_transmit_on(m_scheduled_mode, size_bits)) {
-				if (can_transmit_on(KineisModulation::LDA2, size_bits)
-				    && ensure_modulation(KineisModulation::LDA2)) {
+				if (can_transmit_on(KineisModulation::LDA2, size_bits) && ensure_modulation(KineisModulation::LDA2)) {
 					DEBUG_WARN(
 					    "ArgosTxService::process_gnss_burst: %u bits don't fit master mod %d — falling back to LDA2",
 					    size_bits, (int)m_scheduled_mode);
@@ -2802,8 +2800,7 @@ void ArgosTxService::react(KineisEventTxComplete const &) {
 	// snapshot guards the address matching exactly as the refund path does; if the
 	// pile moved under us we leave the counters alone rather than charge the wrong
 	// position.
-	if (tx_copies > 1 && !m_inflight_gps.empty()
-	    && m_depth_pile_manager.gps_evictions() == m_inflight_evictions) {
+	if (tx_copies > 1 && !m_inflight_gps.empty() && m_depth_pile_manager.gps_evictions() == m_inflight_evictions) {
 		const unsigned int n = m_depth_pile_manager.debit_gps_extra(m_inflight_gps, tx_copies - 1);
 		if (n) {
 			DEBUG_INFO("ArgosTxService: BLIND burst sent %u copies — charged %u extra credit(s) to %u entry(ies)",
@@ -3030,7 +3027,8 @@ void ArgosTxService::react(KineisEventDeviceError const &) {
 		ArgosConfig ac;
 		configuration_store->get_argos_configuration(ac);
 		if (ac.adaptive_modulation && ac.mode == BaseArgosMode::SURFACING_BURST) {
-			KineisModulation target = m_has_gnss_fix_since_surfacing ? KineisModulation::LDK : adaptive_doppler_modulation();
+			KineisModulation target =
+			    m_has_gnss_fix_since_surfacing ? KineisModulation::LDK : adaptive_doppler_modulation();
 			m_modulation_preconfig = target;
 			DEBUG_INFO("ArgosTxService::react: error recovery — caching RCONF for modulation %d", (int)target);
 		}

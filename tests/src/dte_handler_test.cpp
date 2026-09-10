@@ -351,8 +351,7 @@ TEST(DTEHandler, DUMPM_REQ) {
 	             resp.c_str());
 }
 
-TEST(DTEHandler, DUMPM_REQ_OutOfRangeAddressIsRefusedNotIgnored)
-{
+TEST(DTEHandler, DUMPM_REQ_OutOfRangeAddressIsRefusedNotIgnored) {
 	/*
 	 * DUMPM must ANSWER an address it will not read.
 	 *
