@@ -137,6 +137,7 @@ const char *EZO_RTD_Sensor::response_code_to_str(ResponseCode resp) {
 	case ResponseCode::ERROR: return "ERROR";
 	case ResponseCode::BUSY: return "BUSY";
 	case ResponseCode::NODATA: return "NODATA";
+	case ResponseCode::UNKNOWN: return "UNKNOWN";
 	default: return "UNKNOWN";
 	}
 }
