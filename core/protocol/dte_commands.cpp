@@ -179,9 +179,28 @@ const DTECommandMap command_map[] = {
 		}
 	},
 	// SENSR - Sensor/GNSS read command
-	// Usage: $SENSR,<sensors_bitmask>,<gnss_timeout_s>*<checksum>\r\n
-	// sensors_bitmask: 1=battery, 2=pressure, 4=GNSS, 8=accel, 15=all
-	// Response: $SENSR,<status>,<batt_mv>,<batt_soc>,<pressure_bar>,<temp_c>,<altitude_m>,<lat>,<lon>,<hdop>,<num_sv>,<accel_x>,<accel_y>,<accel_z>,<accel_temp>*<checksum>\r\n
+	// Usage: $SENSR#LEN;<sensors_bitmask>,<gnss_timeout_s>\r
+	// sensors_bitmask: 1=battery, 2=pressure, 4=GNSS, 8=accel, 16=thermistor,
+	//                  32=sea_temp, 64=ALS, 128=pH, 255=all
+	//
+	// Reponse: 19 champs, dans CET ordre (voir le prototype SENSR_RESP plus bas,
+	// qui fait foi, et la page wiki 06-DTE-commands) :
+	//   1 batt_mv | 2 batt_soc | 3 pressure | 4 temperature | 5 altitude |
+	//   6 lat | 7 lon | 8 hdop | 9 num_sv | 10 accel_x | 11 accel_y | 12 accel_z |
+	//   13 accel_temp | 14 activity | 15 thermistor_temp | 16 sea_temp |
+	//   17 als_lux | 18 ph | 19 sensor_status
+	//
+	// ⚠️ Ce commentaire annoncait autrefois une trame NMEA (`$SENSR,...*<checksum>`)
+	// et une reponse de 14 champs COMMENCANT par <status>. Les deux etaient faux :
+	// le cadrage est `$CMD#LEN;payload` comme toute commande DTE, et sensor_status
+	// est le DERNIER champ, pas le premier. Une IHM ecrite depuis cette
+	// description lisait donc les mauvais index -- typiquement hdop (99.9, la
+	// sentinelle « pas de fix ») a la place d'une temperature.
+	//
+	// sensor_status : un bit par capteur, MEME numerotation que le masque de
+	// requete. Bit a 1 = lecture reussie. Bit a 0 = echec, et le champ de valeur
+	// correspondant ne veut alors RIEN DIRE (il vaut son initialisation, 0.0 pour
+	// les temperatures). Toujours tester le bit avant d'afficher la valeur.
 	{
 		.name = "SENSR",
 		.command = DTECommand::SENSR_REQ,
