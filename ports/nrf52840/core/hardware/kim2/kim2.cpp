@@ -1213,7 +1213,7 @@ void KIM2Device::state_idle_exit() {
 
 /// @brief Start TX: send AT+TX, set timeout, start polling for +TX= response.
 void KIM2Device::state_transmit_enter() {
-	DEBUG_INFO("KIM2Device::state_transmit_enter: mode=%u", static_cast<unsigned int>(m_tx_mode));
+	DEBUG_TRACE("KIM2Device::state_transmit_enter: mode=%u", static_cast<unsigned int>(m_tx_mode));
 
 	// Auto-recovery: if the module's RCONF doesn't match the requested TX
 	// modulation, rewrite it before AT+TX. Otherwise KIM rejects the TX with
@@ -1402,7 +1402,7 @@ void KIM2Device::state_transmit() {
 		if (m_tx_buffer.size()) {
 			m_tx_buffer.clear();
 			if (m_kim2_comm.m_tx_status == 0) {
-				DEBUG_INFO("KIM2Device::state_transmit: TX EMITTED OK — Argos message sent (mode=%d, RCONF=[%s])",
+				DEBUG_TRACE("KIM2Device::state_transmit: TX EMITTED OK — Argos message sent (mode=%d, RCONF=[%s])",
 				           static_cast<int>(m_tx_mode), m_kim2_comm.m_rconf_info.c_str());
 				notify(KineisEventTxComplete({}));
 			} else {
@@ -1785,7 +1785,7 @@ bool KIM2Device::write_and_validate_rconf(const std::string &rconf_hex, KineisMo
 		return true;  // Non-VLDA4 path — accept even without verification
 	}
 
-	DEBUG_INFO("KIM2Device::write_and_validate_rconf: module RCONF=%s (expected mode=%d)",
+	DEBUG_TRACE("KIM2Device::write_and_validate_rconf: module RCONF=%s (expected mode=%d)",
 	           m_kim2_comm.m_rconf_info.c_str(), static_cast<int>(expected_mode));
 
 	KIM2::RConfDecoded decoded = KIM2::parse_rconf_info(m_kim2_comm.m_rconf_info);

@@ -763,7 +763,7 @@ ScheduleDecision GPSService::service_next_schedule() {
 	            (unsigned int)gnss_config.cold_start_retry_period, (unsigned int)aq_period, (unsigned int)now,
 	            (unsigned int)next_schedule);
 
-	DEBUG_INFO("GPSService: next GNSS acquisition in %u s (UTC-aligned, period=%u s)",
+	DEBUG_TRACE("GPSService: next GNSS acquisition in %u s (UTC-aligned, period=%u s)",
 	           (unsigned int)(next_schedule - now), (unsigned int)aq_period);
 
 	// Find the time in milliseconds until this schedule (cast to uint64_t to prevent
@@ -991,7 +991,7 @@ void GPSService::service_initiate() {
 	m_wakeup_time = service_current_timer();
 	m_is_active = true;
 	m_session_device_error = false;
-	DEBUG_INFO("GPSService: M10Q on — nav_max=%u cold=%u cl=%u const=0x%02x",
+	DEBUG_TRACE("GPSService: M10Q on — nav_max=%u cold=%u cl=%u const=0x%02x",
 	           (unsigned int)nav_settings.max_nav_samples, (unsigned int)force_cold,
 	           (unsigned int)nav_settings.cloudlocate_enable, (unsigned int)nav_settings.constellation_mask);
 	m_device.power_on(nav_settings);

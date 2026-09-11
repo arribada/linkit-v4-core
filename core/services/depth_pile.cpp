@@ -230,7 +230,7 @@ void DepthPileManager::update_depth_pile() {
 				}
 			} else {
 				m_gps_depth_pile.store(m_gps_cache, burst_counter);
-				DEBUG_INFO("DepthPileManager: GPS %s stored, burst_counter=%u (0xFFFFFFFF=unlimited)",
+				DEBUG_TRACE("DepthPileManager: GPS %s stored, burst_counter=%u (0xFFFFFFFF=unlimited)",
 				           m_gps_cache.info.valid ? "FIX" : "NO_FIX heartbeat", burst_counter);
 			}
 		}

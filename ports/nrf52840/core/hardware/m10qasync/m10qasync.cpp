@@ -1003,7 +1003,7 @@ void M10QAsyncReceiver::react(const UBXCommsEventNavReport &n) {
 				    if (!m_rtc_persisted_this_session && now >= RTC_MIN_REAL && configuration_store) {
 					    m_rtc_persisted_this_session = true;
 					    configuration_store->write_param(ParamID::LAST_KNOWN_RTC, static_cast<unsigned int>(now));
-					    DEBUG_INFO("M10QAsyncReceiver: GNSS time persisted (%u), measured drift %d ppm",
+					    DEBUG_TRACE("M10QAsyncReceiver: GNSS time persisted (%u), measured drift %d ppm",
 						           (unsigned int)now, (int)rtc->drift_ppm());
 				    }
 
@@ -1369,7 +1369,7 @@ void M10QAsyncReceiver::state_poweron_enter() {
 	m_unrecoverable_error = false;
 
 
-	DEBUG_INFO("M10QAsyncReceiver::state_poweron_enter");
+	DEBUG_TRACE("M10QAsyncReceiver::state_poweron_enter");
 	exit_shutdown();
 	notify<GPSEventPowerOn>({});
 }
@@ -1433,7 +1433,7 @@ void M10QAsyncReceiver::state_poweron() {
 				// no longer exists on the receiver side.
 				m_applied_constellation_mask = CONSTELLATION_MASK_UNKNOWN;
 			}
-			DEBUG_INFO("M10QAsyncReceiver: boot sync at %u baud — BBR %s", synced,
+			DEBUG_TRACE("M10QAsyncReceiver: boot sync at %u baud — BBR %s", synced,
 			           m_bbr_retained ? "RETAINED" : "lost");
 			if (m_step != 0) {
 				m_boot_baud_idx = (m_boot_baud_idx + m_step) % BOOT_BAUD_COUNT;

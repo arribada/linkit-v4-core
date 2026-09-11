@@ -334,7 +334,7 @@ void M10QAsyncReceiver::supply_time_assistance() {
 	// A receiver that kept its BBR has its own GNSS time base, necessarily better
 	// than ours. We teach it nothing, and risk only constraining it wrongly.
 	if (m_bbr_retained) {
-		DEBUG_INFO("M10QAsyncReceiver::supply_time_assistance: BBR retained — the receiver has its own time, injection "
+		DEBUG_TRACE("M10QAsyncReceiver::supply_time_assistance: BBR retained — the receiver has its own time, injection "
 		           "unnecessary");
 		m_step++;
 		m_op_state = OpState::IDLE;
@@ -397,7 +397,7 @@ void M10QAsyncReceiver::supply_position_assistance() {
 	// With a time restored from flash the gap can be weeks, and the age would be a
 	// fiction -- better to inject nothing.
 	if (rtc->time_accuracy_s() == 0) {
-		DEBUG_INFO("M10QAsyncReceiver::supply_position_assistance: time unreliable — position age not computable, "
+		DEBUG_TRACE("M10QAsyncReceiver::supply_position_assistance: time unreliable — position age not computable, "
 		           "no injection");
 		return;
 	}
@@ -777,7 +777,7 @@ void M10QAsyncReceiver::react(const UBXCommsEventMonVer &ver) {
 		std::memcpy(m_gnss_hw_version, ver.hwVersion, sizeof(m_gnss_hw_version));
 		m_gnss_sw_version[sizeof(m_gnss_sw_version) - 1] = '\0';
 		m_gnss_hw_version[sizeof(m_gnss_hw_version) - 1] = '\0';
-		DEBUG_INFO("GNSS SW: %s HW: %s", m_gnss_sw_version, m_gnss_hw_version);
+		DEBUG_TRACE("GNSS SW: %s HW: %s", m_gnss_sw_version, m_gnss_hw_version);
 		m_op_state = OpState::SUCCESS;
 		run_state_machine();
 	}
@@ -788,7 +788,7 @@ void M10QAsyncReceiver::react(const UBXCommsEventSecUniqId &uid) {
 		cancel_timeout();
 		std::memcpy(m_gnss_unique_id, uid.uniqueId, sizeof(m_gnss_unique_id));
 		m_gnss_info_valid = true;
-		DEBUG_INFO("GNSS UID: %02X%02X%02X%02X%02X", m_gnss_unique_id[0], m_gnss_unique_id[1], m_gnss_unique_id[2],
+		DEBUG_TRACE("GNSS UID: %02X%02X%02X%02X%02X", m_gnss_unique_id[0], m_gnss_unique_id[1], m_gnss_unique_id[2],
 		           m_gnss_unique_id[3], m_gnss_unique_id[4]);
 		notify(GPSEventDeviceInfoReady{});
 		m_op_state = OpState::SUCCESS;

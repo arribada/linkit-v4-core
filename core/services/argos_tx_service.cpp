@@ -838,7 +838,7 @@ ScheduleDecision ArgosTxService::schedule_with_gnss(ArgosConfig &argos_config, s
 		return ScheduleDecision::run(0, "time-sync burst");
 	}
 	if (m_depth_pile_manager.eligible() == 0) {
-		DEBUG_INFO("ArgosTxService: depth pile has no eligible entries (NTRY exhausted or empty) — TX disabled "
+		DEBUG_TRACE("ArgosTxService: depth pile has no eligible entries (NTRY exhausted or empty) — TX disabled "
 		           "until next GPS entry");
 		// The pile is RAM-only, so it is empty at every boot. Answering Off here
 		// is what deadlocked a tag whose only filler -- the GNSS service -- was
@@ -2656,7 +2656,7 @@ void ArgosTxService::react(KineisEventTxStarted const &) {
 #if !defined(ARGOS_SMD) || (ARGOS_SMD != 1)
 	// KIM2 only: surface the burst type + modulation + running session TX count
 	// so the operator can see WHAT is being sent and HOW MANY this session.
-	DEBUG_INFO("ArgosTxService: TX START — type=%s mode=%d session_tx#=%u", m_last_val_tx_type,
+	DEBUG_TRACE("ArgosTxService: TX START — type=%s mode=%d session_tx#=%u", m_last_val_tx_type,
 	           static_cast<int>(m_scheduled_mode), m_session_tx_count + 1);
 #endif
 	service_active();
@@ -2667,7 +2667,7 @@ void ArgosTxService::react(KineisEventTxComplete const &) {
 	DEBUG_TRACE("ArgosTxService::react: KineisEventTxComplete");
 #if !defined(ARGOS_SMD) || (ARGOS_SMD != 1)
 	// KIM2 only: clear, visible confirmation that the Argos message went out.
-	DEBUG_INFO("ArgosTxService: TX SUCCESS — type=%s mode=%d session_tx#=%u", m_last_val_tx_type,
+	DEBUG_TRACE("ArgosTxService: TX SUCCESS — type=%s mode=%d session_tx#=%u", m_last_val_tx_type,
 	           static_cast<int>(m_scheduled_mode), m_session_tx_count + 1);
 #endif
 	m_is_tx_pending = false;
