@@ -539,6 +539,12 @@ const BaseMap param_map[] = {
 	// 100 km ceiling: past that the widened visibility circle predicts passes
 	// the beacon cannot actually use.
 	{ "PP_POSITION_MARGIN_KM", "PPP12", BaseEncoding::UINT, 0U, 100U, {}, true, true },
+	// Barometer
+	{ "BARO_SENSOR_ENABLE", "BAP01",  BaseEncoding::BOOLEAN, 0, 0, {}, ENABLE_BARO_SENSOR, true },
+	{ "BARO_SENSOR_PERIODIC", "BAP02", BaseEncoding::UINT, 0U, 0U, {}, ENABLE_BARO_SENSOR, true },
+	{ "BARO_SENSOR_ENABLE_TX_MODE", "BAP03", BaseEncoding::SENSORENABLETXMODE, 0, 0, {}, ENABLE_BARO_SENSOR, true },
+	{ "BARO_SENSOR_ENABLE_TX_MAX_SAMPLES", "BAP04", BaseEncoding::UINT, 1U, 0xFFFFFFFFU, {}, ENABLE_BARO_SENSOR, true },
+	{ "BARO_SENSOR_ENABLE_TX_SAMPLE_PERIOD", "BAP05", BaseEncoding::UINT, 1U, 0xFFFFFFFFU, {}, ENABLE_BARO_SENSOR, true },
 };
 // clang-format on
 

@@ -94,6 +94,9 @@
 #if ENABLE_THERMISTOR_SENSOR
 #include "thermistor.hpp"
 #endif
+#if ENABLE_BARO_SENSOR
+#include "ads1115.hpp"
+#endif
 #ifdef CAM_PWR_EN
 #include "runcam.hpp"
 #endif
@@ -130,6 +133,9 @@
 #endif
 #if ENABLE_THERMISTOR_SENSOR
 #include "thermistor_sensor_service.hpp"
+#endif
+#if ENABLE_BARO_SENSOR
+#include "baro_sensor_service.hpp"
 #endif
 #include "cam_service.hpp"
 #if ENABLE_MORTALITY_SENSOR
@@ -1374,6 +1380,19 @@ static void init_sensors(LFSFileSystem &lfs_file_system) {
 		static ThermistorSensorService thermistor_sensor_service(thermistor, &thermistor_sensor_log);
 	} catch (...) {
 		DEBUG_INFO("Thermistor: not detected");
+	}
+#endif
+
+#if ENABLE_BARO_SENSOR
+	DEBUG_TRACE("EXT BAROMETER...");
+	static BAROLogFormatter baro_sensor_log_formatter;
+	static FsLog baro_sensor_log(&lfs_file_system, "BARO", 1024*1024);
+	baro_sensor_log.set_log_formatter(&baro_sensor_log_formatter);
+	try {
+		static ads1115 adc_barometer;
+		static BAROSensorService baro_sensor_service(adc_barometer, &baro_sensor_log);
+	} catch (...) {
+		DEBUG_TRACE("EXT BAROMETER: not detected");
 	}
 #endif
 

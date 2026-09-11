@@ -103,6 +103,12 @@ void DepthPileManager::notify_peer_event(ServiceEvent &e) {
 		m_axl_cache.port[4] = (unsigned int)(entry.port[4]);                      // Activity (0-255)
 		m_sensor_tx_current |= (1 << (int)ServiceIdentifier::AXL_SENSOR);
 #endif
+	} else if (e.event_source == ServiceIdentifier::BARO_SENSOR
+	           && e.event_type == ServiceEventType::SERVICE_LOG_UPDATED) {
+		DEBUG_TRACE("DepthPileManager::notify_peer_event: BARO cache set");
+		ServiceSensorData &entry = std::get<ServiceSensorData>(e.event_data);
+		m_baro_cache.port[0] = (unsigned int)((entry.port[0] - 800.0) * 100U);
+		m_sensor_tx_current |= (1 << (int)ServiceIdentifier::BARO_SENSOR);
 	} else if (e.event_source == ServiceIdentifier::GNSS_SENSOR && e.event_type == ServiceEventType::SERVICE_INACTIVE) {
 		// If we didn't yet gather all the expected inputs then we start
 		// a timeout to force dummy values into the depth pile
@@ -180,6 +186,7 @@ void DepthPileManager::update_depth_pile() {
 #if ENABLE_AXL_SENSOR
 		m_axl_depth_pile.set_max_size(max_size);
 #endif
+		m_baro_depth_pile.set_max_size(max_size);
 
 		unsigned int burst_counter;
 		if (argos_config.mode == BaseArgosMode::DUTY_CYCLE || argos_config.mode == BaseArgosMode::LEGACY
@@ -255,6 +262,10 @@ void DepthPileManager::update_depth_pile() {
 			m_axl_depth_pile.store(m_axl_cache, burst_counter);
 		}
 #endif
+		if (m_sensor_tx_current & (1 << (int)ServiceIdentifier::BARO_SENSOR)) {
+			// Store the BARO entry into the depth pile
+			m_baro_depth_pile.store(m_baro_cache, burst_counter);
+		}
 		m_sensor_tx_current = 0;
 	}
 }

@@ -47,6 +47,10 @@ extern "C" {
 #define ENABLE_AXL_SENSOR 1
 #endif
 
+#ifndef ENABLE_BARO_SENSOR
+#define ENABLE_BARO_SENSOR 0
+#endif
+
 #ifndef ENABLE_MORTALITY_SENSOR
 #define ENABLE_MORTALITY_SENSOR 0
 #endif
@@ -484,8 +488,14 @@ enum class ParamID {
 	PP_MIN_CULMINATION                       = 263,  // uint deg: reject grazing passes (0 = disabled). TX path.
 	PP_RX_MIN_CULMINATION                    = 264,  // uint deg: same for the AOP downlink window, where a poor pass wastes a whole RX slot
 	PP_POSITION_MARGIN_KM                    = 265,  // uint km: beacon position uncertainty, widens the visibility circle
+	// === Barometer sensor params (slots always reserved) ===
+	BARO_SENSOR_ENABLE                       = 266,
+	BARO_SENSOR_PERIODIC                     = 267,
+	BARO_SENSOR_ENABLE_TX_MODE               = 268,
+	BARO_SENSOR_ENABLE_TX_MAX_SAMPLES        = 269,
+	BARO_SENSOR_ENABLE_TX_SAMPLE_PERIOD      = 270,
 	// === Sentinel (fixed regardless of #ifdef combinations) ===
-	__PARAM_SIZE                             = 266,
+	__PARAM_SIZE                             = 271,
 	__NULL_PARAM                             = 0xFFFF
 };
 // clang-format on

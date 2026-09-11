@@ -522,6 +522,7 @@ KineisPacket ArgosPacketBuilder::build_rspb_doppler_packet(unsigned int battery_
 KineisPacket ArgosPacketBuilder::build_sensor_packet(GPSLogEntry *gps_entry, ServiceSensorData *als_sensor,
                                                      ServiceSensorData *ph_sensor, ServiceSensorData *pressure_sensor,
                                                      ServiceSensorData *sea_temp_sensor, ServiceSensorData *axl_sensor,
+                                                     ServiceSensorData *baro_sensor,
                                                      bool is_out_of_zone, bool is_low_battery,
                                                      unsigned int &size_bits) {
 	DEBUG_TRACE("ArgosPacketBuilder::build_sensor_packet");
@@ -533,7 +534,10 @@ KineisPacket ArgosPacketBuilder::build_sensor_packet(GPSLogEntry *gps_entry, Ser
 	packet.assign(WOODBUOY_SENSOR_PACKET_BYTES, 0);
 
 	// 3-bit type header — Type 1 (001) for temperature only
-	PACK_BITS(SENSOR_TEMP_PACKET_HEADER, packet, base_pos, 3);
+	if(baro_sensor != nullptr)
+		PACK_BITS(SENSOR_TEMP_BARO_PACKET_HEADER, packet, base_pos, 3);
+	else
+		PACK_BITS(SENSOR_TEMP_PACKET_HEADER, packet, base_pos, 3);
 #else
 	// Reserve required number of bytes
 	packet.assign(SENSOR_PACKET_BYTES, 0);
@@ -599,6 +603,10 @@ KineisPacket ArgosPacketBuilder::build_sensor_packet(GPSLogEntry *gps_entry, Ser
 		current_sensor = 0xFFFFFFFF;;
 	DEBUG_TRACE("ArgosPacketBuilder::build_sensor_packet: sea_temp=%06X", (unsigned int)current_sensor);
 	PACK_BITS((unsigned int)current_sensor, packet, base_pos, 21);
+
+	// BARO sensor data
+	DEBUG_TRACE("ArgosPacketBuilder::build_sensor_packet: baro=%06X", (unsigned int)baro_sensor->port[0]);
+	PACK_BITS((unsigned int)baro_sensor->port[0], packet, base_pos, 15);
 
 	size_bits = WOODBUOY_SENSOR_PACKET_MAX_BITS;
 #else

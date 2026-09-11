@@ -285,6 +285,7 @@ public:
 #if ENABLE_AXL_SENSOR
 		m_axl_depth_pile.clear();
 #endif
+		m_baro_depth_pile.clear();
 	}
 	bool eligible() { return m_gps_depth_pile.eligible(); }
 
@@ -375,6 +376,8 @@ public:
 			} else if (service == ServiceIdentifier::AXL_SENSOR) {
 				return m_axl_depth_pile.retrieve(depth_pile, 1).at(0);
 #endif
+			} else if (service == ServiceIdentifier::BARO_SENSOR) {
+				return m_baro_depth_pile.retrieve(depth_pile, 1).at(0);
 			}
 			// Unknown sensor type — return nullptr instead of throwing an enum
 			// (ErrorCode is not derived from std::exception so it would escape
@@ -404,6 +407,8 @@ private:
 	DepthPile<ServiceSensorData> m_axl_depth_pile;
 	ServiceSensorData m_axl_cache;
 #endif
+	DepthPile<ServiceSensorData> m_baro_depth_pile;
+	ServiceSensorData m_baro_cache;
 
 	void update_depth_pile();
 };

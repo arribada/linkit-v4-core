@@ -160,6 +160,7 @@ See [Wiki: CI Workflows](https://github.com/arribada/linkit-v4-core/wiki/17-%E2%
 | `ENABLE_SEA_TEMP_SENSOR` | 0 | RTD / TSYS01 sea temperature |
 | `ENABLE_ALS_SENSOR` | 0 | LTR-303 ambient light |
 | `ENABLE_CDT_SENSOR` | 0 | Conductivity-Depth-Temperature |
+| `ENABLE_BARO_SENSOR` | 0 | VAISALA PTB110-2.5V with ADC read |
 | `CAM_ENABLE` | 0 | RunCam camera trigger |
 
 Note: `ENABLE_THERMISTOR_SENSOR` and `ENABLE_SEA_TEMP_SENSOR` are mutually exclusive (shared Argos TX slot).

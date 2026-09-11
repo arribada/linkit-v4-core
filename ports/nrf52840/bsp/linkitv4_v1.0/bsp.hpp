@@ -60,6 +60,9 @@
 #define ADC_ENABLE      BSP::GPIO::GPIO_ADC_EN
 #define VSYS_SEL        BSP::GPIO::GPIO_VSYS_SEL
 #define BAT_READ_ENABLE BSP::GPIO::GPIO_BAT_READ_EN
+#if ENABLE_BARO_SENSOR
+#define BARO_PWR_EN     BSP::GPIO::GPIO_EXT_GPIO1
+#endif
 
 // Battery ADC settling time (ms) after enabling BAT_READ_ENABLE.
 // KIM variant has higher impedance divider resistors — needs longer RC settling.

@@ -57,7 +57,8 @@ enum class ServiceIdentifier : unsigned int {
 	DIVE_MODE,
 	CAM_SENSOR,
 	THERMISTOR_SENSOR,
-	MORTALITY
+	MORTALITY,
+	BARO_SENSOR,
 };
 
 /// @brief Inter-service event — carries type, data, source, and originator ID.

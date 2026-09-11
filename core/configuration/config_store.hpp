@@ -466,6 +466,11 @@ protected:
 		/* [263] PP_MIN_CULMINATION */ 0U,         // TX: keep every pass the elevation filter accepted (previous hardcoded value)
 		/* [264] PP_RX_MIN_CULMINATION */ 20U,     // RX: a downlink needs a good pass — a grazing one wastes the whole window (previous hardcoded value)
 		/* [265] PP_POSITION_MARGIN_KM */ 0U,      // no position uncertainty by default
+		/* [266] BARO_SENSOR_ENABLE */ (bool)false,
+		/* [267] BARO_SENSOR_PERIODIC */ 0U,
+		/* [268] BARO_SENSOR_ENABLE_TX_MODE */ BaseSensorEnableTxMode::OFF,
+		/* [269] BARO_SENSOR_ENABLE_TX_MAX_SAMPLES */  1U,
+		/* [270] BARO_SENSOR_ENABLE_TX_SAMPLE_PERIOD */ 1000U,
 	};
 	// clang-format on
 
@@ -1433,6 +1438,11 @@ public:
 			                 != BaseSensorEnableTxMode::OFF)
 			    << (int)ServiceIdentifier::THERMISTOR_SENSOR;
 #endif
+			argos_config.sensor_tx_enable |=
+			    (int)(read_param<bool>(ParamID::BARO_SENSOR_ENABLE)
+			          && read_param<BaseSensorEnableTxMode>(ParamID::BARO_SENSOR_ENABLE_TX_MODE)
+			                 != BaseSensorEnableTxMode::OFF)
+			    << (int)ServiceIdentifier::BARO_SENSOR;
 		}
 	}
 

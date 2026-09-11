@@ -1889,6 +1889,8 @@ void ArgosTxService::process_sensor_burst() {
             m_depth_pile_manager.retrieve_sensor_single((unsigned int)argos_config.depth_pile,
                                                         ServiceIdentifier::SEA_TEMP_SENSOR),
             nullptr, // AXL_SENSOR
+            m_depth_pile_manager.retrieve_sensor_single((unsigned int)argos_config.depth_pile,
+                                                        ServiceIdentifier::BARO_SENSOR),
             argos_config.is_out_of_zone, argos_config.is_lb, size_bits);
 #else
 		// Generic sensor packet for LinkIt V4 (all sensors, no RSPB-specific packing)
@@ -1912,6 +1914,7 @@ void ArgosTxService::process_sensor_burst() {
 #else
 		    nullptr,
 #endif
+		    nullptr, // BARO SENSOR
 		    argos_config.is_out_of_zone, argos_config.is_lb, size_bits);
 
 		// Adaptive modulation for generic sensor packet
