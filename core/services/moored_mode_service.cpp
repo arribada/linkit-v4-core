@@ -274,9 +274,10 @@ void MooredModeService::on_motion_event(std::time_t now) {
 	bool burst_expired = s_noinit.motion_events != 0 && s_noinit.last_motion_rtc != 0
 	                     && now >= s_noinit.last_motion_rtc
 	                     && (now - s_noinit.last_motion_rtc) > MOTION_BURST_WINDOW_S;
-	if (burst_expired)
+	if (burst_expired) {
 		DEBUG_TRACE("MooredModeService: motion burst window expired (%u events dropped), restarting at 1",
 		            (unsigned int)s_noinit.motion_events);
+	}
 
 	{
 		InterruptLock lock;
