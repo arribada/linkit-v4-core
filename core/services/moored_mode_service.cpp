@@ -49,6 +49,7 @@ struct MooredNoinit {
 	double ref_lat;  // reference anchor (degrees)
 	double ref_lon;
 	std::time_t last_axl_exit_rtc;  // debounce anchor for accelerometer exits
+	std::time_t last_motion_rtc;    // burst-window anchor for counted wake-ups
 	uint8_t in_moored;              // 0 = UNDERWAY, 1 = MOORED
 	uint8_t has_ref;                // 0 until the first valid fix lands
 	uint8_t stationary_fixes;       // consecutive fixes inside the radius
@@ -127,6 +128,14 @@ void enter_underway_locked() {
 /// not survive a reset (the boot GNSS session covers that case), and the
 /// noinit layout/CRC stays untouched.
 bool s_motion_exit_kick = false;
+
+/// Wake-ups counted toward MOORED_EXIT_EVENTS must form a burst, not a
+/// collection: without a window, two wave slaps hours apart add up to an exit
+/// on any rolly anchorage. A genuine departure (engine, underway chop) fires
+/// its wake-ups within seconds; 10 minutes leaves margin without letting
+/// isolated events accumulate. A constant, not a parameter: MRP03/MRP04
+/// already give the operator the knobs that matter.
+constexpr std::time_t MOTION_BURST_WINDOW_S = 600;
 
 }  // namespace
 
@@ -259,9 +268,21 @@ void MooredModeService::on_motion_event(std::time_t now) {
 	unsigned int exit_events = read_uint(ParamID::MOORED_EXIT_EVENTS, 2);
 	if (exit_events == 0) exit_events = 1;
 
+	// The `now >=` guard mirrors the hold-off above: a future timestamp (RTC
+	// rollback) does not read as an expired window, and heals at the write
+	// just below.
+	bool burst_expired = s_noinit.motion_events != 0 && s_noinit.last_motion_rtc != 0
+	                     && now >= s_noinit.last_motion_rtc
+	                     && (now - s_noinit.last_motion_rtc) > MOTION_BURST_WINDOW_S;
+	if (burst_expired)
+		DEBUG_TRACE("MooredModeService: motion burst window expired (%u events dropped), restarting at 1",
+		            (unsigned int)s_noinit.motion_events);
+
 	{
 		InterruptLock lock;
+		if (burst_expired) s_noinit.motion_events = 0;
 		if (s_noinit.motion_events < 0xFF) s_noinit.motion_events++;
+		s_noinit.last_motion_rtc = now;
 		s_noinit.crc = noinit_crc();
 	}
 

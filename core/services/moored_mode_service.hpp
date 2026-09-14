@@ -18,8 +18,8 @@
  *                        MOORED_RADIUS_M of the reference anchor.
  *   MOORED -> UNDERWAY : one fix outside the radius, OR a fix reporting
  *                        gSpeed > UNDERWAY_SPEED_MMS, OR MOORED_EXIT_EVENTS
- *                        accelerometer wake-ups (rate-limited by
- *                        MOORED_AXL_HOLDOFF_S).
+ *                        accelerometer wake-ups within a 10 min burst window
+ *                        (rate-limited by MOORED_AXL_HOLDOFF_S).
  *
  * The reference anchor is NOT re-centred while stationary. That is the whole
  * point: a slow drift (a vessel swinging on its anchor, a current) accumulates
