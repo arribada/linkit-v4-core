@@ -90,7 +90,8 @@ void PMU::storage_off_check() {
 	uint32_t resetreas = NRF_POWER->RESETREAS;
 	uint32_t gpregret = NRF_POWER->GPREGRET;
 
-	bool was_pseudo_power_off = (resetreas & POWER_RESETREAS_SREQ_Msk) && (gpregret == 0x80);
+	bool was_pseudo_power_off = (gpregret == 0x80)
+        && !(resetreas & (POWER_RESETREAS_RESETPIN_Msk | POWER_RESETREAS_DOG_Msk));
 
 	if (!was_pseudo_power_off) {
 		return;  // Not a wake from storage — proceed to normal init
@@ -137,7 +138,8 @@ void PMU::storage_off_check() {
 	// (POWER_ON for battery insert, or GPIO for the SENSE wake we just armed).
 	// Without this clear, every cold boot via Hall would re-detect
 	// "PSEUDO_POWER_OFF + magnet released" and bounce back into System OFF.
-	NRF_POWER->GPREGRET = 0;
+	// Update 2026-09: keep GREGRET to keep knowledge of pseudo power-on
+	//NRF_POWER->GPREGRET = 0;
 	NRF_POWER->RESETREAS = NRF_POWER->RESETREAS;  // write-1-to-clear
 
 	// Clear any latched DETECT events on both GPIO ports. Without this clear,
@@ -394,11 +396,10 @@ ResetCause PMU::reset_cause() {
 		return ResetCause::HARD_RESET;
 	else if (m_reset_cause & NRF_POWER_RESETREAS_DOG_MASK)
 		return ResetCause::WDT_RESET;
+	else if (m_reset_cause & POWER_RESETREAS_PSEUDO_POWER_OFF)
+		return ResetCause::PSEUDO_POWER_ON;
 	else if (m_reset_cause & NRF_POWER_RESETREAS_SREQ_MASK)
-		if (m_reset_cause & POWER_RESETREAS_PSEUDO_POWER_OFF)
-			return ResetCause::PSEUDO_POWER_ON;
-		else
-			return ResetCause::SOFT_RESET;
+		return ResetCause::SOFT_RESET;
 	else
 		return ResetCause::POWER_ON;
 }
