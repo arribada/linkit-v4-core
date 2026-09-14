@@ -44,6 +44,12 @@ private:
 	/// nominal rate rather than leaving the service owning nothing.
 	ScheduleDecision schedule_surfacing_heartbeat(ArgosConfig &argos_config, std::time_t now);
 
+	/// @brief Record an absolute TX time and build the run decision from the
+	/// EFFECTIVE time the scheduler returns — schedule_at may defer t onto a
+	/// pending earliest-TX bound (error backoff, surface dry-time), and the
+	/// decision must land on the same instant as the TR_NOM anchor.
+	ScheduleDecision schedule_at_decision(std::time_t now, std::time_t t, const char *why);
+
 	KineisDevice &m_device;
 	DepthPileManager m_depth_pile_manager;
 	LoRaTxScheduler m_sched;
