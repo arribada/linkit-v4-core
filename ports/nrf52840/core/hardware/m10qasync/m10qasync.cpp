@@ -2676,6 +2676,10 @@ void M10QAsyncReceiver::state_fetchdatabase() {
 					// so it doesn't get sent out
 					m_ana_database_len = m_ana_database_len - std::min(m_ana_database_len, msg_size<MGA::MSG_ACK>());
 					// Persist to flash if a fix was obtained (useful data for next session)
+					// Costed at boat cadence (288-360 sessions/day, 2026-09): a <=16 KB
+					// rewrite per session is ~5-6 MB/day through LittleFS on the 16 MB
+					// wear-levelled IS25 — ~0.4 erase-cycles per block per day against a
+					// 100K endurance. No throttle needed at any cadence this firmware runs.
 					if (m_fix_was_found) {
 						save_dbd_to_flash();
 					}
