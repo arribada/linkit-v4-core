@@ -90,18 +90,20 @@ public:
 	/// @brief Storage-mode wake filter (LinkIt V4 only).
 	///
 	/// Called at the very beginning of `main()` BEFORE `initialise()` and
-	/// `start_watchdog()`. If the device just woke from `PSEUDO_POWER_OFF`
-	/// (soft reset with `GPREGRET=0x80`) AND no magnet is currently held
-	/// on the reed switch, this function:
+	/// `start_watchdog()`. If the device carries the storage marker
+	/// (`GPREGRET=0x80` — powerdown soft reset or SENSE wake out of storage)
+	/// AND no magnet is currently held on the reed switch, this function:
 	///   - Drops `VSYS_SEL` to switch the buck-boost from 3.3 V to 1.8 V
 	///     (same trick as `prepare_for_deep_idle`)
 	///   - Configures `REED_SW` as a SENSE wake-up source
-	///   - Clears `GPREGRET` / `RESETREAS` so the next wake reports cleanly
+	///   - Keeps `GPREGRET=0x80` (clears only `RESETREAS`) so the SENSE wake
+	///     decodes as `PSEUDO_POWER_ON` and re-arms the 3 s magnet gesture
 	///   - Enters `NRF_POWER->SYSTEMOFF` (deepest sleep, wake = chip reset)
 	///
-	/// Returns immediately if reset cause is not pseudo-power-off, or if the
-	/// magnet IS held (lets the normal `init_power_on_check` 3 s gesture
-	/// take over). Must be called before `initialise()` because:
+	/// Returns immediately if the storage marker is absent (or the reset came
+	/// from RESETPIN / watchdog), or if the magnet IS held (lets the normal
+	/// `init_power_on_check` 3 s gesture take over). Must be called before
+	/// `initialise()` because:
 	///   - `initialise()` clears `RESETREAS` / `GPREGRET`
 	///   - The watchdog must NOT be running before System OFF (it would
 	///     tick in System OFF and reset the chip on timeout)
