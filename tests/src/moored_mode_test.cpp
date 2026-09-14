@@ -241,6 +241,32 @@ TEST(MooredMode, MotionWhileUnderwayDoesNotArmTheKick) {
 	CHECK_FALSE(MooredModeService::take_motion_exit_kick());
 }
 
+// === The burst window ======================================================
+
+TEST(MooredMode, StaleMotionEventsDoNotAccumulateIntoAnExit) {
+	// Two wave slaps ten minutes apart are weather, not a departure. Without
+	// the window the counter never forgot, so any rolly anchorage eventually
+	// collected MOORED_EXIT_EVENTS and manufactured a false exit.
+	enable(150, 3, 2, 0);
+	moor_it();
+	MooredModeService::on_motion_event(2000);
+	MooredModeService::on_motion_event(2000 + 601);  // expired: restarts at 1
+	CHECK_TRUE(MooredModeService::is_moored());
+	CHECK_EQUAL(1, (int)MooredModeService::motion_events());
+	// A wake-up close behind the restarted count is a genuine burst: exit.
+	MooredModeService::on_motion_event(2000 + 610);
+	CHECK_FALSE(MooredModeService::is_moored());
+}
+
+TEST(MooredMode, EventsInsideTheWindowStillCountAsABurst) {
+	enable(150, 3, 3, 0);
+	moor_it();
+	MooredModeService::on_motion_event(2000);
+	MooredModeService::on_motion_event(2000 + 300);
+	MooredModeService::on_motion_event(2000 + 599);
+	CHECK_FALSE(MooredModeService::is_moored());
+}
+
 TEST(MooredMode, HoldoffSuppressesRepeatedMotionExits) {
 	// Swell trips the accelerometer over and over. Without the hold-off each
 	// trip costs a GNSS acquisition (via GNSS_TRIGGER_ON_AXL_WAKEUP) and the
