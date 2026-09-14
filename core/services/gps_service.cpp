@@ -15,6 +15,7 @@
 extern RTC *rtc;
 #if ENABLE_AXL_SENSOR
 #include "axl_sensor_service.hpp"
+#include "moored_mode_service.hpp"
 #endif
 
 extern ConfigurationStore *configuration_store;
@@ -1763,8 +1764,11 @@ bool GPSService::service_is_triggered_on_event(ServiceEvent &event, bool &immedi
 		auto *sensor_data = std::get_if<ServiceSensorData>(&event.event_data);
 		if (sensor_data && sensor_data->port[AXLSensorPort::WAKEUP_TRIGGERED]) {
 			bool trigger_on_axl = service_read_param<bool>(ParamID::GNSS_TRIGGER_ON_AXL_WAKEUP);
-			immediate = trigger_on_axl;
-			return trigger_on_axl;
+			// Consumed unconditionally — hiding it behind a short-circuit would
+			// leave the latch armed for an unrelated later wake-up.
+			bool moored_exit_kick = MooredModeService::take_motion_exit_kick();
+			immediate = trigger_on_axl || moored_exit_kick;
+			return immediate;
 		}
 	}
 #else
