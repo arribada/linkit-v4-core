@@ -184,25 +184,41 @@ uint8_t BMA400LL::range_to_g(uint8_t range_reg) const {
 	return (range_reg < 4) ? g_table[range_reg] : 4;
 }
 
-/// @brief Convert a g-force motion threshold to its interrupt-register value.
-///
-/// The interrupt engines (GEN1 and wake-up) use a FIXED 8 mg/LSB scale, NOT the
-/// range-dependent scale of the acceleration DATA registers — the vendored
-/// driver states it outright for GEN1 ("1 LSB = 8mg, if gen_int_thres = 10,
-/// then threshold = 10 * 8 = 80mg", bma400_defs.h). Converting with the data
-/// scale (0.977 mg/LSB at 2G) inflated every threshold by 8x: a 0.15 g request
-/// wrote 153, which the chip read as 1.22 g sustained over the sample window —
-/// unreachable by hand, and the reason no wake-up had ever been observed.
-///
-/// Ceiling is 255 * 8 mg = 2.04 g, independent of BMA400_RANGE_*; the range
-/// argument is kept for signature compatibility with the data-scale helpers.
-uint8_t BMA400LL::calculate_threshold_reg(double threshold_g, uint8_t acc_range) {
-	(void)acc_range;
-	constexpr double INT_THRESHOLD_LSB_G = 0.008;
+/// @brief Round a g-force threshold onto a register scale, never down to zero.
+static uint8_t threshold_to_reg(double threshold_g, double lsb_g) {
 	if (threshold_g <= 0.0) return 0;
-	uint16_t threshold_raw = static_cast<uint16_t>((threshold_g / INT_THRESHOLD_LSB_G) + 0.5);
-	if (threshold_raw == 0) threshold_raw = 1;  // a non-zero request must not disarm the engine
-	return static_cast<uint8_t>(std::min<uint16_t>(255, threshold_raw));
+	uint16_t raw = static_cast<uint16_t>((threshold_g / lsb_g) + 0.5);
+	if (raw == 0) raw = 1;  // a non-zero request must not disarm the engine
+	return static_cast<uint8_t>(std::min<uint16_t>(255, raw));
+}
+
+/// @brief Threshold register for the LOW_POWER wake-up engine (WKUP_INT_CONFIG1).
+///
+/// RANGE-SENSITIVE, per BMA400 datasheet BST-BMA400-DS000-02 p.80: "The physical
+/// value of LSB corresponds to 2^(2+acc_range)/256" — 15.625 mg at +/-2g, 31.25
+/// at +/-4g, and so on. Page 81 gives the same scale from the other side: the
+/// engine tests abs(acc - ref*16) > thres*16 in 12-bit counts, and 16 counts at
+/// +/-2g IS 15.6 mg.
+///
+/// This is NOT the GEN1 scale, and using the GEN1 constant here made every
+/// deployed wake-up threshold 1.95x larger than its label. Ceiling at +/-2g is
+/// 255 * 15.625 mg = 3.98 g.
+uint8_t BMA400LL::calculate_wakeup_threshold_reg(double threshold_g, uint8_t acc_range) {
+	const double lsb_g = static_cast<double>(1u << (2 + (acc_range & 0x03))) / 256.0;
+	return threshold_to_reg(threshold_g, lsb_g);
+}
+
+/// @brief Threshold register for the NORMAL-mode GEN1 activity interrupt.
+///
+/// FIXED 8 mg/LSB whatever the measurement range — stated by the vendored driver
+/// ("1 LSB = 8mg, if gen_int_thres = 10, then threshold = 10 * 8 = 80mg",
+/// bma400_defs.h) and by the datasheet's GEN1 section. Ceiling 255 * 8 = 2.04 g.
+///
+/// Neither engine uses the range-dependent scale of the acceleration DATA
+/// registers (0.977 mg/LSB at +/-2g). That confusion is what made this whole
+/// path silent: a 0.15 g request became register 153, i.e. multiple g.
+uint8_t BMA400LL::calculate_gen1_threshold_reg(double threshold_g) {
+	return threshold_to_reg(threshold_g, 0.008);
 }
 
 /// @brief Check Bosch API result — log and throw on error.
@@ -504,7 +520,7 @@ void BMA400LL::enable_wakeup_low_power(std::function<void()> func) {
 	dev_conf.param.wakeup.wakeup_axes_en = BMA400_AXIS_XYZ_EN;
 	dev_conf.param.wakeup.wakeup_ref_update = BMA400_UPDATE_EVERY_TIME;
 	dev_conf.param.wakeup.sample_count = BMA400_SAMPLE_COUNT_4;
-	dev_conf.param.wakeup.int_wkup_threshold = calculate_threshold_reg(m_wakeup_threshold, m_g_range);
+	dev_conf.param.wakeup.int_wkup_threshold = calculate_wakeup_threshold_reg(m_wakeup_threshold, m_g_range);
 	dev_conf.param.wakeup.int_chan = BMA400_MAP_BOTH_INT_PINS;
 
 	rslt = bma400_set_device_conf(&dev_conf, 1, &m_bma400_dev);
@@ -541,7 +557,7 @@ void BMA400LL::enable_wakeup_normal(std::function<void()> func) {
 	int8_t rslt;
 
 	m_sensor_conf[1].type = BMA400_GEN1_INT;
-	m_sensor_conf[1].param.gen_int.gen_int_thres = calculate_threshold_reg(m_wakeup_threshold, m_g_range);
+	m_sensor_conf[1].param.gen_int.gen_int_thres = calculate_gen1_threshold_reg(m_wakeup_threshold);
 	m_sensor_conf[1].param.gen_int.gen_int_dur = static_cast<uint8_t>(m_wakeup_duration - 1);
 	m_sensor_conf[1].param.gen_int.axes_sel = BMA400_AXIS_XYZ_EN;
 	m_sensor_conf[1].param.gen_int.data_src = BMA400_DATA_SRC_ACC_FILT2;

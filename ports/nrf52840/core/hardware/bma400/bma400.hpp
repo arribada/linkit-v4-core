@@ -214,7 +214,8 @@ private:
 	/// @{
 	double lsb_to_ms2(int16_t accel_data, uint8_t g_range, uint8_t bit_width);  ///< Raw LSB → m/s²
 	void check_result(const char *api_name, int8_t rslt);                       ///< Log + throw on Bosch API error
-	uint8_t calculate_threshold_reg(double threshold_g, uint8_t acc_range);     ///< g → register value
+	uint8_t calculate_wakeup_threshold_reg(double threshold_g, uint8_t acc_range);  ///< g → WKUP reg (range-sensitive)
+	uint8_t calculate_gen1_threshold_reg(double threshold_g);                      ///< g → GEN1 reg (8 mg/LSB fixed)
 	                                                                            /// @}
 };
 
