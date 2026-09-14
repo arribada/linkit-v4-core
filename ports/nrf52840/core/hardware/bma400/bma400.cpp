@@ -184,10 +184,24 @@ uint8_t BMA400LL::range_to_g(uint8_t range_reg) const {
 	return (range_reg < 4) ? g_table[range_reg] : 4;
 }
 
-/// @brief Convert g-force threshold to BMA400 register value (0-255).
+/// @brief Convert a g-force motion threshold to its interrupt-register value.
+///
+/// The interrupt engines (GEN1 and wake-up) use a FIXED 8 mg/LSB scale, NOT the
+/// range-dependent scale of the acceleration DATA registers — the vendored
+/// driver states it outright for GEN1 ("1 LSB = 8mg, if gen_int_thres = 10,
+/// then threshold = 10 * 8 = 80mg", bma400_defs.h). Converting with the data
+/// scale (0.977 mg/LSB at 2G) inflated every threshold by 8x: a 0.15 g request
+/// wrote 153, which the chip read as 1.22 g sustained over the sample window —
+/// unreachable by hand, and the reason no wake-up had ever been observed.
+///
+/// Ceiling is 255 * 8 mg = 2.04 g, independent of BMA400_RANGE_*; the range
+/// argument is kept for signature compatibility with the data-scale helpers.
 uint8_t BMA400LL::calculate_threshold_reg(double threshold_g, uint8_t acc_range) {
-	double lsb = static_cast<double>(1 << (2 + acc_range)) / 4096.0;
-	uint16_t threshold_raw = static_cast<uint16_t>(threshold_g / lsb);
+	(void)acc_range;
+	constexpr double INT_THRESHOLD_LSB_G = 0.008;
+	if (threshold_g <= 0.0) return 0;
+	uint16_t threshold_raw = static_cast<uint16_t>((threshold_g / INT_THRESHOLD_LSB_G) + 0.5);
+	if (threshold_raw == 0) threshold_raw = 1;  // a non-zero request must not disarm the engine
 	return static_cast<uint8_t>(std::min<uint16_t>(255, threshold_raw));
 }
 
