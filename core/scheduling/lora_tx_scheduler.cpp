@@ -144,9 +144,22 @@ void LoRaTxScheduler::set_earliest_schedule(std::time_t earliest) {
 	m_earliest_schedule = (uint64_t)earliest * MSECS_PER_SECOND;
 }
 
-void LoRaTxScheduler::schedule_at(std::time_t t) {
-	DEBUG_TRACE("LoRaTxScheduler::schedule_at: t=%llu", t);
-	m_curr_schedule_abs = (uint64_t)t * MSECS_PER_SECOND;
+std::time_t LoRaTxScheduler::schedule_at(std::time_t t) {
+	uint64_t t_ms = (uint64_t)t * MSECS_PER_SECOND;
+	// The "TX now" call sites (first TX after a fix, surfacing pings) must not
+	// slip under an active error backoff or dry-time window: without this clamp
+	// each new fix discarded the bound and the 60/120 s backoff never actually
+	// spaced the strikes. A stale (past) bound never binds; schedule_periodic
+	// owns the lazy clear.
+	if (m_earliest_schedule.has_value() && m_earliest_schedule.value() > t_ms) {
+		DEBUG_TRACE("LoRaTxScheduler::schedule_at: t=%llu deferred %llu s by earliest-TX bound", t,
+		            (m_earliest_schedule.value() - t_ms) / MSECS_PER_SECOND);
+		t_ms = m_earliest_schedule.value();
+	} else {
+		DEBUG_TRACE("LoRaTxScheduler::schedule_at: t=%llu", t);
+	}
+	m_curr_schedule_abs = t_ms;
+	return (std::time_t)(t_ms / MSECS_PER_SECOND);
 }
 
 void LoRaTxScheduler::notify_tx_complete() {

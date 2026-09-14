@@ -432,3 +432,81 @@ TEST(LoRaTxService, BurstEndingOnMaxMessagesKeepsTheHeartbeatInTheSamePass) {
 
 	mock().checkExpectations();
 }
+
+// A fresh GNSS fix re-enters the dispatch through the first-TX branch, which
+// schedules "now" -- and used to write that straight into the scheduler,
+// discarding the error backoff set moments earlier. On a periodic tracker the
+// fixes keep coming, so the 60/120 s ladder never actually spaced the strikes:
+// three failures burned through at fix cadence. The first-TX branch must land
+// on the remaining backoff instead.
+TEST(LoRaTxService, FixDrivenRescheduleDoesNotBypassTheErrorBackoff) {
+	configure_plain_legacy();
+
+	LoRaTxService serv(*mock_device);
+	std::time_t t = 1652105502000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+
+	serv.start();
+	inject_gps_location(t / 1000);
+
+	mock().expectNCalls(2, "send").onObject(mock_device).ignoreOtherParameters();
+	mock().ignoreOtherCalls();
+
+	fail_n_transmissions(serv, t, 1);
+	CHECK_EQUAL(60000U, serv.get_last_schedule());
+
+	// The fix arrives in the same second as the failure: the full 60 s of
+	// backoff must remain in front of the TX it triggers.
+	inject_gps_location(t / 1000);
+	CHECK_EQUAL(60000U, serv.get_last_schedule());
+
+	// Half-way through the backoff nothing may fly -- the strict send count is
+	// what proves it.
+	t += 30000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	system_scheduler->run();
+
+	// ...and once the bound elapses, the fix-driven TX goes out.
+	t += 30000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	system_scheduler->run();
+
+	mock().checkExpectations();
+}
+
+// The converse guard: a bound left behind by an old failure is a PAST time,
+// not a standing penalty. A fix arriving after the backoff has elapsed must
+// transmit immediately -- over-clamping here would tax every healthy fix with
+// a stale deferral.
+TEST(LoRaTxService, FixDrivenTxIsImmediateOnceTheBackoffHasElapsed) {
+	configure_plain_legacy();
+
+	LoRaTxService serv(*mock_device);
+	std::time_t t = 1652105502000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+
+	serv.start();
+	inject_gps_location(t / 1000);
+
+	mock().expectNCalls(2, "send").onObject(mock_device).ignoreOtherParameters();
+	mock().ignoreOtherCalls();
+
+	fail_n_transmissions(serv, t, 1);
+	CHECK_EQUAL(60000U, serv.get_last_schedule());
+
+	// Walk the wall clock past the bound WITHOUT running the scheduler: the
+	// immediacy asserted below can then only come from the fix, and the
+	// reschedule it triggers cancels the pending backoff retry.
+	t += 120000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	inject_gps_location(t / 1000);
+	CHECK_EQUAL(0U, serv.get_last_schedule());
+
+	system_scheduler->run();
+	mock().checkExpectations();
+}

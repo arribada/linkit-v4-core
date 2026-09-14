@@ -101,6 +101,11 @@ unsigned int LoRaTxService::service_next_schedule_in_ms() {
 	return SCHEDULE_DISABLED;
 }
 
+ScheduleDecision LoRaTxService::schedule_at_decision(std::time_t now, std::time_t t, const char *why) {
+	const std::time_t effective = m_sched.schedule_at(t);
+	return ScheduleDecision::run((effective > now) ? (unsigned int)(effective - now) * 1000U : 0U, why);
+}
+
 /// @brief Decide what LoRa does next: transmit, wait on a named gate, or stay off.
 ScheduleDecision LoRaTxService::service_next_schedule() {
 	ArgosConfig argos_config;
@@ -172,16 +177,14 @@ ScheduleDecision LoRaTxService::service_next_schedule() {
 
 	if (argos_config.mode == BaseArgosMode::DUTY_CYCLE) {
 		if (m_is_first_tx && m_depth_pile_manager.eligible()) {
-			m_sched.schedule_at(now);
-			return ScheduleDecision::run(0, "first TX, depth pile ready");
+			return schedule_at_decision(now, now, "first TX, depth pile ready");
 		}
 		return from_scheduler(m_sched.schedule_duty_cycle(argos_config, now), "duty-cycle window",
 		                      "duty cycle: no window computable");
 	}
 	if (argos_config.mode == BaseArgosMode::LEGACY) {
 		if (m_is_first_tx && m_depth_pile_manager.eligible()) {
-			m_sched.schedule_at(now);
-			return ScheduleDecision::run(0, "first TX, depth pile ready");
+			return schedule_at_decision(now, now, "first TX, depth pile ready");
 		}
 		return from_scheduler(m_sched.schedule_legacy(argos_config, now), "TR_NOM period",
 		                      "legacy: no slot computable");
@@ -236,8 +239,7 @@ ScheduleDecision LoRaTxService::service_next_schedule() {
 
 				if (have_cached_position) {
 					DEBUG_INFO("LoRaTxService::SURFACING_BURST: status #1 immediate (cached position available)");
-					m_sched.schedule_at(now);
-					return ScheduleDecision::run(0, "surfacing burst: status #1, cached position");
+					return schedule_at_decision(now, now, "surfacing burst: status #1, cached position");
 				}
 
 				unsigned int fastloc_mode = configuration_store->read_param<unsigned int>(ParamID::GNSS_FASTLOC_MODE);
@@ -253,13 +255,11 @@ ScheduleDecision LoRaTxService::service_next_schedule() {
 					DEBUG_INFO(
 					    "LoRaTxService::SURFACING_BURST: status #1 deferred up to %u s waiting for CloudLocate raw",
 					    wait_s);
-					m_sched.schedule_at(now + wait_s);
-					return ScheduleDecision::run(wait_s * 1000, "surfacing burst: waiting for a CloudLocate raw");
+					return schedule_at_decision(now, now + wait_s, "surfacing burst: waiting for a CloudLocate raw");
 				}
 				DEBUG_INFO("LoRaTxService::SURFACING_BURST: status #%u (immediate, no cache)",
 				           m_status_burst_count + 1);
-				m_sched.schedule_at(now);
-				return ScheduleDecision::run(0, "surfacing burst: status #1");
+				return schedule_at_decision(now, now, "surfacing burst: status #1");
 			}
 
 			// Progressive interval: init + (count-1) * step, capped at max
@@ -271,8 +271,7 @@ ScheduleDecision LoRaTxService::service_next_schedule() {
 			// Burst start ("status #1 immediate") and end ("max messages
 			// reached" / "STATUS-PURE silencing") are the meaningful markers.
 			DEBUG_TRACE("LoRaTxService::SURFACING_BURST: status #%u in %u s", m_status_burst_count + 1, interval_s);
-			m_sched.schedule_at(now + interval_s);
-			return ScheduleDecision::run(interval_s * 1000, "surfacing burst: progressive status");
+			return schedule_at_decision(now, now + interval_s, "surfacing burst: progressive status");
 		}
 
 		// Phase 2: GNSS fix available — TX position immediately, then TR_NOM
@@ -295,8 +294,7 @@ ScheduleDecision LoRaTxService::service_next_schedule() {
 			// Note: m_first_gnss_tx_sent is set in service_initiate(), not here.
 			if (!m_first_gnss_tx_sent) {
 				DEBUG_INFO("LoRaTxService::SURFACING_BURST: GNSS fix — TX immediate");
-				m_sched.schedule_at(now);
-				return ScheduleDecision::run(0, "surfacing burst: first TX after fix");
+				return schedule_at_decision(now, now, "surfacing burst: first TX after fix");
 			}
 			return from_scheduler(m_sched.schedule_legacy(argos_config, now), "surfacing burst: GNSS phase",
 			                      "surfacing burst: no slot computable");

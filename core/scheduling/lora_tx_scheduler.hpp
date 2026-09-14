@@ -52,8 +52,11 @@ public:
 	/// @param seed  RNG seed (typically device ID).
 	void reset(unsigned int seed);
 
-	/// @brief Force next TX at absolute time t.
-	void schedule_at(std::time_t t);
+	/// @brief Force next TX at absolute time t, deferred onto any pending
+	/// earliest-TX bound (error backoff, surface dry-time).
+	/// @return The effective schedule time — callers must build their run
+	/// decision from it, or the decision and the TR_NOM anchor diverge.
+	std::time_t schedule_at(std::time_t t);
 
 	/// @brief Notify TX completed — saves timestamp for TR_NOM.
 	void notify_tx_complete();
