@@ -301,6 +301,12 @@ def coherence(valeurs):
     v = valeurs.get
     out = []
     mode = v("ARGOS_MODE")
+    model = (v("DEVICE_MODEL") or "").upper()
+    if "LORA" in model and mode == "OFF":
+        out.append("ARGOS_MODE=OFF on a LoRa profile: the LoRa TX service reuses ARGOS_MODE "
+                   "as its own mode switch (LoRaTxService::service_is_enabled), so OFF mutes "
+                   "the tracker entirely — positions are logged and never transmitted. A "
+                   "periodic LoRa tracker wants LEGACY.")
     if mode == "PASS_PREDICTION" and v("GNSS_ENABLE") == "0":
         out.append("ARGOS_MODE=PASS_PREDICTION with GNSS_ENABLE=0 schedules NOTHING: "
                    "pass prediction is computed from a position. The service logs an "
