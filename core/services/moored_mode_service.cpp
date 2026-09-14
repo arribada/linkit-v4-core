@@ -123,6 +123,11 @@ void enter_underway_locked() {
 	s_noinit.motion_events = 0;
 }
 
+/// Deliberately a plain static, NOT part of MooredNoinit: a pending kick must
+/// not survive a reset (the boot GNSS session covers that case), and the
+/// noinit layout/CRC stays untouched.
+bool s_motion_exit_kick = false;
+
 }  // namespace
 
 void MooredModeService::restore_state() {
@@ -276,10 +281,14 @@ void MooredModeService::on_motion_event(std::time_t now) {
 		s_noinit.crc = noinit_crc();
 	}
 	publish_state(0);
-	// No reschedule kick is needed here: GNSS_TRIGGER_ON_AXL_WAKEUP (GNP26)
-	// already turns this same wake-up event into an immediate GNSS acquisition
-	// in GPSService::service_is_triggered_on_event, and that fix then routes
-	// through LoRaTxService's "GNSS fix -> reschedule for immediate TX" branch.
+	// Arm the acquisition kick. GNP26 would turn this same wake-up into an
+	// immediate acquisition on its own, but the boat profile deliberately keeps
+	// it OFF (one session per wake-up on swell would eat the economy) — and
+	// without a kick the pending GPS task keeps its MOORED_DLOC delay, so the
+	// first post-departure position could land a full moored period late. The
+	// latch is reachable only through this debounced exit, so its worst case is
+	// one acquisition per moor/unmoor cycle.
+	s_motion_exit_kick = true;
 }
 
 void MooredModeService::evaluate() {
@@ -359,6 +368,12 @@ unsigned int MooredModeService::motion_events() {
 	return s_noinit.motion_events;
 }
 
+bool MooredModeService::take_motion_exit_kick() {
+	bool kick = s_motion_exit_kick;
+	s_motion_exit_kick = false;
+	return kick;
+}
+
 double MooredModeService::reference_lat() {
 	return s_noinit.ref_lat;
 }
@@ -374,4 +389,5 @@ double MooredModeService::distance_to_reference_m(double lat, double lon) {
 
 void MooredModeService::reset_for_tests() {
 	clear_state();
+	s_motion_exit_kick = false;
 }

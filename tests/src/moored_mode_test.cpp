@@ -210,6 +210,37 @@ TEST(MooredMode, MotionEventsIgnoredWhenAlreadyUnderway) {
 	CHECK_EQUAL(0, (int)MooredModeService::motion_events());
 }
 
+// === The acquisition kick ==================================================
+
+TEST(MooredMode, MotionExitArmsTheAcquisitionKickExactlyOnce) {
+	enable(150, 3, 2, 0);
+	moor_it();
+	MooredModeService::on_motion_event(2000);
+	CHECK_FALSE(MooredModeService::take_motion_exit_kick());  // one wave is not a departure
+	MooredModeService::on_motion_event(2010);
+	CHECK_FALSE(MooredModeService::is_moored());
+	CHECK_TRUE(MooredModeService::take_motion_exit_kick());   // armed by the exit...
+	CHECK_FALSE(MooredModeService::take_motion_exit_kick());  // ...and consumed exactly once
+}
+
+TEST(MooredMode, GnssDrivenExitDoesNotArmTheKick) {
+	// A GNSS-observed departure is detected during a fix broadcast, whose
+	// service_complete already reschedules at the underway cadence — a kick
+	// there would only buy a redundant acquisition.
+	enable();
+	moor_it();
+	MooredModeService::on_gnss_fix(BASE_LAT + lat_offset_m(500), BASE_LON, 0, 3000);
+	CHECK_FALSE(MooredModeService::is_moored());
+	CHECK_FALSE(MooredModeService::take_motion_exit_kick());
+}
+
+TEST(MooredMode, MotionWhileUnderwayDoesNotArmTheKick) {
+	enable(150, 3, 2, 0);
+	MooredModeService::on_motion_event(1000);
+	MooredModeService::on_motion_event(1010);
+	CHECK_FALSE(MooredModeService::take_motion_exit_kick());
+}
+
 TEST(MooredMode, HoldoffSuppressesRepeatedMotionExits) {
 	// Swell trips the accelerometer over and over. Without the hold-off each
 	// trip costs a GNSS acquisition (via GNSS_TRIGGER_ON_AXL_WAKEUP) and the

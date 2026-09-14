@@ -693,6 +693,74 @@ TEST(GPSService, GNSSNoPeriodicTriggerOnAXLWakeupEvent) {
 }
 
 
+// The boat profile keeps GNP26 OFF (one acquisition per wake-up on swell would
+// eat the moored economy), so a motion-driven MOORED exit used to produce no
+// fix at all: the pending GPS task kept its MOORED_DLOC delay and the first
+// post-departure position landed a full moored period late. The exit now arms
+// a one-shot kick which GPSService consumes from the very same AXL broadcast.
+// End-to-end through ServiceManager::notify_peer_event: the classifier funnel
+// runs before the broadcast loop, which is the ordering the latch relies on.
+TEST(GPSService, MooredExitKicksAnImmediateAcquisitionWithoutGNP26) {
+	fake_config_store->write_param(ParamID::LB_EN, (bool)false);
+	fake_config_store->write_param(ParamID::GNSS_EN, (bool)true);
+	fake_config_store->write_param(ParamID::DLOC_ARG_NOM, (unsigned int)0);
+	fake_config_store->write_param(ParamID::GNSS_ACQ_TIMEOUT, (unsigned int)60);
+	fake_config_store->write_param(ParamID::GNSS_COLD_ACQ_TIMEOUT, (unsigned int)60);
+	fake_config_store->write_param(ParamID::GNSS_HDOPFILT_EN, (bool)false);
+	fake_config_store->write_param(ParamID::UNDERWATER_EN, (bool)true);
+	BaseGNSSFixMode fix_mode = BaseGNSSFixMode::FIX_2D;
+	fake_config_store->write_param(ParamID::GNSS_FIX_MODE, fix_mode);
+	BaseGNSSDynModel dyn_model = BaseGNSSDynModel::SEA;
+	fake_config_store->write_param(ParamID::GNSS_TRIGGER_ON_AXL_WAKEUP, (bool)false);
+	fake_config_store->write_param(ParamID::GNSS_DYN_MODEL, dyn_model);
+	fake_config_store->write_param(ParamID::MOORED_DETECT_EN, (bool)true);
+	fake_config_store->write_param(ParamID::MOORED_RADIUS_M, (unsigned int)150);
+	fake_config_store->write_param(ParamID::MOORED_ENTER_FIXES, (unsigned int)3);
+	fake_config_store->write_param(ParamID::MOORED_EXIT_EVENTS, (unsigned int)2);
+	fake_config_store->write_param(ParamID::MOORED_AXL_HOLDOFF_S, (unsigned int)0);
+
+	// A real epoch: the moored funnel refuses motion events on an unset clock.
+	fake_rtc->settime(1580083200);
+
+	GPSService s(*mock_m10q, fake_log);
+	s.start();
+
+	mock().expectOneCall("power_on").onObject(mock_m10q).ignoreOtherParameters();
+	increment_time_s(FIRST_AQPERIOD);
+	mock().expectOneCall("power_off").onObject(mock_m10q);
+	mock_m10q->notify_gnss_data(fake_rtc->gettime(), 10, 10);
+
+	// Moor the classifier directly — the funnel path for fixes has its own
+	// coverage in the MooredMode group.
+	for (unsigned int i = 0; i < 4; i++) MooredModeService::on_gnss_fix(10.0, 10.0, 0, fake_rtc->gettime() + i);
+	CHECK_TRUE(MooredModeService::is_moored());
+
+	ServiceEvent e;
+	e.event_type = ServiceEventType::SERVICE_LOG_UPDATED;
+	ServiceSensorData sensor_data = {};
+	sensor_data.port[AXLSensorPort::WAKEUP_TRIGGERED] = 1.0;
+	e.event_data = sensor_data;
+	e.event_source = ServiceIdentifier::AXL_SENSOR;
+	e.event_originator_unique_id = 0x12345678;
+
+	// First wake-up: 1/2 toward the exit, no kick — the strict mock proves no
+	// acquisition starts.
+	ServiceManager::notify_peer_event(e);
+	increment_time_s(5);
+	CHECK_TRUE(MooredModeService::is_moored());
+
+	// Second wake-up: exit + kick, consumed by GPSService in the same
+	// broadcast — the acquisition must start immediately, GNP26 notwithstanding.
+	ServiceManager::notify_peer_event(e);
+	CHECK_FALSE(MooredModeService::is_moored());
+	mock().expectOneCall("power_on").onObject(mock_m10q).ignoreOtherParameters();
+	increment_time_s(1);
+
+	mock().expectOneCall("power_off").onObject(mock_m10q);
+	mock_m10q->notify_gnss_data(fake_rtc->gettime(), 10, 10);
+}
+
+
 TEST(GPSService, GNSSInterruptedByErrorEvent) {
 	bool lb_en = false;
 	unsigned int lb_threshold = 0U;

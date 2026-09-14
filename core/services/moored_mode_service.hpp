@@ -78,6 +78,14 @@ public:
 	// already under way carries no information.
 	static void on_motion_event(std::time_t now);
 
+	// One-shot latch, set on a motion-driven MOORED -> UNDERWAY exit and
+	// consumed (read-and-clear) by GPSService to turn that exit into an
+	// immediate acquisition even with GNSS_TRIGGER_ON_AXL_WAKEUP off. The
+	// ordering is guaranteed: ServiceManager::notify_peer_event runs this
+	// classifier's funnel BEFORE broadcasting the same AXL event to services,
+	// so the latch is always consumed within the event that set it.
+	static bool take_motion_exit_kick();
+
 	// Re-evaluate housekeeping (feature disabled -> force exit; RTC rollback ->
 	// re-baseline). Called from ConfigurationStore before every parameter read
 	// so a DTE toggle takes effect without a separate service tick. Cheap: one
