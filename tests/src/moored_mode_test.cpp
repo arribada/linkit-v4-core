@@ -267,6 +267,21 @@ TEST(MooredMode, EventsInsideTheWindowStillCountAsABurst) {
 	CHECK_FALSE(MooredModeService::is_moored());
 }
 
+TEST(MooredMode, ASlowChainOfEventsIsNotABurst) {
+	// Regular swell tripping the sensor every ~8 min: each gap is under the
+	// window, but the chain spans 16 min. Anchored on the burst's FIRST
+	// event, the third wake-up finds the window expired and restarts the
+	// count instead of completing a false exit — the failure mode a
+	// last-event anchor would reintroduce.
+	enable(150, 3, 3, 0);
+	moor_it();
+	MooredModeService::on_motion_event(2000);
+	MooredModeService::on_motion_event(2000 + 480);
+	MooredModeService::on_motion_event(2000 + 960);  // 960 > 600 from the anchor
+	CHECK_TRUE(MooredModeService::is_moored());
+	CHECK_EQUAL(1, (int)MooredModeService::motion_events());
+}
+
 TEST(MooredMode, HoldoffSuppressesRepeatedMotionExits) {
 	// Swell trips the accelerometer over and over. Without the hold-off each
 	// trip costs a GNSS acquisition (via GNSS_TRIGGER_ON_AXL_WAKEUP) and the
