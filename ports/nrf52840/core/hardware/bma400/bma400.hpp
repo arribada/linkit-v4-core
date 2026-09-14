@@ -168,6 +168,7 @@ private:
 	struct bma400_sensor_conf m_sensor_conf[2];  ///< [0]=accel config, [1]=GEN1 interrupt config
 	struct bma400_int_enable m_int_enable;       ///< Current interrupt enable state
 	bool m_irq_pending;                          ///< Set by ISR, cleared by check_and_clear_wakeup()
+	bool m_wakeup_armed = false;                 ///< Wake-on-motion armed: reads must re-arm, not SLEEP
 	/// @}
 
 	/// @name Configuration (set via calibration_write from service layer)
@@ -193,6 +194,7 @@ private:
 	void setup_sleep_mode();   ///< Enter SLEEP (~0.2 µA)
 	void setup_active_mode();  ///< Enter NORMAL 100 Hz for readings + calibration
 	void setup_normal_mode();  ///< Enter NORMAL with GEN1 interrupt config
+	void rearm_or_sleep();     ///< Post-read resting state: armed wake mode, or SLEEP
 	/// @}
 
 	/// @name Wakeup mode internals

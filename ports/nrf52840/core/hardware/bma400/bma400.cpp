@@ -213,10 +213,29 @@ void BMA400LL::check_result(const char *api_name, int8_t rslt) {
 //  Power modes
 // ═══════════════════════════════════════════════════════
 
-/// @brief Enter SLEEP mode (~0.2 µA, no readings, wakeup via auto-wakeup engine).
+/// @brief Enter SLEEP mode (~0.2 µA). NO engine runs in SLEEP — the
+/// auto-wakeup engine needs LOW_POWER, GEN1 needs NORMAL. A sensor left here
+/// is deaf until a mode change.
 void BMA400LL::setup_sleep_mode() {
 	int8_t rslt = bma400_set_power_mode(BMA400_MODE_SLEEP, &m_bma400_dev);
 	check_result("set_power_mode(SLEEP)", rslt);
+}
+
+/// @brief Resting state after an on-demand reading. Every read used to end in
+/// SLEEP unconditionally, which silently disarmed wake-on-motion: the very
+/// first wake event's own sensor read put the chip to sleep, capping the whole
+/// deployment at ONE motion interrupt per boot. When a wakeup handler is
+/// armed, return to the mode its engine evaluates in — the WKUP/GEN1 config
+/// registers persist across power-mode changes, so no reconfiguration is
+/// needed.
+void BMA400LL::rearm_or_sleep() {
+	if (!m_wakeup_armed) {
+		setup_sleep_mode();
+		return;
+	}
+	int8_t rslt =
+	    bma400_set_power_mode(m_power_mode == 0 ? BMA400_MODE_LOW_POWER : BMA400_MODE_NORMAL, &m_bma400_dev);
+	check_result("set_power_mode(rearm)", rslt);
 }
 
 /// @brief NORMAL mode at 100 Hz — used for on-demand readings and calibration.
@@ -297,7 +316,7 @@ void BMA400LL::read_xyz(double &x, double &y, double &z, int16_t &temperature) {
 	}
 	if (!data_ready) {
 		DEBUG_WARN("BMA400::read_xyz: DRDY timeout");
-		setup_sleep_mode();
+		rearm_or_sleep();
 		return;
 	}
 
@@ -317,7 +336,7 @@ void BMA400LL::read_xyz(double &x, double &y, double &z, int16_t &temperature) {
 	// Read temperature while sensor is in active mode (doesn't work in SLEEP)
 	bma400_get_temperature_data(&temperature, &m_bma400_dev);
 
-	setup_sleep_mode();
+	rearm_or_sleep();
 }
 
 /// @brief Read temperature — requires sensor to be in active mode.
@@ -331,7 +350,7 @@ int16_t BMA400LL::read_temperature() {
 	int16_t temperature_data;
 	bma400_get_temperature_data(&temperature_data, &m_bma400_dev);
 
-	setup_sleep_mode();
+	rearm_or_sleep();
 	return temperature_data;
 }
 
@@ -422,7 +441,7 @@ void BMA400LL::calibrate_offset(uint8_t g_range, double &offset_x, double &offse
 		acc_z += lsb_to_ms2(data.z, g_force, 12) / GRAVITY;
 	}
 
-	setup_sleep_mode();
+	rearm_or_sleep();
 
 	offset_x = acc_x / N_SAMPLES;
 	offset_y = acc_y / N_SAMPLES;
@@ -466,20 +485,34 @@ void BMA400LL::enable_wakeup_low_power(std::function<void()> func) {
 	dev_conf.type = BMA400_AUTOWAKEUP_INT;
 
 	rslt = bma400_get_device_conf(&dev_conf, 1, &m_bma400_dev);
-	if (rslt == BMA400_OK) {
-		dev_conf.param.wakeup.wakeup_axes_en = BMA400_AXIS_XYZ_EN;
-		dev_conf.param.wakeup.wakeup_ref_update = BMA400_UPDATE_EVERY_TIME;
-		dev_conf.param.wakeup.sample_count = BMA400_SAMPLE_COUNT_4;
-		dev_conf.param.wakeup.int_wkup_threshold = calculate_threshold_reg(m_wakeup_threshold, m_g_range);
-		dev_conf.param.wakeup.int_chan = BMA400_MAP_BOTH_INT_PINS;
+	check_result("enable_wakeup_low_power: get_device_conf", rslt);
 
-		rslt = bma400_set_device_conf(&dev_conf, 1, &m_bma400_dev);
-		if (rslt == BMA400_OK) {
-			m_int_enable.type = BMA400_GEN1_INT_EN;
-			m_int_enable.conf = BMA400_ENABLE;
-			rslt = bma400_enable_interrupt(&m_int_enable, 1, &m_bma400_dev);
-		}
-	}
+	dev_conf.param.wakeup.wakeup_axes_en = BMA400_AXIS_XYZ_EN;
+	dev_conf.param.wakeup.wakeup_ref_update = BMA400_UPDATE_EVERY_TIME;
+	dev_conf.param.wakeup.sample_count = BMA400_SAMPLE_COUNT_4;
+	dev_conf.param.wakeup.int_wkup_threshold = calculate_threshold_reg(m_wakeup_threshold, m_g_range);
+	dev_conf.param.wakeup.int_chan = BMA400_MAP_BOTH_INT_PINS;
+
+	rslt = bma400_set_device_conf(&dev_conf, 1, &m_bma400_dev);
+	check_result("enable_wakeup_low_power: set_device_conf", rslt);
+
+	// AUTO_WAKEUP_EN, not GEN1: the wake-up engine's arming bit is
+	// AUTOWAKEUP_1.wkup_int (set_auto_wakeup in the Bosch driver). GEN1 is a
+	// DIFFERENT engine — enabling it here armed an interrupt whose axes were
+	// left at soft-reset defaults and which was never mapped to a pin, so
+	// INT1 stayed silent forever (register-level audit, 2026-09; this path
+	// had never fired on hardware).
+	m_int_enable.type = BMA400_AUTO_WAKEUP_EN;
+	m_int_enable.conf = BMA400_ENABLE;
+	rslt = bma400_enable_interrupt(&m_int_enable, 1, &m_bma400_dev);
+	check_result("enable_wakeup_low_power: enable_interrupt", rslt);
+
+	// The auto-wakeup engine only evaluates in LOW_POWER mode (fixed 25 Hz
+	// ODR, ~1 µA). The chip was previously parked in NORMAL, where the engine
+	// never runs. The accel range set by setup_active_mode() persists.
+	rslt = bma400_set_power_mode(BMA400_MODE_LOW_POWER, &m_bma400_dev);
+	check_result("enable_wakeup_low_power: set_power_mode(LOW_POWER)", rslt);
+	m_wakeup_armed = true;
 
 	m_irq.enable([this, func]() {
 		if (!m_irq_pending) {
@@ -515,6 +548,9 @@ void BMA400LL::enable_wakeup_normal(std::function<void()> func) {
 	rslt = bma400_enable_interrupt(&m_int_enable, 1, &m_bma400_dev);
 	check_result("enable_wakeup_normal: enable_interrupt", rslt);
 
+	// GEN1 evaluates in NORMAL mode, which setup_normal_mode() already set.
+	m_wakeup_armed = true;
+
 	m_irq.enable([this, func]() {
 		if (!m_irq_pending) {
 			m_irq_pending = true;
@@ -528,12 +564,14 @@ void BMA400LL::disable_wakeup() {
 	SensorsPowerGuard power_guard;
 	int8_t rslt;
 
+	m_wakeup_armed = false;  // before the mode change, so nothing re-arms
 	m_irq.disable();
 
 	rslt = bma400_set_power_mode(BMA400_MODE_SLEEP, &m_bma400_dev);
 	check_result("disable_wakeup: set_power_mode", rslt);
 
-	m_int_enable.type = BMA400_GEN1_INT_EN;
+	// Disarm the engine that enable_wakeup actually armed for this mode.
+	m_int_enable.type = (m_power_mode == 0) ? BMA400_AUTO_WAKEUP_EN : BMA400_GEN1_INT_EN;
 	m_int_enable.conf = BMA400_DISABLE;
 	rslt = bma400_enable_interrupt(&m_int_enable, 1, &m_bma400_dev);
 	check_result("disable_wakeup: disable_interrupt", rslt);
