@@ -594,6 +594,15 @@ void LoRaTxService::notify_peer_event(ServiceEvent &e) {
 			// the module exactly when the cooldown ends so that the moment a
 			// TX becomes permitted the first dispatch is fast. Task is
 			// idempotent (warm_up_for_tx is a no-op on a running module).
+			// Known limit (review 2026-09): this bound only gates decisions that
+			// go through the scheduler. The immediate paths — reschedule(true)
+			// from GNSS_CLOUDLOCATE_READY, and the surfacing trigger's
+			// immediate=true which fires status ping #1 — short-circuit in
+			// Service::reschedule and never consult it. So ping #1 goes out at
+			// surface regardless of dry time; pings #2+ and the fix-driven first
+			// TX honour it. Gating the immediate paths means touching the shared
+			// Service base (Argos first-TX-fast rides the same short-circuit) —
+			// not done on purpose.
 			std::time_t earliest_schedule = service_current_time() + argos_config.dry_time_before_tx;
 			m_sched.set_earliest_schedule(earliest_schedule);
 

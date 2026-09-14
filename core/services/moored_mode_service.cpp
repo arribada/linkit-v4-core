@@ -268,9 +268,12 @@ void MooredModeService::on_motion_event(std::time_t now) {
 	unsigned int exit_events = read_uint(ParamID::MOORED_EXIT_EVENTS, 2);
 	if (exit_events == 0) exit_events = 1;
 
-	// The `now >=` guard mirrors the hold-off above: a future timestamp (RTC
-	// rollback) does not read as an expired window, and heals at the write
-	// just below.
+	// The window is anchored on the FIRST event of the burst, not the last —
+	// re-stamping on every event would turn it into an inter-event gap, and a
+	// regular swell tripping the sensor every 8-9 min would chain forever and
+	// still read as one burst. The `now >=` guard mirrors the hold-off above:
+	// a future timestamp (RTC rollback) does not read as an expired window,
+	// and heals when a fresh burst restarts the anchor.
 	bool burst_expired = s_noinit.motion_events != 0 && s_noinit.last_motion_rtc != 0
 	                     && now >= s_noinit.last_motion_rtc
 	                     && (now - s_noinit.last_motion_rtc) > MOTION_BURST_WINDOW_S;
@@ -282,8 +285,8 @@ void MooredModeService::on_motion_event(std::time_t now) {
 	{
 		InterruptLock lock;
 		if (burst_expired) s_noinit.motion_events = 0;
+		if (s_noinit.motion_events == 0) s_noinit.last_motion_rtc = now;  // burst starts here
 		if (s_noinit.motion_events < 0xFF) s_noinit.motion_events++;
-		s_noinit.last_motion_rtc = now;
 		s_noinit.crc = noinit_crc();
 	}
 
