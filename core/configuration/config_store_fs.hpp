@@ -448,42 +448,37 @@ private:
 #endif
 	};
 
-	/// @brief Serialize the identifiers and the provisioning secrets — used
-	/// during factory_reset recovery.
+	/// @brief True for the identifiers and the provisioning secrets a factory_reset keeps.
+	static bool is_protected_param(unsigned int index) {
+		if (index <= (unsigned int)ParamID::ARGOS_HEXID) return true;
+		for (ParamID id : PROTECTED_PARAMS)
+			if ((unsigned int)id == index) return true;
+		return false;
+	}
+
+	/// @brief Write config.dat for factory_reset: every parameter back to its default
+	/// except the identifiers and the provisioning secrets.
+	///
+	/// deserialize_config reads config.dat by table index and rejects a record whose
+	/// key does not match that slot. The file must therefore hold every implemented
+	/// parameter, in order, exactly like a normal save. It used to be written sparse
+	/// (identifiers, then the secrets): each secret landed in the wrong slot, was
+	/// rejected, and came back empty on the next boot, so a tag recovered by the
+	/// boot-fail path could no longer join or build a frame.
+	/// Power is left to the caller (factory_reset brackets it).
 	void serialize_protected_config() {
-		LFSFile f(&m_filesystem, "config.dat", LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC);
-
-		// Write configuration version field
-		if (f.write((void *)&m_config_version_code, sizeof(m_config_version_code)) != sizeof(m_config_version_code))
-			throw CONFIG_STORE_CORRUPTED;
-
-		for (unsigned int i = 0; i <= (unsigned int)ParamID::ARGOS_HEXID; i++) {
-			// Check variant index (type) matches default parameter
-			if (m_params.at(i).index() != default_params[i].index()) {
-				DEBUG_TRACE(
-				    "serialize_config: protected param %u variant index mismatch expected %u but got %u - repairing", i,
-				    default_params[i].index(), m_params.at(i).index());
-				// Reset parameter to back to factory default
+		for (unsigned int i = 0; i < MAX_CONFIG_ITEMS; i++) {
+			if (!is_protected_param(i) || m_params.at(i).index() != default_params[i].index())
 				m_params.at(i) = default_params[i];
-			}
-
-			if (!serialize_config_entry(f, i)) {
-				DEBUG_TRACE("serialize_config: failed to serialize protected param %u", i);
-				throw CONFIG_STORE_CORRUPTED;
-			}
 		}
 
-		// The credentials live far above ARGOS_HEXID in the table, so they need
-		// their own pass. serialize_config_entry writes the parameter's index
-		// alongside its value, so a sparse set deserialises correctly.
-		for (ParamID id : PROTECTED_PARAMS) {
-			const unsigned int i = (unsigned int)id;
-			if (m_params.at(i).index() != default_params[i].index()) {
-				DEBUG_WARN("serialize_protected_config: credential %u has the wrong type — resetting it", i);
-				m_params.at(i) = default_params[i];
-			}
+		LFSFile f(&m_filesystem, "config.dat", LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC);
+		if (f.write((void *)&m_config_version_code, sizeof(m_config_version_code)) != sizeof(m_config_version_code))
+			throw CONFIG_STORE_CORRUPTED;
+		for (unsigned int i = 0; i < MAX_CONFIG_ITEMS; i++) {
+			if (!param_map[i].is_implemented) continue;
 			if (!serialize_config_entry(f, i)) {
-				DEBUG_ERROR("serialize_protected_config: failed to serialize credential %u", i);
+				DEBUG_ERROR("serialize_protected_config: failed to serialize param %u", i);
 				throw CONFIG_STORE_CORRUPTED;
 			}
 		}

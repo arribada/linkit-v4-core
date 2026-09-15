@@ -215,6 +215,41 @@ TEST(ConfigStore, CheckFactoryResetRetainsProtectedParams) {
 	CHECK_EQUAL(hex_id, store->read_param<unsigned int>(ParamID::ARGOS_HEXID));
 }
 
+// factory_reset is reached automatically after repeated failed boots. The
+// provisioning secrets it promises to keep (PROTECTED_PARAMS) must come back on
+// the next boot, or the recovered tag can no longer transmit. Only DECID/HEXID
+// were checked above, and they are the two that sit at the head of the file.
+TEST(ConfigStore, CheckFactoryResetRetainsProvisioningSecrets) {
+	store = new LFSConfigurationStore(*main_filesystem);
+	store->init();
+
+	const std::string radioconf = "0123456789ABCDEF0123456789ABCDEF";
+	store->write_param(ParamID::ARGOS_RADIOCONF, radioconf);
+#if defined(LORA_RAK3172) && (LORA_RAK3172 == 1)
+	const std::string appeui = "70B3D57ED0000001";
+	const std::string appkey = "00112233445566778899AABBCCDDEEFF";
+	store->write_param(ParamID::LORA_APPEUI, appeui);
+	store->write_param(ParamID::LORA_APPKEY, appkey);
+#endif
+	unsigned int tr_nom = 1200U;
+	store->write_param(ParamID::TR_NOM, tr_nom);
+	store->save_params();
+
+	store->factory_reset();
+
+	delete store;
+	store = new LFSConfigurationStore(*main_filesystem);
+	store->init();
+
+	STRCMP_EQUAL(radioconf.c_str(), store->read_param<std::string>(ParamID::ARGOS_RADIOCONF).c_str());
+#if defined(LORA_RAK3172) && (LORA_RAK3172 == 1)
+	STRCMP_EQUAL(appeui.c_str(), store->read_param<std::string>(ParamID::LORA_APPEUI).c_str());
+	STRCMP_EQUAL(appkey.c_str(), store->read_param<std::string>(ParamID::LORA_APPKEY).c_str());
+#endif
+	// Everything that is not protected is back to its default.
+	CHECK_TRUE(store->read_param<unsigned int>(ParamID::TR_NOM) != tr_nom);
+}
+
 class DummyCalibration : public Calibratable {
 public:
 	DummyCalibration(const char *name) : Calibratable(name), m_cal(Calibration(name)) {}
