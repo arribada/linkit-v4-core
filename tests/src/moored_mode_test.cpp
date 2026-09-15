@@ -362,3 +362,67 @@ TEST(MooredMode, DistanceToReferenceIsNegativeBeforeFirstFix) {
 	MooredModeService::on_gnss_fix(BASE_LAT, BASE_LON, 0, 1000);
 	DOUBLES_EQUAL(100.0, MooredModeService::distance_to_reference_m(BASE_LAT + lat_offset_m(100), BASE_LON), 1.0);
 }
+
+// === Diagnostic accessors (LoRa MOTION block) ==============================
+
+TEST(MooredMode, LastAxlExitRecordsTheMotionExitInstant) {
+	enable(150, 3, 2, 0);
+	moor_it();
+	CHECK_EQUAL(0L, (long)MooredModeService::last_axl_exit_rtc());
+	MooredModeService::on_motion_event(2000);
+	CHECK_EQUAL(0L, (long)MooredModeService::last_axl_exit_rtc());  // one wave is not a departure
+	MooredModeService::on_motion_event(2010);
+	CHECK_FALSE(MooredModeService::is_moored());
+	CHECK_EQUAL(2010L, (long)MooredModeService::last_axl_exit_rtc());
+}
+
+TEST(MooredMode, GnssDrivenExitDoesNotStampTheAxlExit) {
+	enable();
+	moor_it();
+	MooredModeService::on_gnss_fix(BASE_LAT + lat_offset_m(500), BASE_LON, 0, 3000);
+	CHECK_FALSE(MooredModeService::is_moored());
+	CHECK_EQUAL(0L, (long)MooredModeService::last_axl_exit_rtc());
+}
+
+TEST(MooredMode, HoldoffAccessorMatchesTheMotionGate) {
+	// axl_holdoff_active() restates the hold-off gate of on_motion_event()
+	// instead of sharing it; this test is what keeps the two from drifting.
+	enable(150, 3, 2, 900);
+	moor_it();
+	CHECK_FALSE(MooredModeService::axl_holdoff_active(2000));  // no exit yet
+	MooredModeService::on_motion_event(2000);
+	MooredModeService::on_motion_event(2010);  // exit at t=2010
+	CHECK_FALSE(MooredModeService::is_moored());
+	CHECK_FALSE(MooredModeService::axl_holdoff_active(2009));  // before the stamp
+	feed_still(3, 2100);
+	CHECK_TRUE(MooredModeService::is_moored());
+
+	// Last second of the window: the accessor says active, and the gate swallows a burst.
+	CHECK_TRUE(MooredModeService::axl_holdoff_active(2010 + 899));
+	MooredModeService::on_motion_event(2010 + 899);
+	MooredModeService::on_motion_event(2010 + 899);
+	CHECK_TRUE(MooredModeService::is_moored());
+
+	// First second past it: the accessor says inactive, and the gate lets a burst out.
+	CHECK_FALSE(MooredModeService::axl_holdoff_active(2010 + 900));
+	MooredModeService::on_motion_event(2010 + 900);
+	MooredModeService::on_motion_event(2010 + 900);
+	CHECK_FALSE(MooredModeService::is_moored());  // new exit stamp: t=2910
+
+	// Stamp ahead of the clock (the RTC went backwards): the accessor says
+	// inactive, and the gate does not swallow a burst either.
+	feed_still(3, 3000);
+	CHECK_TRUE(MooredModeService::is_moored());
+	CHECK_FALSE(MooredModeService::axl_holdoff_active(2010 + 800));
+	MooredModeService::on_motion_event(2010 + 800);
+	MooredModeService::on_motion_event(2010 + 800);
+	CHECK_FALSE(MooredModeService::is_moored());
+}
+
+TEST(MooredMode, HoldoffAccessorIsInactiveWhenHoldoffIsZero) {
+	enable(150, 3, 1, 0);
+	moor_it();
+	MooredModeService::on_motion_event(2000);
+	CHECK_FALSE(MooredModeService::is_moored());
+	CHECK_FALSE(MooredModeService::axl_holdoff_active(2001));
+}

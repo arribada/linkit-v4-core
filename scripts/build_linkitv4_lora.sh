@@ -201,6 +201,9 @@ ENABLE_SWS_LOG=${ENABLE_SWS_LOG:-OFF}
 # derives that from the chemistry name, nothing else to set.
 BATTERY_CHEMISTRY=${BATTERY_CHEMISTRY:-BATT_CHEM_LS17500_2P}
 GNSS_HAS_BACKUP_BATTERY=${GNSS_HAS_BACKUP_BATTERY:-ON}
+# MOTION debug block appended to LoRa frames (see ports/nrf52840/CMakeLists.txt).
+# OFF keeps every existing LoRa build byte-identical; build_linkitv4_lora_cyprus.sh sets ON.
+LORA_MOTION_EXT=${LORA_MOTION_EXT:-OFF}
 
 
 
@@ -213,6 +216,7 @@ echo "  LORA_TX_ERROR_SUSPEND_S=${LORA_TX_ERROR_SUSPEND_S}   (0 = no TX suspensi
 echo "  BENCH_TEST=${BENCH}   (ON = %GPS injection console over USB-CDC)"
 echo "  BATTERY_CHEMISTRY=${BATTERY_CHEMISTRY}"
 echo "  GNSS_HAS_BACKUP_BATTERY=${GNSS_HAS_BACKUP_BATTERY}"
+echo "  LORA_MOTION_EXT=${LORA_MOTION_EXT}   (ON = MOTION debug block appended to frames)"
 echo ""
 
 cmake -DCMAKE_TOOLCHAIN_FILE=../../toolchain_arm_gcc_nrf52.cmake \
@@ -225,6 +229,7 @@ cmake -DCMAKE_TOOLCHAIN_FILE=../../toolchain_arm_gcc_nrf52.cmake \
       -DGNSS_HAS_BACKUP_BATTERY=${GNSS_HAS_BACKUP_BATTERY} \
       -DLORA_DCS_ENABLE=${LORA_DCS_ENABLE} \
       -DLORA_TX_ERROR_SUSPEND_S=${LORA_TX_ERROR_SUSPEND_S} \
+      -DLORA_MOTION_EXT=${LORA_MOTION_EXT} \
       -DBENCH_TEST=${BENCH} \
       -DBATTERY_CHEMISTRY=${BATTERY_CHEMISTRY} \
       -DMETRIC_LATENCY_LOG_ENABLE=$([ "$METRICS" = "ON" ] && echo 1 || echo 0) \

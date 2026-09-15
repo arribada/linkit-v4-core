@@ -59,7 +59,7 @@ set(BOOL_BUILD_FLAGS
     ENABLE_PRESSURE_SENSOR ENABLE_ALS_SENSOR ENABLE_CDT_SENSOR ENABLE_AXL_SENSOR
     ENABLE_THERMISTOR_SENSOR ENABLE_MORTALITY_SENSOR ENABLE_SWS_LOG ENABLE_SWS_ANALOG
     GNSS_HAS_BACKUP_BATTERY GPS_FAKE_POSITION STC3117_MIXED_MODE
-    ARGOS_SMD LORA_RAK3172 LORA_DCS_ENABLE LORA_POWER_OFF_UNDERWATER
+    ARGOS_SMD LORA_RAK3172 LORA_DCS_ENABLE LORA_POWER_OFF_UNDERWATER LORA_MOTION_EXT
     SMDSAT_USE_SAFE_TIMINGS SMDSAT_AUTOFALLBACK SMDSAT_TXTRACE DEBUG_NO_SYSTEMLOG
     BENCH_TEST BENCH_FORCE_LPM_NONE SMD_FLASH_HOLD SMD_UART KIM2_BLIND_WKUP_RELEASE
     CAM_ENABLE BUZZER_ENABLE
@@ -132,6 +132,14 @@ message(STATUS "SMD timing profile: USE_SAFE_TIMINGS=${SMDSAT_USE_SAFE_TIMINGS_V
 #   legal airtime limits (1 %/0.1 %/10 % per sub-band). Default ON.
 #   OFF is for RF bench testing only — **illegal in EU production deployment**.
 option(LORA_DCS_ENABLE "Enforce LoRaWAN duty-cycle on RAK3172 (ETSI EN 300 220)" ON)
+
+# LORA_MOTION_EXT: append the 4-byte MOTION debug block to every LoRa frame but
+#   CloudLocate — moored/underway state, AXL hold-off, accelerometer wake-ups
+#   since the last transmitted frame, minutes since the last wake-up and since
+#   the last accelerometer-driven MOORED exit. Default OFF: every existing LoRa
+#   build stays byte-identical. Only build_linkitv4_lora_cyprus.sh sets it.
+#   Layout: LoRaPacketBuilder::append_motion_ext.
+option(LORA_MOTION_EXT "Append the MOTION debug block to LoRa frames (Cyprus boat)" OFF)
 
 # LORA_TX_ERROR_SUSPEND_S: how long LoRaTxService stops transmitting after
 # DEVICE_ERROR_MAX_CONSECUTIVE consecutive device errors, before letting one
@@ -220,6 +228,14 @@ endif()
 if(ENABLE_MORTALITY_SENSOR AND NOT ENABLE_THERMISTOR_SENSOR)
     message(WARNING "ENABLE_MORTALITY_SENSOR=ON but ENABLE_THERMISTOR_SENSOR=OFF. "
         "Mortality detection requires thermistor data for body temperature monitoring.")
+endif()
+
+# Guard: the MOTION block is appended to LoRa frames and counts accelerometer wake-ups.
+if(LORA_MOTION_EXT AND NOT LORA_RAK3172)
+    message(FATAL_ERROR "LORA_MOTION_EXT=ON requires LORA_RAK3172=ON (the block rides on LoRa frames).")
+endif()
+if(LORA_MOTION_EXT AND NOT ENABLE_AXL_SENSOR)
+    message(FATAL_ERROR "LORA_MOTION_EXT=ON requires ENABLE_AXL_SENSOR=ON (the block counts accelerometer wake-ups).")
 endif()
 
 # Battery monitor type: ANALOG, FAKE (always 4.1V), STC3117 (I2C fuel gauge)
@@ -746,6 +762,7 @@ if(LORA_RAK3172)
         ${PROJ_DIR}/core/hardware/lora_rak3172/lora_rak3172_comm.cpp
         ${CORE_DIR}/services/lora_tx_service.cpp
         ${CORE_DIR}/services/lora_packet_builder.cpp
+        $<$<BOOL:${LORA_MOTION_EXT}>:${CORE_DIR}/services/lora_packet_builder_motion.cpp>
         ${CORE_DIR}/scheduling/lora_tx_scheduler.cpp
     )
     target_include_directories(${TARGET_NAME} SYSTEM PRIVATE
@@ -816,6 +833,7 @@ target_compile_definitions(${TARGET_NAME} PRIVATE
     $<$<BOOL:${LORA_RAK3172_ENABLED}>:LORA_RAK3172=1>
     $<$<BOOL:${LORA_RAK3172_ENABLED}>:LORA_DCS_ENABLE=${LORA_DCS_ENABLE_VAL}>
     $<$<BOOL:${LORA_RAK3172_ENABLED}>:LORA_TX_ERROR_SUSPEND_S=${LORA_TX_ERROR_SUSPEND_S}>
+    $<$<AND:$<BOOL:${LORA_RAK3172_ENABLED}>,$<BOOL:${LORA_MOTION_EXT}>>:LORA_MOTION_EXT=1>
     ARGOS_TX_ERROR_SUSPEND_S=${ARGOS_TX_ERROR_SUSPEND_S}
     $<$<BOOL:${LORA_RAK3172_ENABLED}>:LORA_POWER_OFF_UNDERWATER=${LORA_POWER_OFF_UNDERWATER_VAL}>
     # Battery monitor type defines

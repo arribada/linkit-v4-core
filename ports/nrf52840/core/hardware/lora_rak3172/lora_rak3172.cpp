@@ -1245,6 +1245,10 @@ void LoRaDevice::load_config_from_store() {
 		sensor_bits += 67;  // AXL temp + 3 axis + act
 #endif
 	unsigned int sensor_bytes = (sensor_bits + 7) / 8;
+#if defined(LORA_MOTION_EXT) && (LORA_MOTION_EXT == 1)
+	// MOTION block (LoRaPacketBuilder::MOTION_EXT_BYTES), byte-aligned after the frame.
+	sensor_bytes += 4;
+#endif
 	if (sensor_bytes > max_packet_bytes) max_packet_bytes = sensor_bytes;
 
 	// GPS multi is always size-clamped by max_gps_entries(), so it never

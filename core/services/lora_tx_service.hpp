@@ -160,4 +160,17 @@ private:
 	/// @brief Get max payload bytes for current DR setting.
 	/// @return Max bytes from LoRaPayloadLimits.
 	unsigned int get_max_payload_bytes();
+
+#if defined(LORA_MOTION_EXT) && (LORA_MOTION_EXT == 1)
+	// MOTION v1 debug block (Cyprus build). Wake-ups are counted here rather
+	// than in MooredModeService, which every board compiles and which therefore
+	// stays byte-identical. They leave the count only once a frame reporting
+	// them has actually been transmitted.
+	uint8_t m_motion_wakeups = 0;              ///< Wake-ups not yet in a transmitted frame (saturates)
+	std::time_t m_motion_last_wakeup_rtc = 0;  ///< RTC of the last wake-up, 0 = none or clock unset
+	uint8_t m_motion_in_flight = 0;            ///< Wake-ups reported by the frame in flight
+
+	/// @brief Append the MOTION block to a frame about to be sent, noting what it reports.
+	void append_motion_ext(KineisPacket &packet, unsigned int &size_bits);
+#endif
 };

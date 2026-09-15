@@ -8,7 +8,7 @@
 # change to the shared LoRa script is inherited here automatically — except for
 # the values pinned below, which is the whole point of having this file.
 #
-# FOUR firmware options differ from the standard LoRa build. Every one of them
+# FIVE firmware options differ from the standard LoRa build. Every one of them
 # is load-bearing; none may change silently if someone edits the defaults in
 # build_linkitv4_lora.sh. Each line below states the shared default it overrides.
 #
@@ -48,6 +48,17 @@
 #   rate. LORA_DR is NOT overridden. Keep AXP05 (AXL_SENSOR_ENABLE_TX_MODE) at
 #   OFF: the accelerometer is a sentinel here, not a payload.
 #
+#   LORA_MOTION_EXT=ON  (shared default: OFF)
+#   Appends the 4-byte MOTION debug block to every frame but CloudLocate:
+#   moored/underway, AXL hold-off, accelerometer wake-ups since the last
+#   transmitted frame, minutes since the last wake-up and since the last
+#   accelerometer-driven MOORED exit. Debug telemetry for tuning moored mode:
+#   it reads no sensor and changes no decision. GPS_MULTI x3 goes from 30 to
+#   34 B (SF9 airtime 287.7 -> 308.2 ms); GPS frames are sized against the DR
+#   limit minus the block, so they never outgrow it. The ChirpStack codec must
+#   know the block: layout in LoRaPacketBuilder::append_motion_ext and wiki
+#   page 12.
+#
 # Runtime configuration (ARGOS_MODE, ARP11, GNP52, LoRaWAN credentials, DR, ...)
 # is NOT set here — it is provisioned device-side over DTE. See the deployment
 # plan, part E.
@@ -74,6 +85,7 @@ export BATTERY_CHEMISTRY=BATT_CHEM_NCR18650_3100_3400
 export LORA_DCS_ENABLE=ON
 export GNSS_HAS_BACKUP_BATTERY=OFF
 export ENABLE_AXL_SENSOR=ON
+export LORA_MOTION_EXT=ON
 
 # LORA_TX_ERROR_SUSPEND_S is deliberately NOT pinned here: the default artifact
 # of this script must be the deployment-safe one (shared default 3600 s — after

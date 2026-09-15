@@ -107,6 +107,14 @@ public:
 	/// only (bench console) — the classifier computes its own distance.
 	static double distance_to_reference_m(double lat, double lon);
 
+	/// Last accelerometer-driven MOORED -> UNDERWAY exit (RTC epoch), 0 if none
+	/// since the state was last cleared. Diagnostic only (LoRa MOTION block).
+	static std::time_t last_axl_exit_rtc();
+
+	/// True while MOORED_AXL_HOLDOFF_S suppresses accelerometer exits at `now`.
+	/// Diagnostic only (LoRa MOTION block).
+	static bool axl_holdoff_active(std::time_t now);
+
 	// Visible-for-tests: clear state directly.
 	static void reset_for_tests();
 };

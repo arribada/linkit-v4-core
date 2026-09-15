@@ -412,6 +412,20 @@ double MooredModeService::distance_to_reference_m(double lat, double lon) {
 	return haversine_distance(s_noinit.ref_lon, s_noinit.ref_lat, lon, lat) * 1000.0;
 }
 
+std::time_t MooredModeService::last_axl_exit_rtc() {
+	return s_noinit.last_axl_exit_rtc;
+}
+
+bool MooredModeService::axl_holdoff_active(std::time_t now) {
+	// Same condition as the hold-off gate in on_motion_event(), restated rather
+	// than shared: this accessor only feeds diagnostics, and factoring the gate
+	// out would change the classifier's own code on every board that compiles
+	// it. MooredMode.HoldoffAccessorMatchesTheMotionGate pins the two together.
+	unsigned int holdoff_s = read_uint(ParamID::MOORED_AXL_HOLDOFF_S, 900);
+	return holdoff_s && s_noinit.last_axl_exit_rtc != 0 && now >= s_noinit.last_axl_exit_rtc
+	       && (now - s_noinit.last_axl_exit_rtc) < (std::time_t)holdoff_s;
+}
+
 void MooredModeService::reset_for_tests() {
 	clear_state();
 	s_motion_exit_kick = false;

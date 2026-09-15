@@ -9,6 +9,7 @@
 #pragma once
 
 #include <cstdint>
+#include <ctime>
 #include <string>
 #include <vector>
 
@@ -34,6 +35,17 @@ struct LoRaPayloadLimits {
 		                                   DR3_MAX_BYTES, DR4_MAX_BYTES, DR5_MAX_BYTES };
 		return (dr < 6) ? table[dr] : DR0_MAX_BYTES;
 	}
+};
+
+/// @brief MOTION v1 debug block content: the moored/underway classifier and the
+/// accelerometer wake-ups feeding it. Appended to LoRa frames on builds with
+/// LORA_MOTION_EXT (Cyprus boat tracker) — see LoRaPacketBuilder::append_motion_ext.
+struct LoRaMotionExt {
+	bool moored;                 ///< MooredModeService is in MOORED
+	bool axl_holdoff;            ///< Accelerometer exits suppressed by MOORED_AXL_HOLDOFF_S
+	uint8_t wakeups;             ///< Wake-ups not yet carried by a transmitted frame, saturating at 255
+	uint8_t min_since_wakeup;    ///< encode_minutes_since() of the last wake-up
+	uint8_t min_since_axl_exit;  ///< encode_minutes_since() of the last accelerometer-driven MOORED exit
 };
 
 /// @brief LoRa packet builder — constructs GPS, sensor, status, CloudLocate packets.
@@ -110,6 +122,12 @@ public:
 	static constexpr unsigned int LON_LAT_RESOLUTION = 10000;
 	static constexpr int NEG_LON_LAT_RESOLUTION = -10000;
 
+	// === MOTION v1 debug block (LORA_MOTION_EXT builds only) ===
+	static constexpr unsigned int MOTION_EXT_BYTES = 4;
+	static constexpr unsigned int MOTION_EXT_TAG = 0x1;       ///< First nibble of the block: its format version
+	static constexpr uint8_t MOTION_MINUTES_SATURATED = 254;  ///< Age of 254 minutes or more
+	static constexpr uint8_t MOTION_MINUTES_UNKNOWN = 255;    ///< Never happened, or no usable clock
+
 	// === Conversion helpers ===
 
 	/// @brief Convert altitude (mm MSL) to 8-bit encoding (40m/unit).
@@ -163,4 +181,34 @@ public:
 	static KineisPacket build_cloudlocate_packet(const uint8_t *blob, unsigned int blob_size, uint8_t format_id,
 	                                             bool is_low_battery, unsigned int battery_voltage,
 	                                             unsigned int &size_bits, uint32_t capture_rtc = 0);
+
+	// === MOTION v1 debug block ===
+
+	/// @brief Age of an RTC stamp in whole minutes, as the MOTION block carries it.
+	/// @param now   Current RTC epoch (s), 0 when the clock is not set.
+	/// @param then  Stamp to age (s), 0 when the event never happened.
+	/// @return 0-253, MOTION_MINUTES_SATURATED for 254 minutes or more, or
+	///         MOTION_MINUTES_UNKNOWN when either time is missing or the stamp
+	///         lies in the future (the RTC went backwards).
+	static uint8_t encode_minutes_since(std::time_t now, std::time_t then);
+
+	/// @brief Append the MOTION v1 block to a frame from any builder above except
+	///        build_cloudlocate_packet, whose optional trailing time field is
+	///        already detected by length.
+	///
+	/// The block is byte-aligned: the base frame keeps its own zero padding and
+	/// the block is always the LAST MOTION_EXT_BYTES of the payload. A decoder
+	/// knows the base length from the type (plus count, or mask and fastloc
+	/// flag), so the block is present iff payload_len == ceil(base_bits / 8) +
+	/// MOTION_EXT_BYTES, and its first nibble is MOTION_EXT_TAG.
+	///
+	/// Layout (32 bits, MSB first):
+	///   tag(4) | moored(1) | axl_holdoff(1) | reserved(2) = 0
+	///   | wakeups(8) | min_since_wakeup(8) | min_since_axl_exit(8)
+	///
+	/// @warning Build a GPS frame against max_payload_bytes minus MOTION_EXT_BYTES,
+	///          or the extended frame can outgrow the data-rate limit.
+	/// @param packet     Frame to extend, exactly as its builder returned it.
+	/// @param size_bits  Out: total frame size, a multiple of 8.
+	static void append_motion_ext(KineisPacket &packet, unsigned int &size_bits, const LoRaMotionExt &motion);
 };

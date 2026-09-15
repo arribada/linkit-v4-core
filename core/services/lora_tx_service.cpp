@@ -14,6 +14,9 @@
 #include "binascii.hpp"
 #include "debug.hpp"
 #include "moored_mode_service.hpp"
+#if defined(LORA_MOTION_EXT) && (LORA_MOTION_EXT == 1)
+#include "axl_sensor_service.hpp"
+#endif
 
 extern ConfigurationStore *configuration_store;
 extern Scheduler *system_scheduler;
@@ -52,6 +55,9 @@ void LoRaTxService::service_init() {
 	m_last_tx_had_gps = false;
 	m_cooldown_armed = false;
 	m_cloudlocate_ready_pending = false;
+#if defined(LORA_MOTION_EXT) && (LORA_MOTION_EXT == 1)
+	m_motion_in_flight = 0;
+#endif
 
 	DEBUG_TRACE("LoRaTxService::service_init: initialized");
 }
@@ -416,6 +422,12 @@ bool LoRaTxService::service_cancel() {
 			DEBUG_WARN("LoRaTxService: TX ended before reaching the air — %u depth-pile credit(s) given back", n);
 		}
 	}
+#if defined(LORA_MOTION_EXT) && (LORA_MOTION_EXT == 1)
+	// A frame that reached the air can still see its TX_DONE after this cancel
+	// (the safety-net timeout firing mid-transmit): keep its count for that late
+	// TxComplete. A frame that never went out reported nothing.
+	if (!m_inflight_reached_air) m_motion_in_flight = 0;
+#endif
 	m_inflight_gps.clear();
 	m_inflight_reached_air = false;
 
@@ -465,6 +477,18 @@ bool LoRaTxService::service_is_triggered_on_surfaced(bool &immediate) {
 }
 
 void LoRaTxService::notify_peer_event(ServiceEvent &e) {
+#if defined(LORA_MOTION_EXT) && (LORA_MOTION_EXT == 1)
+	// MOTION block: every accelerometer wake-up counts, whatever the moored
+	// classifier makes of it (hold-off, burst window, already under way).
+	if (e.event_source == ServiceIdentifier::AXL_SENSOR && e.event_type == ServiceEventType::SERVICE_LOG_UPDATED) {
+		const auto *sensor = std::get_if<ServiceSensorData>(&e.event_data);
+		if (sensor && sensor->port[AXLSensorPort::WAKEUP_TRIGGERED]) {
+			if (m_motion_wakeups < 0xFF) m_motion_wakeups++;
+			m_motion_last_wakeup_rtc = service_is_time_known() ? service_current_time() : 0;
+		}
+	}
+#endif
+
 	// During SURFACING_BURST status phase, CloudLocate/Fastloc/NO_FIX entries are already
 	// sent directly in process_status_burst() — skip depth pile to avoid double transmission.
 	bool skip_depth_pile = false;
@@ -691,6 +715,10 @@ void LoRaTxService::process_gps_burst() {
 	configuration_store->get_argos_configuration(argos_config);
 
 	unsigned int max_payload = get_max_payload_bytes();
+#if defined(LORA_MOTION_EXT) && (LORA_MOTION_EXT == 1)
+	// The MOTION block rides after the GPS frame: size the frame against what is left.
+	max_payload -= LoRaPacketBuilder::MOTION_EXT_BYTES;
+#endif
 	unsigned int max_entries = LoRaPacketBuilder::max_gps_entries(max_payload);
 
 	// Retrieve GPS entries from depth pile, using the LoRa-specific per-slot cap
@@ -724,6 +752,9 @@ void LoRaTxService::process_gps_burst() {
 		} else if (v.back()->info.event_type == GPSEventType::FASTLOC) {
 			packet = LoRaPacketBuilder::build_sensor_packet(v.back(), nullptr, nullptr, nullptr, nullptr, nullptr,
 			                                                argos_config.is_out_of_zone, argos_config.is_lb, size_bits);
+#if defined(LORA_MOTION_EXT) && (LORA_MOTION_EXT == 1)
+			append_motion_ext(packet, size_bits);
+#endif
 		} else {
 			// Filter out any CloudLocate/fastloc entries that may be mixed in
 			v.erase(std::remove_if(v.begin(), v.end(),
@@ -743,6 +774,9 @@ void LoRaTxService::process_gps_burst() {
 
 			packet = LoRaPacketBuilder::build_gps_packet(v, argos_config.is_out_of_zone, argos_config.is_lb,
 			                                             max_payload, size_bits);
+#if defined(LORA_MOTION_EXT) && (LORA_MOTION_EXT == 1)
+			append_motion_ext(packet, size_bits);
+#endif
 		}
 
 		// Demoted to TRACE: per-TX payload dump on the burst hot path (~50-300 ms
@@ -823,6 +857,9 @@ void LoRaTxService::process_sensor_burst() {
 		    nullptr,
 #endif
 		    argos_config.is_out_of_zone, argos_config.is_lb, size_bits);
+#if defined(LORA_MOTION_EXT) && (LORA_MOTION_EXT == 1)
+		append_motion_ext(packet, size_bits);
+#endif
 
 		// Demoted to TRACE: per-TX payload dump (~50-300 ms LFS commit).
 		DEBUG_TRACE("LoRaTxService::process_sensor_burst: data=%s sz=%u bits", Binascii::hexlify(packet).c_str(),
@@ -942,6 +979,9 @@ void LoRaTxService::process_status_burst() {
 		KineisPacket packet =
 		    LoRaPacketBuilder::build_sensor_packet(&fastloc_entry, nullptr, nullptr, nullptr, nullptr, nullptr, false,
 			                                       service_is_battery_level_low(), size_bits);
+#if defined(LORA_MOTION_EXT) && (LORA_MOTION_EXT == 1)
+		append_motion_ext(packet, size_bits);
+#endif
 
 		// Demoted to TRACE: per-ping payload dump (~50-300 ms LFS commit).
 		DEBUG_TRACE("LoRaTxService::process_status_burst: FASTLOC #%u hAcc=%um numSV=%u data=%s", m_status_burst_count,
@@ -1001,6 +1041,9 @@ void LoRaTxService::process_status_burst() {
 			entry.info.batt_voltage = service_get_voltage();  // freshen battery field
 			KineisPacket packet = LoRaPacketBuilder::build_sensor_packet(
 			    &entry, nullptr, nullptr, nullptr, nullptr, nullptr, false, service_is_battery_level_low(), size_bits);
+#if defined(LORA_MOTION_EXT) && (LORA_MOTION_EXT == 1)
+			append_motion_ext(packet, size_bits);
+#endif
 			// Demoted to TRACE: per-ping payload dump (~50-300 ms LFS commit).
 			DEBUG_TRACE("LoRaTxService::process_status_burst: %s #%u lat=%lf lon=%lf data=%s",
 			            (pick->info.event_type == GPSEventType::FIX) ? "CACHED_GPS" : "CACHED_FASTLOC",
@@ -1018,6 +1061,9 @@ void LoRaTxService::process_status_burst() {
 	// re-arm the burst.
 	KineisPacket packet =
 	    LoRaPacketBuilder::build_status_packet(service_get_voltage(), service_is_battery_level_low(), size_bits);
+#if defined(LORA_MOTION_EXT) && (LORA_MOTION_EXT == 1)
+	append_motion_ext(packet, size_bits);
+#endif
 
 	DEBUG_INFO(
 	    "LoRaTxService::process_status_burst: STATUS-PURE #%u data=%s sz=%u bits (no cache, silencing further pings)",
@@ -1053,6 +1099,11 @@ void LoRaTxService::react(KineisEventTxComplete const &) {
 	m_inflight_reached_air = false;
 	m_is_tx_pending = false;
 	m_consecutive_device_errors = 0;
+#if defined(LORA_MOTION_EXT) && (LORA_MOTION_EXT == 1)
+	// The wake-ups that frame reported are delivered; keep any counted since it was built.
+	m_motion_wakeups = (uint8_t)(m_motion_wakeups - std::min(m_motion_wakeups, m_motion_in_flight));
+	m_motion_in_flight = 0;
+#endif
 
 	// Increment TX counter
 	configuration_store->increment_tx_counter();
@@ -1304,3 +1355,24 @@ void LoRaTxService::react(KineisEventDeviceError const &) {
 		}
 	}
 }
+
+#if defined(LORA_MOTION_EXT) && (LORA_MOTION_EXT == 1)
+void LoRaTxService::append_motion_ext(KineisPacket &packet, unsigned int &size_bits) {
+	const std::time_t now = service_is_time_known() ? service_current_time() : 0;
+	LoRaMotionExt motion{};
+	motion.moored = MooredModeService::is_moored();
+	motion.axl_holdoff = (now != 0) && MooredModeService::axl_holdoff_active(now);
+	motion.wakeups = m_motion_wakeups;
+	motion.min_since_wakeup = LoRaPacketBuilder::encode_minutes_since(now, m_motion_last_wakeup_rtc);
+	motion.min_since_axl_exit = LoRaPacketBuilder::encode_minutes_since(now, MooredModeService::last_axl_exit_rtc());
+	LoRaPacketBuilder::append_motion_ext(packet, size_bits, motion);
+	// Nothing is normally in flight here. If a frame that reached the air was
+	// cancelled and its TX_DONE may still land, keep the smaller count, so that
+	// late TxComplete cannot consume wake-ups this frame reports but the old one
+	// never carried: at worst some are reported twice, never lost.
+	m_motion_in_flight = m_motion_in_flight ? std::min(m_motion_in_flight, motion.wakeups) : motion.wakeups;
+	DEBUG_TRACE("LoRaTxService: MOTION moored=%u holdoff=%u wakeups=%u since_wakeup=%u min since_axl_exit=%u min",
+	            (unsigned)motion.moored, (unsigned)motion.axl_holdoff, (unsigned)motion.wakeups,
+	            (unsigned)motion.min_since_wakeup, (unsigned)motion.min_since_axl_exit);
+}
+#endif

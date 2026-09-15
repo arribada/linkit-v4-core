@@ -404,3 +404,145 @@ TEST(BoundedDepthPile, NewerStorePopsOldestWhenFull) {
 	CHECK(found_b);
 	CHECK(found_c);
 }
+
+// ---------------------------------------------------------------------------
+// MOTION v1 debug block (LORA_MOTION_EXT, Cyprus build) — always the last 4
+// bytes of the frame, base frame byte-for-byte untouched.
+// ---------------------------------------------------------------------------
+TEST_GROUP(LoRaMotionExt) {
+	static constexpr std::time_t T0 = 1580083200;
+
+	static LoRaMotionExt sample() {
+		LoRaMotionExt m{};
+		m.moored = true;
+		m.axl_holdoff = false;
+		m.wakeups = 37;
+		m.min_since_wakeup = 12;
+		m.min_since_axl_exit = LPB::MOTION_MINUTES_UNKNOWN;
+		return m;
+	}
+
+	static GPSLogEntry fix(std::time_t t) {
+		GPSLogEntry e{};
+		e.info.valid = true;
+		e.info.lat = 34.75;
+		e.info.lon = 33.03;
+		e.info.gSpeed = 1000;
+		e.info.headMot = 90.0f;
+		e.info.fixType = 3;
+		e.info.numSV = 9;
+		e.info.batt_voltage = 3900;
+		e.info.schedTime = t;
+		return e;
+	}
+
+	/// Append `m`, then check the frame grew by exactly the block, the base
+	/// bytes are unchanged and the block decodes back to `m`.
+	static void append_and_check(KineisPacket &pkt, unsigned int size_bits, unsigned int base_bytes,
+	                             const LoRaMotionExt &m) {
+		CHECK_EQUAL(base_bytes, (unsigned int)pkt.size());
+		const KineisPacket base = pkt;
+
+		LPB::append_motion_ext(pkt, size_bits, m);
+
+		CHECK_EQUAL(base_bytes + LPB::MOTION_EXT_BYTES, (unsigned int)pkt.size());
+		CHECK_EQUAL((base_bytes + LPB::MOTION_EXT_BYTES) * 8, size_bits);
+		CHECK_EQUAL(0, std::memcmp(pkt.data(), base.data(), base_bytes));
+
+		unsigned int pos = base_bytes * 8;
+		uint32_t tag, moored, holdoff, reserved, wakeups, since_wakeup, since_exit;
+		EXTRACT_BITS(tag, pkt, pos, 4);
+		EXTRACT_BITS(moored, pkt, pos, 1);
+		EXTRACT_BITS(holdoff, pkt, pos, 1);
+		EXTRACT_BITS(reserved, pkt, pos, 2);
+		EXTRACT_BITS(wakeups, pkt, pos, 8);
+		EXTRACT_BITS(since_wakeup, pkt, pos, 8);
+		EXTRACT_BITS(since_exit, pkt, pos, 8);
+		CHECK_EQUAL(LPB::MOTION_EXT_TAG, tag);
+		CHECK_EQUAL(m.moored ? 1U : 0U, moored);
+		CHECK_EQUAL(m.axl_holdoff ? 1U : 0U, holdoff);
+		CHECK_EQUAL(0U, reserved);
+		CHECK_EQUAL((uint32_t)m.wakeups, wakeups);
+		CHECK_EQUAL((uint32_t)m.min_since_wakeup, since_wakeup);
+		CHECK_EQUAL((uint32_t)m.min_since_axl_exit, since_exit);
+	}
+};
+
+TEST(LoRaMotionExt, StatusFrameGrowsFromTwoToSixBytes) {
+	unsigned int size_bits;
+	KineisPacket pkt = LPB::build_status_packet(3900, false, size_bits);
+	append_and_check(pkt, size_bits, 2, sample());
+}
+
+TEST(LoRaMotionExt, SingleFixGrowsFromThirteenToSeventeenBytes) {
+	GPSLogEntry e = fix(T0);
+	std::vector<GPSLogEntry *> v{ &e };
+	unsigned int size_bits;
+	KineisPacket pkt = LPB::build_gps_packet(v, false, false,
+	                                         LoRaPayloadLimits::DR3_MAX_BYTES - LPB::MOTION_EXT_BYTES, size_bits);
+	append_and_check(pkt, size_bits, 13, sample());
+}
+
+TEST(LoRaMotionExt, DepthPileOfThreeGrowsFromThirtyToThirtyFourBytes) {
+	GPSLogEntry a = fix(T0), b = fix(T0 + 300), c = fix(T0 + 600);
+	std::vector<GPSLogEntry *> v{ &a, &b, &c };  // oldest first, as retrieve() returns them
+	unsigned int size_bits;
+	KineisPacket pkt = LPB::build_gps_packet(v, false, false,
+	                                         LoRaPayloadLimits::DR3_MAX_BYTES - LPB::MOTION_EXT_BYTES, size_bits);
+	append_and_check(pkt, size_bits, 30, sample());
+}
+
+TEST(LoRaMotionExt, MooredHeartbeatGrowsFromFourteenToEighteenBytes) {
+	GPSLogEntry e = fix(T0);
+	unsigned int size_bits;
+	KineisPacket pkt =
+	    LPB::build_sensor_packet(&e, nullptr, nullptr, nullptr, nullptr, nullptr, false, false, size_bits);
+	append_and_check(pkt, size_bits, 14, sample());
+}
+
+TEST(LoRaMotionExt, ExtremeFieldValuesRoundTrip) {
+	LoRaMotionExt m{};
+	m.moored = false;
+	m.axl_holdoff = true;
+	m.wakeups = 255;
+	m.min_since_wakeup = LPB::MOTION_MINUTES_SATURATED;
+	m.min_since_axl_exit = 0;
+	unsigned int size_bits;
+	KineisPacket pkt = LPB::build_status_packet(3900, true, size_bits);
+	append_and_check(pkt, size_bits, 2, m);
+}
+
+TEST(LoRaMotionExt, ReservingTheBlockKeepsFullGpsFramesWithinTheDataRate) {
+	std::vector<GPSLogEntry> entries;
+	for (unsigned int i = 0; i < 15; i++)
+		entries.push_back(fix(T0 + 300 * i));
+
+	for (unsigned int dr_bytes : { LoRaPayloadLimits::DR0_MAX_BYTES, LoRaPayloadLimits::DR3_MAX_BYTES }) {
+		std::vector<GPSLogEntry *> v;
+		for (auto &e : entries)
+			v.push_back(&e);
+		unsigned int size_bits;
+		KineisPacket pkt = LPB::build_gps_packet(v, false, false, dr_bytes - LPB::MOTION_EXT_BYTES, size_bits);
+		LPB::append_motion_ext(pkt, size_bits, sample());
+		CHECK((unsigned int)pkt.size() <= dr_bytes);
+	}
+	// The reserve costs DR3 one entry (13 -> 12); DR0 keeps its five.
+	CHECK_EQUAL(12U, LPB::max_gps_entries(LoRaPayloadLimits::DR3_MAX_BYTES - LPB::MOTION_EXT_BYTES));
+	CHECK_EQUAL(5U, LPB::max_gps_entries(LoRaPayloadLimits::DR0_MAX_BYTES - LPB::MOTION_EXT_BYTES));
+}
+
+TEST(LoRaMotionExt, MinutesSinceSaturatesAndFlagsMissingTimes) {
+	auto enc = [](std::time_t now, std::time_t then) {
+		return (unsigned int)LPB::encode_minutes_since(now, then);
+	};
+	constexpr unsigned int UNKNOWN = LPB::MOTION_MINUTES_UNKNOWN;
+	constexpr unsigned int SATURATED = LPB::MOTION_MINUTES_SATURATED;
+	CHECK_EQUAL(UNKNOWN, enc(T0, 0));        // never happened
+	CHECK_EQUAL(UNKNOWN, enc(0, T0));        // clock not set
+	CHECK_EQUAL(UNKNOWN, enc(T0, T0 + 60));  // RTC went backwards
+	CHECK_EQUAL(0U, enc(T0 + 59, T0));
+	CHECK_EQUAL(2U, enc(T0 + 120, T0));
+	CHECK_EQUAL(253U, enc(T0 + 253 * 60, T0));
+	CHECK_EQUAL(SATURATED, enc(T0 + 254 * 60, T0));
+	CHECK_EQUAL(SATURATED, enc(T0 + 90 * 86400, T0));
+}
