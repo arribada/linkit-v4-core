@@ -227,7 +227,17 @@ void DepthPileManager::update_depth_pile() {
 			bool is_planned_mode =
 			    (argos_config.mode == BaseArgosMode::LEGACY || argos_config.mode == BaseArgosMode::DUTY_CYCLE
 			     || argos_config.mode == BaseArgosMode::PASS_PREDICTION);
+#if defined(LORA_LINKCHECK) && (LORA_LINKCHECK == 1)
+			// LoRa frames date every entry with its own minutes-back delta, so the
+			// grid-slot argument below is an Argos one. Under store-and-forward the
+			// pile holds the positions still waiting for coverage: a run of NO_FIX
+			// markers (sky blocked during an outage) must not push them out of the
+			// ARGOS_DEPTH_PILE slots. Consecutive markers share one slot here too.
+			(void)is_planned_mode;
+			if (m_gps_cache.info.event_type == GPSEventType::NO_FIX) {
+#else
 			if (m_gps_cache.info.event_type == GPSEventType::NO_FIX && !is_planned_mode) {
+#endif
 				// NO_FIX dedup (SURFACING_BURST & co only): if the cache is
 				// NO_FIX and the last pile entry is also NO_FIX, replace rather
 				// than append — keep one fresh heartbeat timestamp instead of

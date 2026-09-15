@@ -179,6 +179,31 @@ TEST_GROUP(LoRaLinkCheck) {
 		configuration_store->notify_gps_location(log);
 	}
 
+	/// An acquisition that ended without a position: the NO_FIX marker GPSService logs.
+	void inject_no_fix() {
+		const std::time_t now_s = t / 1000;
+		GPSLogEntry log{};
+		log.info.valid = false;
+		log.info.event_type = GPSEventType::NO_FIX;
+		log.info.batt_voltage = 4000;
+		log.info.schedTime = now_s;
+		uint16_t year;
+		uint8_t month, day, hour, min, sec;
+		convert_datetime_to_epoch(now_s, year, month, day, hour, min, sec);
+		log.header.year = log.info.year = year;
+		log.header.month = log.info.month = month;
+		log.header.day = log.info.day = day;
+		log.header.hours = log.info.hour = hour;
+		log.header.minutes = log.info.min = min;
+		log.header.seconds = log.info.sec = sec;
+		ServiceEvent e;
+		e.event_source = ServiceIdentifier::GNSS_SENSOR;
+		e.event_type = ServiceEventType::SERVICE_LOG_UPDATED;
+		e.event_data = log;
+		e.event_originator_unique_id = 0x12345678;
+		ServiceManager::notify_peer_event(e);
+	}
+
 	void inject_wakeups(unsigned int n) {
 		for (unsigned int i = 0; i < n; i++) {
 			ServiceSensorData data{};
@@ -308,6 +333,30 @@ TEST(LoRaLinkCheck, NtryZeroIgnoresTheVerdict) {
 	CHECK_EQUAL(2U, fix_and_send(LINK_HEARD).size());
 	CHECK_EQUAL(3U, fix_and_send(LINK_NOT_HEARD).size());
 	CHECK_EQUAL(4U, fix_and_send(LINK_HEARD).size());
+}
+
+// Sky lost during an outage: every acquisition stores a NO_FIX marker in the pile.
+// The markers must not push the real positions still waiting for coverage out of
+// the 24 slots -- the next valid fix deletes the markers anyway.
+TEST(LoRaLinkCheck, NoFixMarkersDoNotEvictWaitingPositions) {
+	for (unsigned int k = 1; k <= 12; k++) {
+		CHECK_EQUAL(k, fix_and_send(LINK_NOT_HEARD).size());
+	}
+	for (unsigned int k = 0; k < 18; k++) {
+		set_time(t + 300000);
+		inject_no_fix();
+		if (dispatch()) complete(true, LINK_NOT_HEARD);
+	}
+	std::set<unsigned int> delivered;
+	const std::vector<unsigned int> back = fix_and_send(LINK_HEARD);
+	delivered.insert(back.begin(), back.end());
+	for (unsigned int k = 0; k < 3; k++) {
+		const std::vector<unsigned int> lats = periodic_send(LINK_HEARD);
+		delivered.insert(lats.begin(), lats.end());
+	}
+	for (unsigned int n = 1; n <= 13; n++) {
+		CHECK_TRUE(delivered.count(fix_code(n)) == 1);
+	}
 }
 
 // A TxComplete never preceded by TxStarted (a late event after a cancel) says
