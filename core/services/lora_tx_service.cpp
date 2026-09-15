@@ -420,7 +420,13 @@ bool LoRaTxService::service_cancel() {
 	// so a cancel after a real transmission gives nothing back, and the eviction
 	// snapshot keeps the address matching honest.
 	if (is_pending && !m_inflight_reached_air && !m_inflight_gps.empty()
-	    && m_depth_pile_manager.gps_evictions() == m_inflight_evictions) {
+	    && m_depth_pile_manager.gps_evictions() == m_inflight_evictions
+#if defined(LORA_LINKCHECK) && (LORA_LINKCHECK == 1)
+	    // A NO_FIX marker replaced in place keeps its slot's address, so after any
+	    // GNSS log the addresses may name a newer entry: same rule as apply_link_check.
+	    && m_pile_generation == m_inflight_generation
+#endif
+	) {
 		const unsigned int n = m_depth_pile_manager.refund_gps(m_inflight_gps);
 		if (n) {
 			DEBUG_WARN("LoRaTxService: TX ended before reaching the air — %u depth-pile credit(s) given back", n);

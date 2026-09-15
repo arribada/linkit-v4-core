@@ -76,6 +76,15 @@ std::set<unsigned int> fix_codes(unsigned int first, unsigned int last) {
 	return codes;
 }
 
+/// Latitude code of a NO_FIX marker: the invalid-fix sentinel, every bit set.
+constexpr unsigned int NO_FIX_LATITUDE = (1U << LoRaPacketBuilder::BITS_LATITUDE) - 1U;
+
+unsigned int count_code(const std::vector<unsigned int> &lats, unsigned int code) {
+	unsigned int n = 0;
+	for (unsigned int lat : lats) n += (lat == code);
+	return n;
+}
+
 /// wake-ups field of the MOTION block: second of the frame's last four bytes.
 unsigned int frame_motion_wakeups(const KineisPacket &p) {
 	return static_cast<unsigned char>(p[p.size() - 3]);
@@ -385,6 +394,60 @@ TEST(LoRaLinkCheck, PileChangedInFlightFallsBackToOneCredit) {
 	CHECK_TRUE(dispatch());
 	const std::vector<unsigned int> lats = frame_latitudes(mock_device->last_packet);
 	CHECK_TRUE(std::set<unsigned int>(lats.begin(), lats.end()) == fix_codes(1, 2));
+}
+
+// A frame cancelled before the air (a DeviceError during the join) gives back the
+// credits retrieve() took. A NO_FIX marker replaced in place while that frame
+// waited sits at the old marker's address: the refund must not land on the new
+// marker. As when the pile changes on air, the frame then spends one credit.
+TEST(LoRaLinkCheck, CancelledFrameDoesNotRefundAMarkerReplacedBeforeTheAir) {
+	for (unsigned int k = 1; k <= 3; k++) fix_and_send(LINK_NOT_HEARD);
+	set_time(t + 300000);
+	inject_no_fix();
+	if (dispatch()) complete(true, LINK_NOT_HEARD);
+	set_time(t + serv->get_last_schedule());
+	CHECK_TRUE(dispatch());
+	CHECK_EQUAL(4U, frame_latitudes(mock_device->last_packet).size());
+	set_time(t + 5000);
+	inject_no_fix();
+	mock_device->notify(KineisEventDeviceError{});
+
+	unsigned int marker_rides = 0, fix1_rides = 0;
+	for (unsigned int k = 0; k < 8; k++) {
+		const unsigned int s = serv->get_last_schedule();
+		if (s > 7200000U) break;
+		set_time(t + s + 1000);
+		if (!dispatch()) continue;
+		const std::vector<unsigned int> lats = frame_latitudes(mock_device->last_packet);
+		marker_rides += count_code(lats, NO_FIX_LATITUDE);
+		fix1_rides += count_code(lats, fix_code(1));
+		complete(true, LINK_UNKNOWN);
+	}
+	CHECK_EQUAL(3U, marker_rides);
+	CHECK_EQUAL(2U, fix1_rides);
+}
+
+// NTRY_PER_MESSAGE 0: the same misplaced refund wraps the new marker's credit
+// counter to zero, and the next frame leaves the marker out.
+TEST(LoRaLinkCheck, CancelledFrameCannotWrapAReplacedMarkerAtNtryZero) {
+	fake_config_store->write_param(ParamID::NTRY_PER_MESSAGE, 0U);
+	for (unsigned int k = 1; k <= 3; k++) fix_and_send(LINK_NOT_HEARD);
+	set_time(t + 300000);
+	inject_no_fix();
+	if (dispatch()) complete(true, LINK_NOT_HEARD);
+	set_time(t + serv->get_last_schedule());
+	CHECK_TRUE(dispatch());
+	CHECK_EQUAL(4U, frame_latitudes(mock_device->last_packet).size());
+	set_time(t + 5000);
+	inject_no_fix();
+	mock_device->notify(KineisEventDeviceError{});
+
+	set_time(t + serv->get_last_schedule() + 1000);
+	CHECK_TRUE(dispatch());
+	const std::vector<unsigned int> lats = frame_latitudes(mock_device->last_packet);
+	complete(true, LINK_UNKNOWN);
+	CHECK_EQUAL(4U, lats.size());
+	CHECK_EQUAL(1U, count_code(lats, NO_FIX_LATITUDE));
 }
 
 // MOTION wake-ups reported by a frame nobody heard are reported again.
