@@ -71,6 +71,19 @@ public:
 	 * @note Wakes sensor from SLEEP, reads, then returns to SLEEP.
 	 */
 	void read_xyz(double &x, double &y, double &z, int16_t &temperature);
+#if defined(LORA_MOTION_EXT) && (LORA_MOTION_EXT == 1)
+	/// Consecutive failed reads recovered before giving up: a bus that stays dead is
+	/// then left latched instead of costing an I2C timeout on every wake edge.
+	static constexpr uint8_t MAX_READ_RECOVERIES = 3;
+	/// @brief After a read that threw: release the wake latch and re-arm the chip. Never throws.
+	void recover_after_failed_read();
+	/// @brief A read went through: the recovery budget is whole again.
+	void note_read_succeeded() { m_failed_reads = 0; }
+#endif
+#if defined(BENCH_TEST) && defined(LORA_MOTION_EXT) && (LORA_MOTION_EXT == 1)
+	/// @brief Bench: make the next read_xyz fail like an I2C error, after the mode change.
+	static void bench_fail_next_read();
+#endif
 
 	/// @brief Read temperature only.  Briefly enters NORMAL mode then sleeps.
 	int16_t read_temperature();
@@ -169,6 +182,9 @@ private:
 	struct bma400_int_enable m_int_enable;       ///< Current interrupt enable state
 	bool m_irq_pending;                          ///< Set by ISR, cleared by check_and_clear_wakeup()
 	bool m_wakeup_armed = false;                 ///< Wake-on-motion armed: reads must re-arm, not SLEEP
+#if defined(LORA_MOTION_EXT) && (LORA_MOTION_EXT == 1)
+	uint8_t m_failed_reads = 0;  ///< Consecutive failed reads recovered, up to MAX_READ_RECOVERIES
+#endif
 	/// @}
 
 	/// @name Configuration (set via calibration_write from service layer)

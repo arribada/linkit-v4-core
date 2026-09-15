@@ -194,6 +194,11 @@ void LoRaDevice::send(const KineisModulation mode, const KineisPacket &user_payl
 		notify(KineisEventDeviceError({}));
 		return;
 	}
+#if defined(LORA_LINKCHECK) && (LORA_LINKCHECK == 1)
+	// The LinkCheckReq rides in FOpts, one byte the DR limit above does not count:
+	// a payload already at the limit goes out without it (result unknown).
+	m_linkcheck_fits = payload_bytes < max_bytes;
+#endif
 
 	KineisPacket packet(user_payload.begin(), user_payload.begin() + payload_bytes);
 	m_packet_buffer = Binascii::hexlify(packet);
@@ -257,6 +262,20 @@ void LoRaDevice::react(const LoRaCommEventUartError &err) {
 	DEBUG_INFO("LoRaDevice: UART error type=%02x", err.error_type);
 	m_is_error = true;
 }
+
+#if defined(LORA_LINKCHECK) && (LORA_LINKCHECK == 1)
+void LoRaDevice::react(const LoRaCommEventLinkCheck &e) {
+	// Only the answer to the uplink in flight counts. A late one for an earlier
+	// frame can surface in any send_AT pump and must not be credited to this one.
+	if (!m_linkcheck_armed || m_linkcheck_result >= 0) {
+		DEBUG_TRACE("LoRaDevice: LINKCHECK result=%d ignored (none awaited)", (int)e.result);
+		return;
+	}
+	m_linkcheck_result = e.result;
+	DEBUG_TRACE("LoRaDevice: LINKCHECK result=%d margin=%d gateways=%d rssi=%d snr=%d", (int)e.result, (int)e.margin,
+	            (int)e.gateways, (int)e.rssi, (int)e.snr);
+}
+#endif
 
 // ========================================================================
 // Timeout management
@@ -425,6 +444,13 @@ void LoRaDevice::state_power_off_enter() {
 	// through the satellite interface when SAT_PWR_EN is low.
 	lora_park_unused_sat_pins();
 	m_packet_buffer.clear();
+#if defined(LORA_LINKCHECK) && (LORA_LINKCHECK == 1)
+	m_linkcheck_armed = false;
+	m_linkcheck_waiting = false;
+	m_linkcheck_result = -1;
+	m_linkcheck_failures = 0;  // a freshly booted module gets asked again
+	m_linkcheck_pause = 0;
+#endif
 }
 
 void LoRaDevice::state_power_off() {
@@ -1102,6 +1128,38 @@ void LoRaDevice::state_transmit_enter() {
 	m_tx_done = false;
 	m_is_error = false;
 
+#if defined(LORA_LINKCHECK) && (LORA_LINKCHECK == 1)
+	// Ask the network to acknowledge this uplink. Whatever happens here, the frame
+	// goes out below exactly as it would without LinkCheck: a refused or
+	// unanswered request only leaves the result unknown. Default timeout on
+	// purpose: send_AT does not match answers to commands, so a late OK must not
+	// be taken for AT+SEND's.
+	m_linkcheck_armed = false;
+	m_linkcheck_waiting = false;
+	m_linkcheck_result = -1;
+	// A module that keeps refusing costs a 2 s timeout per frame, so after
+	// LINKCHECK_MAX_FAILURES in a row the request pauses for LINKCHECK_PAUSE_FRAMES
+	// frames, then is tried again. One glitch costs one unacknowledged frame, not
+	// the rest of a deployment on a module that stays in standby for weeks.
+	bool linkcheck_requested = false;
+	if (m_linkcheck_fits) {
+		if (m_linkcheck_pause > 0) {
+			m_linkcheck_pause--;
+		} else {
+			linkcheck_requested = send_AT(AT_SET_LINKCHECK, std::string("1"));
+			if (linkcheck_requested) {
+				m_linkcheck_failures = 0;
+			} else if (++m_linkcheck_failures >= LINKCHECK_MAX_FAILURES) {
+				m_linkcheck_failures = 0;
+				m_linkcheck_pause = LINKCHECK_PAUSE_FRAMES;
+				DEBUG_WARN("LoRaDevice: AT+LINKCHECK failed %u times in a row — next %u uplinks go unacknowledged",
+				           (unsigned)LINKCHECK_MAX_FAILURES, (unsigned)LINKCHECK_PAUSE_FRAMES);
+			}
+			m_lora_comm.process_rx();
+		}
+	}
+#endif
+
 	// Format: AT+SEND=<port>:<hex_payload>
 	std::string send_params = std::to_string(m_config.fport) + ":" + m_packet_buffer;
 	if (!send_AT(AT_SEND, send_params)) {
@@ -1110,6 +1168,9 @@ void LoRaDevice::state_transmit_enter() {
 		return;
 	}
 
+#if defined(LORA_LINKCHECK) && (LORA_LINKCHECK == 1)
+	m_linkcheck_armed = linkcheck_requested;
+#endif
 	notify(KineisEventTxStarted({}));
 
 	// TX timeout based on data rate — low DRs have very long air times
@@ -1131,12 +1192,38 @@ void LoRaDevice::state_transmit_enter() {
 void LoRaDevice::state_transmit() {
 	m_lora_comm.process_rx();  // Process any ISR-buffered async events
 
+#if defined(LORA_LINKCHECK) && (LORA_LINKCHECK == 1)
+	if (m_tx_done && m_linkcheck_armed && m_linkcheck_result < 0) {
+		// On air, answer not in yet. From here nothing may turn this frame into an
+		// error: the TX timeout is dropped and m_is_error is no longer looked at,
+		// because an error now would send again a frame that already went out.
+		if (!m_linkcheck_waiting) {
+			cancel_timeout();
+			m_linkcheck_waiting = true;
+			m_linkcheck_deadline_ms = PMU::get_timestamp_ms() + LINKCHECK_WAIT_MS;
+		}
+		if (PMU::get_timestamp_ms() < m_linkcheck_deadline_ms) {
+			run_state_machine(100);
+			return;
+		}
+		DEBUG_TRACE("LoRaDevice: no LINKCHECK answer within %u ms", LINKCHECK_WAIT_MS);
+	}
+#endif
+
 	if (m_tx_done) {
 		m_tx_done = false;
 		m_consecutive_errors = 0;  // Reset error counter on successful TX
 		DEBUG_TRACE("LoRaDevice::state_transmit: TX complete");
 		m_packet_buffer.clear();
+#if defined(LORA_LINKCHECK) && (LORA_LINKCHECK == 1)
+		KineisEventTxComplete complete;
+		complete.link_check = m_linkcheck_result;
+		m_linkcheck_armed = false;
+		m_linkcheck_waiting = false;
+		notify(complete);
+#else
 		notify(KineisEventTxComplete({}));
+#endif
 		LORA_STATE_CHANGE(transmit, idle);
 	} else if (m_is_error) {
 		DEBUG_ERROR("LoRaDevice::state_transmit: TX error");
@@ -1148,6 +1235,11 @@ void LoRaDevice::state_transmit() {
 
 void LoRaDevice::state_transmit_exit() {
 	cancel_timeout();
+#if defined(LORA_LINKCHECK) && (LORA_LINKCHECK == 1)
+	m_linkcheck_armed = false;
+	m_linkcheck_waiting = false;
+	m_linkcheck_result = -1;
+#endif
 }
 
 // ========================================================================

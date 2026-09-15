@@ -8,7 +8,10 @@ public:
 	MockKineisDevice() {}
 	virtual ~MockKineisDevice() {}
 
-	void send(const KineisModulation mode, const KineisPacket & /*packet*/, const unsigned int size_bits) override {
+	void send(const KineisModulation mode, const KineisPacket &packet, const unsigned int size_bits) override {
+		last_packet = packet;
+		last_size_bits = size_bits;
+		send_count++;
 		mock()
 		    .actualCall("send")
 		    .onObject(this)
@@ -61,6 +64,11 @@ public:
 	// i.e. the base-class behaviour, so existing tests are unaffected.
 	unsigned int cooldown_remaining_ms() const override { return m_cooldown_remaining_ms; }
 	void test_set_cooldown_remaining_ms(unsigned int ms) { m_cooldown_remaining_ms = ms; }
+
+	// Test helpers: the last frame handed to send(), and how many frames were.
+	KineisPacket last_packet;
+	unsigned int last_size_bits = 0;
+	unsigned int send_count = 0;
 
 	void set_lpm_mode(uint8_t lpm_bitmap) override {
 		(void)lpm_bitmap;  // LPM is SMD-specific, not verified in generic TX tests

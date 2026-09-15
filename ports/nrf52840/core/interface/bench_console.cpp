@@ -25,6 +25,13 @@ extern RGBLed *status_led;
 using led_handle = LEDState;  // meme alias que gentracker.cpp / ledsm.cpp
 #include "argos_tx_service.hpp"
 extern ArgosTxService *argos_tx_service_instance;
+#if defined(LORA_LINKCHECK) && (LORA_LINKCHECK == 1)
+#include "lora_tx_service.hpp"
+extern LoRaTxService *lora_tx_service_instance;
+#endif
+#if defined(LORA_MOTION_EXT) && (LORA_MOTION_EXT == 1)
+#include "bma400.hpp"
+#endif
 #include "moored_mode_service.hpp"
 #include "hauled_mode_service.hpp"
 #include "rtc.hpp"
@@ -547,12 +554,27 @@ bool bench::handle_line(const std::string &raw) {
 		// is the only way to watch the rotation at all -- retrieve() decrements
 		// before the burst decides what to encode, and an entry at 0 is never
 		// eligible again.
+#if defined(LORA_LINKCHECK) && (LORA_LINKCHECK == 1)
+		if (lora_tx_service_instance) {
+			std::string d = lora_tx_service_instance->bench_dump_pile();
+			reply(std::string("%PILE ") + (d.empty() ? "empty" : d));
+			return true;
+		}
+#endif
 		if (!argos_tx_service_instance) {
 			reply("%PILE ERR no-service");
 		} else {
 			std::string d = argos_tx_service_instance->bench_dump_pile();
 			reply(std::string("%PILE ") + (d.empty() ? "empty" : d));
 		}
+#if defined(LORA_MOTION_EXT) && (LORA_MOTION_EXT == 1)
+	} else if (cmd == "%AXLFAIL") {
+		// Make the next BMA400 read throw like an I2C failure, after the chip was
+		// switched to NORMAL: the path that used to leave the wake interrupt latched
+		// until reboot. The next wake-up (motion, or a low AXP03) does the read.
+		BMA400LL::bench_fail_next_read();
+		reply("%AXLFAIL OK next read fails");
+#endif
 	} else if (cmd == "%LED") {
 		bench_led(line);
 	} else if (cmd == "%ARGOSCFG") {

@@ -401,6 +401,10 @@ static constexpr uint32_t FLASH_INIT_MAX_RESETS = 5;
 Is25Flash *bench_flash = nullptr;
 /// @brief Bench-only handle on the Argos TX service, for the %PILE probe.
 ArgosTxService *argos_tx_service_instance = nullptr;
+#if defined(LORA_LINKCHECK) && (LORA_LINKCHECK == 1)
+/// @brief Bench-only handle on the LoRa TX service, for the %PILE probe (Cyprus build).
+LoRaTxService *lora_tx_service_instance = nullptr;
+#endif
 #endif
 
 [[noreturn]] static void storage_unusable(const char *what) {
@@ -1115,6 +1119,9 @@ static void init_communication(LFSFileSystem &lfs_file_system) {
 		static LoRaDevice lora_rak3172;
 		lora_device_instance = &lora_rak3172;
 		static LoRaTxService lora_tx_service(lora_rak3172);
+#if defined(BENCH_TEST) && defined(LORA_LINKCHECK) && (LORA_LINKCHECK == 1)
+		lora_tx_service_instance = &lora_tx_service;
+#endif
 	} catch (...) {
 		DEBUG_INFO("LoRa RAK3172 not detected");
 		lora_device_instance = nullptr;

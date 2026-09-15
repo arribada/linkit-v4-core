@@ -311,9 +311,77 @@ void BMA400LL::setup_normal_mode() {
 //  Sensor reading
 // ═══════════════════════════════════════════════════════
 
+#if defined(LORA_MOTION_EXT) && (LORA_MOTION_EXT == 1)
+#include <exception>
+
+namespace {
+/// @brief Calls BMA400LL::recover_after_failed_read() when read_xyz is left by an
+/// exception. A guard object rather than a catch leaves the read path itself
+/// untouched. Declared after SensorsPowerGuard, it runs while the sensors are
+/// still powered.
+class FailedReadRecovery {
+public:
+	explicit FailedReadRecovery(BMA400LL &ll) : m_ll(ll), m_exceptions(std::uncaught_exceptions()) {}
+	~FailedReadRecovery() {
+		if (std::uncaught_exceptions() > m_exceptions)
+			m_ll.recover_after_failed_read();
+		else
+			m_ll.note_read_succeeded();
+	}
+	FailedReadRecovery(const FailedReadRecovery &) = delete;
+	FailedReadRecovery &operator=(const FailedReadRecovery &) = delete;
+
+private:
+	BMA400LL &m_ll;
+	int m_exceptions;
+};
+}  // namespace
+
+/// @brief After a read that threw: let the next wake interrupt through and put the
+/// chip back where its wake engine evaluates.
+///
+/// The latch goes first. On the Cyprus configuration nothing else ever clears it
+/// (no periodic sampling, no TX sampling). A bus that stays dead gets
+/// MAX_READ_RECOVERIES tries and is then left latched, as before this fix, rather
+/// than cost an I2C timeout on every wake edge; a read that goes through restores
+/// the budget. The mode is set with the raw Bosch call and its result ignored:
+/// check_result would log and throw again over the exception already on its way
+/// out. If this fails too, the chip may stay in NORMAL, where the mode-0 engine
+/// does not evaluate; a periodic AXL read (AXL_SENSOR_PERIODIC) re-arms it.
+void BMA400LL::recover_after_failed_read() {
+	try {
+		if (m_failed_reads >= MAX_READ_RECOVERIES) {
+			DEBUG_ERROR("BMA400: reads keep failing — wake interrupt left latched until one succeeds");
+			return;
+		}
+		m_failed_reads++;
+		m_irq_pending = false;
+		const uint8_t mode = !m_wakeup_armed           ? BMA400_MODE_SLEEP
+		                     : (m_power_mode == 0) ? BMA400_MODE_LOW_POWER
+		                                           : BMA400_MODE_NORMAL;
+		[[maybe_unused]] const int8_t rslt = bma400_set_power_mode(mode, &m_bma400_dev);
+	} catch (...) {
+	}
+}
+#endif
+
+#if defined(BENCH_TEST) && defined(LORA_MOTION_EXT) && (LORA_MOTION_EXT == 1)
+static bool s_bench_fail_next_read = false;
+
+void BMA400LL::bench_fail_next_read() {
+	s_bench_fail_next_read = true;
+}
+#endif
+
 /// @brief Read calibrated XYZ + temperature.  Wakes from SLEEP, reads, returns to SLEEP.
 void BMA400LL::read_xyz(double &x, double &y, double &z, int16_t &temperature) {
 	SensorsPowerGuard power_guard;
+#if defined(LORA_MOTION_EXT) && (LORA_MOTION_EXT == 1)
+	// Cyprus build: an I2C failure mid-read used to leave m_irq_pending set for
+	// good -- only read(5) clears it, and the exception skipped read(5) -- so every
+	// later wake interrupt was ignored and MOORED could no longer exit on motion.
+	const FailedReadRecovery recovery(*this);
+#endif
 	int8_t rslt;
 	struct bma400_sensor_data data;
 	uint8_t g_force = range_to_g(m_g_range);
@@ -322,6 +390,12 @@ void BMA400LL::read_xyz(double &x, double &y, double &z, int16_t &temperature) {
 		setup_active_mode();
 	else
 		setup_normal_mode();
+#if defined(BENCH_TEST) && defined(LORA_MOTION_EXT) && (LORA_MOTION_EXT == 1)
+	if (s_bench_fail_next_read) {
+		s_bench_fail_next_read = false;
+		check_result("bench: injected read failure", BMA400_E_COM_FAIL);
+	}
+#endif
 
 	// Enable DRDY interrupt and wait for stabilization
 	struct bma400_int_enable int_en = { .type = BMA400_DRDY_INT_EN, .conf = BMA400_ENABLE };

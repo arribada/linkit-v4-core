@@ -14,7 +14,14 @@ using KineisPacket = std::string;
 struct KineisEventPowerOn {};
 struct KineisEventPowerOff {};
 struct KineisEventTxStarted {};
-struct KineisEventTxComplete {};
+struct KineisEventTxComplete {
+#if defined(LORA_LINKCHECK) && (LORA_LINKCHECK == 1)
+	/// LoRa Cyprus build: did the network hear this uplink? Answer to the
+	/// LinkCheckReq piggybacked on it. -1 unknown (none requested, or none came
+	/// in time), 0 heard by at least one gateway, 1 not heard.
+	int8_t link_check = -1;
+#endif
+};
 struct KineisEventRxStarted {};
 struct KineisEventRxStopped {
 	unsigned int rx_time;

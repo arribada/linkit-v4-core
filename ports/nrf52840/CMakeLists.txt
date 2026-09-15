@@ -59,7 +59,7 @@ set(BOOL_BUILD_FLAGS
     ENABLE_PRESSURE_SENSOR ENABLE_ALS_SENSOR ENABLE_CDT_SENSOR ENABLE_AXL_SENSOR
     ENABLE_THERMISTOR_SENSOR ENABLE_MORTALITY_SENSOR ENABLE_SWS_LOG ENABLE_SWS_ANALOG
     GNSS_HAS_BACKUP_BATTERY GPS_FAKE_POSITION STC3117_MIXED_MODE
-    ARGOS_SMD LORA_RAK3172 LORA_DCS_ENABLE LORA_POWER_OFF_UNDERWATER LORA_MOTION_EXT
+    ARGOS_SMD LORA_RAK3172 LORA_DCS_ENABLE LORA_POWER_OFF_UNDERWATER LORA_MOTION_EXT LORA_LINKCHECK
     SMDSAT_USE_SAFE_TIMINGS SMDSAT_AUTOFALLBACK SMDSAT_TXTRACE DEBUG_NO_SYSTEMLOG
     BENCH_TEST BENCH_FORCE_LPM_NONE SMD_FLASH_HOLD SMD_UART KIM2_BLIND_WKUP_RELEASE
     CAM_ENABLE BUZZER_ENABLE
@@ -140,6 +140,14 @@ option(LORA_DCS_ENABLE "Enforce LoRaWAN duty-cycle on RAK3172 (ETSI EN 300 220)"
 #   build stays byte-identical. Only build_linkitv4_lora_cyprus.sh sets it.
 #   Layout: LoRaPacketBuilder::append_motion_ext.
 option(LORA_MOTION_EXT "Append the MOTION debug block to LoRa frames (Cyprus boat)" OFF)
+
+# LORA_LINKCHECK: every uplink carries a LinkCheckReq, and a depth-pile position
+#   is spent only once a gateway heard a frame carrying it. Out of coverage
+#   nothing is spent; the pile (ARGOS_DEPTH_PILE, up to 24 positions) goes out as
+#   soon as coverage returns. Default OFF: every existing LoRa build stays
+#   byte-identical. Only build_linkitv4_lora_cyprus.sh sets it. Accounting:
+#   LoRaTxService::apply_link_check.
+option(LORA_LINKCHECK "Spend LoRa positions only once LinkCheck says a gateway heard them (Cyprus boat)" OFF)
 
 # LORA_TX_ERROR_SUSPEND_S: how long LoRaTxService stops transmitting after
 # DEVICE_ERROR_MAX_CONSECUTIVE consecutive device errors, before letting one
@@ -236,6 +244,10 @@ if(LORA_MOTION_EXT AND NOT LORA_RAK3172)
 endif()
 if(LORA_MOTION_EXT AND NOT ENABLE_AXL_SENSOR)
     message(FATAL_ERROR "LORA_MOTION_EXT=ON requires ENABLE_AXL_SENSOR=ON (the block counts accelerometer wake-ups).")
+endif()
+# Guard: LinkCheck is a LoRaWAN MAC command.
+if(LORA_LINKCHECK AND NOT LORA_RAK3172)
+    message(FATAL_ERROR "LORA_LINKCHECK=ON requires LORA_RAK3172=ON (LinkCheck is a LoRaWAN MAC command).")
 endif()
 
 # Battery monitor type: ANALOG, FAKE (always 4.1V), STC3117 (I2C fuel gauge)
@@ -834,6 +846,7 @@ target_compile_definitions(${TARGET_NAME} PRIVATE
     $<$<BOOL:${LORA_RAK3172_ENABLED}>:LORA_DCS_ENABLE=${LORA_DCS_ENABLE_VAL}>
     $<$<BOOL:${LORA_RAK3172_ENABLED}>:LORA_TX_ERROR_SUSPEND_S=${LORA_TX_ERROR_SUSPEND_S}>
     $<$<AND:$<BOOL:${LORA_RAK3172_ENABLED}>,$<BOOL:${LORA_MOTION_EXT}>>:LORA_MOTION_EXT=1>
+    $<$<AND:$<BOOL:${LORA_RAK3172_ENABLED}>,$<BOOL:${LORA_LINKCHECK}>>:LORA_LINKCHECK=1>
     ARGOS_TX_ERROR_SUSPEND_S=${ARGOS_TX_ERROR_SUSPEND_S}
     $<$<BOOL:${LORA_RAK3172_ENABLED}>:LORA_POWER_OFF_UNDERWATER=${LORA_POWER_OFF_UNDERWATER_VAL}>
     # Battery monitor type defines

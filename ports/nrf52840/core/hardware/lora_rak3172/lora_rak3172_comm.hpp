@@ -68,6 +68,9 @@ enum ATCmd {
 	// existing field logs / runbook references stay valid).
 	AT_GET_LPM,     // AT+LPM=?       - read back current LPM mode
 	AT_GET_LPMLVL,  // AT+LPMLVL=?    - read back current LPM level
+#if defined(LORA_LINKCHECK) && (LORA_LINKCHECK == 1)
+	AT_SET_LINKCHECK,  // AT+LINKCHECK=  - LinkCheckReq on the next uplink (Cyprus build only)
+#endif
 	AT_UNKNOWN
 };
 
@@ -84,6 +87,9 @@ enum RespType {
 	RESP_EVT_SEND_CONFIRMED_OK,
 	RESP_EVT_SEND_CONFIRMED_FAILED,
 	RESP_EVT_RX,  // Downlink data received
+#if defined(LORA_LINKCHECK) && (LORA_LINKCHECK == 1)
+	RESP_EVT_LINKCHECK,  // +EVT:LINKCHECK:<result>:<margin>:<gateways>:<rssi>:<snr> (',' also accepted)
+#endif
 	RESP_UNKNOWN
 };
 
@@ -102,6 +108,9 @@ constexpr std::string_view EVT_TX_DONE = "+EVT:TX_DONE";
 constexpr std::string_view EVT_SEND_CONF_OK = "+EVT:SEND CONFIRMED OK";
 constexpr std::string_view EVT_SEND_CONF_FAIL = "+EVT:SEND CONFIRMED FAILED";
 constexpr std::string_view EVT_RX_PREFIX = "+EVT:RX_";
+#if defined(LORA_LINKCHECK) && (LORA_LINKCHECK == 1)
+constexpr std::string_view EVT_LINKCHECK_PREFIX = "+EVT:LINKCHECK:";
+#endif
 
 // Default LoRaWAN configuration (optimized for marine GPS tracker)
 static constexpr uint8_t DEFAULT_NWM = 1;    // LoRaWAN mode
@@ -139,6 +148,18 @@ struct LoRaCommEventUartError {
 	unsigned int error_type;
 	LoRaCommEventUartError(unsigned int a) : error_type(a) {}
 };
+#if defined(LORA_LINKCHECK) && (LORA_LINKCHECK == 1)
+/// Network answer to a LinkCheckReq. result: 0 heard by at least one gateway,
+/// 1 not heard, -1 line not understood. The other fields are the module's own
+/// report (dB, gateway count, dBm, dB), meaningful only when result is 0.
+struct LoRaCommEventLinkCheck {
+	int8_t result = -1;
+	int16_t margin = 0;
+	int16_t gateways = 0;
+	int16_t rssi = 0;
+	int16_t snr = 0;
+};
+#endif
 
 class LoRaCommEventListener {
 public:
@@ -150,6 +171,9 @@ public:
 	virtual void react(const LoRaCommEventTxDone &) {}
 	virtual void react(const LoRaCommEventRxData &) {}
 	virtual void react(const LoRaCommEventUartError &) {}
+#if defined(LORA_LINKCHECK) && (LORA_LINKCHECK == 1)
+	virtual void react(const LoRaCommEventLinkCheck &) {}
+#endif
 };
 
 /**
@@ -196,6 +220,9 @@ protected:
 private:
 	bool m_passthrough_active = false;
 	PassthroughCallback m_passthrough_callback;
+#if defined(LORA_LINKCHECK) && (LORA_LINKCHECK == 1)
+	LoRaCommEventLinkCheck m_last_linkcheck;  // Filled by the parser, carried by RESP_EVT_LINKCHECK
+#endif
 
 	bool send_at_cmd(LoRa::ATCmd cmd, const std::optional<std::string> &params = std::nullopt);
 	LoRa::RespType parse_rx_line_protocol(std::string &line);

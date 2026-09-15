@@ -106,7 +106,13 @@ static constexpr ATCmdEntry cmd_table[] = {
 	// Readback queries — see header note about enum stability.
 	{ AT_GET_LPM, "AT+LPM=?\r\n", false },
 	{ AT_GET_LPMLVL, "AT+LPMLVL=?\r\n", false },
+#if defined(LORA_LINKCHECK) && (LORA_LINKCHECK == 1)
+	{ AT_SET_LINKCHECK, "AT+LINKCHECK=", true },
+#endif
 };
+// Rows are looked up by enum value. A missing or misplaced row makes send()
+// refuse the command, and send_AT then waits out its whole timeout for nothing.
+static_assert(std::size(cmd_table) == static_cast<size_t>(AT_UNKNOWN), "cmd_table must list every ATCmd in enum order");
 
 bool LoRaComm::send_at_cmd(ATCmd cmd, const std::optional<std::string> &params) {
 	// O(1) lookup: ATCmd enum values match cmd_table indices
@@ -181,6 +187,9 @@ void LoRaComm::on_rx_line(std::string &line) {
 	case RESP_EVT_SEND_CONFIRMED_OK: notify<LoRaCommEventTxDone>({}); break;
 	case RESP_EVT_SEND_CONFIRMED_FAILED: notify(LoRaCommEventRespError(RESP_EVT_SEND_CONFIRMED_FAILED)); break;
 	case RESP_EVT_RX: notify(LoRaCommEventRxData(m_last_rx_port, m_last_value)); break;
+#if defined(LORA_LINKCHECK) && (LORA_LINKCHECK == 1)
+	case RESP_EVT_LINKCHECK: notify(m_last_linkcheck); break;
+#endif
 	case RESP_VALUE:
 		// Value stored in m_last_value, OK will follow
 		break;
@@ -196,6 +205,44 @@ void LoRaComm::on_rx_error(unsigned int error_type) {
 // ============================================================================
 // RUI3 response line parser
 // ============================================================================
+
+#if defined(LORA_LINKCHECK) && (LORA_LINKCHECK == 1)
+/// @brief Parse the "Y0,Y1,Y2,Y3,Y4" tail of +EVT:LINKCHECK (signed decimals).
+///
+/// Runs inside process_rx, from FSM ticks and from blocking send_AT loops, so it
+/// never throws: a line cut short by an RX overflow, or any other shape, comes
+/// back with result -1, which the TX service treats exactly like no answer.
+static LoRaCommEventLinkCheck parse_linkcheck(const std::string &line, size_t pos) {
+	LoRaCommEventLinkCheck parsed;
+	int fields[5] = { 0, 0, 0, 0, 0 };
+	for (unsigned int n = 0; n < 5; n++) {
+		if (n > 0) {
+			// RUI3 on the bench RAK3172 (2026-09) prints ':' between the fields, its
+			// documentation ','. Either is taken.
+			if (pos >= line.size() || (line[pos] != ',' && line[pos] != ':')) return parsed;
+			pos++;
+		}
+		const bool negative = (pos < line.size() && line[pos] == '-');
+		if (negative) pos++;
+		unsigned int digits = 0;
+		int value = 0;
+		while (pos < line.size() && line[pos] >= '0' && line[pos] <= '9') {
+			if (++digits > 5) return parsed;
+			value = value * 10 + (line[pos] - '0');
+			pos++;
+		}
+		if (digits == 0) return parsed;
+		fields[n] = negative ? -value : value;
+	}
+	if (pos != line.size()) return parsed;
+	parsed.result = (fields[0] == 0) ? 0 : 1;
+	parsed.margin = static_cast<int16_t>(fields[1]);
+	parsed.gateways = static_cast<int16_t>(fields[2]);
+	parsed.rssi = static_cast<int16_t>(fields[3]);
+	parsed.snr = static_cast<int16_t>(fields[4]);
+	return parsed;
+}
+#endif
 
 /// @brief Parse a single line from the RAK3172 response.
 LoRa::RespType LoRaComm::parse_rx_line_protocol(std::string &line) {
@@ -217,6 +264,13 @@ LoRa::RespType LoRaComm::parse_rx_line_protocol(std::string &line) {
 		if (line == EVT_TX_DONE) return RESP_EVT_TX_DONE;
 		if (line == EVT_SEND_CONF_OK) return RESP_EVT_SEND_CONFIRMED_OK;
 		if (line == EVT_SEND_CONF_FAIL) return RESP_EVT_SEND_CONFIRMED_FAILED;
+#if defined(LORA_LINKCHECK) && (LORA_LINKCHECK == 1)
+		if (line.compare(0, EVT_LINKCHECK_PREFIX.size(), EVT_LINKCHECK_PREFIX.data(), EVT_LINKCHECK_PREFIX.size())
+		    == 0) {
+			m_last_linkcheck = parse_linkcheck(line, EVT_LINKCHECK_PREFIX.size());
+			return RESP_EVT_LINKCHECK;
+		}
+#endif
 
 		// Check for RX data: +EVT:RX_1:<rssi>:<snr>:UNICAST:<port>:<payload>
 		if (line.compare(0, EVT_RX_PREFIX.size(), EVT_RX_PREFIX.data(), EVT_RX_PREFIX.size()) == 0) {

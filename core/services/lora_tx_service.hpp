@@ -27,6 +27,11 @@ public:
 	/// @param e  Peer service event.
 	void notify_peer_event(ServiceEvent &e) override;
 
+#ifdef BENCH_TEST
+	/// @brief Bench probe: "<type>:<credits>" per GPS pile slot, oldest first.
+	std::string bench_dump_pile() { return m_depth_pile_manager.bench_dump_gps(); }
+#endif
+
 protected:
 	void service_init() override;
 	void service_term() override;
@@ -172,5 +177,19 @@ private:
 
 	/// @brief Append the MOTION block to a frame about to be sent, noting what it reports.
 	void append_motion_ext(KineisPacket &packet, unsigned int &size_bits);
+#endif
+
+#if defined(LORA_LINKCHECK) && (LORA_LINKCHECK == 1)
+	// LinkCheck store-and-forward (Cyprus build). m_inflight_gps is everything
+	// retrieve() debited; m_inflight_encoded is what the frame in flight actually
+	// carries. The generation stamp moves with every GNSS log handed to the pile:
+	// a purge or a replace-last reshapes the deque without counting as an
+	// eviction, and would leave the in-flight pointers naming other positions.
+	std::vector<GPSLogEntry *> m_inflight_encoded;
+	unsigned int m_pile_generation = 0;
+	unsigned int m_inflight_generation = 0;
+
+	/// @brief Settle the in-flight positions on the network's verdict.
+	void apply_link_check(int8_t link_check);
 #endif
 };

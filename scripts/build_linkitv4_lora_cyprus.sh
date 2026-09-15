@@ -8,7 +8,7 @@
 # change to the shared LoRa script is inherited here automatically — except for
 # the values pinned below, which is the whole point of having this file.
 #
-# FIVE firmware options differ from the standard LoRa build. Every one of them
+# SIX firmware options differ from the standard LoRa build. Every one of them
 # is load-bearing; none may change silently if someone edits the defaults in
 # build_linkitv4_lora.sh. Each line below states the shared default it overrides.
 #
@@ -59,6 +59,17 @@
 #   know the block: layout in LoRaPacketBuilder::append_motion_ext and wiki
 #   page 12.
 #
+#   LORA_LINKCHECK=ON  (shared default: OFF)
+#   Every uplink carries a LinkCheckReq, and a depth-pile position is spent
+#   only once a gateway heard a frame carrying it. Out of coverage nothing is
+#   spent; the pile keeps the newest ARGOS_DEPTH_PILE positions (24 max: 2 h
+#   under way at 5 min, a day moored) and sends them as soon as a frame is
+#   heard again. Cost: one FOpts byte and one downlink per uplink (gateway RX1
+#   1 %, or RX2 10 % if ChirpStack answers there). Device side: ARP16=12 and
+#   LBP08=12 (DTE depth-pile code 12 = 24 positions), ARP19=3, LBP11=3.
+#   Image without it, same options otherwise:
+#     LORA_LINKCHECK=OFF ./scripts/build_linkitv4_lora_cyprus.sh --clean
+#
 # Runtime configuration (ARGOS_MODE, ARP11, GNP52, LoRaWAN credentials, DR, ...)
 # is NOT set here — it is provisioned device-side over DTE. See the deployment
 # plan, part E.
@@ -86,6 +97,7 @@ export LORA_DCS_ENABLE=ON
 export GNSS_HAS_BACKUP_BATTERY=OFF
 export ENABLE_AXL_SENSOR=ON
 export LORA_MOTION_EXT=ON
+export LORA_LINKCHECK=${LORA_LINKCHECK:-ON}
 
 # LORA_TX_ERROR_SUSPEND_S is deliberately NOT pinned here: the default artifact
 # of this script must be the deployment-safe one (shared default 3600 s — after

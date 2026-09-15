@@ -284,6 +284,7 @@ target_sources(${PROJECT_NAME} PRIVATE
     "src/kim2_modulation_test.cpp"
     "src/lora_packet_builder_test.cpp"
     "src/lora_tx_test.cpp"
+    "src/lora_linkcheck_test.cpp"
     "src/packet_field_encoding_test.cpp"
     "src/exponential_backoff_test.cpp"
     "src/schedule_decision_test.cpp"
@@ -313,6 +314,37 @@ set_source_files_properties(${ROOT_DIR}/libraries/prepass/previpass-PREPASS_V4.0
 set_source_files_properties(${ROOT_DIR}/libraries/prepass/previpass_compat_layer/previpass.c PROPERTIES COMPILE_FLAGS "-Wno-unused-parameter -Wno-switch-enum -Wno-switch -Wno-double-promotion -Wno-conversion -Wno-sign-conversion -Wno-float-conversion -Wno-cast-align -Wno-missing-field-initializers")
 
 target_link_libraries(${PROJECT_NAME} PRIVATE CppUTest CppUTestExt ${CMAKE_THREAD_LIBS_INIT})
+
+# ============================================================================
+# TrackerTestsCyprus - TrackerTests compiled again with the two Cyprus boat
+# firmware flags (LORA_MOTION_EXT, LORA_LINKCHECK). TrackerTests keeps the
+# configuration every other firmware ships, so neither loses host coverage.
+# Sources, definitions, options and include paths are read back from the
+# TrackerTests target: a file or flag added there is picked up here too.
+# ============================================================================
+set(CYPRUS_TESTS_NAME "TrackerTestsCyprus")
+get_target_property(TT_SOURCES ${PROJECT_NAME} SOURCES)
+add_executable(${CYPRUS_TESTS_NAME} ${TT_SOURCES})
+foreach(TT_PROP CXX_STANDARD CXX_STANDARD_REQUIRED C_STANDARD)
+    get_target_property(TT_VALUE ${PROJECT_NAME} ${TT_PROP})
+    if(TT_VALUE)
+        set_property(TARGET ${CYPRUS_TESTS_NAME} PROPERTY ${TT_PROP} ${TT_VALUE})
+    endif()
+endforeach()
+get_target_property(TT_DEFINITIONS ${PROJECT_NAME} COMPILE_DEFINITIONS)
+get_target_property(TT_OPTIONS ${PROJECT_NAME} COMPILE_OPTIONS)
+get_target_property(TT_INCLUDES ${PROJECT_NAME} INCLUDE_DIRECTORIES)
+if(TT_DEFINITIONS)
+    target_compile_definitions(${CYPRUS_TESTS_NAME} PRIVATE ${TT_DEFINITIONS})
+endif()
+if(TT_OPTIONS)
+    target_compile_options(${CYPRUS_TESTS_NAME} PRIVATE ${TT_OPTIONS})
+endif()
+if(TT_INCLUDES)
+    target_include_directories(${CYPRUS_TESTS_NAME} PRIVATE ${TT_INCLUDES})
+endif()
+target_compile_definitions(${CYPRUS_TESTS_NAME} PRIVATE LORA_MOTION_EXT=1 LORA_LINKCHECK=1)
+target_link_libraries(${CYPRUS_TESTS_NAME} PRIVATE CppUTest CppUTestExt ${CMAKE_THREAD_LIBS_INIT})
 
 # ============================================================================
 # TURTLE SIMULATION - Executable séparé avec rapport HTML

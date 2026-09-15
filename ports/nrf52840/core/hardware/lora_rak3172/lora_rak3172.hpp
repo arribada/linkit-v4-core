@@ -201,6 +201,23 @@ private:
 	// values are pushed to the module. Cleared once acted on.
 	volatile bool m_config_reload_pending;
 
+#if defined(LORA_LINKCHECK) && (LORA_LINKCHECK == 1)
+	// LinkCheck (Cyprus build): each uplink carries a LinkCheckReq, and the
+	// answer reaches LoRaTxService in KineisEventTxComplete::link_check. On the bench
+	// RAK3172 (RUI3, 2026-09) +EVT:LINKCHECK follows +EVT:TX_DONE; either way, once
+	// TX_DONE is in -- the frame is on air -- we only keep listening, bounded.
+	static constexpr unsigned int LINKCHECK_WAIT_MS = 3000;
+	static constexpr uint8_t LINKCHECK_MAX_FAILURES = 3;   ///< AT+LINKCHECK failures in a row before pausing
+	static constexpr uint8_t LINKCHECK_PAUSE_FRAMES = 24;  ///< Frames sent without asking, then ask again
+	bool m_linkcheck_fits = false;     ///< send(): the payload leaves room for the FOpts byte
+	uint8_t m_linkcheck_failures = 0;  ///< Consecutive failed AT+LINKCHECK=1
+	uint8_t m_linkcheck_pause = 0;     ///< Frames left before asking again
+	bool m_linkcheck_armed = false;    ///< AT+SEND accepted with a LinkCheckReq pending
+	bool m_linkcheck_waiting = false;  ///< TX_DONE seen, still listening for the answer
+	int8_t m_linkcheck_result = -1;    ///< -1 none yet, 0 heard, 1 no answer
+	uint64_t m_linkcheck_deadline_ms = 0;
+#endif
+
 	// State machine methods
 	void state_machine();
 	void run_state_machine(uint16_t delay_ms = 100);
@@ -254,6 +271,9 @@ private:
 	void react(const LoRaCommEventTxDone &) override;
 	void react(const LoRaCommEventRxData &) override;
 	void react(const LoRaCommEventUartError &) override;
+#if defined(LORA_LINKCHECK) && (LORA_LINKCHECK == 1)
+	void react(const LoRaCommEventLinkCheck &) override;
+#endif
 
 	// Bridge state
 	bool m_bridge_active = false;

@@ -58,6 +58,10 @@ void LoRaTxService::service_init() {
 #if defined(LORA_MOTION_EXT) && (LORA_MOTION_EXT == 1)
 	m_motion_in_flight = 0;
 #endif
+#if defined(LORA_LINKCHECK) && (LORA_LINKCHECK == 1)
+	m_inflight_encoded.clear();
+	DEBUG_INFO("LoRaTxService: LinkCheck store-and-forward — a position is spent only once the network heard it");
+#endif
 
 	DEBUG_TRACE("LoRaTxService::service_init: initialized");
 }
@@ -428,6 +432,9 @@ bool LoRaTxService::service_cancel() {
 	// TxComplete. A frame that never went out reported nothing.
 	if (!m_inflight_reached_air) m_motion_in_flight = 0;
 #endif
+#if defined(LORA_LINKCHECK) && (LORA_LINKCHECK == 1)
+	m_inflight_encoded.clear();
+#endif
 	m_inflight_gps.clear();
 	m_inflight_reached_air = false;
 
@@ -445,6 +452,8 @@ unsigned int LoRaTxService::service_next_timeout() {
 	//                     per packet by m_join_attempted)
 	//   transmit  150 s  (lora_rak3172.cpp tx_timeout_ms[DR0])
 	// ≈ 307 s at DR0, ≈ 182 s at the DR3 default. 360 s clears both.
+	// LORA_LINKCHECK builds add the AT+LINKCHECK round-trip (2 s at worst) and the
+	// post-TX_DONE listening window (LINKCHECK_WAIT_MS, 3 s): ≈ 312 s, still clear.
 	//
 	// Was 300 s, sized against the old flat 90 s join timeout. That timeout was
 	// shorter than the module's own 8-attempt cycle and has been corrected to
@@ -503,6 +512,10 @@ void LoRaTxService::notify_peer_event(ServiceEvent &e) {
 
 	if (!skip_depth_pile) {
 		m_depth_pile_manager.notify_peer_event(e);
+#if defined(LORA_LINKCHECK) && (LORA_LINKCHECK == 1)
+		if (e.event_source == ServiceIdentifier::GNSS_SENSOR && e.event_type == ServiceEventType::SERVICE_LOG_UPDATED)
+			m_pile_generation++;
+#endif
 	}
 
 	if (e.event_source == ServiceIdentifier::GNSS_SENSOR && e.event_type == ServiceEventType::SERVICE_LOG_UPDATED) {
@@ -732,6 +745,10 @@ void LoRaTxService::process_gps_burst() {
 	m_inflight_gps = v;
 	m_inflight_reached_air = false;
 	m_inflight_evictions = m_depth_pile_manager.gps_evictions();
+#if defined(LORA_LINKCHECK) && (LORA_LINKCHECK == 1)
+	m_inflight_encoded.clear();
+	m_inflight_generation = m_pile_generation;
+#endif
 
 	if (v.size()) {
 		KineisPacket packet;
@@ -748,12 +765,18 @@ void LoRaTxService::process_gps_burst() {
 			    (uint32_t)convert_epochtime(v.back()->header.year, v.back()->header.month, v.back()->header.day,
 				                            v.back()->header.hours, v.back()->header.minutes,
 				                            v.back()->header.seconds));
+#if defined(LORA_LINKCHECK) && (LORA_LINKCHECK == 1)
+			m_inflight_encoded.assign(1, v.back());
+#endif
 			// Fastloc entries: send as unified sensor packet (GPS + fastloc quality metadata)
 		} else if (v.back()->info.event_type == GPSEventType::FASTLOC) {
 			packet = LoRaPacketBuilder::build_sensor_packet(v.back(), nullptr, nullptr, nullptr, nullptr, nullptr,
 			                                                argos_config.is_out_of_zone, argos_config.is_lb, size_bits);
 #if defined(LORA_MOTION_EXT) && (LORA_MOTION_EXT == 1)
 			append_motion_ext(packet, size_bits);
+#endif
+#if defined(LORA_LINKCHECK) && (LORA_LINKCHECK == 1)
+			m_inflight_encoded.assign(1, v.back());
 #endif
 		} else {
 			// Filter out any CloudLocate/fastloc entries that may be mixed in
@@ -771,6 +794,11 @@ void LoRaTxService::process_gps_burst() {
 			}
 			// Trim to max entries that fit in payload
 			if (v.size() > max_entries) v.resize(max_entries);
+#if defined(LORA_LINKCHECK) && (LORA_LINKCHECK == 1)
+			// build_gps_packet encodes the oldest of these, up to what its count field holds.
+			const std::size_t encodable = (1U << LoRaPacketBuilder::BITS_GPS_COUNT) - 1U;
+			m_inflight_encoded.assign(v.begin(), v.begin() + std::min(v.size(), encodable));
+#endif
 
 			packet = LoRaPacketBuilder::build_gps_packet(v, argos_config.is_out_of_zone, argos_config.is_lb,
 			                                             max_payload, size_bits);
@@ -811,6 +839,11 @@ void LoRaTxService::process_sensor_burst() {
 	if (gps != nullptr) m_inflight_gps.push_back(gps);
 	m_inflight_reached_air = false;
 	m_inflight_evictions = m_depth_pile_manager.gps_evictions();
+#if defined(LORA_LINKCHECK) && (LORA_LINKCHECK == 1)
+	// Sensor bursts keep today's accounting: their sensor piles are not refunded.
+	m_inflight_encoded.clear();
+	m_inflight_generation = m_pile_generation;
+#endif
 
 	if (gps != nullptr) {
 		// CloudLocate entries: send as dedicated CloudLocate packet
@@ -1091,8 +1124,11 @@ void LoRaTxService::react(KineisEventTxStarted const &) {
 	service_active();
 }
 
-void LoRaTxService::react(KineisEventTxComplete const &) {
+void LoRaTxService::react([[maybe_unused]] KineisEventTxComplete const &e) {
 	DEBUG_TRACE("LoRaTxService::react: KineisEventTxComplete");
+#if defined(LORA_LINKCHECK) && (LORA_LINKCHECK == 1)
+	apply_link_check(e.link_check);
+#endif
 	// Transmitted: the credits paid for a real emission. Drop the note so a later
 	// cancel cannot hand them back.
 	m_inflight_gps.clear();
@@ -1100,8 +1136,13 @@ void LoRaTxService::react(KineisEventTxComplete const &) {
 	m_is_tx_pending = false;
 	m_consecutive_device_errors = 0;
 #if defined(LORA_MOTION_EXT) && (LORA_MOTION_EXT == 1)
+	bool motion_delivered = true;
+#if defined(LORA_LINKCHECK) && (LORA_LINKCHECK == 1)
+	// No gateway heard that frame: the wake-ups it reported reached nobody and ride again.
+	motion_delivered = (e.link_check != 1);
+#endif
 	// The wake-ups that frame reported are delivered; keep any counted since it was built.
-	m_motion_wakeups = (uint8_t)(m_motion_wakeups - std::min(m_motion_wakeups, m_motion_in_flight));
+	if (motion_delivered) m_motion_wakeups = (uint8_t)(m_motion_wakeups - std::min(m_motion_wakeups, m_motion_in_flight));
 	m_motion_in_flight = 0;
 #endif
 
@@ -1374,5 +1415,47 @@ void LoRaTxService::append_motion_ext(KineisPacket &packet, unsigned int &size_b
 	DEBUG_TRACE("LoRaTxService: MOTION moored=%u holdoff=%u wakeups=%u since_wakeup=%u min since_axl_exit=%u min",
 	            (unsigned)motion.moored, (unsigned)motion.axl_holdoff, (unsigned)motion.wakeups,
 	            (unsigned)motion.min_since_wakeup, (unsigned)motion.min_since_axl_exit);
+}
+#endif
+
+#if defined(LORA_LINKCHECK) && (LORA_LINKCHECK == 1)
+/// @brief Settle the positions of the frame that just completed on the network's
+/// verdict, before react() drops the in-flight note.
+///
+/// Every credit retrieve() took is given back first, then:
+/// - heard (0): every position the frame carried is spent, whatever credits NTRY
+///   left on it -- the network has them. Positions retrieved but left out of the
+///   frame (the 4-bit count field, at DR4/DR5) keep theirs;
+/// - no answer (1): nothing more. No gateway heard the frame, or its answer was
+///   lost on the way down: an outage spends nothing and the pile keeps the newest
+///   ARGOS_DEPTH_PILE positions for when coverage returns. A downlink that never
+///   gets through costs what an outage costs -- full frames, repeats the IHM merges.
+///
+/// Anything uncertain keeps today's accounting, one credit per frame:
+///  - no verdict (-1);
+///  - a frame that never reached TxStarted: a late TX_DONE after a cancel would
+///    otherwise settle a batch that never left the device;
+///  - a pile evicted or reshaped while in flight: the pointers may name other
+///    positions;
+///  - NTRY_PER_MESSAGE 0, which already means "replay until evicted";
+///  - sensor TX enabled: the sensor piles are not refunded alongside the GPS one.
+void LoRaTxService::apply_link_check(int8_t link_check) {
+	const std::vector<GPSLogEntry *> encoded = std::move(m_inflight_encoded);
+	m_inflight_encoded.clear();
+	if (link_check < 0 || !m_inflight_reached_air || m_inflight_gps.empty()
+	    || m_depth_pile_manager.gps_evictions() != m_inflight_evictions || m_pile_generation != m_inflight_generation) {
+		return;
+	}
+	ArgosConfig argos_config;
+	configuration_store->get_argos_configuration(argos_config);
+	if (argos_config.ntry_per_message == 0 || argos_config.sensor_tx_enable != 0) return;
+
+	[[maybe_unused]] const unsigned int kept = m_depth_pile_manager.refund_gps(m_inflight_gps);
+	if (link_check == 1) {
+		DEBUG_TRACE("LoRaTxService: no LinkCheck answer - %u position(s) kept for the next frame", kept);
+		return;
+	}
+	[[maybe_unused]] const unsigned int heard = m_depth_pile_manager.debit_gps_extra(encoded, UINT_MAX);
+	DEBUG_TRACE("LoRaTxService: uplink heard - %u position(s) delivered", heard);
 }
 #endif
