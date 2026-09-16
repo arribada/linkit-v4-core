@@ -230,6 +230,12 @@ TEST(ConfigStore, CheckFactoryResetRetainsProvisioningSecrets) {
 	const std::string appkey = "00112233445566778899AABBCCDDEEFF";
 	store->write_param(ParamID::LORA_APPEUI, appeui);
 	store->write_param(ParamID::LORA_APPKEY, appkey);
+	// Join mode and band belong to provisioning too: an ABP tag, or one on
+	// another band, keeps its keys but can no longer reach its network.
+	const unsigned int njm = 0U;   // ABP, not the default OTAA
+	const unsigned int band = 5U;  // not the default EU868
+	store->write_param(ParamID::LORA_NJM, njm);
+	store->write_param(ParamID::LORA_BAND, band);
 #endif
 	unsigned int tr_nom = 1200U;
 	store->write_param(ParamID::TR_NOM, tr_nom);
@@ -245,6 +251,8 @@ TEST(ConfigStore, CheckFactoryResetRetainsProvisioningSecrets) {
 #if defined(LORA_RAK3172) && (LORA_RAK3172 == 1)
 	STRCMP_EQUAL(appeui.c_str(), store->read_param<std::string>(ParamID::LORA_APPEUI).c_str());
 	STRCMP_EQUAL(appkey.c_str(), store->read_param<std::string>(ParamID::LORA_APPKEY).c_str());
+	CHECK_EQUAL(njm, store->read_param<unsigned int>(ParamID::LORA_NJM));
+	CHECK_EQUAL(band, store->read_param<unsigned int>(ParamID::LORA_BAND));
 #endif
 	// Everything that is not protected is back to its default.
 	CHECK_TRUE(store->read_param<unsigned int>(ParamID::TR_NOM) != tr_nom);

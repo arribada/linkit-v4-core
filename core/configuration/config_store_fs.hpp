@@ -445,6 +445,11 @@ private:
 	    ParamID::LORA_DEVADDR,
 	    ParamID::LORA_APPSKEY,
 	    ParamID::LORA_NWKSKEY,
+	    // Join mode and band are provisioning, not mission settings: a tag
+	    // deployed in ABP, or on a band other than the build default, would keep
+	    // its keys through the recovery and still be unable to reach its network.
+	    ParamID::LORA_NJM,
+	    ParamID::LORA_BAND,
 #endif
 	};
 
