@@ -8,7 +8,7 @@
 # change to the shared LoRa script is inherited here automatically — except for
 # the values pinned below, which is the whole point of having this file.
 #
-# SIX firmware options differ from the standard LoRa build. Every one of them
+# SEVEN firmware options differ from the standard LoRa build. Every one of them
 # is load-bearing; none may change silently if someone edits the defaults in
 # build_linkitv4_lora.sh. Each line below states the shared default it overrides.
 #
@@ -70,6 +70,18 @@
 #   Image without it, same options otherwise:
 #     LORA_LINKCHECK=OFF ./scripts/build_linkitv4_lora_cyprus.sh --clean
 #
+#   LORA_TX_ERROR_SUSPEND_S=900  (shared default: 3600)
+#   After three consecutive device errors (failed OTAA join, refused AT+SEND),
+#   TX suspends for this long, then one probe. The boat has no surface events
+#   to clear the counter, so the probe is its only way back. An hour of silence
+#   at a 1-5 min cadence produces 12-60 fixes against a 24-position pile, so the
+#   oldest are lost; 15 min keeps that loss small. Cost with the gateway down:
+#   one join window per 15 min instead of per hour, which the solar pack
+#   absorbs. The capped backoff (10 min) still spaces the first two retries.
+#   Commissioning, no suspension at all (backoff only):
+#     ./scripts/build_linkitv4_lora_cyprus.sh --clean --debug --no-tx-suspend
+#   Another value: LORA_TX_ERROR_SUSPEND_S=3600 ./scripts/build_linkitv4_lora_cyprus.sh
+#
 # Runtime configuration (ARGOS_MODE, ARP11, GNP52, LoRaWAN credentials, DR, ...)
 # is NOT set here — it is provisioned device-side over DTE. See the deployment
 # plan, part E.
@@ -98,18 +110,6 @@ export GNSS_HAS_BACKUP_BATTERY=OFF
 export ENABLE_AXL_SENSOR=ON
 export LORA_MOTION_EXT=ON
 export LORA_LINKCHECK=${LORA_LINKCHECK:-ON}
-
-# LORA_TX_ERROR_SUSPEND_S is deliberately NOT pinned here: the default artifact
-# of this script must be the deployment-safe one (shared default 3600 s — after
-# three consecutive device errors, TX suspends for an hour, then one probe).
-# Gateway down on that regime costs ~one join window per hour; without the
-# suspension it is one attempt per capped backoff (10 min), six times the
-# radio-on time, forever. The boat has no surface events to clear the counter,
-# so the probe is its only way back — which the suspension provides.
-#
-# Commissioning, where an hour between retries makes iteration impossible:
-#   ./scripts/build_linkitv4_lora_cyprus.sh --clean --debug --no-tx-suspend
-# (--no-tx-suspend sets LORA_TX_ERROR_SUSPEND_S=0; the capped backoff still
-# bounds retries to one per 10 min.)
+export LORA_TX_ERROR_SUSPEND_S=${LORA_TX_ERROR_SUSPEND_S:-900}
 
 exec "$SCRIPT_DIR/build_linkitv4_lora.sh" "$@"
