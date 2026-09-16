@@ -160,6 +160,14 @@ void GenTracker::react(ReedSwitchEvent const &event) {
 			// Magnet released during confirmation — start 3s re-engage window
 			m_awaiting_re_engage = true;
 			led_handle::dispatch<SetLEDMagnetDisengaged>({});
+			// Audible phase 2 of the power-off gesture: the continuous tone armed at
+			// LONG_HOLD becomes a short beep / long silence (200/600) for as long as
+			// the re-engage window is open. Note we deliberately do NOT dispatch
+			// SetBuzzMagnetDisengaged here (the LED FSM gets its own disengage above):
+			// the buzzer's magnet flag stays true until the gesture resolves, and both
+			// confirmation-phase buzz states ignore it anyway.
+			if (m_confirmation_pending == ConfirmationPending::POWEROFF)
+				buzz_handle::dispatch<SetBuzzPowerDownAwaitConfirm>({});
 			// Cancel any previous timeout before posting a new one.
 			// Intentionally left at DEFAULT_PRIORITY (lower than the elevated
 			// REED_GESTURE_PRIORITY used for the gesture callbacks in reed.cpp):
@@ -175,6 +183,12 @@ void GenTracker::react(ReedSwitchEvent const &event) {
 				    m_confirmation_pending = ConfirmationPending::NONE;
 				    m_awaiting_re_engage = false;
 				    buzz_handle::dispatch<SetBuzzMagnetDisengaged>({});
+				    // Silence the confirmation pattern. Without this the buzzer stays in
+				    // BuzzConfigPending / BuzzPreOperationalPending / BuzzPowerDown*, and the
+				    // SetBuzzMagnetDisengaged just above re-runs that state's entry() — so an
+				    // abandoned gesture left the tag beeping (or droning) indefinitely in every
+				    // branch that does not end in OperationalState::entry.
+				    buzz_handle::dispatch<SetBuzzOff>({});
 				    // Restore LED to current GenTracker state
 				    if (is_in_state<ConfigurationState>()) {
 					    led_handle::dispatch<SetLEDConfigNotConnected>({});
@@ -204,6 +218,8 @@ void GenTracker::react(ReedSwitchEvent const &event) {
 		m_confirmation_pending = ConfirmationPending::POWEROFF;
 		m_awaiting_re_engage = false;
 		led_handle::dispatch<SetLEDConfirmPowerOff>({});
+		// Audible phase 1: continuous tone, the sound counterpart of the LED going fast-RED here.
+		buzz_handle::dispatch<SetBuzzPowerDownPending>({});
 	}
 }
 
@@ -464,6 +480,13 @@ void BootState::entry() {
 	led_handle::start();
 	led_handle::dispatch<SetLEDBoot>({});
 	buzz_handle::start();
+
+	// Boot chime — two short beeps: "boot confirmed, you can release the magnet".
+	// Gated on the same reset causes as main.cpp's power-on magnet-hold check, so a
+	// watchdog reset, an ErrorState soft-reset retry or any other unattended reboot
+	// stays silent.
+	if (PMU::reset_cause() == ResetCause::PSEUDO_POWER_ON)
+		buzz_handle::dispatch<SetBuzzBoot>({});
 
 	// WDT kick before LFS mount/format. On a sealed deployment, a marginal
 	// flash block (wear, ECC retry) can stretch mount() into multiple seconds;

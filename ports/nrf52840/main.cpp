@@ -814,7 +814,7 @@ static void init_power_on_check(NrfSwitch &nrf_reed_switch) {
 		GPIOPins::set(VSYS_SEL);
 		PMU::kick_watchdog();
 		nrf_reed_switch.stop();
-		BUZZER_BEEP_COUNT(buzzer_ctl, 200, 200, 2);
+		BUZZER_OFF(buzzer_ctl);
 	}
 #else
 	// Without PSEUDO_POWER_OFF (RSPB/gentracker): The board has a real power path
