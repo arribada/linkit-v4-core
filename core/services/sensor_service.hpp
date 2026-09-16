@@ -49,7 +49,14 @@ protected:
 				// This ensures we always have a valid value to report even if GNSS completes early
 				update_ready_value();
 
-				if (service_is_scheduled()) {
+				// A wake-up read is not a scheduled session: service_complete() would
+				// bail on !m_is_initiated, but only after logging a WARN per wake-up,
+				// and on a release build that WARN is a LittleFS write (measured at a
+				// low wake threshold: 13/min, 38 % of all log lines). Testing the flag
+				// here keeps the behaviour and drops the noise. It also stops a sensor
+				// wake-up from releasing another service's log hold, which
+				// service_complete() does before that check.
+				if (service_is_scheduled() && service_is_initiated()) {
 					service_complete(nullptr, nullptr,
 					                 !gnss_shutdown
 					                     && (sensor_enable_tx_mode() != BaseSensorEnableTxMode::ONESHOT

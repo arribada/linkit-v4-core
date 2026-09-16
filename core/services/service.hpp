@@ -214,6 +214,13 @@ protected:
 
 	/// @brief Check if this service has a pending schedule.
 	bool service_is_scheduled();
+	/// @brief True while a scheduled session of this service is running.
+	///
+	/// A handler that fires OUTSIDE a session (a sensor wake-up interrupt) must
+	/// not call service_complete(): that call bails on this very flag, but only
+	/// after logging a warning — one LittleFS write per wake-up on a release
+	/// build, which is what wraps system.log in hours on a moving tag.
+	bool service_is_initiated() const { return m_is_initiated; }
 	/// @brief Force reschedule (e.g., after config change or peer event).
 	/// @param immediate  true to schedule with 0 delay.
 	void service_reschedule(bool immediate = false);
