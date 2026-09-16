@@ -593,7 +593,17 @@ void BMA400LL::enable_wakeup_low_power(std::function<void()> func) {
 
 	dev_conf.param.wakeup.wakeup_axes_en = BMA400_AXIS_XYZ_EN;
 	dev_conf.param.wakeup.wakeup_ref_update = BMA400_UPDATE_EVERY_TIME;
-	dev_conf.param.wakeup.sample_count = BMA400_SAMPLE_COUNT_4;
+	// AXL_SENSOR_WAKEUP_SAMPLES, not a constant: the register holds 1..8 samples
+	// (field value = count - 1) and the low-power ODR is fixed at 25 Hz, so this
+	// is the duration the motion must hold above the threshold, 40 ms per sample.
+	// It used to be hardcoded to 4 here, which left the parameter inert on every
+	// low-power build while the NORMAL-mode engine below did honour it.
+	unsigned int samples = m_wakeup_duration;
+	if (samples < 1) samples = 1;
+	if (samples > 8) samples = 8;
+	dev_conf.param.wakeup.sample_count = static_cast<uint8_t>(samples - 1);
+	DEBUG_INFO("BMA400::enable_wakeup_low_power: threshold=%.3f g samples=%u (%u ms at 25 Hz)", m_wakeup_threshold,
+	           samples, samples * 40U);
 	dev_conf.param.wakeup.int_wkup_threshold = calculate_wakeup_threshold_reg(m_wakeup_threshold, m_g_range);
 	dev_conf.param.wakeup.int_chan = BMA400_MAP_BOTH_INT_PINS;
 
