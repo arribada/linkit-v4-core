@@ -82,5 +82,6 @@
   },
   "editor.detectIndentation": false,
   "files.trimTrailingWhitespace": true,
-  "files.insertFinalNewline": true
+  "files.insertFinalNewline": true,
+  "cmake.sourceDirectory": "${workspaceFolder}/tests"
 }
