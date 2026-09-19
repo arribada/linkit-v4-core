@@ -564,7 +564,7 @@ void KIM2Device::read_credentials(unsigned int *dec_id, unsigned int *address, s
 			// proscrit explicitement.
 			GPIOPins::init_pin(SAT_RESET);
 			GPIOPins::clear(SAT_RESET);
-			GPIOPins::clear(SAT_PWR_EN);
+			cut_module_rail();
 			return;
 		}
 	}
@@ -624,7 +624,7 @@ void KIM2Device::read_credentials(unsigned int *dec_id, unsigned int *address, s
 		// proscrit explicitement.
 		GPIOPins::init_pin(SAT_RESET);
 		GPIOPins::clear(SAT_RESET);
-		GPIOPins::clear(SAT_PWR_EN);
+		cut_module_rail();
 	}
 }
 
@@ -668,7 +668,7 @@ bool KIM2Device::resync_rconf_cache() {
 			// proscrit explicitement.
 			GPIOPins::init_pin(SAT_RESET);
 			GPIOPins::clear(SAT_RESET);
-			GPIOPins::clear(SAT_PWR_EN);
+			cut_module_rail();
 			return false;
 		}
 	}
@@ -704,7 +704,7 @@ bool KIM2Device::resync_rconf_cache() {
 		// proscrit explicitement.
 		GPIOPins::init_pin(SAT_RESET);
 		GPIOPins::clear(SAT_RESET);
-		GPIOPins::clear(SAT_PWR_EN);
+		cut_module_rail();
 	}
 	return ok;
 }
@@ -889,6 +889,20 @@ void KIM2Device::start_device() {
 	run_state_machine(KIM2_DELAY_POWER_ON_MS);
 }
 
+/// @brief Cut the module rail, every nRF pin that still drives it made inert first.
+///
+/// NrfUartAsync::deinit() parks TX as an OUTPUT driven HIGH -- the UART idle level,
+/// which is right while the module is powered and wrong the instant the rail drops:
+/// 3.3 V on an input of an unpowered part forward-biases its ESD clamp and feeds the
+/// module's rail through it, so the KIM2 sits half-powered and leaks for the whole
+/// idle period instead of being off. The SMD AT transport already guards this
+/// (prepare_power_off -> park_tx_for_power_off) and the LoRa driver parks its slot
+/// pins (lora_park_unused_sat_pins); the KIM2 path had neither.
+void KIM2Device::cut_module_rail() {
+	m_kim2_comm.park_tx_for_power_off();
+	GPIOPins::clear(SAT_PWR_EN);
+}
+
 /// @brief Immediate power off — cancel tasks, uninit UART, cut GPIO power.
 void KIM2Device::power_off_immediate(void) {
 	DEBUG_TRACE("KIM2Device::power_off_immediate");
@@ -945,7 +959,7 @@ void KIM2Device::state_power_off_enter() {
 	// forbids.
 	GPIOPins::init_pin(SAT_RESET);
 	GPIOPins::clear(SAT_RESET);
-	GPIOPins::clear(SAT_PWR_EN);
+	cut_module_rail();
 	m_tx_buffer.clear();
 	m_packet_buffer.clear();
 

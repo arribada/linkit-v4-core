@@ -73,6 +73,16 @@ void GPIOPins::initialise() {
 	// would leave it FLOATING on a powered-down module. It is held LOW instead --
 	// reset asserted, module inert -- and it is the driver that releases it to the
 	// internal pull once the module is powered.
+	//
+	// Slot pins that only the KIM2 ever drives. The module spends nearly all of its
+	// life unpowered, and an nRF pin that still buffers or still sinks that net leaks
+	// for the whole of it: SAT_INT is an INPUT_CONNECT input sitting on the output of
+	// a dead part, KIM_PWR_ON an OUTPUT held LOW on a net the module may pull up.
+	// Same parking as lora_park_unused_sat_pins() on the neighbouring variant.
+#ifdef SAT_INT
+	disable(SAT_INT);                     // P0.29 -> input, buffer off, no pull
+	disable(BSP::GPIO::GPIO_KIM_PWR_ON);  // P0.05 -> idem (documented dead net)
+#endif
 #endif
 #ifdef SMD_VPA_PIN
 	// Drive VPA LOW at boot to prevent floating regulator enable

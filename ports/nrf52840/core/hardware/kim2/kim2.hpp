@@ -259,6 +259,9 @@ private:
 	/// @brief Immediate power off — cancel all tasks, uninit UART, cut power.
 	void power_off_immediate();
 
+	/// @brief Cut the module rail, every nRF pin that still drives it made inert first.
+	void cut_module_rail();
+
 	void cancel_timeout();                                  ///< Cancel pending AT response timeout
 	void initiate_timeout(unsigned int timeout_ms = 1000);  ///< Schedule AT response timeout
 	void on_timeout();                                      ///< Timeout handler — sets m_is_error
