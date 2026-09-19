@@ -107,7 +107,7 @@ void GPIOPins::initialise() {
 	set(ADC_ENABLE);  // Enable ADC to avoid leakage current (I2C pull-up)
 #endif
 
-#ifdef CAM_PWR_EN
+#if ENABLE_CAM_SENSOR
 	DEBUG_TRACE("Initializing CAM pins: CAM_PWR_EN=%u (P%u.%u) | CAM_PWR_BUTT=%u (P%u.%u)", CAM_PWR_EN,
 	            (BSP::GPIO_Inits[CAM_PWR_EN].pin_number >> 5), (BSP::GPIO_Inits[CAM_PWR_EN].pin_number & 0x1F),
 	            CAM_PWR_BUTT, (BSP::GPIO_Inits[CAM_PWR_BUTT].pin_number >> 5),

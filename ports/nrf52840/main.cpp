@@ -94,7 +94,7 @@
 #if ENABLE_THERMISTOR_SENSOR
 #include "thermistor.hpp"
 #endif
-#ifdef CAM_PWR_EN
+#if ENABLE_CAM_SENSOR
 #include "runcam.hpp"
 #endif
 
@@ -1388,7 +1388,7 @@ static void init_sensors(LFSFileSystem &lfs_file_system) {
 	}
 #endif
 
-#ifdef CAM_PWR_EN
+#if ENABLE_CAM_SENSOR
 	DEBUG_TRACE("RunCam...");
 	static CAMLogFormatter cam_sensor_log_formatter;
 	static FsLog cam_sensor_log(&lfs_file_system, "CAM", 1024 * 1024);

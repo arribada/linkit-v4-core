@@ -94,6 +94,7 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
     ENABLE_CDT_SENSOR=1
     ENABLE_AXL_SENSOR=1
     ENABLE_THERMISTOR_SENSOR=1
+    ENABLE_CAM_SENSOR=1
     ENABLE_MORTALITY_SENSOR=1
     ENABLE_SWS_LOG=1
     ENABLE_SWS_ANALOG=1
@@ -225,6 +226,7 @@ target_sources(${PROJECT_NAME} PRIVATE
     "${ROOT_DIR}/core/services/service.cpp"
     "${ROOT_DIR}/core/services/service_cooldown.cpp"
     "${ROOT_DIR}/core/services/mortality_service.cpp"
+    "${ROOT_DIR}/core/services/cam_service.cpp"
     "${ROOT_DIR}/core/filesystem/ota_flash_file_updater.cpp"
     "${ROOT_DIR}/core/services/uwdetector_service.cpp"
     "${ROOT_DIR}/core/services/sws_analog_service.cpp"
@@ -296,6 +298,7 @@ target_sources(${PROJECT_NAME} PRIVATE
     "src/haversine_test.cpp"
     "src/moored_mode_test.cpp"
     "src/thermistor_test.cpp"
+    "src/cam_service_test.cpp"
     "src/main.cpp"
     "fakes/memmang.cpp"
     "fakes/nrfx_rtc.c"

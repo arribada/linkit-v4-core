@@ -148,8 +148,11 @@ git show-ref --tags -d | grep ^`git rev-parse HEAD` | sed -e "s,.* refs/tags/,,"
 if [ -z "$(cat TAG_NAME)" ]; then
     git describe --dirty > TAG_NAME
 fi
-# Default to both disabled (0)
-CAM_ENABLE=${CAM_ENABLE:-1}
+# GPIO_EXT_GPIO4/5 device. Both disabled (0) by default, like every other
+# board script. A camera build (turtle + RunCam) is an explicit choice:
+#   CAM_ENABLE=1 ./scripts/build_linkitv4_kim.sh
+# CAM and BUZZER share GPIO5 — CMake refuses both at once.
+CAM_ENABLE=${CAM_ENABLE:-0}
 BUZZER_ENABLE=${BUZZER_ENABLE:-0}
 
 # Battery configuration (params previously absent from this KIM script vs the SMD one).

@@ -247,12 +247,17 @@ void PMU::powerdown() {
 	// 	           (rtc && rtc->is_set()) ? (unsigned int)rtc->gettime() : 0,
 	// 	           (unsigned long long)PMU::get_timestamp_ms());
 	// #endif
-	// Ensure all power control pins are turned off before shutdown
-	// #ifdef CAM_PWR_EN
-	// 	DEBUG_TRACE("Powering off CAM");
-	// 	GPIOPins::clear(CAM_PWR_EN);
-	// 	GPIOPins::clear(CAM_PWR_BUTT);
-	// #endif
+#if ENABLE_CAM_SENSOR
+	// Backstop for the camera rail. The FSM path (OperationalState::exit ->
+	// ServiceManager::stopall) shuts the camera down cleanly before we get
+	// here, but the critical-battery branches of ArgosTxService / LoRaTxService
+	// call powerdown() straight from service context, without stopall(). GPIO
+	// output levels are retained in System OFF: a CAM_PWR_EN left high would
+	// keep the camera's LDO on for the rest of the deployment.
+	DEBUG_TRACE("PMU::powerdown: CAM rail off");
+	GPIOPins::clear(CAM_PWR_BUTT);
+	GPIOPins::clear(CAM_PWR_EN);
+#endif
 
 	// Persist cooldown state to noinit RAM before shutdown
 	ServiceManager::save_cooldown_state();
