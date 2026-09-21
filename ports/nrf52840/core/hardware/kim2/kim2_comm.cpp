@@ -68,6 +68,7 @@ void KIM2Comm::init() {
 
 void KIM2Comm::deinit() {
 	NrfUartAsync::deinit();
+	NrfUartAsync::park_tx_for_power_off();
 }
 
 // ============================================================================

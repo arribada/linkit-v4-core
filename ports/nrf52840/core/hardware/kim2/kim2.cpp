@@ -938,6 +938,7 @@ void KIM2Device::run_state_machine(uint16_t delay_ms) {
 /// @brief Power off: uninit UART, cut GPIO power, clear buffers.
 void KIM2Device::state_power_off_enter() {
 	DEBUG_INFO("KIM2Device::state_power_off_enter");
+	m_kim2_comm.unsubscribe(*this);
 	m_kim2_comm.deinit();
 	GPIOPins::clear(SAT_EXTWAKEUP);
 	// Reset asserted BEFORE cutting the supply, and held low afterwards: a

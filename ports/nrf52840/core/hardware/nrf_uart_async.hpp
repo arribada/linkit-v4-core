@@ -56,6 +56,8 @@ public:
 	void isr_handle_rx_data(uint8_t *buffer, uint16_t length);
 	void isr_handle_error(unsigned int error_type);
 
+	void park_tx_for_power_off();  ///< Disable UART_TX line before cutting module power
+
 protected:
 	/// @brief Called for each complete line received (stripped of CR/LF).
 	/// Runs in main context (safe for heap/string operations).

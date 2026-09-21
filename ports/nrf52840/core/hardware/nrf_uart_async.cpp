@@ -122,6 +122,12 @@ void NrfUartAsync::deinit() {
 	             NRF_GPIO_PIN_NOSENSE);
 }
 
+void NrfUartAsync::park_tx_for_power_off() {
+	uint32_t tx_pin = BSP::UARTAsync_Inits[1].config.tx_pin;
+	nrf_gpio_cfg(tx_pin, NRF_GPIO_PIN_DIR_INPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_S0S1,
+	             NRF_GPIO_PIN_NOSENSE);
+}
+
 // ============================================================================
 // TX
 // ============================================================================

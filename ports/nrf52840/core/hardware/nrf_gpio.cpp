@@ -58,6 +58,10 @@ void GPIOPins::initialise() {
 	// would leave it FLOATING on a powered-down module. It is held LOW instead --
 	// reset asserted, module inert -- and it is the driver that releases it to the
 	// internal pull once the module is powered.
+#ifdef SAT_INT
+	disable(SAT_INT);                     // P0.29 -> input, buffer off, no pull
+	disable(BSP::GPIO::GPIO_KIM_PWR_ON);  // P0.05 -> idem (documented dead net)
+#endif
 #endif
 #ifdef SMD_VPA_PIN
 	// Drive VPA LOW at boot to prevent floating regulator enable
