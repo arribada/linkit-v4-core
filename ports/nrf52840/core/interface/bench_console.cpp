@@ -41,6 +41,8 @@ extern LoRaTxService *lora_tx_service_instance;
 #include "nrf_i2c.hpp"
 #include "pmu.hpp"
 #include "bsp.hpp"
+#include "gpio.hpp"
+#include "nrf_gpio.h"
 
 extern OTAFileUpdater *ota_updater;
 
@@ -880,6 +882,48 @@ bool bench::handle_line(const std::string &raw) {
 			         (unsigned long long)PMU::get_timestamp_ms());
 			reply(b);
 		}
+	} else if (cmd == "%RST") {
+		// Boot forensics: decoded cause plus the raw registers behind it. The
+		// decisive datum for the storage work is bit 16 (OFF) of RESETREAS —
+		// whether it survives the bootloader — and the GPREGRET marker.
+		char buf[96];
+		snprintf(buf, sizeof(buf), "%%RST OK cause=%s RESETREAS=0x%08x GPREGRET=0x%02x", PMU::reset_cause_str(),
+		         (unsigned int)PMU::reset_reason_raw(), (unsigned int)PMU::boot_gpregret());
+		reply(buf);
+	} else if (cmd == "%REED") {
+		char buf[64];
+		snprintf(buf, sizeof(buf), "%%REED OK pin=%u engaged=%u", (unsigned int)GPIOPins::value(BSP::GPIO_REED_SW),
+		         (unsigned int)(GPIOPins::value(BSP::GPIO_REED_SW) == REED_SWITCH_ACTIVE_STATE));
+		reply(buf);
+	} else if (cmd == "%SENSE") {
+		// Every pin left with a SENSE field armed is a System OFF wake source.
+		// Only the reed should appear here; anything else (P0.11 armed by the
+		// bootloader's DFU button, a sensor INT...) is a spurious-wake vector.
+		char buf[64];
+		unsigned int found = 0;
+		for (unsigned int pin = 0; pin < 48; pin++) {
+			NRF_GPIO_Type *port = (pin < 32) ? NRF_P0 : NRF_P1;
+			uint32_t cnf = port->PIN_CNF[pin & 31];
+			uint32_t sense = (cnf & GPIO_PIN_CNF_SENSE_Msk) >> GPIO_PIN_CNF_SENSE_Pos;
+			if (sense) {
+				snprintf(buf, sizeof(buf), "%%SENSE pin=P%u.%02u sense=%s", pin < 32 ? 0u : 1u, pin & 31,
+				         sense == GPIO_PIN_CNF_SENSE_High ? "HIGH" : "LOW");
+				reply(buf);
+				found++;
+			}
+		}
+		snprintf(buf, sizeof(buf), "%%SENSE OK count=%u", found);
+		reply(buf);
+	} else if (cmd == "%STORE") {
+		// Drive a real storage entry without a magnet. Requires the firmware to
+		// be built with BENCH_ALLOW_POWERDOWN, otherwise powerdown() is a no-op
+		// under BENCH_TEST and the board just stays alive.
+#ifdef BENCH_ALLOW_POWERDOWN
+		reply("%STORE OK powering-down (USB link will drop)");
+		system_scheduler->post_task_prio([]() { PMU::powerdown(); }, "BenchStore");
+#else
+		reply("%STORE ERR rebuild with -DBENCH_ALLOW_POWERDOWN=ON");
+#endif
 	} else {
 		reply(std::string("%ERR unknown-cmd ") + cmd);
 	}

@@ -61,7 +61,7 @@ set(BOOL_BUILD_FLAGS
     GNSS_HAS_BACKUP_BATTERY GPS_FAKE_POSITION STC3117_MIXED_MODE
     ARGOS_SMD LORA_RAK3172 LORA_DCS_ENABLE LORA_POWER_OFF_UNDERWATER LORA_MOTION_EXT LORA_LINKCHECK
     SMDSAT_USE_SAFE_TIMINGS SMDSAT_AUTOFALLBACK SMDSAT_TXTRACE DEBUG_NO_SYSTEMLOG
-    BENCH_TEST BENCH_FORCE_LPM_NONE SMD_FLASH_HOLD SMD_UART KIM2_BLIND_WKUP_RELEASE
+    BENCH_TEST BENCH_ALLOW_POWERDOWN BENCH_FORCE_LPM_NONE SMD_FLASH_HOLD SMD_UART KIM2_BLIND_WKUP_RELEASE
     CAM_ENABLE BUZZER_ENABLE
     METRIC_LATENCY_LOG_ENABLE VALIDATION_LOG_ENABLE RSPB_VSENSORS_FLOOR)
 
@@ -83,6 +83,12 @@ option(LORA_RAK3172 "Use RAK3172-SiP LoRa module instead of satellite" OFF)
 option(BENCH_TEST "Enable bench-test serial console + GPS injection hook" OFF)
 # Bench diagnostic (RSPB/SMD): force the SMD LPM bitmap to NONE (always-on) so a
 # satellite-TX SPI failure can be attributed to STOP-mode wake vs the SPI itself.
+# BENCH_TEST alone SUPPRESSES PMU::powerdown() so the board stays reachable —
+# which makes every storage measurement meaningless (it measures a board that is
+# awake). This flag lets powerdown() run for real while keeping the %-console, so
+# a storage entry can be driven and measured. Losing the USB link at power-off is
+# the POINT here, not a failure.
+option(BENCH_ALLOW_POWERDOWN "Bench: let PMU::powerdown() actually run (storage tests)" OFF)
 option(BENCH_FORCE_LPM_NONE "Bench: force SMD LPM=NONE (isolate SPI from STOP-mode wake)" OFF)
 # KIM2 + profil MAC BLIND: une fois AT+TX acquitté, le module cadence lui-même
 # ses retransmissions et n'attend plus aucune commande AT jusqu'au +TX= final.
@@ -861,6 +867,7 @@ target_compile_definitions(${TARGET_NAME} PRIVATE
     USB_DTE_ENABLED
     # Bench-test harness (autonomous HIL validation) — off in production
     $<$<BOOL:${BENCH_TEST}>:BENCH_TEST=1>
+    $<$<BOOL:${BENCH_ALLOW_POWERDOWN}>:BENCH_ALLOW_POWERDOWN=1>
     $<$<BOOL:${BENCH_FORCE_LPM_NONE}>:BENCH_FORCE_LPM_NONE=1>
     BUILD_TYPE=${CMAKE_BUILD_TYPE}
     #SCHEDULER_DEBUG

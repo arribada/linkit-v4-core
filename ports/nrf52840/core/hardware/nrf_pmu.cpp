@@ -272,7 +272,7 @@ void PMU::powerdown() {
 		DEBUG_TRACE("PMU::powerdown: Saved LAST_KNOWN_RTC = %u", static_cast<unsigned int>(rtc->gettime()));
 	}
 
-#ifdef BENCH_TEST
+#if defined(BENCH_TEST) && !defined(BENCH_ALLOW_POWERDOWN)
 	// Bench: EVERY power-off path below cuts VDD and we lose host/UART/SWD access.
 	// On RSPB the TPL5111 latch drops power the moment the MCU stops holding it
 	// (MCU_DONE pulse OR the brown-out that follows a soft reset on a marginal
