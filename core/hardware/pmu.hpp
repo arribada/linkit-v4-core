@@ -101,19 +101,26 @@ public:
 	/// @brief Storage-mode wake filter (LinkIt V4 only).
 	///
 	/// Called at the very beginning of `main()` BEFORE `initialise()` and
-	/// `start_watchdog()`. If the device carries the storage marker
-	/// (`GPREGRET=0x80` — powerdown soft reset or SENSE wake out of storage)
-	/// AND no magnet is currently held on the reed switch, this function:
-	///   - Drops `VSYS_SEL` to switch the buck-boost from 3.3 V to 1.8 V
+	/// `start_watchdog()`. Acts on either storage marker in `GPREGRET` — `0x80`
+	/// "powerdown just asked for storage", `0x81` "asleep in storage, this boot
+	/// is a wake from it" — provided the reset was not RESETPIN or watchdog.
+	/// With no magnet held it then:
+	///   - Drops `VSYS_SEL` to switch the buck-boost from 3.3 V to 2.3 V
 	///     (same trick as `prepare_for_deep_idle`)
 	///   - Configures `REED_SW` as a SENSE wake-up source
-	///   - Keeps `GPREGRET=0x80` (clears only `RESETREAS`) so the SENSE wake
-	///     decodes as `PSEUDO_POWER_ON` and re-arms the 3 s magnet gesture
+	///   - Writes `GPREGRET=0x81` (clears only `RESETREAS`) so the SENSE wake
+	///     still decodes as `PSEUDO_POWER_ON` and re-arms the 3 s magnet gesture
 	///   - Enters `NRF_POWER->SYSTEMOFF` (deepest sleep, wake = chip reset)
 	///
-	/// Returns immediately if the storage marker is absent (or the reset came
-	/// from RESETPIN / watchdog), or if the magnet IS held (lets the normal
-	/// `init_power_on_check` 3 s gesture take over). Must be called before
+	/// With a magnet held the two markers part ways, and that is the point of
+	/// having two. On `0x81` the magnet is the operator waking a stored tag, so
+	/// this returns and lets the normal `init_power_on_check` 3 s gesture decide.
+	/// On `0x80` the magnet is the one that just confirmed the power-off and is
+	/// still on the case; returning would let it satisfy that same 3 s hold ~9.5 s
+	/// later and turn the power-off into a power-on, so this waits (bounded, with
+	/// a magenta blink asking for the magnet) for it to be taken away first.
+	///
+	/// Returns immediately if neither marker is present. Must be called before
 	/// `initialise()` because:
 	///   - `initialise()` clears `RESETREAS` / `GPREGRET`
 	///   - The watchdog must NOT be running before System OFF (it would

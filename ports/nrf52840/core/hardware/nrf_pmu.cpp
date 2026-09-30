@@ -83,6 +83,93 @@ static __attribute__((section(".noinit"))) volatile uint16_t m_crc;           //
 
 static uint32_t m_boot_gpregret = 0;  ///< GPREGRET as read at boot, before initialise() clears it
 
+#ifdef PSEUDO_POWER_OFF
+/// @name Storage markers written to GPREGRET
+/// GPREGRET lives in the always-on power domain: it survives a soft reset and a
+/// System OFF wake, and is lost on POR / brown-out. That is exactly the semantics
+/// wanted here — storage is entered ONLY by the deliberate magnet gesture, and
+/// inserting a battery always reads 0 and boots normally.
+///
+/// Two values rather than one. Both are non-zero, so both still decode as
+/// PSEUDO_POWER_ON (initialise() only tests GPREGRET for non-zero) and the 3 s
+/// magnet-hold gate is armed either way — the wake behaviour of 4db92ed7 is
+/// unchanged. The distinction exists for a single reason: with one value the
+/// code cannot tell a magnet still lying on the case after the power-off gesture
+/// from a magnet deliberately held to wake a stored tag, and it had to guess.
+///
+/// Both are out of reach of the bootloader: it enters DFU, and clears its own
+/// mark, only when `(GPREGRET & BOOTLOADER_DFU_GPREGRET_MASK) == 0xB0`, and
+/// `0x8X & 0xF8` is never 0xB0.
+/// @{
+#define GPREGRET_STORAGE_REQUESTED 0x80  ///< powerdown() has just asked for storage
+#define GPREGRET_IN_STORAGE        0x81  ///< asleep in storage; this boot is a wake from it
+/// @}
+
+/// @brief Bounded wait for the operator to take the magnet away, in ms.
+/// Two orders of magnitude below the 15-minute watchdog, which is fed anyway.
+#define REED_RELEASE_TIMEOUT_MS    60000
+
+/// @brief Reload watchdog channel 0 at register level.
+///
+/// storage_off_check() runs before start_watchdog(), so the nrfx driver has no
+/// allocated channel and nrfx_wdt_feed() would do nothing — but the watchdog
+/// itself keeps running across the soft reset that brought us here (only a POR
+/// stops it). start_watchdog() allocates a single channel, which is always
+/// channel 0, so reloading RR[0] directly is what holds the timeout off during
+/// the bounded magnet-release wait below. Harmless if the WDT is not running.
+static inline void raw_wdt_feed() {
+	NRF_WDT->RR[0] = WDT_RR_RR_Reload;
+}
+
+/// @brief True while a magnet is on the reed switch.
+static inline bool reed_is_engaged() {
+	return GPIOPins::value(BSP::GPIO_REED_SW) == REED_SWITCH_ACTIVE_STATE;
+}
+
+/// @brief Blink the status LED without any driver / timer / scheduler dependency.
+/// Same raw path powerdown() already uses to force the LED off.
+static void storage_blink(RGBLedColor color, unsigned int on_ms, unsigned int off_ms, unsigned int count) {
+	GPIOPins::init_pin(BSP::GPIO_LED_RED);
+	GPIOPins::init_pin(BSP::GPIO_LED_GREEN);
+	GPIOPins::init_pin(BSP::GPIO_LED_BLUE);
+	for (unsigned int i = 0; i < count; i++) {
+		NrfRGBLed::set_color_raw(BSP::GPIO::GPIO_LED_RED, BSP::GPIO::GPIO_LED_GREEN, BSP::GPIO::GPIO_LED_BLUE, color);
+		nrf_delay_ms(on_ms);
+		NrfRGBLed::set_color_raw(BSP::GPIO::GPIO_LED_RED, BSP::GPIO::GPIO_LED_GREEN, BSP::GPIO::GPIO_LED_BLUE,
+		                         RGBLedColor::BLACK);
+		nrf_delay_ms(off_ms);
+	}
+}
+
+/// @brief Poll the reed until the magnet is removed, or the timeout expires.
+/// @return true if the magnet was still engaged when the timeout expired.
+static bool wait_for_reed_release(unsigned int timeout_ms) {
+	unsigned int waited = 0;
+	while (waited < timeout_ms) {
+		raw_wdt_feed();
+		// MAGENTA slow blink = "take the magnet away" — the only feedback the
+		// operator gets at this point (no console, no scheduler, no LED driver).
+		// Deliberately NOT red and NOT fast: red/50 ms is already
+		// LEDConfirmPowerOff ("power-off armed") and white/50 ms is LEDPowerDown
+		// ("shutting down"), both of which the operator has just seen. A third
+		// fast blink in a colour from the same vocabulary reads as part of the
+		// shutdown, not as an instruction.
+		//
+		// Magenta is NOT free — it is Argos TX in the documented LED table — but
+		// it cannot be confused here: that one is SOLID and only ever appears in
+		// Operational, whereas this is a slow blink emitted after every rail but
+		// the MCU's has been cut, so no transmission is physically possible. Every
+		// colour in the table is taken; a distinct cadence in an impossible
+		// context is the cheapest unambiguous signal left.
+		storage_blink(RGBLedColor::MAGENTA, 150, 850, 1);
+		waited += 1000;
+		if (!reed_is_engaged()) return false;
+	}
+	return true;
+}
+
+#endif  // PSEUDO_POWER_OFF
+
 /// @brief Storage-mode wake filter — see header for full rationale.
 /// Must be called BEFORE initialise() (which clears RESETREAS / GPREGRET)
 /// and BEFORE start_watchdog() (WDT keeps running in System OFF and would
@@ -93,15 +180,17 @@ void PMU::storage_off_check() {
 	uint32_t resetreas = NRF_POWER->RESETREAS;
 	uint32_t gpregret = NRF_POWER->GPREGRET;
 
-	// GPREGRET == 0x80 is the storage marker: set by powerdown() before its
-	// soft reset and kept through System OFF, so it covers both the powerdown
-	// reboot (SREQ) and the SENSE wake out of storage. RESETPIN / DOG are
-	// excluded so a debugger flash or a watchdog reset never lands here.
+	// The storage marker is set by powerdown() before its soft reset and kept
+	// through System OFF, so it covers both the powerdown reboot (SREQ) and the
+	// SENSE wake out of storage. RESETPIN / DOG are excluded so a debugger flash
+	// or a watchdog reset never lands here.
+	bool req_off = (gpregret == GPREGRET_STORAGE_REQUESTED);
+	bool in_storage = (gpregret == GPREGRET_IN_STORAGE);
 	bool was_pseudo_power_off =
-	    (gpregret == 0x80) && !(resetreas & (POWER_RESETREAS_RESETPIN_Msk | POWER_RESETREAS_DOG_Msk));
+	    (req_off || in_storage) && !(resetreas & (POWER_RESETREAS_RESETPIN_Msk | POWER_RESETREAS_DOG_Msk));
 
 	if (!was_pseudo_power_off) {
-		return;  // Not a wake from storage — proceed to normal init
+		return;  // Not a storage boot (battery insert, WDT, OTA...) — normal init
 	}
 
 	// Apply BSP config for the reed pin (PULLDOWN input on LinkIt V4).
@@ -110,9 +199,23 @@ void PMU::storage_off_check() {
 	// Tiny settle delay — pulldown needs a few µs to discharge the pin cap.
 	nrf_delay_us(50);
 
-	if (GPIOPins::value(BSP::GPIO_REED_SW) == REED_SWITCH_ACTIVE_STATE) {
-		// Magnet held at boot — likely a real user gesture. Let the normal
-		// init_power_on_check flow take over (3 s held-check + buzzer + LED).
+	if (req_off && reed_is_engaged()) {
+		// The power-off gesture is confirmed by a re-engage, so the magnet is on
+		// the case at this very instant by construction. Returning here — what
+		// this function did — handed a still-present magnet to the 3 s power-on
+		// hold in init_power_on_check, which that same magnet satisfies on its
+		// own ~9.5 s later: the power-off silently became a power-on and the tag
+		// went into the box running a full GNSS schedule. Wait, bounded, for the
+		// magnet to go. Before the VSYS drop below, because the LED needs 3.3 V.
+		(void)wait_for_reed_release(REED_RELEASE_TIMEOUT_MS);
+	}
+
+	if (reed_is_engaged()) {
+		// Magnet genuinely held — either the operator waking a stored tag (the
+		// wanted path: hold 3 s and it boots) or a reed stuck active past the
+		// release timeout. Let the normal boot run so the 3 s hold check in
+		// init_power_on_check() decides. GPREGRET is left as-is and initialise()
+		// consumes it, so the gate sees the wake.
 		return;
 	}
 
@@ -141,15 +244,21 @@ void PMU::storage_off_check() {
 	nrf_gpio_cfg_sense_input(BSP::GPIO_Inits[BSP::GPIO_REED_SW].pin_number, NRF_GPIO_PIN_PULLDOWN,
 	                         (REED_SWITCH_ACTIVE_STATE != 0) ? NRF_GPIO_PIN_SENSE_HIGH : NRF_GPIO_PIN_SENSE_LOW);
 
-	// Keep GPREGRET = 0x80 through System OFF: it is the storage marker that
-	// makes the SENSE wake decode as PSEUDO_POWER_ON, re-arming the 3 s
-	// magnet-hold gate in init_power_on_check (CG-307). It cannot leak into
-	// other boot paths: a battery insert (POR) wipes GPREGRET in hardware,
-	// and the filter above ignores it on RESETPIN / DOG resets. The marker
-	// lives in GPREGRET rather than RESETREAS because the production
-	// bootloader consumes the OFF bit on wake from System OFF
+	// Carry a storage marker through System OFF — it is what makes the SENSE
+	// wake decode as PSEUDO_POWER_ON and re-arms the 3 s magnet-hold gate in
+	// init_power_on_check (CG-307). Step it to GPREGRET_IN_STORAGE so the next
+	// boot knows it woke from the sleep it put itself into, rather than having
+	// just been asked to sleep: that is the whole difference between "the
+	// operator is waking me, run the 3 s gate" and "the operator's magnet is
+	// still on the case, wait for it to go".
+	//
+	// It cannot leak into other boot paths: a battery insert (POR) wipes
+	// GPREGRET in hardware, and the filter above ignores it on RESETPIN / DOG
+	// resets. The marker lives in GPREGRET rather than RESETREAS because the
+	// production bootloader consumes the OFF bit on wake from System OFF
 	// (NRF_BL_APP_CRC_CHECK_SKIPPED_ON_SYSTEMOFF_RESET) but never touches
 	// GPREGRET. RESETREAS is still cleared so stale causes don't accumulate.
+	NRF_POWER->GPREGRET = GPREGRET_IN_STORAGE;
 	NRF_POWER->RESETREAS = NRF_POWER->RESETREAS;  // write-1-to-clear
 
 	// Clear any latched DETECT events on both GPIO ports. Without this clear,
@@ -370,7 +479,7 @@ void PMU::powerdown() {
 
 #if defined(PSEUDO_POWER_OFF)
 	DEBUG_TRACE("Pseudo power off (soft reset with GPREGRET)");
-	NRF_POWER->GPREGRET = 0x80;
+	NRF_POWER->GPREGRET = GPREGRET_STORAGE_REQUESTED;
 	sd_nvic_SystemReset();
 #endif
 
