@@ -514,7 +514,11 @@ void BootState::entry() {
 		DEBUG_INFO("Firmware Version: %s", FW_APP_VERSION_STR_C);
 		LoggerManager::show_info();
 		DEBUG_INFO("configuration_store: is_valid=%u", configuration_store->is_valid());
-		DEBUG_INFO("reset cause: %s", PMU::reset_cause_str());
+		// Raw registers, not just the decoded enum: a field return is diagnosed
+		// by reading this line. Bit 16 = OFF (System OFF wake), 20 = VBUS,
+		// 18 = DIF (debugger), 3 = LOCKUP, 2 = SREQ, 1 = DOG, 0 = RESETPIN.
+		DEBUG_INFO("reset cause: %s (RESETREAS=0x%08x GPREGRET=0x%02x)", PMU::reset_cause_str(),
+		           (unsigned int)PMU::reset_reason_raw(), (unsigned int)PMU::boot_gpregret());
 		PMU::print_stack();
 
 		// Check if we just applied a firmware update (green blink for 3s)

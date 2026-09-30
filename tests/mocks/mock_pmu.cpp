@@ -53,12 +53,40 @@ void PMU::save_stack(PMULogType type) {
 	(void)type;
 }
 
+// Parameterizable so a test can exercise the boot paths that branch on the
+// reset cause. It used to hardcode POWER_ON — which is exactly the value that
+// hid the storage-wake bug, since a System OFF wake also decoded as POWER_ON.
+static ResetCause s_mock_reset_cause = ResetCause::POWER_ON;
+static uint32_t s_mock_resetreas = 0;
+static uint32_t s_mock_gpregret = 0;
+
+void mock_pmu_set_reset_cause(ResetCause cause, uint32_t resetreas, uint32_t gpregret) {
+	s_mock_reset_cause = cause;
+	s_mock_resetreas = resetreas;
+	s_mock_gpregret = gpregret;
+}
+
 ResetCause PMU::reset_cause() {
-	return ResetCause::POWER_ON;
+	return s_mock_reset_cause;
+}
+
+uint32_t PMU::reset_reason_raw() {
+	return s_mock_resetreas;
+}
+
+uint32_t PMU::boot_gpregret() {
+	return s_mock_gpregret;
 }
 
 const char *PMU::reset_cause_str() {
-	return "UNKNOWN";
+	switch (s_mock_reset_cause) {
+	case ResetCause::HARD_RESET: return "Hard Reset";
+	case ResetCause::WDT_RESET: return "WDT Reset";
+	case ResetCause::SOFT_RESET: return "Soft Reset";
+	case ResetCause::PSEUDO_POWER_ON: return "Pseudo Power On Reset";
+	case ResetCause::POWER_ON: return "Power On Reset";
+	default: return "UNKNOWN";
+	}
 }
 
 const char *PMU::hardware_version() {

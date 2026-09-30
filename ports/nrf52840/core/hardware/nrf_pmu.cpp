@@ -81,6 +81,8 @@ static __attribute__((section(".noinit"))) volatile uint16_t m_crc;           //
 /// @brief Spare bit in RESETREAS to distinguish pseudo power-off (via GPREGRET) from real SREQ.
 #define POWER_RESETREAS_PSEUDO_POWER_OFF 0x80000000
 
+static uint32_t m_boot_gpregret = 0;  ///< GPREGRET as read at boot, before initialise() clears it
+
 /// @brief Storage-mode wake filter — see header for full rationale.
 /// Must be called BEFORE initialise() (which clears RESETREAS / GPREGRET)
 /// and BEFORE start_watchdog() (WDT keeps running in System OFF and would
@@ -187,6 +189,7 @@ void PMU::initialise() {
 	NRF_POWER->RESETREAS = 0xFFFFFFFF;  // Clear down
 
 	// Apply pseudo power off flag if GPREGRET is set
+	m_boot_gpregret = NRF_POWER->GPREGRET;
 	if (NRF_POWER->GPREGRET)
 		m_reset_cause |= POWER_RESETREAS_PSEUDO_POWER_OFF;
 	else
@@ -430,6 +433,16 @@ ResetCause PMU::reset_cause() {
 		return ResetCause::SOFT_RESET;
 	else
 		return ResetCause::POWER_ON;
+}
+
+/// @brief Raw RESETREAS captured at boot — see header for the bit map.
+uint32_t PMU::reset_reason_raw() {
+	return m_reset_cause;
+}
+
+/// @brief Raw GPREGRET captured at boot.
+uint32_t PMU::boot_gpregret() {
+	return m_boot_gpregret;
 }
 
 /// @brief Human-readable string for the current reset cause.

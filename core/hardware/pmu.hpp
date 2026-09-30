@@ -41,6 +41,17 @@ public:
 
 	static ResetCause reset_cause();
 	static const char *reset_cause_str();
+	/// @brief Raw RESETREAS captured at boot (before it is cleared), for diagnostics.
+	/// Bit 16 = OFF (System OFF wake), 20 = VBUS, 18 = DIF, 3 = LOCKUP, 2 = SREQ,
+	/// 1 = DOG, 0 = RESETPIN. Bit 31 is our own storage-marker flag.
+	///
+	/// The decoded enum is lossy by design, and the storage work showed how much:
+	/// a System OFF wake and a battery insertion both read POWER_ON, so a field
+	/// return could not be told apart from a fresh install. Logging the registers
+	/// makes the boot path recoverable from a single line.
+	static uint32_t reset_reason_raw();
+	/// @brief Raw GPREGRET captured at boot (before it is cleared).
+	static uint32_t boot_gpregret();
 	static const char *hardware_version();
 	static uint32_t device_identifier();
 

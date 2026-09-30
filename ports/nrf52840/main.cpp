@@ -727,7 +727,8 @@ static InitContext init_peripherals() {
  * @param nrf_reed_switch  Hardware reed switch instance for state/callback registration.
  */
 static void init_power_on_check(NrfSwitch &nrf_reed_switch) {
-	DEBUG_TRACE("PMU Reset Cause = %s", PMU::reset_cause_str());
+	DEBUG_TRACE("PMU Reset Cause = %s (RESETREAS=0x%08x GPREGRET=0x%02x)", PMU::reset_cause_str(),
+	            (unsigned int)PMU::reset_reason_raw(), (unsigned int)PMU::boot_gpregret());
 
 #ifdef POWER_ON_RESET_REQUIRES_REED_SWITCH
 #ifdef PSEUDO_POWER_OFF
