@@ -15,6 +15,7 @@ uint8_t GPIOPins::m_sensors_pwr_refcount = 0;
 bool GPIOPins::m_gnss_uart_active = false;
 bool GPIOPins::m_flash_busy = false;
 bool GPIOPins::m_config_mode_active = false;
+bool GPIOPins::m_gnss_rail_active = false;
 
 // Build-time flag (build_rspb.sh: RSPB_VSENSORS_FLOOR, default 1).
 //   1 = keep the RSPB VSENSORS refcount floor: never cut VSENSORS, since the I2C
@@ -142,11 +143,27 @@ void GPIOPins::init_pin(uint32_t pin) {
 	             BSP::GPIO_Inits[pin].pull, BSP::GPIO_Inits[pin].drive, BSP::GPIO_Inits[pin].sense);
 }
 
+// The GNSS rail interlock is maintained HERE rather than at the driver's
+// power-on / shutdown helpers, because the rail is also commanded from the three
+// abort paths of M10QAsyncReceiver::power_on(), from poweroff_from_deep_idle(),
+// from PMU::powerdown() and from the R1 boot invariant in main(). Those are seven
+// call sites to keep in step; set()/clear() is the one point all of them go
+// through. See GPIOPins::is_gnss_rail_active() for why the flag exists.
+#ifdef GPS_POWER
+#define GNSS_RAIL_PIN_INDEX ((uint32_t)GPS_POWER)
+#endif
+
 void GPIOPins::set(uint32_t pin) {
+#ifdef GNSS_RAIL_PIN_INDEX
+	if (pin == GNSS_RAIL_PIN_INDEX) m_gnss_rail_active = true;
+#endif
 	nrf_gpio_pin_set(BSP::GPIO_Inits[pin].pin_number);
 }
 
 void GPIOPins::clear(uint32_t pin) {
+#ifdef GNSS_RAIL_PIN_INDEX
+	if (pin == GNSS_RAIL_PIN_INDEX) m_gnss_rail_active = false;
+#endif
 	nrf_gpio_pin_clear(BSP::GPIO_Inits[pin].pin_number);
 }
 
@@ -341,6 +358,10 @@ void GPIOPins::set_config_mode_active(bool active) {
 
 bool GPIOPins::is_config_mode_active() {
 	return m_config_mode_active;
+}
+
+bool GPIOPins::is_gnss_rail_active() {
+	return m_gnss_rail_active;
 }
 
 bool GPIOPins::get_sensors_pwr_state() {

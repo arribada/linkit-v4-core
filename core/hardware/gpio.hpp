@@ -86,6 +86,41 @@ public:
 	static void set_config_mode_active(bool active);
 	static bool is_config_mode_active();
 
+	/// @brief "The GNSS rail is powered" interlock (2026-10).
+	///
+	/// Fourth component to need the same rail, and the one the first three left
+	/// out. The GNSS-UART interlock above covers an ACTIVE session only: it is
+	/// taken by `UBXComms::init()` and released by `deinit()`. Deep idle
+	/// (GNSS_DEEP_IDLE_AFTER_OFF_S / GNP52 != 0) deliberately tears the UART down
+	/// and LEAVES THE RAIL UP -- that is the whole point, the M10Q sleeps in
+	/// PMREQ-backup off VDD and on a board without a V_BCKP cell that rail is the
+	/// only thing holding the ephemeris. So for the entire deep-idle window the
+	/// UART interlock reads false while the receiver is powered, the 250 ms idle
+	/// trigger fires, and VSYS goes to 2.3 V under a SAM-M10Q whose datasheet
+	/// minimum is 2.7 V.
+	///
+	/// Whether that actually under-volts the receiver depends on a topology this
+	/// repository cannot settle: `nrf_pmu.cpp` carries two comments that
+	/// contradict each other on whether the GNSS rail is separate or derived from
+	/// VSYS (the "separate rails at 3.3 V" one is from 2026-04 and two of its
+	/// three claims are falsified elsewhere in this tree -- the slot rail is
+	/// 3.6 V, and SENSORS_PWR_PIN does not exist on LinkIt), and no schematic is
+	/// available here. The interlock removes the need to answer: VSYS simply
+	/// stays at 3.3 V whenever the receiver is powered.
+	///
+	/// Price: the ~8 µA idle saving is given up for the duration of the deep-idle
+	/// window, and ONLY there -- rail off, which is every configuration with
+	/// GNP52 = 0, is unaffected. Compared with the three interlocks above this one
+	/// can only ever hold the rail HIGHER than before, so it cannot brown anything
+	/// out; a flag wrongly left set costs current, never a wedged die.
+	///
+	/// Taken and released inside `GPIOPins::set()` / `clear()` on the rail pin
+	/// itself -- one single point, like the three above, and the one point that
+	/// every path to the rail must pass through (the driver's shutdown/wake, the
+	/// three abort paths in `power_on()`, `poweroff_from_deep_idle()`,
+	/// `PMU::powerdown()` and the R1 boot invariant in `main()`).
+	static bool is_gnss_rail_active();
+
 	/// @brief Force a VSENSORS off→on power-cycle to release a wedged I2C slave,
 	/// WITHOUT changing the reference count (the rail ends powered). Used by the
 	/// I2C bus-recovery path. No-op if the rail is currently off. Resets every
@@ -125,6 +160,7 @@ private:
 	static bool m_gnss_uart_active;
 	static bool m_flash_busy;
 	static bool m_config_mode_active;
+	static bool m_gnss_rail_active;
 
 	/// @brief Disconnect sensor I2C/interrupt pins to prevent backfeed when VSENSORS off.
 	static void disconnect_sensor_pins();

@@ -690,10 +690,21 @@ void PMU::reduce_power_rails() {
 #endif
 
 	// LinkIt V4: Switch VSYS to 2.3V during deep idle to reduce nRF52840 core
-	// and DCDC quiescent current. Only safe when all peripherals are powered off
-	// (GPS, SMD, sensors all use separate power rails at 3.3V and are not affected).
-	// The nRF52840 DCDC operates down to 1.8 V with full functionality (CPU, RAM,
-	// BLE, RTC), so 2.3 V leaves a comfortable margin on the nRF side.
+	// and DCDC quiescent current. The nRF52840 DCDC operates down to 1.8 V with
+	// full functionality (CPU, RAM, BLE, RTC), so 2.3 V leaves a comfortable
+	// margin on the nRF side.
+	//
+	// 2026-10 — this comment used to read "only safe when all peripherals are
+	// powered off (GPS, SMD, sensors all use separate power rails at 3.3V and are
+	// not affected)". That sentence was written 2026-04 and is NOT a description of
+	// the board: the slot rail is 3.6 V, not 3.3 V (bsp.hpp, KIM2 EXT_PWR_ON wired
+	// to VSAT_EN which also commands the module's 3.6 V LDO), SENSORS_PWR_PIN does
+	// not exist at all on LinkIt (gpio.hpp — the refcount stays 0 for life), and
+	// the IS25 flash was later found to share THIS rail at a 2.30 V floor. No
+	// schematic for LinkIt v4 exists in this repository; the hardware repo
+	// (arribada/linkit-v4-hw) is the only authority and is not vendored here.
+	// Everything below therefore treats the rail as shared, which is the only
+	// assumption under which a wrong guess costs current rather than silicon.
 #if defined(VSYS_SEL) && !defined(BOARD_RSPB)
 	// Conditions for dropping to 2.3 V:
 	//   - LED off (Vf ~3 V, it needs the 3.3 V rail);
@@ -712,9 +723,20 @@ void PMU::reduce_power_rails() {
 	//   - 2026-08: configuration mode. The scheduler is idle almost all the time
 	//     there, so the whole operator session -- DTE commands, BLE OTA writes --
 	//     ran at 2.3 V. See GPIOPins::set_config_mode_active.
-	if (!GPIOPins::get_sensors_pwr_state() && !GPIOPins::is_gnss_uart_active() && !GPIOPins::is_flash_busy()
-	    && !GPIOPins::is_config_mode_active() && status_led && status_led->get_state() == RGBLedColor::BLACK
-	    && !status_led->is_flashing()) {
+	//   - 2026-10: GNSS rail powered. The UART interlock above only covers an
+	//     ACTIVE session; deep idle (GNP52 != 0) tears the UART down on purpose
+	//     and leaves the rail UP, so for the whole deep-idle window the receiver
+	//     was powered at 2.3 V while its datasheet minimum is 2.7 V. The comment
+	//     just above claiming the GNSS is on a separate 3.3 V rail dates from
+	//     2026-04 and two of its three claims are falsified elsewhere in this tree
+	//     (the slot rail is 3.6 V; SENSORS_PWR_PIN does not exist on LinkIt), and
+	//     no schematic is available to settle it -- so the rail is treated as
+	//     shared, which is the only assumption that cannot damage anything. See
+	//     GPIOPins::is_gnss_rail_active for the cost (~8 µA, deep-idle window
+	//     only; GNP52 = 0 is unaffected because the rail is then off).
+	if (!GPIOPins::get_sensors_pwr_state() && !GPIOPins::is_gnss_uart_active() && !GPIOPins::is_gnss_rail_active()
+	    && !GPIOPins::is_flash_busy() && !GPIOPins::is_config_mode_active() && status_led
+	    && status_led->get_state() == RGBLedColor::BLACK && !status_led->is_flashing()) {
 		// Lower the POF brownout threshold BELOW the idle rail BEFORE dropping VSYS:
 		// POFCON is armed at 2.7V, but the idle rail is 2.3V, so at 2.7V the comparator
 		// would assert POFWARN continuously in deep idle (CPU wakes / cooldown-save churn,
