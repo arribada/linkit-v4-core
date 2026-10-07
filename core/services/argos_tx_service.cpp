@@ -2450,6 +2450,34 @@ void ArgosTxService::process_doppler_burst() {
 			           cl_format, (unsigned)raw.has_measc12, (unsigned)raw.has_meas20);
 		}
 
+		// 2026-10 — a MEAS20 snapshot we can no longer date is worth less than the
+		// Doppler ping it would replace, so give the slot back.
+		//
+		// The ten-bit age field tops out at 1023 s. The device holds its last raw
+		// measurement until the NEXT session resets it (reset_session_state), while
+		// a surfacing burst keeps firing from the cache — so seventeen minutes after
+		// the capture the age stops being representable. The packet builder now
+		// refuses to claim a time it cannot encode, which is right, but on Argos an
+		// undated blob is also an unresolvable one (the measurement reaches the
+		// service minutes to hours after capture, well past the window in which the
+		// DateTime field is optional). Dropping to Doppler instead still yields a
+		// position for this ping, coarse but real and correctly dated.
+		//
+		// Only when the capture instant is KNOWN and too old. capture_time == 0 is
+		// the legacy time-less frame — a device whose RTC was never set — and must
+		// keep working exactly as before.
+		if (blob && raw.capture_time != 0 && format_id == (uint8_t)BaseCloudLocateFormat::MEAS20) {
+			uint32_t now_rtc = (uint32_t)service_current_time();
+			bool undatable = (now_rtc < raw.capture_time)
+			                 || ((now_rtc - raw.capture_time) >= ArgosPacketBuilder::CLOUDLOCATE_AGE_MAX_S);
+			if (undatable) {
+				DEBUG_WARN("ArgosTxService::process_doppler_burst: CloudLocate snapshot no longer datable "
+				           "(capture=%u now=%u) — falling back to Doppler for this ping",
+				           (unsigned)raw.capture_time, (unsigned)now_rtc);
+				blob = nullptr;
+			}
+		}
+
 		if (blob) {
 			// Demoted to TRACE: per-ping TX_RAW dump on the surfacing-burst hot
 			// path adds ~50-300 ms of LFS commit per emit.

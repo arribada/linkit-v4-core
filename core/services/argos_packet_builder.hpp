@@ -64,6 +64,12 @@ public:
 	static constexpr unsigned int CLOUDLOCATE_TIME_FLAG_BITS = 1;
 	static constexpr unsigned int CLOUDLOCATE_SOD_BITS = 17;  // seconds-of-day 0..86399 (MEASC12 + LoRa)
 	static constexpr unsigned int CLOUDLOCATE_AGE_BITS = 10;  // capture→TX age 0..1023 s (MEAS20/LDA2)
+	/// First age the 10-bit field can no longer represent honestly. 1023 is itself
+	/// excluded because it is indistinguishable from a saturated value, so a frame
+	/// carrying it could not be told apart from one that is arbitrarily older. At or
+	/// above this, build_cloudlocate_packet withholds the "time present" flag and
+	/// the Argos live path gives the TX slot back to a Doppler ping.
+	static constexpr unsigned int CLOUDLOCATE_AGE_MAX_S = (1U << CLOUDLOCATE_AGE_BITS) - 1U;  // 1023 s
 
 	// Sensor packet (Type 1, LDA2). Always emitted as a full 24-byte LDA2 frame so the
 	// CRC sits at byte 23. Adaptive LDK fallback for tiny sensor packets is therefore

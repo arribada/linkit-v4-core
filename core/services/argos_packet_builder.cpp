@@ -271,16 +271,58 @@ KineisPacket ArgosPacketBuilder::build_cloudlocate_packet(const uint8_t *blob, u
 	// The cloud reconstructs the absolute instant: date comes from the Argos
 	// Doppler pass; seconds-of-day (MEASC12) or (reception_time − age) (MEAS20)
 	// gives the precise time-of-measurement, removing the cache/TX-delay error.
-	if (capture_rtc != 0) {
+	//
+	// 2026-10 — the flag now means "this timestamp can be trusted", and is
+	// withheld in the two cases where the old code emitted a plausible-looking
+	// lie. The ground segment derives the satellite geometry from this instant, so
+	// a wrong one does not produce a flagged error: it produces a position, in the
+	// wrong place, indistinguishable from a good one. Leaving the flag at 0 instead
+	// costs at worst one unresolvable blob.
+	//
+	//   (a) The clock went BACKWARDS between capture and transmission
+	//       (now_rtc < capture_rtc). The old expression clamped the subtraction to
+	//       zero, which encodes "captured just now" — the most confident possible
+	//       claim, from the one situation where nothing is known. This is not
+	//       hypothetical: a reset restores LAST_KNOWN_RTC, which the flash-write
+	//       cadence can place up to half an hour in the past (RtcSource::RESTORED,
+	//       whose error rtc.hpp documents as not boundable), while the blob
+	//       survives in the depth pile.
+	//   (b) The MEAS20 age no longer FITS its ten bits (>= 1023 s). Saturating
+	//       told the ground "captured 1023 s ago" for a blob that could be an hour
+	//       old — a surfacing burst re-sending a cached snapshot reaches that in
+	//       seventeen minutes. 1023 itself is excluded: it is indistinguishable
+	//       from a saturated value, so it is treated as out of range.
+	//
+	// MEASC12's seconds-of-day is left as it was. It carries the RTC's absolute
+	// error by construction (there is no reference to difference it against), which
+	// is the documented reason MEAS20 is the format of choice for Argos; refusing
+	// it here on drift grounds would need a provenance input this builder is not
+	// given.
+	bool time_is_trustworthy = (capture_rtc != 0);
+	unsigned int age = 0;
+	if (time_is_trustworthy && format_id == (uint8_t)BaseCloudLocateFormat::MEAS20) {
+		if (now_rtc < capture_rtc) {
+			time_is_trustworthy = false;  // (a)
+		} else {
+			age = (unsigned int)(now_rtc - capture_rtc);
+			if (age >= CLOUDLOCATE_AGE_MAX_S) time_is_trustworthy = false;  // (b)
+		}
+	}
+	if (time_is_trustworthy) {
 		PACK_BITS(1U, packet, base_pos, CLOUDLOCATE_TIME_FLAG_BITS);  // time present
 		if (format_id == (uint8_t)BaseCloudLocateFormat::MEAS20) {
-			unsigned int age = (now_rtc > capture_rtc) ? (now_rtc - capture_rtc) : 0U;
-			if (age > ((1U << CLOUDLOCATE_AGE_BITS) - 1U)) age = (1U << CLOUDLOCATE_AGE_BITS) - 1U;
 			PACK_BITS(age, packet, base_pos, CLOUDLOCATE_AGE_BITS);
 		} else {
 			unsigned int sod = (unsigned int)(capture_rtc % 86400U);
 			PACK_BITS(sod, packet, base_pos, CLOUDLOCATE_SOD_BITS);
 		}
+	} else if (capture_rtc != 0) {
+		// Say so once, with the numbers: this is the only place the discrepancy is
+		// visible, and it is the difference between "the tag is silent" and "the
+		// tag is sending positions nobody can date".
+		DEBUG_WARN("ArgosPacketBuilder::build_cloudlocate_packet: capture time NOT trustworthy (capture=%u now=%u) — "
+		           "frame sent undated",
+		           (unsigned)capture_rtc, (unsigned)now_rtc);
 	}
 
 	// Remaining bits are zero-padded (already zeroed by assign).
@@ -289,8 +331,8 @@ KineisPacket ArgosPacketBuilder::build_cloudlocate_packet(const uint8_t *blob, u
 		apply_lda2_crc8(packet);
 	}
 
-	DEBUG_INFO("CL_PKT: fmt=%u sz=%u batt=%u t_present=%u data=%s", format_id, blob_size, battery_voltage,
-	           (unsigned)(capture_rtc != 0), Binascii::hexlify(packet).c_str());
+	DEBUG_INFO("CL_PKT: fmt=%u sz=%u batt=%u t_present=%u age=%u data=%s", format_id, blob_size, battery_voltage,
+	           (unsigned)time_is_trustworthy, age, Binascii::hexlify(packet).c_str());
 
 	return packet;
 }
