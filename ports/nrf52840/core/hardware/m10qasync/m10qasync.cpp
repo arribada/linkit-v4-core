@@ -1309,8 +1309,34 @@ void M10QAsyncReceiver::react(const UBXCommsEventMgaDBD &dbd) {
 			m_database_overflow = true;
 		initiate_timeout();
 	} else if (STATE_EQUAL(senddatabase) || STATE_EQUAL(sendofflinedatabase)) {
-		if ((m_mga_ack_count + dbd.length) <= sizeof(m_navigation_database)) {
-			std::memcpy(&m_navigation_database[m_mga_ack_count], dbd.database, dbd.length);
+		// The acknowledgements are captured PAST the end of the payload, never at
+		// offset 0 (2026-10).
+		//
+		// m_navigation_database is a dual-use buffer: state_senddatabase /
+		// state_sendofflinedatabase transmit from &m_navigation_database[m_step]
+		// while this branch wrote the receiver's replies into the SAME buffer
+		// starting at offset 0. Both cursors therefore began at 0 on the first
+		// chunk, and that chunk is handed to the UART as a DMA descriptor — the
+		// bytes are still being read out of the buffer while this memcpy can land
+		// on them. Later chunks are safe by arithmetic alone (the send cursor
+		// advances 128 or 512 bytes per chunk against roughly 16 bytes per
+		// acknowledgement), which is safety by accident rather than by
+		// construction; and the first chunk is not even safe by arithmetic. At
+		// 460800 baud 128 bytes clear in under 3 ms, so the window is narrow — but
+		// a session that fell back to 9600 takes 133 ms for the same chunk, which
+		// is far longer than a receiver takes to acknowledge the first MGA-DBD. The
+		// corruption would land squarely in the assistance data, i.e. it would show
+		// up as a slow fix, not as an error.
+		//
+		// Writing above max(payload length) removes the overlap by construction, at
+		// no cost in capacity: the region above the payload is free by definition,
+		// and the send cursor stops at the payload end. Only one of the two lengths
+		// is ever non-zero in these states (state_sendofflinedatabase_enter zeroes
+		// m_ana_database_len, and senddatabase runs after it), so the max is the
+		// payload end in both.
+		const unsigned int ack_base = mga_ack_base();
+		if ((ack_base + m_mga_ack_count + dbd.length) <= sizeof(m_navigation_database)) {
+			std::memcpy(&m_navigation_database[ack_base + m_mga_ack_count], dbd.database, dbd.length);
 			m_mga_ack_count += dbd.length;
 		}
 	}
@@ -2322,25 +2348,41 @@ void M10QAsyncReceiver::state_startreceive() {
 				m_op_state = OpState::IDLE;
 				m_step++;
 				continue;  // re-enter loop with correct m_step
-			} else if (m_step == 4) {
-				if (m_nav_settings.cloudlocate_enable) {
-					enable_rxm_measc12_message();
-					break;
-				}
-				m_op_state = OpState::IDLE;
-				m_step++;
-				continue;
-			} else if (m_step == 5) {
-				if (m_nav_settings.cloudlocate_enable) {
-					enable_rxm_meas20_message();
-					break;
-				}
-				m_op_state = OpState::IDLE;
-				m_step++;
-				continue;
-			} else if (m_step == 6) {
-				if (m_nav_settings.cloudlocate_enable) {
-					enable_rxm_meas50_message();
+			}
+			// Steps 4-6 are the three compact CloudLocate formats, and ONLY the
+			// configured one is now asked for.
+			//
+			// 2026-10: all three were enabled on every CloudLocate session, while
+			// gps_service (task_process_cloudlocate_data), argos_tx_service and
+			// lora_tx_service each read strictly the operator-configured format and
+			// deliberately refuse to substitute another. So two of the three VALSET
+			// round-trips were spent producing streams nothing would ever read —
+			// two extra ACK waits before `receive`, i.e. before the receiver is
+			// listening at all, on a path whose entire budget is the few seconds a
+			// turtle spends at the surface. u-blox's own CloudLocate procedure asks
+			// for a single compact format for the same reason.
+			//
+			// An out-of-range format cannot silence CloudLocate: `want_format`
+			// compares against the three known ids, and a value matching none of
+			// them falls through every step and reaches `receive` with no MEAS
+			// stream — exactly what the pre-existing "format unavailable" branches
+			// in the TX paths already report. The three known ids are the full
+			// range of BaseCloudLocateFormat, so this is unreachable through the
+			// DTE table; it is written not to crash if that ever changes.
+			else if (m_step >= 4 && m_step <= 6) {
+				const unsigned int want_format = m_nav_settings.cloudlocate_format;
+				const bool want_this_step =
+				    m_nav_settings.cloudlocate_enable
+				    && ((m_step == 4 && want_format == (unsigned int)BaseCloudLocateFormat::MEASC12)
+				        || (m_step == 5 && want_format == (unsigned int)BaseCloudLocateFormat::MEAS20)
+				        || (m_step == 6 && want_format == (unsigned int)BaseCloudLocateFormat::MEAS50));
+				if (want_this_step) {
+					if (m_step == 4)
+						enable_rxm_measc12_message();
+					else if (m_step == 5)
+						enable_rxm_meas20_message();
+					else
+						enable_rxm_meas50_message();
 					break;
 				}
 				m_op_state = OpState::IDLE;
@@ -2359,18 +2401,19 @@ void M10QAsyncReceiver::state_startreceive() {
 		} else {
 			if (m_retries == 0 || --m_retries == 0) {
 				// CloudLocate format steps (4=MEASC12, 5=MEAS20, 6=MEAS50): a
-				// single format-enable failing must NOT disable the whole
-				// CloudLocate path. The three formats are independent; if e.g.
-				// MEAS50 NACKs on a given M10Q FW, MEASC12/MEAS20 can still
-				// produce snapshots. The previous code set cloudlocate_enable=
-				// false on ANY step failure, so one NACK silently killed ALL
-				// CloudLocate output (root cause of "0 CloudLocate frames" tags:
-				// MEASC12 enabled fine but a later format NACK disabled
-				// everything, and the emitted MEASC12 were then ignored).
-				// Now: skip just the failing format and continue to the next.
+				// format-enable failing must NOT abort the session. The previous
+				// code set cloudlocate_enable=false on ANY step failure, which
+				// silently killed ALL CloudLocate output (root cause of the
+				// "0 CloudLocate frames" tags) and, worse, failed the whole
+				// power-on. Carry on to `receive` instead: the session still
+				// yields a PVT if one arrives, and the TX paths already have an
+				// explicit "configured format unavailable" branch for the rest.
+				//
+				// 2026-10: only the configured format is enabled now, so this is
+				// the one that matters — there are no "others" left to keep.
 				if (m_step >= 4 && m_step <= 6 && m_nav_settings.cloudlocate_enable) {
 					DEBUG_WARN("M10QAsyncReceiver::state_start_receive: CloudLocate format step %u enable FAILED — "
-					           "skipping this format, keeping others",
+					           "continuing without a raw-measurement stream",
 					           m_step);
 					VAL_GNSS("cloudlocate_format_skip step=%u", m_step);
 					m_step++;  // skip ONLY this format, keep CloudLocate enabled
@@ -2774,9 +2817,9 @@ void M10QAsyncReceiver::state_senddatabase() {
 				break;
 			} else {
 				unsigned int actual_count = 0;
-				[[maybe_unused]] bool success =
-				    m_ubx_comms.is_expected_msg_count(m_navigation_database, m_mga_ack_count, m_expected_dbd_messages,
-					                                  actual_count, MessageClass::MSG_CLASS_MGA, MGA::ID_ACK);
+				[[maybe_unused]] bool success = m_ubx_comms.is_expected_msg_count(
+				    &m_navigation_database[mga_ack_base()], m_mga_ack_count, m_expected_dbd_messages, actual_count,
+				    MessageClass::MSG_CLASS_MGA, MGA::ID_ACK);
 				DEBUG_TRACE("M10QAsyncReceiver::state_senddatabase: %s: %u/%u acks recieved",
 				            success ? "success" : "missing MGA-ACK", actual_count, m_expected_dbd_messages);
 				STATE_CHANGE(senddatabase, startreceive);
@@ -2803,12 +2846,19 @@ void M10QAsyncReceiver::state_senddatabase() {
 
 void M10QAsyncReceiver::state_senddatabase_exit() {
 	m_ubx_comms.stop_dbd_filter();
-	// 2026-08 (A2) — react(UBXCommsEventMgaDBD) copies the MGA-ACKs into
-	// m_navigation_database at offset 0 while sending: the contents are worthless
-	// afterwards. Without this reset, a session that never reaches fetchdatabase
-	// (the only other reset site) left a dirtied buffer with a non-zero length, and
-	// every following session injected those bytes without ever reloading the valid
-	// flash copy.
+	// 2026-08 (A2) — the DBD held in RAM is declared dead at the end of the send.
+	// Without this reset, a session that never reaches fetchdatabase (the only
+	// other reset site) left the buffer holding a non-zero length, and every
+	// following session re-injected those bytes without reloading the valid flash
+	// copy.
+	//
+	// The original reason was that react(UBXCommsEventMgaDBD) overwrote the payload
+	// from offset 0 with the incoming MGA-ACKs, so the contents were worthless
+	// afterwards. That is no longer the case — the acknowledgements are captured
+	// above the payload now (see mga_ack_base) — but the reset is KEPT, and
+	// deliberately: "the RAM copy is one send old" is a property worth holding
+	// independently of how the buffer is laid out, and load_dbd_from_flash is the
+	// one path that also re-derives m_expected_dbd_messages.
 	m_ana_database_len = 0;
 }
 
@@ -2909,9 +2959,9 @@ void M10QAsyncReceiver::state_sendofflinedatabase() {
 				// ACK polling phase. m_step is reused as poll counter:
 				// value (m_ano_database_len + N) means N polls have completed.
 				unsigned int actual_count = 0;
-				bool all_received =
-				    m_ubx_comms.is_expected_msg_count(m_navigation_database, m_mga_ack_count, m_expected_dbd_messages,
-					                                  actual_count, MessageClass::MSG_CLASS_MGA, MGA::ID_ACK);
+				bool all_received = m_ubx_comms.is_expected_msg_count(
+				    &m_navigation_database[mga_ack_base()], m_mga_ack_count, m_expected_dbd_messages, actual_count,
+				    MessageClass::MSG_CLASS_MGA, MGA::ID_ACK);
 				unsigned int poll_idx = m_step - m_ano_database_len;  // 1..MGA_ACK_POLL_COUNT
 				if (all_received || poll_idx >= MGA_ACK_POLL_COUNT) {
 					if (!all_received)

@@ -44,6 +44,17 @@ private:
 	unsigned int m_ana_database_len;
 	unsigned int m_expected_dbd_messages;
 	unsigned int m_mga_ack_count;
+
+	/// @brief Offset in m_navigation_database where the MGA-ACK capture starts.
+	///
+	/// The buffer serves both the payload being transmitted (DBD or ANO) and the
+	/// acknowledgements coming back, and the two used to start at the same offset —
+	/// see react(UBXCommsEventMgaDBD). The replies are captured above the payload
+	/// instead, which the send cursor never reaches. Exactly one of the two lengths
+	/// is non-zero while either send state runs, so the max is the payload end.
+	unsigned int mga_ack_base() const {
+		return (m_ana_database_len > m_ano_database_len) ? m_ana_database_len : m_ano_database_len;
+	}
 	unsigned int m_step;
 	unsigned int m_retries;
 	unsigned int m_ano_start_pos;

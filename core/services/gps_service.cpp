@@ -68,6 +68,7 @@ static void copy_gnss_to_log(const GNSSData &src, GPSLogEntry &dst) {
 void GPSService::service_init() {
 	m_is_active = false;
 	m_is_first_fix_found = false;
+	m_first_acquisition_done = false;
 	m_is_first_schedule = true;
 	m_num_gps_fixes = 0;
 	m_backup_active = false;
@@ -957,9 +958,25 @@ void GPSService::service_initiate() {
 			nav_settings.max_nav_samples = gnss_config.acquisition_timeout_cold_start;
 		}
 	}
-	// Cold start: enable all constellations (GPS+GAL+GLO+BDS) to maximize visible SVs
-	nav_settings.constellation_mask = (m_is_first_fix_found && !force_cold) ? gnss_config.constellation_mask
-	                                                                        : (gnss_config.constellation_mask | 0x0F);
+	// Cold start: widen to GPS+GAL+GLO+BDS to maximise visible SVs.
+	//
+	// The gate is "has ANY acquisition succeeded since boot", not "has a PVT been
+	// obtained" (2026-10). It used to be m_is_first_fix_found, which only a real
+	// PVT sets — and a CloudLocate deployment never produces one: the raw
+	// measurement IS the product, and react(GPSEventCloudLocateReady) /
+	// gnss_cloudlocate_callback both document that they deliberately leave
+	// m_is_first_fix_found alone. The flag therefore stayed false for the whole
+	// deployment, the mask was forced to |0x0F on every single session, and
+	// GNSS_CONSTELLATION_MASK (GNP40) was dead configuration in precisely the mode
+	// whose acquisition budget is tightest. Setting it narrower changed nothing and
+	// reported nothing.
+	//
+	// Behaviour is unchanged for every mask that already includes the low four bits
+	// — 15 | 0x0F == 15 — so this only takes effect where an operator deliberately
+	// asked for fewer constellations than the widening would add back.
+	nav_settings.constellation_mask = (m_first_acquisition_done && !force_cold)
+	                                      ? gnss_config.constellation_mask
+	                                      : (gnss_config.constellation_mask | 0x0F);
 	nav_settings.orbmaxerr = gnss_config.orbmaxerr;
 	nav_settings.min_cno = gnss_config.min_cno;
 	nav_settings.min_elev = gnss_config.min_elev;
@@ -986,6 +1003,12 @@ void GPSService::service_initiate() {
 	nav_settings.cloudlocate_enable = (fastloc_mode == (unsigned int)BaseFastlocMode::CLOUDLOCATE)
 	                                  && (argos_mode == BaseArgosMode::SURFACING_BURST)
 	                                  && (!m_is_first_fix_found || cloudlocate_always);
+	// Tell the driver WHICH compact format to ask the receiver for. It used to
+	// enable all three on every CloudLocate session while this service, the Argos
+	// TX path and the LoRa TX path each read only the configured one and refuse to
+	// substitute another — so two of the three MSGOUT round-trips were spent, on
+	// the critical path of a surfacing window, on streams nothing would ever read.
+	nav_settings.cloudlocate_format = configuration_store->read_param<unsigned int>(ParamID::GNSS_CLOUDLOCATE_FORMAT);
 
 	m_next_schedule = service_current_time();
 	m_is_first_schedule = false;
@@ -1588,6 +1611,7 @@ void GPSService::gnss_data_callback(GNSSData data) {
 	// Mark first fix flag
 	m_gnss_data.data = data;
 	m_is_first_fix_found = true;
+	m_first_acquisition_done = true;
 	// Safety-net 3.2: M10Q produced a PVT → reset stuck-recovery state.
 	m_consecutive_dead_sessions = 0;
 	m_consecutive_comms_failures = 0;
@@ -1739,6 +1763,9 @@ void GPSService::gnss_degraded_callback(GNSSData data) {
 void GPSService::gnss_cloudlocate_callback(GNSSRawMeasurement data) {
 	m_raw_measurement = data;
 	// Don't set m_is_first_fix_found — CloudLocate does not provide on-device position
+	// — but DO record that the receiver acquired satellites here, which is what the
+	// constellation-mask decision in service_initiate actually asks about.
+	m_first_acquisition_done = true;
 	// Safety-net 3.2: M10Q produced a raw measurement → reset stuck-recovery state.
 	m_consecutive_dead_sessions = 0;
 	m_consecutive_comms_failures = 0;

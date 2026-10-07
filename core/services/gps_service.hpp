@@ -89,6 +89,16 @@ protected:
 private:
 	GPSDevice &m_device;
 	bool m_is_first_fix_found = false;
+	/// @brief Has ANY acquisition succeeded since boot — a real PVT or a CloudLocate
+	/// raw measurement?
+	///
+	/// Distinct from m_is_first_fix_found, which only a real PVT sets and which a
+	/// CloudLocate deployment therefore never sets at all. Used for the one decision
+	/// that wants "the receiver has demonstrably acquired satellites here" rather
+	/// than "we hold a position": whether to widen the constellation mask past what
+	/// the operator configured. RAM-only, like m_is_first_fix_found — a reboot
+	/// legitimately re-earns the wider first acquisition.
+	bool m_first_acquisition_done = false;
 	/// @brief One-shot request for a true cold start (CFG-RST navBbrMask=0xFFFF).
 	/// Set by the GNP28 surface trigger (and any future periodic/stuck hook),
 	/// consumed and cleared in service_initiate when building GPSNavSettings.

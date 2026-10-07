@@ -471,6 +471,30 @@ void UBXComms::run_nav_filter(const UBX::HeaderAndPayloadCRC *const msg) {
 void UBXComms::run_rxm_filter(const UBX::HeaderAndPayloadCRC *const msg) {
 	if (msg->msgClass != UBX::MessageClass::MSG_CLASS_RXM) return;
 
+	// Each notification announces EXACTLY the format that just arrived.
+	//
+	// 2026-10: `m_raw_meas` is a member and its three `has_*` flags were never
+	// cleared anywhere, in any state, for the whole life of the object — so every
+	// notification carried the union of every format seen since boot. The
+	// receiver-side struct (M10QAsyncReceiver::m_raw_measurement) IS reset per
+	// session by reset_session_state(), but react(UBXCommsEventRawMeasurement)
+	// copies in whatever the event declares: one MEAS20 arriving in session N
+	// therefore re-injected session N-1's MEASC12 bytes into session N, and the
+	// capture_time stamp applied there is TODAY's. With the strict format policy
+	// (argos_tx_service / task_process_cloudlocate_data use only the configured
+	// format and skip the TX otherwise) the visible result is the worst kind: a
+	// deployment configured for MEASC12 whose window only yielded a MEAS20 still
+	// transmits — an old blob, freshly dated, resolving to where the animal was
+	// hours or days earlier, with no error anywhere in the log.
+	//
+	// Clearing before each notify keeps the per-session accumulation (which lives
+	// in m_raw_measurement and is reset per session, as intended) and removes only
+	// the cross-session bleed. The payload bytes are left alone: the has_* flags
+	// are what gates every read of them.
+	m_raw_meas.has_measc12 = false;
+	m_raw_meas.has_meas20 = false;
+	m_raw_meas.has_meas50 = false;
+
 	if (msg->msgId == UBX::RXM::ID_MEASC12 && msg->msgLength >= sizeof(UBX::RXM::MSG_MEASC12)) {
 		std::memcpy(m_raw_meas.measc12, msg->payload, sizeof(UBX::RXM::MSG_MEASC12));
 		m_raw_meas.has_measc12 = true;

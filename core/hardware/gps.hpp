@@ -32,6 +32,22 @@ struct GPSNavSettings {
 	unsigned int min_elev = 10;
 	unsigned int ano_stale_threshold_s = 25 * 24 * 3600;  // ANO staleness threshold in seconds (default: 25 days)
 	bool cloudlocate_enable = false;                      // Enable MEAS message capture for CloudLocate
+	/// Which compact RXM-MEAS format to ask the receiver for, as BaseCloudLocateFormat
+	/// (0 = MEASC12, 1 = MEAS20, 2 = MEAS50). Mirrors GNSS_CLOUDLOCATE_FORMAT.
+	///
+	/// 2026-10: the driver used to enable ALL THREE formats whenever
+	/// cloudlocate_enable was set, while every consumer (argos_tx_service,
+	/// lora_tx_service, task_process_cloudlocate_data) reads only the configured
+	/// one and refuses to substitute. Two of the three MSGOUT writes were therefore
+	/// pure cost — two extra VALSET round-trips on the critical path of a surfacing
+	/// window, plus two more message streams for the receiver to produce — and
+	/// u-blox's own CloudLocate procedure asks for a single compact format.
+	///
+	/// The default mirrors config_store's own default for GNSS_CLOUDLOCATE_FORMAT
+	/// (0 = MEASC12), so the two cannot disagree for a caller that sets
+	/// cloudlocate_enable and forgets this one. GPSService::service_initiate sets
+	/// both together, from the same parameter read.
+	unsigned int cloudlocate_format = 0;
 	bool cold_start =
 	    false;  // Force a true cold start: CFG-RST navBbrMask=0xFFFF (wipe ephemeris/almanac/pos/time/clock + aiding) at power-on, then re-inject time/pos + ANO. Default false = hot start (keep BBR).
 };
