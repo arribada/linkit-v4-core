@@ -299,6 +299,7 @@ target_sources(${PROJECT_NAME} PRIVATE
     "src/moored_mode_test.cpp"
     "src/thermistor_test.cpp"
     "src/cam_service_test.cpp"
+    "src/gnss_short_window_sim_test.cpp"
     "src/main.cpp"
     "fakes/memmang.cpp"
     "fakes/nrfx_rtc.c"
