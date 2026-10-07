@@ -52,6 +52,15 @@ private:
 	unsigned int m_num_power_on;
 	unsigned int m_num_nav_samples;
 	unsigned int m_num_sat_samples;
+	/// @brief The early abort has already been notified for this session.
+	///
+	/// NAV-SAT reports keep arriving after the session has ended -- the rail takes
+	/// time to drop and the UART still has frames in flight -- and the abort test
+	/// is true for every one of them, because m_num_sat_samples stays above the
+	/// threshold. Measured at the bench 2026-10-07: seven more DEBUG_WARN after
+	/// power_off, each one also written to the system log in flash at ~170 ms a
+	/// line, and GPSEventMaxSatSamples re-notified to a service that had finished.
+	bool m_early_abort_notified;
 	bool m_powering_off;
 	bool m_fix_was_found;
 	bool m_unrecoverable_error;

@@ -136,6 +136,7 @@ M10QAsyncReceiver::M10QAsyncReceiver() {
 	m_powering_off = false;
 	m_num_nav_samples = 0;
 	m_num_sat_samples = 0;
+	m_early_abort_notified = false;
 	m_fix_was_found = false;
 	m_unrecoverable_error = false;
 	m_database_overflow = false;
@@ -202,6 +203,7 @@ void M10QAsyncReceiver::reset_session_counters(const GPSNavSettings &nav_setting
 
 	m_num_nav_samples = 0;
 	m_num_sat_samples = 0;
+	m_early_abort_notified = false;
 	m_fix_was_found = false;
 	m_rtc_persisted_this_session = false;
 
@@ -948,7 +950,12 @@ void M10QAsyncReceiver::react(const UBXCommsEventSatReport &s) {
 			    // or underwater. quality >= 1 means satellites are visible — let the
 			    // regular acquisition timeout handle it. Uses >= (not ==) to avoid
 			    // missing the threshold if the counter ever skips a value.
-			    if (m_num_sat_samples >= EARLY_ABORT_SAT_REPORTS && e.bestSignalQuality == 0) {
+			    // Once per session: the reports that arrive after the session has
+			    // ended satisfy this test too, and each one costs a DEBUG_WARN --
+			    // which goes to the flash system log as well, at ~170 ms a line.
+			    if (!m_early_abort_notified && m_num_sat_samples >= EARLY_ABORT_SAT_REPORTS
+			        && e.bestSignalQuality == 0) {
+				    m_early_abort_notified = true;
 				    DEBUG_WARN("M10QAsyncReceiver: no satellite detected after %u sat reports | aborting",
 					           m_num_sat_samples);
 				    notify<GPSEventMaxSatSamples>({});
@@ -2576,8 +2583,26 @@ bool M10QAsyncReceiver::load_dbd_from_flash() {
 		}
 
 		m_ana_database_len = data_len;
-		DEBUG_TRACE("M10QAsyncReceiver::load_dbd_from_flash: loaded %u bytes (age=%u s)", data_len,
-		            rtc->is_set() ? ((uint32_t)rtc->gettime() - save_time) : 0);
+
+		// How many MGA-ACK to expect when this is replayed: one per MGA-DBD
+		// message, counted in the buffer we just loaded.
+		//
+		// Without this, state_senddatabase compares the acknowledgements that
+		// arrived against an expected count of ZERO -- m_expected_dbd_messages is
+		// set only by react(UBXCommsEventMgaAck) while in `fetchdatabase`, i.e.
+		// only when the database was read out of the receiver in the same power
+		// cycle -- and the only line that says whether the receiver accepted the
+		// assistance reads "missing MGA-ACK: 40/0" when all forty arrived.
+		// Measured at the bench 2026-10-07, on every boot. Assistance is the known
+		// cure for the fix dying after two days, so a diagnostic that reports its
+		// success as a failure is what makes a returned unit be read backwards.
+		unsigned int dbd_messages = 0;
+		(void)m_ubx_comms.is_expected_msg_count(m_navigation_database, m_ana_database_len, 0, dbd_messages,
+		                                        MessageClass::MSG_CLASS_MGA, MGA::ID_DBD);
+		m_expected_dbd_messages = dbd_messages;
+
+		DEBUG_TRACE("M10QAsyncReceiver::load_dbd_from_flash: loaded %u bytes (age=%u s), %u MGA-DBD message(s)",
+		            data_len, rtc->is_set() ? ((uint32_t)rtc->gettime() - save_time) : 0, dbd_messages);
 		return true;
 	} catch (...) {
 		return false;
