@@ -317,6 +317,40 @@ def coherence(valeurs):
     if v("GNSS_FASTLOC_MODE") == "2" and mode != "SURFACING_BURST":
         out.append(f"GNSS_FASTLOC_MODE=2 (CloudLocate) needs ARGOS_MODE=SURFACING_BURST; "
                    f"with {mode} the raw-measurement capture is never armed.")
+    if v("GNSS_FASTLOC_MODE") == "2":
+        # Every rule below is about a CloudLocate deployment whose surfacings are
+        # short. None of them makes the device refuse the config; each one quietly
+        # spends part of a window the animal does not give back.
+        if v("GNSS_TRIGGER_COLD_START_ON_SURFACED") == "1":
+            out.append("GNSS_TRIGGER_COLD_START_ON_SURFACED=1 with CloudLocate asks for a real cold "
+                       "start at EVERY surfacing: CFG-RST navBbrMask=0xFFFF wipes ephemeris, almanac, "
+                       "position and time. That is the exact opposite of what a short-window "
+                       "configuration needs, and no log line calls it a fault.")
+        deep = _num(v("GNSS_DEEP_IDLE_AFTER_OFF_S"))
+        if deep == 0 or v("GNSS_DEEP_IDLE_AFTER_OFF_S") is None:
+            out.append("GNSS_DEEP_IDLE_AFTER_OFF_S is 0 or unset with CloudLocate: the GNSS rail is cut "
+                       "after every session, so each surfacing pays the FULL cold configuration — "
+                       "2602 ms of unconditional waits plus five extra UART round-trips before the "
+                       "receiver listens (counted in m10qasync.cpp; see "
+                       "tests/src/gnss_short_window_sim_test.cpp). On a board with no V_BCKP cell the "
+                       "maintained rail is also the only thing that keeps the ephemeris between "
+                       "surfacings.")
+        if v("GNSS_CLOUDLOCATE_ALWAYS") == "0":
+            out.append("GNSS_CLOUDLOCATE_ALWAYS=0 with CloudLocate captures only until the first real "
+                       "fix is obtained; after that the raw-measurement capture stops, and short "
+                       "surfacings lose the one product that fits in them.")
+        if v("GNSS_CLOUDLOCATE_FORMAT") == "0":
+            out.append("GNSS_CLOUDLOCATE_FORMAT=0 (MEASC12) needs a ground-side position hint to be "
+                       "resolved, and carries the tag's absolute clock error in its seconds-of-day "
+                       "field rather than an age. Both are why a previous deployment returned no "
+                       "position at all. MEAS20 (=1) is autonomous and dated by age.")
+        if v("GNSS_CLOUDLOCATE_ONLY") == "1" and v("GNSS_ASSISTNOW_OFFLINE_EN") == "1":
+            out.append("GNSS_CLOUDLOCATE_ONLY=1 ends every session at the first raw measurement, so no "
+                       "PVT is ever produced and the RTC is never re-synced from GNSS. With "
+                       "ASSISTNOW_OFFLINE on, the ANO day selection then rests entirely on the clock "
+                       "the operator set, drifting ~1.7 s/day — and a wrong day means no offline "
+                       "aiding at all. It also wins no extra captures (the capture has already "
+                       "happened when it cuts); its benefit is power, not position.")
     if v("ARGOS_RX_EN") == "1" and mode != "PASS_PREDICTION":
         out.append(f"ARGOS_RX_EN=1 only bites in PASS_PREDICTION; with {mode} the receive "
                    "window never opens and the parameter does nothing.")
