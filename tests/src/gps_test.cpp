@@ -51,6 +51,15 @@ TEST_GROUP(GPSService) {
 
 		// Initialise configuration store (applies defaults)
 		configuration_store->init();
+		// GNSS_DEEP_IDLE_AFTER_OFF_S now defaults to never-poweroff on LinkIt
+		// (rail kept on, M10Q in PMREQ-backup). These host tests exercise the GPS
+		// SERVICE scheduling cadence through the MockM10Q power_on/power_off
+		// observable, under the deterministic immediate-poweroff model they were
+		// written for; the never-poweroff RAIL behaviour is a driver-port concern
+		// validated on hardware (bench 2026-10-08), not reachable through this mock.
+		// Pin the precondition so a default change does not silently rewrite it.
+		// A test that specifically wants deep-idle overrides this after setup().
+		configuration_store->write_param(ParamID::GNSS_DEEP_IDLE_AFTER_OFF_S, 0U);
 		// The moored classifier is static and consulted by every
 		// get_gnss_configuration(); a state leaked from another test would
 		// silently rewrite dloc_arg_nom here.

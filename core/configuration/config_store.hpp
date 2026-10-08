@@ -176,6 +176,19 @@ protected:
 	// nothing in the logs to say why.
 	static inline const unsigned int m_config_version_code = 0x1c07e800 | 0x20;
 	static inline const unsigned int m_config_version_code_aop = 0x1c07e800 | 0x03;
+	// Board-conditional default for slot [240] GNSS_DEEP_IDLE_AFTER_OFF_S. Kept as a
+	// macro so the defaults table stays ONE physical entry per slot (the alignment
+	// below IS the index map, and scripts/check_param_tables.py counts entries).
+	//  - LinkIt (tortue): never-poweroff (rail maintenu, M10Q en PMREQ-backup =>
+	//    BBR conservee => hot start a chaque remontee). Prouve au banc 2026-10-08
+	//    (9/9 fixes, BBR retenue 8/8, 0 coupure de rail). ~46 µA V_IO (DS Table 15).
+	//  - RSPB (EXTERNAL_WAKEUP): 0 — le TPL5111 coupe la carte en fin de duty-cycle;
+	//    non valide la-bas, on garde la coupure immediate.
+#ifdef EXTERNAL_WAKEUP
+#define GNSS_DEEP_IDLE_AFTER_OFF_DEFAULT 0U
+#else
+#define GNSS_DEEP_IDLE_AFTER_OFF_DEFAULT 0xFFFFFFFFU
+#endif
 	// one line per ParamID slot; the alignment IS the index map
 	// clang-format off
 	static inline const BaseType default_params[] = {
@@ -332,7 +345,11 @@ protected:
 		/* UW_MIN_DRY_SAMPLES */ 1U,
 		/* UW_SAMPLE_GAP */ 1000U,
 		/* UW_PIN_SAMPLE_DELAY_US */ 1000U,  // 1 ms initial RC charge — preserves pre-rename behavior (was UNP08=1 ms before rename to µs)
-		/* GNSS_CONSTELLATION_MASK */ 0x0FU,  // GPS|GAL|GLO|BDS (M10Q factory default)
+		/* GNSS_CONSTELLATION_MASK */ 0x07U,  // GPS|GAL|GLO. B1C (bit3) VOLONTAIREMENT exclu:
+		                                     // sur M10 il DESACTIVE AssistNow (Online/Offline/Autonomous)
+		                                     // ET le power-save (release notes UBX-22001426 §3.1.4), alors
+		                                     // que le TTFF GPS+GAL+GLO est identique (DS UBX-22013293 Table 1).
+		                                     // On privilegie l'assistance (fix court) aux satellites BeiDou.
 		/* GNSS_ORBMAXERR */ 300U,
 		/* SWS_ANALOG_HYSTERESIS */ 4U,
 		/* SWS_ANALOG_CALIB_INTERVAL */ 3600U,
@@ -440,7 +457,7 @@ protected:
 		/* [237] HAULED_GNSS_EN */ (bool)false,        // GNSS off when hauled by default
 		/* [238] HAULED_GNSS_STRAT */ 1U,              // BaseGnssStrategy::REUSE_LAST (stored as uint per BaseMap)
 		/* [239] GNSS_CLOUDLOCATE_ALWAYS */ (bool)false,  // false=CloudLocate only on cold-start surfaces (default, battery-friendly); true=raw-meas captured at every SURFACING_BURST surface (short-surface turtle fallback)
-		/* [240] GNSS_DEEP_IDLE_AFTER_OFF_S */ 0U,     // 0=disabled (immediate poweroff, default — no behavior change); 0xFFFFFFFF=never poweroff (rail always on, M10Q in deep-idle); else=duration in seconds. Replaces deprecated GNSS_BCKP_CHARGE_* (slots 223-225).
+		/* [240] GNSS_DEEP_IDLE_AFTER_OFF_S */ GNSS_DEEP_IDLE_AFTER_OFF_DEFAULT,  // voir macro ci-dessus
 		/* [241] GNSS_CLOUDLOCATE_ONLY */ (bool)false, // FAST3b: when true + FASTLOC_MODE=CLOUDLOCATE, end GNSS session on first raw measurement (skip full PVT wait). Off by default to preserve current behavior.
 		/* [242] GNSS_COLD_START_AFTER_NTRY */ 0U,     // 0=disabled (default, no regression). N>0=force a real cold start (BBR wipe + cold timeout) after N consecutive GNSS sessions with no fix, to recover a receiver stuck on stale assistance.
 		/* [243] ARGOS_BLIND_EN */ (bool)false,        // BASIC by default (no behavior change)

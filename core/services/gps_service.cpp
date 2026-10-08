@@ -971,12 +971,16 @@ void GPSService::service_initiate() {
 	// whose acquisition budget is tightest. Setting it narrower changed nothing and
 	// reported nothing.
 	//
-	// Behaviour is unchanged for every mask that already includes the low four bits
-	// — 15 | 0x0F == 15 — so this only takes effect where an operator deliberately
-	// asked for fewer constellations than the widening would add back.
+	// Widen to GPS+GAL+GLO (0x07, NOT 0x0F): B1C is deliberately left out even on a
+	// cold start. On M10 enabling B1C disables AssistNow and power-save entirely
+	// (release notes UBX-22001426 §3.1.4) — the very assistance a cold/first fix
+	// relies on — while GPS+GAL+GLO already give the datasheet TTFF. Widening TO
+	// B1C would therefore trade away the assistance that makes the fix fast for a
+	// handful of extra SVs. Unchanged for any configured mask that already has the
+	// low three bits (7 | 0x07 == 7); only narrower operator masks are widened.
 	nav_settings.constellation_mask = (m_first_acquisition_done && !force_cold)
 	                                      ? gnss_config.constellation_mask
-	                                      : (gnss_config.constellation_mask | 0x0F);
+	                                      : (gnss_config.constellation_mask | 0x07);
 	nav_settings.orbmaxerr = gnss_config.orbmaxerr;
 	nav_settings.min_cno = gnss_config.min_cno;
 	nav_settings.min_elev = gnss_config.min_elev;

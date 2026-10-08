@@ -221,7 +221,7 @@ void M10QAsyncReceiver::reset_session_state(const GPSNavSettings &nav_settings) 
 }
 
 void M10QAsyncReceiver::power_on(const GPSNavSettings &nav_settings) {
-	DEBUG_INFO("M10QAsyncReceiver::power_on");
+	DEBUG_TRACE("M10QAsyncReceiver::power_on");
 
 	// 2026-05 deep-idle refactor: fast-path wake from PMREQ-backup.
 	//
@@ -280,10 +280,10 @@ void M10QAsyncReceiver::power_on(const GPSNavSettings &nav_settings) {
 			// to identify the caller from the surrounding log context (likely
 			// GPSService scheduler retry or a peer event).
 			uint64_t now_ms = PMU::get_timestamp_ms();
-			uint64_t slept_ms = (m_backupidle_entered_ms > 0 && now_ms >= m_backupidle_entered_ms)
+			[[maybe_unused]] uint64_t slept_ms = (m_backupidle_entered_ms > 0 && now_ms >= m_backupidle_entered_ms)
 			                        ? (now_ms - m_backupidle_entered_ms)
 			                        : 0;
-			DEBUG_INFO("M10QAsyncReceiver::power_on: wake from deep-idle via EXTINT (fail_count=%u, slept_ms=%llu)",
+			DEBUG_TRACE("M10QAsyncReceiver::power_on: wake from deep-idle via EXTINT (fail_count=%u, slept_ms=%llu)",
 			           m_consecutive_wake_failures, (unsigned long long)slept_ms);
 			// M10Q wakes on EXTINT rising edge. Re-init UART driver (was
 			// deinit'd in state_enterbackup step 3 to save the UART block
@@ -508,7 +508,7 @@ void M10QAsyncReceiver::generate_fake_fix() {
 #endif
 
 void M10QAsyncReceiver::power_off() {
-	DEBUG_INFO("M10QAsyncReceiver::power_off");
+	DEBUG_TRACE("M10QAsyncReceiver::power_off");
 	VAL_GNSS("power_off users=%u->%u state=%d", m_num_power_on, m_num_power_on ? m_num_power_on - 1 : 0, (int)m_state);
 	// MED #7 audit fix: warn if power_off called with users already at 0 —
 	// indicates an upstream double-power_off bug (would normally be silent
@@ -601,7 +601,7 @@ void M10QAsyncReceiver::power_off_immediate() {
 }
 
 void M10QAsyncReceiver::request_deep_idle_on_next_stop() {
-	DEBUG_INFO("M10QAsyncReceiver::request_deep_idle_on_next_stop");
+	DEBUG_TRACE("M10QAsyncReceiver::request_deep_idle_on_next_stop");
 	VAL_GNSS("deep_idle_armed (next stop -> enterbackup)");
 	m_deep_idle_pending = true;
 }
@@ -1982,7 +1982,7 @@ void M10QAsyncReceiver::state_backupidle_enter() {
 	// "M10Q wakes after only 3 seconds in a 5-min GNP52 window" case observed
 	// on the bench — see the wake log in `power_on()` below.
 	m_backupidle_entered_ms = PMU::get_timestamp_ms();
-	DEBUG_INFO("M10QAsyncReceiver::state_backupidle_enter: rail ON, M10 sleeping (deep-idle started, t0=%llu ms)",
+	DEBUG_TRACE("M10QAsyncReceiver::state_backupidle_enter: rail ON, M10 sleeping (deep-idle started, t0=%llu ms)",
 	           (unsigned long long)m_backupidle_entered_ms);
 	// Nothing to do — rail is powered, UART deinit'd, M10 in backup mode.
 	// The state remains until exit_backup_charge_mode() is called.
@@ -2056,7 +2056,7 @@ void M10QAsyncReceiver::state_configure() {
 			// cancelled the request — precisely when it is needed (BBR retained, and
 			// therefore possibly stale or corrupt).
 			if (m_bbr_retained && m_gnss_info_valid && !m_nav_settings.cold_start && m_step == 0) {
-				DEBUG_INFO("M10QAsyncReceiver: BBR retained (M10Q at %u baud) — fast path config", m_synced_baud);
+				DEBUG_TRACE("M10QAsyncReceiver: BBR retained (M10Q at %u baud) — fast path config", m_synced_baud);
 				m_step = ConfigStep::FAST_VALIDATE_BAUD;  // Fast path: validate BBR
 				m_op_state = OpState::IDLE;
 				continue;
@@ -2220,14 +2220,43 @@ void M10QAsyncReceiver::state_configure() {
 					m_step++;
 				}
 			} else if (m_step == 15) {
-				query_mon_ver();
-				break;
+				// MON-VER (SW/HW version) is pure read-only identity, cached in
+				// get_device_info() once obtained. On the fast path m_gnss_info_valid
+				// is already a precondition, so re-polling it every surfacing is a
+				// wasted UART round-trip on the latency-critical wake path (and, parsed
+				// in IRQ context, a DEBUG_* -> LittleFS write from an ISR). Query it
+				// only while we do not yet have it (the full/first session).
+				if (!m_gnss_info_valid) {
+					query_mon_ver();
+					break;
+				}
+				m_op_state = OpState::IDLE;
+				m_step++;
 			} else if (m_step == 16) {
-				query_sec_uniqid();
-				break;
+				// SEC-UNIQID sets m_gnss_info_valid; if it is already set (fast path),
+				// skip the query — same reasoning as step 15.
+				if (!m_gnss_info_valid) {
+					query_sec_uniqid();
+					break;
+				}
+				m_op_state = OpState::IDLE;
+				m_step++;
 			} else {
-				// Always try to send offline database as priority
-				STATE_CHANGE(configure, sendofflinedatabase);
+				// BBR retained ⇒ the receiver still holds its own time, position,
+				// ephemeris, almanac and AssistNow-Autonomous data — all fresher than
+				// anything we could replay. Our DBD is just its OWN last dump, and the
+				// IM warns that sending host assistance "clears the existing data in
+				// the receiver" (MAX-M10S IM §3.12.3.2): replaying it is both wasted
+				// time (~1.5 s measured) on the surfacing-critical path AND a risk of
+				// discarding live data. ANO only helps a receiver that LOST its orbits,
+				// which by definition is not this case. Go straight to receive.
+				// When the BBR was lost (cold rail / reset), the full assistance chain
+				// (time + position + ANO + DBD) runs exactly as before.
+				if (m_bbr_retained) {
+					STATE_CHANGE(configure, startreceive);
+				} else {
+					STATE_CHANGE(configure, sendofflinedatabase);
+				}
 				break;
 			}
 		} else if (m_op_state == OpState::SUCCESS) {

@@ -821,7 +821,11 @@ void M10QAsyncReceiver::react(const UBXCommsEventMonVer &ver) {
 		std::memcpy(m_gnss_hw_version, ver.hwVersion, sizeof(m_gnss_hw_version));
 		m_gnss_sw_version[sizeof(m_gnss_sw_version) - 1] = '\0';
 		m_gnss_hw_version[sizeof(m_gnss_hw_version) - 1] = '\0';
-		DEBUG_INFO("GNSS SW: %s HW: %s", m_gnss_sw_version, m_gnss_hw_version);
+		// TRACE, not INFO: this reacts to MON-VER in UART-IRQ context, and a DEBUG_*
+		// that reaches the LittleFS system log from an ISR risks FS re-entrancy on the
+		// same filesystem that holds the config. The identity is cached (get_device_info)
+		// and surfaced by the GNSSI DTE command; it does not need a per-session flash line.
+		DEBUG_TRACE("GNSS SW: %s HW: %s", m_gnss_sw_version, m_gnss_hw_version);
 		m_op_state = OpState::SUCCESS;
 		run_state_machine();
 	}
@@ -832,7 +836,8 @@ void M10QAsyncReceiver::react(const UBXCommsEventSecUniqId &uid) {
 		cancel_timeout();
 		std::memcpy(m_gnss_unique_id, uid.uniqueId, sizeof(m_gnss_unique_id));
 		m_gnss_info_valid = true;
-		DEBUG_INFO("GNSS UID: %02X%02X%02X%02X%02X", m_gnss_unique_id[0], m_gnss_unique_id[1], m_gnss_unique_id[2],
+		// TRACE, not INFO: same IRQ-context / LittleFS re-entrancy reason as the SW/HW line above.
+		DEBUG_TRACE("GNSS UID: %02X%02X%02X%02X%02X", m_gnss_unique_id[0], m_gnss_unique_id[1], m_gnss_unique_id[2],
 		           m_gnss_unique_id[3], m_gnss_unique_id[4]);
 		notify(GPSEventDeviceInfoReady{});
 		m_op_state = OpState::SUCCESS;
