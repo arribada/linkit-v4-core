@@ -28,16 +28,34 @@ class Board:
 
     @staticmethod
     def find_port(timeout=30):
-        """Le nœud CDC change de numéro à chaque re-énumération (reset, flash).
-        On prend le plus récemment apparu qui s'ouvre."""
+        """Trouve le port CDC du tag. Cross-plateforme :
+          - Windows (banc natif, sans usbip) : COMx via serial.tools.list_ports,
+            en preferant le VID Nordic (0x1915) puis le J-Link (0x1366) ;
+          - Linux/WSL : /dev/ttyACM*, le plus recemment apparu qui s'ouvre
+            (le nœud change de numero a chaque re-enumeration).
+        Le VID est le discriminateur stable ; le glob reste le repli sous Linux."""
+        NORDIC_VID, JLINK_VID = 0x1915, 0x1366
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            cands = sorted(glob.glob("/dev/ttyACM*"),
-                           key=lambda p: os.stat(p).st_mtime, reverse=True)
-            for c in cands:
+            # 1) Voie portable (fonctionne Windows ET Linux) : filtrer par VID.
+            try:
+                from serial.tools import list_ports
+                ports = list(list_ports.comports())
+                ranked = ([p.device for p in ports if (p.vid == NORDIC_VID)]
+                          + [p.device for p in ports if (p.vid == JLINK_VID)])
+                for dev in ranked:
+                    try:
+                        serial.Serial(dev, 115200, timeout=0.1).close()
+                        return dev
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+            # 2) Repli Linux/WSL : /dev/ttyACM* le plus recent.
+            for c in sorted(glob.glob("/dev/ttyACM*"),
+                            key=lambda p: os.stat(p).st_mtime, reverse=True):
                 try:
-                    s = serial.Serial(c, 115200, timeout=0.1)
-                    s.close()
+                    serial.Serial(c, 115200, timeout=0.1).close()
                     return c
                 except Exception:
                     continue
