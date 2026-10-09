@@ -73,6 +73,8 @@ class Board:
         self._buf = b""
         self._lock = threading.Lock()
         self._stop = threading.Event()
+        self.link_down = False
+        self.outages = 0
         self.t0 = time.monotonic()
         os.makedirs(LOGDIR, exist_ok=True)
         stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -89,21 +91,32 @@ class Board:
                 # Re-énumération USB (reset carte, flash) : le nœud disparaît puis
                 # revient, souvent sous un autre numéro. On se raccroche au vol,
                 # sinon toute la campagne s'arrête au premier reset.
+                # On ne renonce jamais : une coupure du hub USB peut durer des
+                # heures, et un lecteur arrete tue en silence le reste d'un run de
+                # 6 h. Les scripts comparent `outages` avant/apres un cycle pour
+                # invalider sa mesure.
                 self._note("[bench] lien série perdu — reconnexion…")
+                self.link_down = True
+                self.outages += 1
                 try:
                     self.ser.close()
                 except Exception:
                     pass
-                p = self.find_port(timeout=60)
-                if not p:
-                    self._note("[bench] reconnexion impossible")
-                    break
-                try:
-                    self.ser = serial.Serial(p, self.baud, timeout=0.1)
-                    self.port = p
-                    self._note(f"[bench] reconnecté sur {p}")
-                except Exception:
-                    break
+                down_s = 0
+                while not self._stop.is_set():
+                    p = self.find_port(timeout=60)
+                    if p:
+                        try:
+                            self.ser = serial.Serial(p, self.baud, timeout=0.1)
+                            self.port = p
+                            self.link_down = False
+                            self._note(f"[bench] reconnecté sur {p} après ~{down_s // 60} min")
+                            break
+                        except Exception:
+                            pass
+                    down_s += 60
+                    if down_s % 600 == 0:
+                        self._note(f"[bench] toujours déconnecté ({down_s // 60} min)")
                 continue
             if not data:
                 continue
