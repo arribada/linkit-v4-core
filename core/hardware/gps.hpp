@@ -125,8 +125,24 @@ struct GPSEventMaxSatSamples {};
 struct GPSEventSatReport {
 	unsigned int numSvs;
 	unsigned int bestSignalQuality;
+	// Orbit-state aggregates harvested from the per-SV NAV-SAT flags that the
+	// receiver already sends every session (ephAvail/almAvail/anoAvail/aopAvail,
+	// cno, orbitSource) but that the driver used to discard. These let the start-
+	// type classifier tell a hot receiver (fresh broadcast ephemeris) from a warm
+	// one (ANA predicted orbits) from a stale one (orbits expired) WITHOUT any new
+	// UBX traffic — the bytes already arrive. See GPSStartClass / the best-algo design.
+	unsigned int n_eph = 0;   ///< # SV with ephAvail (fresh broadcast ephemeris on chip)
+	unsigned int n_alm = 0;   ///< # SV with almAvail (almanac present)
+	unsigned int n_ano = 0;   ///< # SV with anoAvail (host AssistNow-Offline loaded)
+	unsigned int n_aop = 0;   ///< # SV with aopAvail (AssistNow-Autonomous predicted orbits valid)
+	unsigned int n_good = 0;  ///< # SV with cno >= CL_CNO_GOOD (CloudLocate-readiness proxy)
 	GPSEventSatReport(unsigned int a, unsigned int b) : numSvs(a), bestSignalQuality(b) {}
 };
+
+/// C/N0 (dB-Hz) at or above which an SV is counted "good" for the CloudLocate
+/// compact-measurement readiness proxy (n_good). The compact RXM formats need
+/// roughly 5 SV at good signal; 30 dB-Hz is the u-blox ubxlib recommendation.
+static constexpr unsigned int CL_CNO_GOOD = 30;
 
 struct GPSEventError {};
 struct GPSEventPowerOn {};

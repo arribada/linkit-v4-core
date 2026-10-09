@@ -407,6 +407,25 @@ void M10QAsyncReceiver::supply_time_assistance() {
 // heartbeat keeps LAST_TX fresh, beacon_is_transmitting() therefore holds off
 // both GNSS watchdogs' reset branch, and each NO_FIX re-arms the 24 h watchdog
 // it should have tripped.
+// Below this age (s) since the last GNSS fix we assume the on-chip broadcast
+// ephemeris is still within its ~2-4 h validity. Conservative 2 h: past it we
+// prefer to run ANO assistance rather than skip it on a BBR-retained session.
+static constexpr unsigned long EPH_FRESH_S = 2UL * 3600UL;
+
+bool M10QAsyncReceiver::bbr_orbits_likely_fresh() {
+	// We cannot read the on-chip ephemeris age at configure time (NAV-SAT only
+	// streams once receiving), so use the last persisted fix time as a proxy for
+	// "broadcast ephemeris still fresh". Unknown time / no valid last fix ⇒ false
+	// ⇒ run assistance (safe: ANO only displaces already-expired orbits).
+	if (!(rtc && rtc->is_set())) return false;
+	const auto &last_gps = configuration_store->get_last_gps_entry();
+	if (!last_gps.info.valid) return false;
+	const std::time_t fix_t = convert_epochtime(last_gps.info.year, last_gps.info.month, last_gps.info.day,
+	                                            last_gps.info.hour, last_gps.info.min, last_gps.info.sec);
+	const std::time_t now_t = rtc->gettime();
+	return (now_t > fix_t) && ((unsigned long)(now_t - fix_t) < EPH_FRESH_S);
+}
+
 void M10QAsyncReceiver::supply_position_assistance() {
 	// Meme sortie anticipee que supply_time_assistance() : un recepteur qui a
 	// garde sa BBR y tient deja sa derniere position, calculee par lui-meme et

@@ -137,6 +137,7 @@ M10QAsyncReceiver::M10QAsyncReceiver() {
 	m_num_nav_samples = 0;
 	m_num_sat_samples = 0;
 	m_early_abort_notified = false;
+	m_start_class_logged = false;
 	m_fix_was_found = false;
 	m_unrecoverable_error = false;
 	m_database_overflow = false;
@@ -204,6 +205,7 @@ void M10QAsyncReceiver::reset_session_counters(const GPSNavSettings &nav_setting
 	m_num_nav_samples = 0;
 	m_num_sat_samples = 0;
 	m_early_abort_notified = false;
+	m_start_class_logged = false;
 	m_fix_was_found = false;
 	m_rtc_persisted_this_session = false;
 
@@ -929,7 +931,8 @@ void M10QAsyncReceiver::react(const UBXCommsEventSatReport &s) {
 			    }
 			    m_num_sat_samples++;
 			    GPSEventSatReport e(sat.sat.numSvs, 0);
-			    for (unsigned int i = 0; i < sat.sat.numSvs; i++) {
+			    const unsigned int n = (sat.sat.numSvs <= 12) ? sat.sat.numSvs : 12;  // svInfo[] is 12
+			    for (unsigned int i = 0; i < n; i++) {
 				    if (m_nav_settings.debug_enable) {
 					    DEBUG_TRACE("UBXCommsEventSatReport: svInfo[%u].svId=%u", i,
 						            (unsigned int)sat.sat.svInfo[i].svId);
@@ -942,8 +945,34 @@ void M10QAsyncReceiver::react(const UBXCommsEventSatReport &s) {
 				    if (sat.sat.svInfo[i].qualityInd > e.bestSignalQuality) {
 					    e.bestSignalQuality = sat.sat.svInfo[i].qualityInd;
 				    }
+				    // Harvest the orbit-state flags the receiver already sends (they
+				    // used to be dropped). These drive the start-type classifier with
+				    // zero extra wire traffic. See GPSEventSatReport / the best-algo design.
+				    if (sat.sat.svInfo[i].ephAvail) e.n_eph++;
+				    if (sat.sat.svInfo[i].almAvail) e.n_alm++;
+				    if (sat.sat.svInfo[i].anoAvail) e.n_ano++;
+				    if (sat.sat.svInfo[i].aopAvail) e.n_aop++;
+				    if (sat.sat.svInfo[i].cno >= CL_CNO_GOOD) e.n_good++;
 			    }
 			    notify(e);
+
+			    // Start-type classification, logged ONCE per session for field/bench
+			    // diagnosis. The firmware now KNOWS which of hot / warm-ANA / warm-ANO
+			    // / stale / cold it is actually in — the prerequisite for choosing the
+			    // right acquisition path. Observe-only here (no behaviour change);
+			    // logged after a few epochs so the NAV-SAT flags have stabilised.
+			    if (!m_start_class_logged && m_num_sat_samples >= 3) {
+				    m_start_class_logged = true;
+				    [[maybe_unused]] const char *cls = !m_bbr_retained      ? "S0_cold"
+				                      : (e.n_eph >= 4)      ? "S1_hot"
+				                      : (e.n_aop >= 4)      ? "S2_warm_ana"
+				                      : (e.n_ano >= 4)      ? "S3_warm_ano"
+				                      : (e.n_good >= 5)     ? "S4_stale_clready"
+				                                            : "S5_weak";
+				    VAL_GNSS("start_class=%s bbr=%u n_eph=%u n_aop=%u n_ano=%u n_alm=%u n_good=%u numSvs=%u",
+				             cls, (unsigned)m_bbr_retained, e.n_eph, e.n_aop, e.n_ano, e.n_alm, e.n_good,
+				             e.numSvs);
+			    }
 
 			    // Early abort: if after EARLY_ABORT_SAT_REPORTS sat reports no satellite
 			    // is even detected (quality==0), the antenna is completely obstructed
@@ -2242,17 +2271,21 @@ void M10QAsyncReceiver::state_configure() {
 				m_op_state = OpState::IDLE;
 				m_step++;
 			} else {
-				// BBR retained ⇒ the receiver still holds its own time, position,
-				// ephemeris, almanac and AssistNow-Autonomous data — all fresher than
-				// anything we could replay. Our DBD is just its OWN last dump, and the
-				// IM warns that sending host assistance "clears the existing data in
-				// the receiver" (MAX-M10S IM §3.12.3.2): replaying it is both wasted
-				// time (~1.5 s measured) on the surfacing-critical path AND a risk of
-				// discarding live data. ANO only helps a receiver that LOST its orbits,
-				// which by definition is not this case. Go straight to receive.
-				// When the BBR was lost (cold rail / reset), the full assistance chain
-				// (time + position + ANO + DBD) runs exactly as before.
-				if (m_bbr_retained) {
+				// Assistance-path choice (start-type aware). Three cases:
+				//  - BBR retained AND orbits still FRESH (a fix < ~2 h ago): the
+				//    receiver holds valid time/position/ephemeris/almanac/ANA — inject
+				//    NOTHING and go straight to receive (today's hot fast path). The
+				//    IM warns host assistance "clears the existing data" (MAX IM
+				//    §3.12.3.2), so we must not clobber live-fresh orbits.
+				//  - BBR retained BUT orbits likely STALE (last fix > ~2 h = the >4 h
+				//    dive hole): run sendofflinedatabase so a fresh host ANO file is
+				//    injected (ANO predictions outlast broadcast ephemeris and are the
+				//    one thing that helps here). DBD is still skipped (redundant — the
+				//    receiver has its own last dump live; see state_senddatabase_enter).
+				//    This gates the blanket ANO-skip of 26ab5c6a on recency (audit #3).
+				//  - BBR lost (cold rail / reset): full assistance chain (TIME+POS+ANO
+				//    +DBD) exactly as before.
+				if (m_bbr_retained && bbr_orbits_likely_fresh()) {
 					STATE_CHANGE(configure, startreceive);
 				} else {
 					STATE_CHANGE(configure, sendofflinedatabase);
@@ -2817,7 +2850,13 @@ void M10QAsyncReceiver::state_senddatabase_enter() {
 	// drapeau ANA a ete retiree, voir state_fetchdatabase : le DBD est un
 	// vecteur de persistance, pas une fonction de l'ANA. Quand ANA=true le terme
 	// retire valait true et le predicat est inchange.
-	if (m_ana_database_len == 0 && m_ano_database_len == 0) {
+	// 2026-10 — ET !m_bbr_retained : quand la BBR est retenue le recepteur tient
+	// deja sa base de navigation en vie, rejouer notre propre dump est redondant
+	// et risque le "clears the existing data" de l'IM. On n'arrive ici sur BBR
+	// retenue QUE si les orbites sont perimees (voir configure final-else) : dans
+	// ce cas on veut l'ANO (deja tente en amont), pas le DBD. Sans BBR (froid), on
+	// relit le DBD comme avant.
+	if (m_ana_database_len == 0 && m_ano_database_len == 0 && !m_bbr_retained) {
 		load_dbd_from_flash();
 	}
 

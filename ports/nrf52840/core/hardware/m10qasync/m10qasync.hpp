@@ -72,6 +72,11 @@ private:
 	/// power_off, each one also written to the system log in flash at ~170 ms a
 	/// line, and GPSEventMaxSatSamples re-notified to a service that had finished.
 	bool m_early_abort_notified;
+	/// @brief The start-type classification has already been logged this session.
+	/// The orbit-state classification (hot / warm-ANA / warm-ANO / stale / cold)
+	/// is derived from the NAV-SAT flags once they have stabilised and logged once
+	/// per session for field/bench diagnosis. Reset in reset_session_counters.
+	bool m_start_class_logged;
 	bool m_powering_off;
 	bool m_fix_was_found;
 	bool m_unrecoverable_error;
@@ -314,6 +319,12 @@ private:
 	void setup_expert_navigation_settings();
 	void supply_time_assistance();
 	void supply_position_assistance();
+	/// @brief True if the receiver's on-chip orbits are likely still FRESH, used
+	/// to decide whether a BBR-retained session may skip the whole assistance
+	/// chain. Proxy: a GNSS fix was obtained less than ~2 h ago (below the ~2-4 h
+	/// broadcast-ephemeris validity). Conservative — returns false when time or
+	/// the last fix is unknown, so assistance (ANO) runs rather than being skipped.
+	bool bbr_orbits_likely_fresh();
 	void disable_odometer();
 	void disable_timepulse_output();
 	void enable_nav_pvt_message();
