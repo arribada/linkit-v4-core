@@ -539,6 +539,11 @@ const BaseMap param_map[] = {
 	// 100 km ceiling: past that the widened visibility circle predicts passes
 	// the beacon cannot actually use.
 	{ "PP_POSITION_MARGIN_KM", "PPP12", BaseEncoding::UINT, 0U, 100U, {}, true, true },
+	// ARP47: DX1 Doppler extension. OFF keeps the legacy 006400-style frame
+	// bit-exact on every modulation. Do NOT enable before the ground decoder
+	// knows DX1: today's decoder drops DX1 LDA2 frames and reads DX1 LDK frames
+	// as GNSS positions. Inert without UNDERWATER_EN or on a build without SWS.
+	{ "ARGOS_DOPPLER_EXT_EN", "ARP47", BaseEncoding::BOOLEAN, false, false, {}, true, true },
 };
 // clang-format on
 

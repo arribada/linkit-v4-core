@@ -124,6 +124,14 @@ public:
 	static Diagnostics get_diagnostics();
 	static void clear_diagnostics();
 
+	/// @brief ADC frontend fault: MAX_CONSECUTIVE_INVALID_ADC invalid reads in
+	/// a row, i.e. the forced-surface fallback is in charge. false without an
+	/// instance. RAM read only (DX1 Doppler ADCF bit).
+	static bool adc_fault_active();
+	/// @brief Adaptive sample-delay bounds (UNP09 floor, UNP10 ceiling) as
+	/// loaded by service_init. false, and outputs untouched, without an instance.
+	static bool get_delay_bounds(uint32_t &min_us, uint32_t &max_us);
+
 	/**
      * @brief Test mode API: start/stop SWS independently of config (DTE SWSTST command)
      *
@@ -233,6 +241,20 @@ public:
 	/// Test-only: expose should_recalibrate() result.
 	static bool test_should_recalibrate() { return s_instance ? s_instance->should_recalibrate() : false; }
 
+	/// Test-only: inject the Status / Diagnostics snapshot another service reads
+	/// (DX1 Doppler health and behaviour fields) without running the detector.
+	static void test_set_status(const Status &st) { m_status = st; }
+	/// Test-only: put the live instance's invalid-ADC run at @p n reads
+	/// (MAX_CONSECUTIVE_INVALID_ADC latches adc_fault_active()). No-op without one.
+	static void test_set_consecutive_invalid_adc(uint16_t n) {
+		if (s_instance) s_instance->m_consecutive_invalid_adc = n;
+	}
+	static constexpr uint16_t test_max_consecutive_invalid_adc() { return MAX_CONSECUTIVE_INVALID_ADC; }
+	static void test_set_diagnostics(const Diagnostics &d) {
+		m_diag = d;
+		update_diagnostics_crc();
+	}
+
 	// Reset static calibration data for test isolation. Covers ALL static
 	// members so a previous test's leftovers cannot pollute the next test
 	// (FlashPersistence and CoherenceCheck regress without this).
@@ -240,6 +262,8 @@ public:
 		memset(&m_calib, 0, sizeof(m_calib));
 		m_observed_peak_adc = 0;
 		m_observed_peak_crc = 0;
+		m_sample_delay_us_noinit = 0;  // adaptive delay must not leak between tests
+		m_sample_delay_us_crc = 0;
 		memset(&m_diag, 0, sizeof(m_diag));
 		m_diag_crc = 0;
 		m_status = {};

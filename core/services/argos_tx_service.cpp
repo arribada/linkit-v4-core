@@ -17,6 +17,10 @@
 #include "pmu.hpp"
 #include "rate_limiter.hpp"
 #include "rgb_led.hpp"
+#include "dive_behaviour_tracker.hpp"
+#if ENABLE_SWS_ANALOG
+#include "sws_analog_service.hpp"
+#endif
 
 // VLDA4 is not permitted on the KIM2 backend.
 //
@@ -225,6 +229,7 @@ void ArgosTxService::service_init() {
 	m_is_underwater = false;
 	m_prepared_doppler_packet.clear();
 	m_prepared_doppler_size_bits = 0;
+	m_prepared_doppler_is_dx1 = false;
 	m_prepared_at_ms = 0;
 
 	// Snapshot which per-mod RCONFs are provisioned. Used by adaptive bursts
@@ -265,6 +270,7 @@ void ArgosTxService::service_term() {
 	m_is_underwater = false;
 	m_prepared_doppler_packet.clear();
 	m_prepared_doppler_size_bits = 0;
+	m_prepared_doppler_is_dx1 = false;
 	m_prepared_at_ms = 0;
 }
 
@@ -1212,6 +1218,34 @@ bool ArgosTxService::service_is_triggered_on_surfaced(bool &immediate) {
 	return true;  // Re-schedule us on a surfaced event
 }
 
+/// @brief May this peer event rebuild the pre-warmed Doppler packet?
+///
+/// Every peer event fired underwater used to qualify, the underwater sensor's
+/// own included -- and those are the ones that bracket a surfacing. The UW
+/// detector broadcasts SERVICE_INACTIVE and then the LOG_UPDATED(false) of the
+/// sample that saw the surface, and m_is_underwater is only cleared by the
+/// latter: a rebuild there (battery ADC, measured 435 ms, plus a DEBUG_INFO in
+/// flash) landed between surfacing and the first send, the one window the
+/// pre-warm exists to protect. So from the UW sensor only a SERVICE_INACTIVE
+/// that closes an UNDERWATER sample still qualifies; the SWS status is pushed
+/// before service_complete(), so it already says which kind of sample this was.
+/// Except under the latched ADC fault: an invalid read returns before that
+/// push, so the status keeps the last VALID sample's "underwater" while the
+/// detector forces the surface -- the read that latches the fault is the one
+/// that surfaces the beacon. Below the latch the beacon is still underwater
+/// and the stale status is right, so the hourly refresh is unchanged there.
+/// Never its SERVICE_ACTIVE (a sample is starting and may be the surfacing
+/// one), never a state broadcast. Every other source keeps today's behaviour.
+static bool prewarm_refresh_allowed_on(const ServiceEvent &e) {
+	if (e.event_source != ServiceIdentifier::UW_SENSOR) return true;
+	if (e.event_type != ServiceEventType::SERVICE_INACTIVE) return false;
+#if ENABLE_SWS_ANALOG
+	return SWSAnalogService::get_status().is_underwater && !SWSAnalogService::adc_fault_active();
+#else
+	return false;  // no status to tell an underwater sample from a surfacing one
+#endif
+}
+
 /// @brief Handle peer service events (GPS fix, sensor data, underwater state, surfacing).
 /// @param e  Event from another service (GPS, SWS, sensors, etc.).
 void ArgosTxService::notify_peer_event(ServiceEvent &e) {
@@ -1221,7 +1255,7 @@ void ArgosTxService::notify_peer_event(ServiceEvent &e) {
 	// fired while underwater (sensor sample, GPS tick, etc.) is a chance to
 	// re-sample the battery and rebuild the payload if it has aged past 1h.
 	// Skipped if we never prepared one (boot underwater, non-SURFACING_BURST).
-	if (m_is_underwater && m_prepared_at_ms != 0) {
+	if (m_is_underwater && m_prepared_at_ms != 0 && prewarm_refresh_allowed_on(e)) {
 		uint64_t now_ms = PMU::get_timestamp_ms();
 		// Rebuild on a CHANGE, not only on the hourly backstop. The whole point
 		// of the pre-warm is that the surface event sends a ready packet; an
@@ -2298,6 +2332,42 @@ void ArgosTxService::process_gnss_burst_from_cached() {
 	m_kineis.send(m_scheduled_mode, packet, size_bits);
 }
 
+const ArgosPacketBuilder::DopplerExt *ArgosTxService::doppler_ext() {
+#if DX1_DOPPLER_EXT_BUILD
+	if (!configuration_store->read_param<bool>(ParamID::UNDERWATER_EN)
+	    || !configuration_store->read_param<bool>(ParamID::ARGOS_DOPPLER_EXT_EN))
+		return nullptr;
+	const uint64_t now_ms = PMU::get_timestamp_ms();
+	const SWSAnalogService::Status st = SWSAnalogService::get_status();
+	const SWSAnalogService::Diagnostics diag = SWSAnalogService::get_diagnostics();
+	const bool adcf = SWSAnalogService::adc_fault_active();
+	uint32_t delay_min = 0, delay_max = 0;
+	if (!SWSAnalogService::get_delay_bounds(delay_min, delay_max)) delay_min = delay_max = 0;
+
+	m_dx1_ext = ArgosPacketBuilder::DopplerExt{};
+	ArgosPacketBuilder::dx1_encode_behaviour(m_dx1_ext, DiveBehaviourTracker::latch(now_ms));
+	m_dx1_ext.dive_end =
+	    (uint8_t)DiveBehaviourTracker::dive_end(diag.dive_timeout_count, diag.force_surface_count, adcf);
+	m_dx1_ext.rst = DiveBehaviourTracker::rst_count();
+	ArgosPacketBuilder::dx1_encode_health(m_dx1_ext, st.sample_delay_us, st.contrast_x10, st.is_calibrated,
+	                                      st.threshold_air, diag.dive_timeout_count, diag.force_surface_count,
+	                                      diag.stuck_recovery_count, delay_min, delay_max, adcf);
+	return &m_dx1_ext;
+#else
+	return nullptr;
+#endif
+}
+
+unsigned int ArgosTxService::dx1_dive_end_now() {
+#if DX1_DOPPLER_EXT_BUILD
+	const SWSAnalogService::Diagnostics diag = SWSAnalogService::get_diagnostics();
+	return DiveBehaviourTracker::dive_end(diag.dive_timeout_count, diag.force_surface_count,
+	                                      SWSAnalogService::adc_fault_active());
+#else
+	return 0;
+#endif
+}
+
 /// @brief Pre-build the first surfacing-burst Doppler packet while underwater.
 /// Samples the battery and builds the Doppler payload now so the first TX at
 /// surface skips the ADC read + packet build on its critical path. Only acts in
@@ -2316,6 +2386,7 @@ void ArgosTxService::prepare_doppler_packet() {
 	if (argos_config.mode != BaseArgosMode::SURFACING_BURST) {
 		m_prepared_doppler_packet.clear();
 		m_prepared_doppler_size_bits = 0;
+		m_prepared_doppler_is_dx1 = false;
 		m_prepared_at_ms = 0;
 		return;
 	}
@@ -2331,11 +2402,16 @@ void ArgosTxService::prepare_doppler_packet() {
 		activity = mortality_service->get_last_activity();
 	}
 	packet = ArgosPacketBuilder::build_rspb_doppler_packet(service_get_level(), activity, mort_conf, size_bits);
+	m_prepared_doppler_is_dx1 = false;
 #else
-	packet = ArgosPacketBuilder::build_doppler_packet(service_get_voltage(), service_is_battery_level_low(), size_bits);
+	// DX1 when enabled: the full 16-byte image; the send path cuts the view.
+	const ArgosPacketBuilder::DopplerExt *ext = doppler_ext();
+	packet =
+	    ArgosPacketBuilder::build_doppler_packet(service_get_voltage(), service_is_battery_level_low(), size_bits, ext);
+	m_prepared_doppler_is_dx1 = (ext != nullptr);
 #endif
 
-	m_prepared_doppler_packet = packet;
+	m_prepared_doppler_packet = std::move(packet);
 	m_prepared_doppler_size_bits = size_bits;
 	m_prepared_voltage = service_get_voltage();
 	m_prepared_batt_low = service_is_battery_level_low();
@@ -2388,14 +2464,24 @@ void ArgosTxService::process_doppler_burst() {
 					tx_mode = m_kineis.get_current_modulation();
 				}
 			}
+			KineisPacket prepared = std::move(m_prepared_doppler_packet);
+			unsigned int prepared_bits = m_prepared_doppler_size_bits;
+			if (m_prepared_doppler_is_dx1) {
+				// The only DX1 work on the surfacing path, RAM only: DEND of the
+				// dive that just ended (2 bits + the byte-3 CRC), then the prefix
+				// the module will ACTUALLY frame with -- its current modulation,
+				// read after any ensure_modulation above.
+				ArgosPacketBuilder::dx1_refresh_dive_end(prepared, dx1_dive_end_now());
+				prepared_bits =
+				    ArgosPacketBuilder::doppler_view(prepared, m_kineis.get_current_modulation(), prepared_bits, true);
+			}
 			DEBUG_INFO("ArgosTxService::process_doppler_burst: PREWARM mode=%s sz=%u age=%lu ms",
-			           argos_modulation_to_string((BaseArgosModulation)tx_mode), m_prepared_doppler_size_bits,
+			           argos_modulation_to_string((BaseArgosModulation)tx_mode), prepared_bits,
 			           static_cast<unsigned long>(prep_age_ms));
 			m_last_tx_had_gps = false;
-			KineisPacket prepared = m_prepared_doppler_packet;
-			unsigned int prepared_bits = m_prepared_doppler_size_bits;
 			m_prepared_doppler_packet.clear();
 			m_prepared_doppler_size_bits = 0;
+			m_prepared_doppler_is_dx1 = false;
 			m_prepared_at_ms = 0;
 			m_last_val_tx_type = "doppler-prewarm";
 			m_kineis.send(tx_mode, prepared, prepared_bits);
@@ -2719,7 +2805,10 @@ void ArgosTxService::process_doppler_burst() {
 	// Standard Doppler: battery voltage only
 	DEBUG_TRACE("TX_RAW: DOPP batt=%umV low_batt=%u", (unsigned)service_get_voltage(),
 	            service_is_battery_level_low() ? 1U : 0U);
-	packet = ArgosPacketBuilder::build_doppler_packet(service_get_voltage(), service_is_battery_level_low(), size_bits);
+	const ArgosPacketBuilder::DopplerExt *ext = doppler_ext();
+	packet =
+	    ArgosPacketBuilder::build_doppler_packet(service_get_voltage(), service_is_battery_level_low(), size_bits, ext);
+	const bool is_dx1 = (ext != nullptr);
 #endif
 
 	// Adaptive modulation: Doppler = 24 bits = VLDA4.
@@ -2737,6 +2826,11 @@ void ArgosTxService::process_doppler_burst() {
 	} else {
 		tx_mode = resolve_non_adaptive_modulation();
 	}
+#if !(defined(BOARD_RSPB) && ENABLE_MORTALITY_SENSOR)
+	// DX1: send the prefix of the image the module will actually frame with.
+	if (is_dx1)
+		size_bits = ArgosPacketBuilder::doppler_view(packet, m_kineis.get_current_modulation(), size_bits, true);
+#endif
 
 	// Demoted to TRACE: METRIC-SURF and METRIC-FIRST-TX already mark the burst
 	// boundaries with absolute timestamps. This per-TX dump adds ~50-300 ms LFS

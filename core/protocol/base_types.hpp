@@ -484,8 +484,13 @@ enum class ParamID {
 	PP_MIN_CULMINATION                       = 263,  // uint deg: reject grazing passes (0 = disabled). TX path.
 	PP_RX_MIN_CULMINATION                    = 264,  // uint deg: same for the AOP downlink window, where a poor pass wastes a whole RX slot
 	PP_POSITION_MARGIN_KM                    = 265,  // uint km: beacon position uncertainty, widens the visibility circle
+
+	// 2026-10 — DX1 turtle Doppler extension (SWS health + dive behaviour in the
+	// existing Doppler). Release gate, default OFF: the ground decoder must know
+	// DX1 before any tag emits it.
+	ARGOS_DOPPLER_EXT_EN                     = 266,  // bool: Doppler carries the DX1 extension (needs UNDERWATER_EN and an SWS-analog build)
 	// === Sentinel (fixed regardless of #ifdef combinations) ===
-	__PARAM_SIZE                             = 266,
+	__PARAM_SIZE                             = 267,
 	__NULL_PARAM                             = 0xFFFF
 };
 // clang-format on

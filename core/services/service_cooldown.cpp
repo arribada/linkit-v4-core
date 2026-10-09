@@ -26,6 +26,7 @@
 #include "interrupt_lock.hpp"
 #include "sws_analog_service.hpp"
 #include "pmu.hpp"
+#include "dive_behaviour_tracker.hpp"
 #include <cstddef>
 
 // Pre-deploy validation channel — see hauled_mode_service.cpp header comment.
@@ -200,6 +201,11 @@ void ServiceManager::set_cycle_complete(std::time_t t) {
 
 	m_last_successful_cycle_time = t;
 	save_cooldown_state();
+#if DX1_DOPPLER_EXT_BUILD
+	// From here the SWS gate refuses to sample: every surfacing until the wake
+	// is invisible, so the DX1 tracker marks the interval BLIND.
+	if (interval > 0) DiveBehaviourTracker::on_blind_start(PMU::get_timestamp_ms());
+#endif
 	DEBUG_INFO("ServiceManager: cycle complete at %u, cooldown started", (unsigned int)t);
 #if VALIDATION_LOG_ENABLE
 	DEBUG_INFO("[VAL-COOLDOWN] enter t=%u interval_s=%u", (unsigned int)t, interval);
@@ -361,6 +367,11 @@ void ServiceManager::enter_cooldown_sleep() {
 /// surface/UW events to wake all services. This avoids incorrectly broadcasting
 /// a surface event when the device might actually be underwater.
 void ServiceManager::exit_cooldown_sleep() {
+#if DX1_DOPPLER_EXT_BUILD
+	// The SWS restarts below and re-emits its state: the tracker must take it
+	// as a state, not as an edge. No-op if no blind interval is open.
+	DiveBehaviourTracker::on_blind_end(PMU::get_timestamp_ms());
+#endif
 	DEBUG_INFO("ServiceManager: exiting cooldown sleep (RTC=%u) — restarting SWS",
 	           (rtc && rtc->is_set()) ? (unsigned int)rtc->gettime() : 0);
 #if VALIDATION_LOG_ENABLE

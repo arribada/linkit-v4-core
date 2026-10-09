@@ -498,11 +498,161 @@ KineisPacket ArgosPacketBuilder::build_certification_packet(std::string cert_tx_
 	return packet;
 }
 
+// ---------------------------------------------------------------- DX1 codecs
+// Integer only, floor everywhere, 0 = unknown. Must match the reference model
+// field for field: the ground decoder is written against the same vectors.
+
+unsigned int ArgosPacketBuilder::dx1_em_encode(uint32_t v, unsigned int e_bits, unsigned int m_bits) {
+	if (v == 0) return 0;  // reserved for "unknown"; callers pass v >= 1
+	const uint32_t base = 1U << m_bits;
+	if (v < base) return v;
+	unsigned int k = 31U - (unsigned int)__builtin_clz(v);  // floor(log2 v)
+	unsigned int e = k - m_bits + 1U;
+	unsigned int m = (unsigned int)(v >> (k - m_bits)) - base;
+	if (e > (1U << e_bits) - 1U) return (1U << (e_bits + m_bits)) - 1U;
+	return (e << m_bits) | m;
+}
+
+unsigned int ArgosPacketBuilder::dx1_q4_encode(uint32_t n) {
+	if (n <= 7) return n;
+	static constexpr struct {
+		uint8_t code;
+		uint32_t lo;
+	} floors[] = { { 15, 4096 }, { 14, 1024 }, { 13, 256 }, { 12, 128 }, { 11, 64 }, { 10, 32 }, { 9, 16 } };
+	for (const auto &f : floors) {
+		if (n >= f.lo) return f.code;
+	}
+	return 8;
+}
+
+unsigned int ArgosPacketBuilder::dx1_pct_code(uint32_t dry_s, uint32_t obs_s) {
+	if (obs_s < DOPPLER_DX1_OBS_MIN_S) return 0;
+	uint64_t p = (200ULL * dry_s + obs_s) / (2ULL * obs_s);
+	return 1U + (unsigned int)std::min<uint64_t>(p, 100ULL);
+}
+
+unsigned int ArgosPacketBuilder::dx1_dry_class(uint32_t dry_s, uint32_t obs_s) {
+	if (obs_s < DOPPLER_DX1_OBS_MIN_S) return 0;
+	static constexpr uint32_t bounds[] = { 20, 40, 80, 160, 320, 640 };  // per-mille, classes 2..7
+	uint64_t pm = (1000ULL * dry_s) / obs_s;
+	unsigned int c = 1;
+	for (unsigned int i = 0; i < sizeof(bounds) / sizeof(bounds[0]); i++) {
+		if (pm >= bounds[i]) c = i + 2;
+	}
+	return c;
+}
+
+void ArgosPacketBuilder::dx1_encode_health(DopplerExt &ext, uint32_t sample_delay_us, uint16_t contrast_x10,
+                                           bool is_calibrated, uint16_t threshold_air, uint32_t dive_timeout_count,
+                                           uint32_t force_surface_count, uint32_t stuck_recovery_count,
+                                           uint32_t delay_min_us, uint32_t delay_max_us, bool adc_fault) {
+	ext.delay =
+	    sample_delay_us ? (uint8_t)dx1_em_encode(std::max<uint32_t>(1U, (sample_delay_us + 25U) / 50U), 3, 3) : 0;
+	// threshold_air == 0 is the fake 10.0x contrast of an uncalibrated sensor.
+	ext.contrast = (!is_calibrated || contrast_x10 == 0 || threshold_air == 0)
+	                   ? 0
+	                   : (uint8_t)dx1_em_encode(std::max<uint32_t>(1U, contrast_x10), 3, 3);
+	ext.dto = (uint8_t)dx1_q4_encode(dive_timeout_count);
+	ext.fsc = (uint8_t)dx1_q4_encode(force_surface_count);
+	ext.src = (uint8_t)dx1_q4_encode(stuck_recovery_count);
+	ext.dfloor = (sample_delay_us > 0 && sample_delay_us == delay_min_us && delay_min_us < delay_max_us) ? 1 : 0;
+	ext.adcf = adc_fault ? 1 : 0;
+}
+
+void ArgosPacketBuilder::dx1_encode_behaviour(DopplerExt &ext, const Dx1Behaviour &b) {
+	ext.latch = b.latch;
+	ext.blind = b.blind;
+	ext.partial = b.partial;
+	ext.surf_seq = b.surf_seq;
+	ext.pct = (uint8_t)dx1_pct_code(b.dry_s, b.obs_s);
+	ext.dry_class = (uint8_t)dx1_dry_class(b.dry_s, b.obs_s);
+	ext.n_surf = b.n_known ? (uint8_t)dx1_em_encode(b.n_surf + 1U, 4, 3) : 0;
+	ext.s_last = (uint8_t)dx1_em_encode(b.s_last_s, 4, 3);  // 0 stays 0 = unknown
+	ext.d_prev = (uint8_t)dx1_em_encode(b.d_prev_s, 4, 3);
+	ext.d_max = (uint8_t)dx1_em_encode(b.d_max_s, 4, 3);
+	ext.surf_method = b.surf_method;
+}
+
+uint8_t ArgosPacketBuilder::dx1_crc8_head(const KineisPacket &img) {
+	// Same polynomial, init and bit order as CRC8::checksum(img, 24), without the
+	// std::string that zeropad() builds -- this runs on the surfacing path.
+	unsigned int crc = 0;
+	for (unsigned int i = 0; i < 3 && i < img.size(); i++) {
+		crc ^= (unsigned int)(uint8_t)img[i] << 8;
+		for (int b = 0; b < 8; b++) {
+			if (crc & 0x8000) crc ^= (0x1070 << 3);
+			crc = (crc << 1) & 0xFFFF;
+		}
+	}
+	return (uint8_t)(crc >> 8);
+}
+
+void ArgosPacketBuilder::dx1_refresh_dive_end(KineisPacket &img, unsigned int dive_end) {
+	if (img.size() < DOPPLER_DX1_VLDA4_BYTES) return;
+	uint8_t b2 = (uint8_t)img[2];
+	b2 = (uint8_t)((b2 & ~DOPPLER_DX1_DEND_MASK) | (dive_end & DOPPLER_DX1_DEND_MASK));
+	img[2] = (char)b2;
+	if (img.size() > DOPPLER_DX1_CRC_BYTE) img[DOPPLER_DX1_CRC_BYTE] = (char)dx1_crc8_head(img);
+}
+
+unsigned int ArgosPacketBuilder::doppler_view(KineisPacket &img, KineisModulation mode, unsigned int in_bits,
+                                              bool is_dx1) {
+	if (!is_dx1 || img.size() != DOPPLER_DX1_IMAGE_BYTES) return in_bits;
+	unsigned int n = DOPPLER_DX1_LDK_BYTES;
+	switch (mode) {
+	case KineisModulation::VLDA4: n = DOPPLER_DX1_VLDA4_BYTES; break;
+	case KineisModulation::LDA2: n = DOPPLER_DX1_LDA2_BYTES; break;
+	case KineisModulation::LDK: n = DOPPLER_DX1_LDK_BYTES; break;
+	default: break;
+	}
+	img.resize(n);  // shrinking a std::string never allocates
+	return n * BITS_PER_BYTE;
+}
+
 KineisPacket ArgosPacketBuilder::build_doppler_packet(unsigned int batt_voltage, bool is_low_battery,
-                                                      unsigned int &size_bits) {
+                                                      unsigned int &size_bits, const DopplerExt *ext) {
 	DEBUG_TRACE("ArgosPacketBuilder::build_doppler_packet");
 	unsigned int base_pos = 0;
 	KineisPacket packet;
+
+	if (ext) {
+		// DX1 image. Every field is masked to its width: an encoder slip must
+		// corrupt one field, never spill into its neighbour.
+		auto put = [&packet, &base_pos](uint32_t v, unsigned int w) {
+			uint32_t m = (w >= 32) ? 0xFFFFFFFFU : ((1U << w) - 1U);
+			PACK_BITS(v & m, packet, base_pos, w);
+		};
+		packet.assign(DOPPLER_DX1_IMAGE_BYTES, 0);
+		put(0, 8);  // frozen marker
+		put(convert_battery_voltage(batt_voltage), 7);
+		put(is_low_battery ? 1 : 0, 1);
+		put(DOPPLER_DX1_VER, 2);
+		put(0, 1);  // EXT: Phase 2 only
+		put(ext->dry_class, 3);
+		put(ext->dive_end, 2);
+		put(dx1_crc8_head(packet), 8);
+		put(ext->latch, 2);
+		put(ext->blind, 1);
+		put(ext->partial, 1);
+		put(ext->surf_seq, 9);
+		put(ext->rst, 3);
+		put(ext->pct, 7);
+		put(ext->n_surf, 7);
+		put(ext->s_last, 7);
+		put(ext->d_prev, 7);
+		put(ext->d_max, 7);
+		put(ext->delay, 6);
+		put(ext->contrast, 6);
+		put(ext->dto, 4);
+		put(ext->fsc, 4);
+		put(ext->src, 4);
+		put(ext->surf_method, 3);
+		put(ext->dfloor, 1);
+		put(ext->adcf, 1);
+		// bits 112-127 stay 0x0000 (reserved, Phase 2)
+		size_bits = DOPPLER_DX1_IMAGE_BITS;
+		return packet;
+	}
 
 	// Reserve required number of bytes
 	packet.assign(DOPPLER_PACKET_BYTES, 0);

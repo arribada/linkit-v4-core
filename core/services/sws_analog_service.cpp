@@ -77,6 +77,19 @@ SWSAnalogService::Diagnostics SWSAnalogService::get_diagnostics() {
 	return m_diag;
 }
 
+/// @brief ADC frontend fault latched (forced-surface fallback active).
+bool SWSAnalogService::adc_fault_active() {
+	return s_instance && s_instance->m_consecutive_invalid_adc >= MAX_CONSECUTIVE_INVALID_ADC;
+}
+
+/// @brief Adaptive delay floor/ceiling currently in force.
+bool SWSAnalogService::get_delay_bounds(uint32_t &min_us, uint32_t &max_us) {
+	if (!s_instance) return false;
+	min_us = s_instance->m_delay_min_us;
+	max_us = s_instance->m_delay_max_us;
+	return true;
+}
+
 /// @brief Reset all counters to zero (DTE-callable).
 void SWSAnalogService::clear_diagnostics() {
 	memset(&m_diag, 0, sizeof(m_diag));

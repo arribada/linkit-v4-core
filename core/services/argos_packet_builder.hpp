@@ -16,6 +16,7 @@
 #include "kineis_device.hpp"
 #include "config_store.hpp"
 #include "service.hpp"
+#include "dive_behaviour_tracker.hpp"  // Dx1Behaviour (plain data, every target)
 
 /// @brief Argos packet encoding constants and static builders.
 class ArgosPacketBuilder {
@@ -93,9 +94,91 @@ public:
 	static constexpr unsigned int SENSOR_PACKET_MASK_AXL = 1u << 0;
 
 	// Doppler packet (24 bits, VLDA4)
+	// byte0 = 0x00 is the LinkIt Doppler marker, FROZEN forever, and so is
+	// byte1 = BATT7 | LB. The legacy frame is those two bytes plus byte2 = 0x00.
 	static constexpr unsigned int DOPPLER_PACKET_BITS = 24;
 	static constexpr unsigned int DOPPLER_PACKET_PAYLOAD_BITS = 24;
 	static constexpr unsigned int DOPPLER_PACKET_BYTES = 3;
+
+	// DX1 Doppler extension (turtle SWS health + behaviour), opt-in through
+	// ARGOS_DOPPLER_EXT_EN. ONE 16-byte image is built; each modulation sends a
+	// prefix of it (doppler_view), so a modulation change can never cut a field
+	// in half or leave a stale CRC:
+	//   byte2      VER(2)=01 | EXT(1)=0 | DRY(3) | DEND(2)
+	//   byte3      CRC8 over bytes 0..2       (views of 32 bits and more)
+	//   bits 32-111 rich block                (LDK view only)
+	//   bits 112-127 reserved, 0x00 (Phase 2)
+	// The byte vectors in tests/src/dx1_doppler_test.cpp are the wire contract the
+	// ground decoder must reproduce.
+	static constexpr unsigned int DOPPLER_DX1_VER = 1;
+	static constexpr unsigned int DOPPLER_DX1_IMAGE_BYTES = 16;
+	static constexpr unsigned int DOPPLER_DX1_IMAGE_BITS = 128;
+	static constexpr unsigned int DOPPLER_DX1_VLDA4_BYTES = 3;
+	static constexpr unsigned int DOPPLER_DX1_LDA2_BYTES = 4;
+	static constexpr unsigned int DOPPLER_DX1_LDK_BYTES = 16;
+	static constexpr unsigned int DOPPLER_DX1_CRC_BYTE = 3;
+	static constexpr unsigned int DOPPLER_DX1_RICH_BIT = 32;  ///< first bit of the rich block
+	static constexpr unsigned int DOPPLER_DX1_RICH_BITS = 80;
+	static constexpr unsigned int DOPPLER_DX1_DEND_MASK = 0x03;  ///< DEND = low 2 bits of byte 2
+	static constexpr uint32_t DOPPLER_DX1_OBS_MIN_S = 43200;     ///< PCT/DRY unknown below 12 h observed
+
+	/// @brief Already-encoded DX1 field codes (0 = unknown / absent everywhere).
+	/// Plain data: every value is a code, never a physical quantity, so the
+	/// builder only packs.
+	struct DopplerExt {
+		uint8_t dry_class = 0;    ///< byte2 DRY, 0..7
+		uint8_t dive_end = 0;     ///< byte2 DEND, 0..3
+		uint8_t latch = 0;        ///< 0 absent, 1 dive edge, 2 no dive edge since reset
+		uint8_t blind = 0;        ///< 1 bit
+		uint8_t partial = 0;      ///< 1 bit
+		uint16_t surf_seq = 0;    ///< 9 bits, 0 none, 1..511
+		uint8_t rst = 0;          ///< 3 bits, saturating 7
+		uint8_t pct = 0;          ///< 7 bits, pct_dry_code()
+		uint8_t n_surf = 0;       ///< E4M3(n + 1)
+		uint8_t s_last = 0;       ///< E4M3 seconds
+		uint8_t d_prev = 0;       ///< E4M3 seconds
+		uint8_t d_max = 0;        ///< E4M3 seconds
+		uint8_t delay = 0;        ///< E3M3 of 50-us units
+		uint8_t contrast = 0;     ///< E3M3 of contrast x10
+		uint8_t dto = 0;          ///< Q4
+		uint8_t fsc = 0;          ///< Q4
+		uint8_t src = 0;          ///< Q4
+		uint8_t surf_method = 0;  ///< 3 bits
+		uint8_t dfloor = 0;       ///< 1 bit
+		uint8_t adcf = 0;         ///< 1 bit
+	};
+
+	/// @brief Floor quasi-log code: exact below 2^M, then E exponent bits and M
+	/// mantissa bits, saturating at the all-ones code. @p v must be >= 1 (code 0
+	/// is reserved for "unknown" and is the caller's to emit).
+	static unsigned int dx1_em_encode(uint32_t v, unsigned int e_bits, unsigned int m_bits);
+	/// @brief 4-bit count code: 0-7 exact, then 8/16/32/64/128/256/1024/4096 floors.
+	static unsigned int dx1_q4_encode(uint32_t n);
+	/// @brief PCT_DRY code: 0 unknown (obs < 12 h), else 1 + round(100 dry/obs).
+	static unsigned int dx1_pct_code(uint32_t dry_s, uint32_t obs_s);
+	/// @brief DRY class: 0 unknown, 1..7 at per-mille bounds 20/40/80/160/320/640.
+	static unsigned int dx1_dry_class(uint32_t dry_s, uint32_t obs_s);
+	/// @brief Fill the SWS health codes of @p ext (SAMPLE_DELAY, CONTRAST, DTO,
+	/// FSC, SRC, DFLOOR, ADCF) from raw SWS values. Pure integer encoding.
+	static void dx1_encode_health(DopplerExt &ext, uint32_t sample_delay_us, uint16_t contrast_x10, bool is_calibrated,
+	                              uint16_t threshold_air, uint32_t dive_timeout_count, uint32_t force_surface_count,
+	                              uint32_t stuck_recovery_count, uint32_t delay_min_us, uint32_t delay_max_us,
+	                              bool adc_fault);
+	/// @brief Fill the behaviour codes of @p ext (DRY, LATCH, BLIND, PARTIAL,
+	/// SURF_SEQ, PCT_DRY, N_SURF, S_LAST, D_PREV, D_MAX, SURF_METHOD) from the
+	/// raw values the tracker latched.
+	static void dx1_encode_behaviour(DopplerExt &ext, const Dx1Behaviour &b);
+	/// @brief CRC8 of the first three bytes (crc8.hpp algorithm), no allocation.
+	static uint8_t dx1_crc8_head(const KineisPacket &img);
+	/// @brief Rewrite DEND in byte 2 and, if the frame has a byte 3, its CRC.
+	/// RAM only, no allocation: this is the ONE thing DX1 adds to the surfacing
+	/// path. No-op on a frame shorter than 3 bytes.
+	static void dx1_refresh_dive_end(KineisPacket &img, unsigned int dive_end);
+	/// @brief Shrink a DX1 image to the prefix the modulation carries and return
+	/// its size in bits (VLDA4 3 B/24, LDA2 4 B/32, LDK 16 B/128). A non-DX1 packet
+	/// (@p is_dx1 false) is left untouched and @p in_bits returned unchanged.
+	/// DX1-ness is the caller's explicit flag, never inferred from the length.
+	static unsigned int doppler_view(KineisPacket &img, KineisModulation mode, unsigned int in_bits, bool is_dx1);
 
 	// RSPB Doppler (Type 6, VLDA4)
 	static constexpr unsigned int RSPB_DOPPLER_HEADER = 0b110;
@@ -181,7 +264,11 @@ public:
 	                                               unsigned int &size_bits);
 
 	/// @brief Build Doppler packet (24 bits, no GPS).
-	static KineisPacket build_doppler_packet(unsigned int battery, bool is_low_battery, unsigned int &size_bits);
+	/// @param ext  nullptr (default): the legacy 3-byte / 24-bit frame, bit-exact.
+	///             Otherwise the 16-byte / 128-bit DX1 image; send it through
+	///             doppler_view() for the modulation actually used.
+	static KineisPacket build_doppler_packet(unsigned int battery, bool is_low_battery, unsigned int &size_bits,
+	                                         const DopplerExt *ext = nullptr);
 
 	/// @brief Build sensor packet (GPS + optional ALS/PH/pressure/temp/AXL).
 	static KineisPacket build_sensor_packet(GPSLogEntry *v, ServiceSensorData *als_sensor, ServiceSensorData *ph_sensor,

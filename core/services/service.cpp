@@ -16,6 +16,10 @@
 #include "rate_limiter.hpp"
 #include "hauled_mode_service.hpp"
 #include "moored_mode_service.hpp"
+#include "dive_behaviour_tracker.hpp"
+#if DX1_DOPPLER_EXT_BUILD
+#include "sws_analog_service.hpp"
+#endif
 #if ENABLE_AXL_SENSOR
 #include "axl_sensor_service.hpp"  // AXLSensorPort::WAKEUP_TRIGGERED
 #endif
@@ -56,6 +60,15 @@ extern Scheduler *system_scheduler;
 extern RTC *rtc;
 extern BatteryMonitor *battery_monitor;
 
+#if DX1_DOPPLER_EXT_BUILD
+// RST counter of the DX1 Doppler: must survive a warm boot, so it lives in
+// .noinit (section attribute on the in-class declaration). One out-of-line
+// definition in one translation unit, like SWSAnalogService's noinit members,
+// rather than an inline variable emitted in every TU that includes the header;
+// this file because every target that links the UW funnel below compiles it.
+Dx1RstRecord DiveBehaviourTracker::s_rst;
+#endif
+
 /// @brief Register a service and assign a unique ID.
 /// @param s  Service to register.
 /// @return Unique ID for this service instance.
@@ -91,6 +104,11 @@ void ServiceManager::startall(std::function<void(ServiceEvent &)> data_notificat
 	RateLimiter::restore_state();
 	HauledModeService::restore_state();
 	MooredModeService::restore_state();
+#if DX1_DOPPLER_EXT_BUILD
+	// Behaviour history restarts with every entry into Operational: SWSTST
+	// edges seen in configuration mode must not count as dives.
+	DiveBehaviourTracker::reset();
+#endif
 	for (auto const &p : m_map) {
 		DEBUG_TRACE("ServiceManager::startall: starting %s id=%u", p.second.get_name(), p.first);
 		p.second.start(data_notification_callback);
@@ -146,6 +164,23 @@ void ServiceManager::notify_peer_event(ServiceEvent &event) {
 	// there's a single ground-truth dispatch site (Plan 1 step 3).
 	if (event.event_source == ServiceIdentifier::UW_SENSOR
 	    && event.event_type == ServiceEventType::SERVICE_LOG_UPDATED) {
+#if DX1_DOPPLER_EXT_BUILD
+		// DX1 behaviour tracker: outside the RTC gate (it runs on the monotonic
+		// uptime clock) and before the peers, so ArgosTx's dive-time Doppler
+		// build already sees this edge. RAM reads and stores only: on a surface
+		// event this is on the surface-to-air path.
+		{
+			const uint64_t now_ms = PMU::get_timestamp_ms();
+			if (SWSAnalogService::is_test_running()) {
+				DiveBehaviourTracker::on_test_event(now_ms);
+			} else {
+				const SWSAnalogService::Diagnostics diag = SWSAnalogService::get_diagnostics();
+				DiveBehaviourTracker::on_uw_event(std::get<bool>(event.event_data), now_ms, diag.dive_timeout_count,
+				                                  diag.force_surface_count, SWSAnalogService::adc_fault_active(),
+				                                  SWSAnalogService::get_status().surface_level);
+			}
+		}
+#endif
 		std::time_t now = (rtc && rtc->is_set()) ? rtc->gettime() : 0;
 		if (now > 0) {
 			HauledModeService::on_underwater_event(std::get<bool>(event.event_data), now);

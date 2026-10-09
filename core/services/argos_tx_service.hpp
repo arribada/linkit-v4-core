@@ -162,6 +162,19 @@ private:
 	uint8_t m_prepared_level = 0;
 	bool prepared_doppler_inputs_changed();
 
+	/// @brief The prepared packet is a 16-byte DX1 image, not the legacy frame.
+	/// Explicit, never inferred from its length: only a DX1 image may be cut to
+	/// a modulation view or have its DEND/CRC rewritten.
+	bool m_prepared_doppler_is_dx1 = false;
+	/// @brief DX1 field codes for the image being built (see doppler_ext()).
+	ArgosPacketBuilder::DopplerExt m_dx1_ext;
+	/// @brief nullptr (legacy Doppler) unless the build has the SWS tracker,
+	/// UNDERWATER_EN is set AND ARGOS_DOPPLER_EXT_EN is set. Otherwise fills
+	/// m_dx1_ext from the tracker latch and the SWS status (RAM reads only).
+	const ArgosPacketBuilder::DopplerExt *doppler_ext();
+	/// @brief DEND from the tracker and the SWS counters as they are now.
+	static unsigned int dx1_dive_end_now();
+
 	void react(KineisEventTxStarted const &) override;
 	void react(KineisEventTxComplete const &) override;
 	void react(KineisEventDeviceError const &) override;

@@ -174,6 +174,8 @@ protected:
 	// the recovery path preserves only ARGOS_DECID/ARGOS_HEXID. A needless bump
 	// would leave every provisioned LoRa unit unable to rejoin its network, with
 	// nothing in the logs to say why.
+	// 0x20 KEPT in 2026-10 for slot 266 (ARGOS_DOPPLER_EXT_EN, ARP47): pure
+	// append again, same reasoning.
 	static inline const unsigned int m_config_version_code = 0x1c07e800 | 0x20;
 	static inline const unsigned int m_config_version_code_aop = 0x1c07e800 | 0x03;
 	// Board-conditional default for slot [240] GNSS_DEEP_IDLE_AFTER_OFF_S. Kept as a
@@ -483,6 +485,7 @@ protected:
 		/* [263] PP_MIN_CULMINATION */ 0U,         // TX: keep every pass the elevation filter accepted (previous hardcoded value)
 		/* [264] PP_RX_MIN_CULMINATION */ 20U,     // RX: a downlink needs a good pass — a grazing one wastes the whole window (previous hardcoded value)
 		/* [265] PP_POSITION_MARGIN_KM */ 0U,      // no position uncertainty by default
+		/* [266] ARGOS_DOPPLER_EXT_EN */ (bool)false,  // legacy Doppler until the ground decoder knows DX1
 	};
 	// clang-format on
 
