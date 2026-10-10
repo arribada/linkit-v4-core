@@ -218,9 +218,10 @@ bool SmdSatCmdAt::send_at_with_data(const std::string &cmd, std::string &respons
 
 	if (!send_string(cmd + "\r\n")) return false;
 
-	static constexpr uint16_t DATA_GRACE_MS = 150;
+	static constexpr uint16_t DATA_GRACE_MS = 500;
 	bool have_data = false;
 	std::string data;
+	std::string other_keys;  // keys only, never values (credentials go through here)
 	uint16_t grace = DATA_GRACE_MS;
 	while (timeout_ms > 0) {
 		PMU::delay_ms(1);
@@ -231,6 +232,8 @@ bool SmdSatCmdAt::send_at_with_data(const std::string &cmd, std::string &respons
 			if (key.empty() || m_resp_key == key) {
 				have_data = true;
 				data = m_resp_data;
+			} else if (other_keys.size() < 40) {
+				other_keys += (other_keys.empty() ? "" : ",") + m_resp_key;
 			}
 			m_resp_data_ready = false;
 		}
@@ -240,6 +243,11 @@ bool SmdSatCmdAt::send_at_with_data(const std::string &cmd, std::string &respons
 		}
 	}
 
+	if (timeout_ms == 0 || m_resp_error || !have_data) {
+		// Shape of the exchange only: never the data, which may be a credential.
+		DEBUG_INFO("SmdSatCmdAt: %s -> ok=%u err=%u data=%u other_keys=[%s]%s", cmd.c_str(), (unsigned)m_resp_ok,
+		           (unsigned)m_resp_error, (unsigned)have_data, other_keys.c_str(), timeout_ms == 0 ? " TIMEOUT" : "");
+	}
 	if (timeout_ms == 0 || m_resp_error) return false;
 
 	response_data = data;
