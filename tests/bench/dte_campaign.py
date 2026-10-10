@@ -3465,7 +3465,8 @@ def _deep_idle_dispatch(r, b, valeur, secondes=70):
     b.inject_gps(43.2, 5.8)
     return _attendre_trace(b, [r'deep-idle for (\d+) s',
                                r'never-poweroff \(rail stays on',
-                               r'disabled — power_off'],
+                               r'disabled — power_off',
+                               r'dispatch=immediate_off', r'power_off_immediate'],
                            secondes, depuis=mk)
 
 
@@ -3489,7 +3490,9 @@ def c_deep_idle_zero(r, case):
         vues = _deep_idle_dispatch(r, b, 0, secondes=60)
     except Exception as e:
         return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
-    coupure = any('disabled — power_off' in l for l in vues)
+    # Libelle actuel : '[VAL-GNSS] dispatch=immediate_off GNP52=0' / 'power_off_immediate'.
+    coupure = any(('disabled — power_off' in l) or ('dispatch=immediate_off' in l)
+                  or ('power_off_immediate' in l) for l in vues)
     if not coupure:
         _deep_idle_restaure(b)
         return r.record(case, 'FAIL', 'GNP52=0 mais aucune coupure immediate annoncee',
@@ -5464,8 +5467,11 @@ def _boot(b, timeout=10.0, essais=4):
     """%BOOT -> (echecs, tentatives de reset usine), ou (None, None)."""
     global _BOOT_MASQUE
     for _ in range(essais):
-        mk = b.mark(); b._send('%BOOT\r')
-        m = b.expect(r'%BOOT (failures=(\d+) factory_attempted=(\d+)|cause=)', timeout, from_idx=mk)
+        # %BOOTFAIL depuis le correctif du 2026-10-10 ; un firmware anterieur repond
+        # "%ERR unknown-cmd" et on retombe sur l ancien diagnostic (masque).
+        mk = b.mark(); b._send('%BOOTFAIL\r')
+        m = b.expect(r'%BOOTFAIL (failures=(\d+) factory_attempted=(\d+))|%ERR unknown-cmd %BOOTFAIL()',
+                     timeout, from_idx=mk)
         if m and m.group(2) is not None:
             return int(m.group(2)), int(m.group(3))
         if m:
