@@ -275,16 +275,31 @@ def nrfjprog(args, timeout=180, snr=None, family=True, log_dir=None):
     return NrfjprogResult(args, rc, text, timed_out, time.monotonic() - t0)
 
 
+def run_text(cmd, timeout=30):
+    """Run a console command and return its stdout as text, '' on any failure.
+
+    Captured as bytes and decoded here: with PYTHONUTF8=1, text=True decodes as
+    UTF-8, but Windows console tools (tasklist, usbipd, powershell) write in the
+    OEM code page; a French tasklist puts 0xFF (no-break space) in "19 772 Ko",
+    the reader thread dies and .stdout comes back as None."""
+    try:
+        raw = subprocess.run(cmd, capture_output=True, timeout=timeout).stdout or b""
+    except Exception:
+        return ""
+    for enc in (("oem", "mbcs") if IS_WINDOWS else ()) + ("utf-8",):
+        try:
+            return raw.decode(enc, errors="replace")
+        except LookupError:
+            continue
+    return raw.decode("latin-1", errors="replace")
+
+
 def probe_holders():
     """Processes known to hold the J-Link (Windows only). Reported, never killed
     here: nRF Connect for Desktop belongs to the operator."""
     if not IS_WINDOWS:
         return []
-    try:
-        out = subprocess.run(["tasklist", "/FO", "CSV", "/NH"], capture_output=True, text=True,
-                             timeout=20).stdout
-    except Exception:
-        return []
+    out = run_text(["tasklist", "/FO", "CSV", "/NH"], timeout=20)
     found = []
     for line in out.splitlines():
         name = line.split(",")[0].strip('"')

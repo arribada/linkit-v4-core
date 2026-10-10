@@ -154,8 +154,10 @@ class Runner:
         import subprocess as sp
         for exe in ('usbipd.exe', '/mnt/c/Program Files/usbipd-win/usbipd.exe'):
             try:
-                out = sp.run([exe, 'list'], capture_output=True, text=True, timeout=30).stdout
+                out = P.run_text([exe, 'list'], timeout=30)
             except Exception:
+                continue
+            if not out:
                 continue
             for ligne in out.splitlines():
                 if '1915:' in ligne:
@@ -241,9 +243,7 @@ class Runner:
         """
         import subprocess as sp
         def ps(c):
-            try: return sp.run(['powershell.exe','-Command',c], capture_output=True,
-                               text=True, timeout=60).stdout
-            except Exception: return ''
+            return P.run_text(['powershell.exe','-Command',c], timeout=60)
         busid = self._busid_carte() or '5-3'
         self.say(f'   reparation du lien USB (busid {busid})…')
         # D abord le remede le moins cher: le CDC est souvent encore enumere
