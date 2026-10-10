@@ -551,6 +551,15 @@ class Suite:
             except Exception as e:
                 self.check("ARGOS_MODE=0 forced (no RF)", False, f"{type(e).__name__}: {e}")
 
+        # 6c. Preconditions of check 8, set explicitly: the config store survives
+        # --recover (QSPI), and a CloudLocate profile left by an earlier run
+        # (GNSS_FASTLOC_MODE=2) took the injected fix off the PVT path: no
+        # PVT-accept log, a false FAIL (2026-10-10, board 294910).
+        try:
+            b.write_params({"GNSS_EN": 1, "GNSS_FASTLOC_MODE": 0})
+        except Exception as e:
+            self.check("GNSS preconditions (GNSS_EN=1, FASTLOC_MODE=0)", False, f"{type(e).__name__}: {e}")
+
         # 7. Back to operational.
         #
         # Leaving config starts every service, and the KIM2 bring-up alone is
