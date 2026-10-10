@@ -16,9 +16,13 @@
 #include "messages.hpp"
 #include "rate_limiter.hpp"
 #include "hauled_mode_service.hpp"
+#include "gps.hpp"
+
+#include <cstring>
 
 using namespace std::string_literals;
 
+extern GPSDevice *gps_device;
 extern Timer *system_timer;
 extern ConfigurationStore *configuration_store;
 extern Scheduler *system_scheduler;
@@ -84,6 +88,7 @@ TEST_GROUP(ArgosTxService) {
 		rtc = nullptr;
 		configuration_store = nullptr;
 		battery_monitor = nullptr;
+		gps_device = nullptr;  // the CloudLocate tests install a fake receiver
 	}
 
 	GPSLogEntry make_gps_location(bool is_valid = true, double longitude = 0, double latitude = 0, std::time_t t = 0,
@@ -4716,4 +4721,290 @@ TEST(ArgosTxService, DopplerSpacingIsFixedUnderBlind) {
 	cfg.blind_en = true;
 	for (unsigned int i = 1; i <= 6; i++)
 		CHECK_EQUAL(90u, ArgosTxService::doppler_interval_s(cfg, i));
+}
+
+// ---------------------------------------------------------------------------
+// CloudLocate MEAS20 with ARGOS_ADAPTIVE_MODULATION = 0 (2026-10)
+//
+// MEAS20 is a full 192-bit LDA2 frame. With adaptive off the frame goes on the
+// master modulation, and on an LDK master it does not fit: the slot used to end
+// with NOTHING on air (DEBUG_ERROR + service_complete) on every ping of the
+// burst and every heartbeat while the snapshot was held. It now falls through
+// to the cached-position / Doppler branches, exactly like an undatable snapshot.
+// ---------------------------------------------------------------------------
+
+// A receiver that only serves a held CloudLocate snapshot. Static so a failed
+// CHECK cannot leave gps_device dangling (teardown resets the pointer).
+namespace {
+class HeldSnapshotGPSDevice : public GPSDevice {
+public:
+	GNSSRawMeasurement raw;
+	void power_on(const GPSNavSettings &) override {}
+	void power_off() override {}
+	bool has_raw_measurement() const override { return true; }
+	GNSSRawMeasurement get_raw_measurement() const override { return raw; }
+};
+HeldSnapshotGPSDevice held_snapshot_gps;
+
+void notify_underwater_state_for_cl(bool state) {
+	ServiceEvent e;
+	e.event_type = ServiceEventType::SERVICE_LOG_UPDATED;
+	e.event_data = state;
+	e.event_source = ServiceIdentifier::UW_SENSOR;
+	e.event_originator_unique_id = 0x12345678;
+	ServiceManager::notify_peer_event(e);
+}
+}  // namespace
+
+// Surfacing burst, adaptive off, CloudLocate MEAS20 armed; returns the RTC (s)
+// of the surfacing, after the first (pre-warmed Doppler) TX has completed.
+static std::time_t cl_surface_and_send_ping1(ArgosTxService &serv, MockKineisDevice *mock_kineis, FakeRTC *fake_rtc,
+                                             FakeTimer *fake_timer, std::time_t &t, KineisModulation master) {
+	serv.start();
+	notify_underwater_state_for_cl(true);
+	t += 60000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+
+	// A datable MEAS20 capture (taken at the surfacing, well inside 1023 s).
+	held_snapshot_gps.raw = GNSSRawMeasurement();
+	held_snapshot_gps.raw.has_meas20 = true;
+	for (unsigned int i = 0; i < sizeof(held_snapshot_gps.raw.meas20); i++)
+		held_snapshot_gps.raw.meas20[i] = (uint8_t)(0xA0 + i);
+	held_snapshot_gps.raw.capture_time = (uint32_t)(t / 1000);
+	gps_device = &held_snapshot_gps;
+
+	notify_underwater_state_for_cl(false);
+
+	// Ping 1: the pre-warmed Doppler, on the master modulation.
+	mock()
+	    .expectOneCall("send")
+	    .onObject(mock_kineis)
+	    .withUnsignedIntParameter("mode", (unsigned int)master)
+	    .withUnsignedIntParameter("size_bits", 24);
+	system_scheduler->run();
+	mock_kineis->notify(KineisEventTxComplete({}));
+	return t / 1000;
+}
+
+TEST(ArgosTxService, CloudLocateMeas20OnLdkMasterFallsBackToDoppler) {
+	mock().ignoreOtherCalls();
+	configure_surfacing_burst();
+	fake_config_store->write_param(ParamID::ARGOS_ADAPTIVE_MODULATION, false);
+	fake_config_store->write_param(ParamID::GNSS_FASTLOC_MODE, (unsigned int)BaseFastlocMode::CLOUDLOCATE);
+	fake_config_store->write_param(ParamID::GNSS_CLOUDLOCATE_FORMAT, (unsigned int)BaseCloudLocateFormat::MEAS20);
+	mock_kineis->test_set_current_modulation(KineisModulation::LDK);
+
+	ArgosTxService serv(*mock_kineis);
+	std::time_t t = 1652105502000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	cl_surface_and_send_ping1(serv, mock_kineis, fake_rtc, fake_timer, t, KineisModulation::LDK);
+	CHECK_EQUAL(1U, mock_kineis->send_count);
+
+	// Ping 2: the MEAS20 (192 b) cannot go on LDK. No cached position exists, so
+	// a plain Doppler goes out on the master -- not nothing.
+	mock()
+	    .expectOneCall("send")
+	    .onObject(mock_kineis)
+	    .withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDK)
+	    .withUnsignedIntParameter("size_bits", 24);
+	t += serv.get_last_schedule();
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	system_scheduler->run();
+	CHECK_EQUAL(2U, mock_kineis->send_count);
+	CHECK_EQUAL(24U, mock_kineis->last_size_bits);
+	mock_kineis->notify(KineisEventTxComplete({}));
+
+	// Ping 3: same snapshot still held and datable -- still a Doppler, the
+	// burst does not go silent.
+	mock()
+	    .expectOneCall("send")
+	    .onObject(mock_kineis)
+	    .withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDK)
+	    .withUnsignedIntParameter("size_bits", 24);
+	t += serv.get_last_schedule();
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	system_scheduler->run();
+	CHECK_EQUAL(3U, mock_kineis->send_count);
+	mock().checkExpectations();
+}
+
+TEST(ArgosTxService, CloudLocateMeas20OnLdkMasterFallsBackToCachedShort) {
+	mock().ignoreOtherCalls();
+	configure_surfacing_burst();
+	fake_config_store->write_param(ParamID::ARGOS_ADAPTIVE_MODULATION, false);
+	fake_config_store->write_param(ParamID::GNSS_FASTLOC_MODE, (unsigned int)BaseFastlocMode::CLOUDLOCATE);
+	fake_config_store->write_param(ParamID::GNSS_CLOUDLOCATE_FORMAT, (unsigned int)BaseCloudLocateFormat::MEAS20);
+	mock_kineis->test_set_current_modulation(KineisModulation::LDK);
+
+	ArgosTxService serv(*mock_kineis);
+	std::time_t t = 1652105502000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+
+	// A last known fix from an earlier surfacing (RAM cache only: it is not in
+	// the depth pile, so it cannot promote the burst to the GNSS phase).
+	GPSLogEntry last = make_gps_location(true, 11.8768, -33.8232, (t / 1000) - 3600, true);
+	last.info.event_type = GPSEventType::FIX;
+	fake_config_store->notify_gps_location(last);
+
+	cl_surface_and_send_ping1(serv, mock_kineis, fake_rtc, fake_timer, t, KineisModulation::LDK);
+
+	// Ping 2: the MEAS20 does not fit LDK; the cached fix goes out as a SHORT
+	// (96 b, padded to the 16 B LDK frame by the backend).
+	mock()
+	    .expectOneCall("send")
+	    .onObject(mock_kineis)
+	    .withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDK)
+	    .withUnsignedIntParameter("size_bits", ArgosPacketBuilder::SHORT_PACKET_BITS);
+	t += serv.get_last_schedule();
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	system_scheduler->run();
+	CHECK_EQUAL(2U, mock_kineis->send_count);
+	mock().checkExpectations();
+}
+
+TEST(ArgosTxService, CloudLocateMeas20OnLda2MasterIsStillSent) {
+	mock().ignoreOtherCalls();
+	configure_surfacing_burst();
+	fake_config_store->write_param(ParamID::ARGOS_ADAPTIVE_MODULATION, false);
+	fake_config_store->write_param(ParamID::GNSS_FASTLOC_MODE, (unsigned int)BaseFastlocMode::CLOUDLOCATE);
+	fake_config_store->write_param(ParamID::GNSS_CLOUDLOCATE_FORMAT, (unsigned int)BaseCloudLocateFormat::MEAS20);
+	mock_kineis->test_set_current_modulation(KineisModulation::LDA2);
+
+	ArgosTxService serv(*mock_kineis);
+	std::time_t t = 1652105502000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	cl_surface_and_send_ping1(serv, mock_kineis, fake_rtc, fake_timer, t, KineisModulation::LDA2);
+
+	// Ping 2: the MEAS20 fits the LDA2 master and goes out unchanged, with no
+	// modulation switch.
+	mock()
+	    .expectOneCall("send")
+	    .onObject(mock_kineis)
+	    .withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2)
+	    .withUnsignedIntParameter("size_bits", ArgosPacketBuilder::CLOUDLOCATE_MEAS20_BITS);
+	mock().expectNoCall("switch_modulation");
+	t += serv.get_last_schedule();
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	system_scheduler->run();
+	CHECK_EQUAL(2U, mock_kineis->send_count);
+	CHECK_EQUAL(ArgosPacketBuilder::CLOUDLOCATE_MEAS20_BYTES, mock_kineis->last_packet.size());
+	CHECK_EQUAL(0xE0U, (unsigned int)((uint8_t)mock_kineis->last_packet[0] & 0xE0U));  // header 111 = CloudLocate
+	mock().checkExpectations();
+}
+
+// The depth-pile path: a CloudLocate entry retrieved by the GNSS burst on an
+// LDK master used to cost the slot AND the entry's credit with nothing sent.
+// The slot now goes to a Doppler.
+TEST(ArgosTxService, CloudLocatePileEntryOnLdkMasterFallsBackToDoppler) {
+	mock().ignoreOtherCalls();
+	configure_plain_legacy();
+	fake_config_store->write_param(ParamID::ARGOS_ADAPTIVE_MODULATION, false);
+	fake_config_store->write_param(ParamID::GNSS_FASTLOC_MODE, (unsigned int)BaseFastlocMode::CLOUDLOCATE);
+	fake_config_store->write_param(ParamID::GNSS_CLOUDLOCATE_FORMAT, (unsigned int)BaseCloudLocateFormat::MEAS20);
+	mock_kineis->test_set_current_modulation(KineisModulation::LDK);
+
+	ArgosTxService serv(*mock_kineis);
+	std::time_t t = 1652105502000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	serv.start();
+
+	// A real fix first (it unlocks LEGACY TX, and it would purge a CloudLocate
+	// already in the pile), then the CloudLocate entry as gps_service builds it.
+	inject_gps_location(true, 11.8768, -33.8232, t / 1000);
+	ServiceEvent e;
+	GPSLogEntry cl = make_gps_location(false, 0, 0, t / 1000);
+	cl.info.event_type = GPSEventType::CLOUDLOCATE;
+	uint8_t overlay[21] = { (uint8_t)BaseCloudLocateFormat::MEAS20 };
+	for (unsigned int i = 1; i < sizeof(overlay); i++)
+		overlay[i] = (uint8_t)i;
+	std::memcpy(reinterpret_cast<uint8_t *>(&cl.info.lon), overlay, sizeof(overlay));
+	e.event_source = ServiceIdentifier::GNSS_SENSOR;
+	e.event_type = ServiceEventType::SERVICE_LOG_UPDATED;
+	e.event_data = cl;
+	e.event_originator_unique_id = 0x12345678;
+
+	// The pile now holds the CloudLocate as its latest entry (depth 1), and the
+	// GNSS burst it triggers retrieves it: a Doppler on the master goes out.
+	mock()
+	    .expectOneCall("send")
+	    .onObject(mock_kineis)
+	    .withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDK)
+	    .withUnsignedIntParameter("size_bits", 24);
+	ServiceManager::notify_peer_event(e);
+	system_scheduler->run();
+	CHECK_EQUAL(1U, mock_kineis->send_count);
+	CHECK_EQUAL(24U, mock_kineis->last_size_bits);
+	mock().checkExpectations();
+}
+
+// GNSS_CLOUDLOCATE_READY fires the next burst ping immediately, past the
+// spacing guard, so that the CloudLocate goes out early. With adaptive off and
+// an LDK master the MEAS20 cannot go out at all -- the ping falls back to a
+// plain Doppler -- so the early fire would only pull a Doppler forward and
+// spend a burst slot. It must not happen: the burst keeps its cadence.
+TEST(ArgosTxService, CloudLocateReadyOnLdkMasterDoesNotFireEarly) {
+	mock().ignoreOtherCalls();
+	configure_surfacing_burst();
+	fake_config_store->write_param(ParamID::ARGOS_ADAPTIVE_MODULATION, false);
+	fake_config_store->write_param(ParamID::GNSS_FASTLOC_MODE, (unsigned int)BaseFastlocMode::CLOUDLOCATE);
+	fake_config_store->write_param(ParamID::GNSS_CLOUDLOCATE_FORMAT, (unsigned int)BaseCloudLocateFormat::MEAS20);
+	mock_kineis->test_set_current_modulation(KineisModulation::LDK);
+
+	ArgosTxService serv(*mock_kineis);
+	std::time_t t = 1652105502000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	cl_surface_and_send_ping1(serv, mock_kineis, fake_rtc, fake_timer, t, KineisModulation::LDK);
+	CHECK_EQUAL(1U, mock_kineis->send_count);
+	const unsigned int cadence = serv.get_last_schedule();
+
+	// One second later, well before the next ping is due.
+	t += 1000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	inject_cloudlocate_ready();
+	system_scheduler->run();
+	CHECK_EQUAL(1U, mock_kineis->send_count);
+	CHECK_EQUAL(cadence, serv.get_last_schedule());
+	mock().checkExpectations();
+}
+
+// The counterpart: on an LDA2 master the MEAS20 fits, and the early fire is
+// kept -- the CloudLocate goes out at once.
+TEST(ArgosTxService, CloudLocateReadyOnLda2MasterStillFiresEarly) {
+	mock().ignoreOtherCalls();
+	configure_surfacing_burst();
+	fake_config_store->write_param(ParamID::ARGOS_ADAPTIVE_MODULATION, false);
+	fake_config_store->write_param(ParamID::GNSS_FASTLOC_MODE, (unsigned int)BaseFastlocMode::CLOUDLOCATE);
+	fake_config_store->write_param(ParamID::GNSS_CLOUDLOCATE_FORMAT, (unsigned int)BaseCloudLocateFormat::MEAS20);
+	mock_kineis->test_set_current_modulation(KineisModulation::LDA2);
+
+	ArgosTxService serv(*mock_kineis);
+	std::time_t t = 1652105502000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	cl_surface_and_send_ping1(serv, mock_kineis, fake_rtc, fake_timer, t, KineisModulation::LDA2);
+	CHECK_EQUAL(1U, mock_kineis->send_count);
+
+	mock()
+	    .expectOneCall("send")
+	    .onObject(mock_kineis)
+	    .withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDA2)
+	    .withUnsignedIntParameter("size_bits", ArgosPacketBuilder::CLOUDLOCATE_MEAS20_BITS);
+	t += 1000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	inject_cloudlocate_ready();
+	system_scheduler->run();
+	CHECK_EQUAL(2U, mock_kineis->send_count);
+	mock().checkExpectations();
 }

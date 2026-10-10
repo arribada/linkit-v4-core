@@ -947,6 +947,13 @@ std::string DTEHandler::SATVF_REQ(int error_code, std::vector<BaseType> &arg_lis
 
 		unsigned int hw_id = 0, hw_addr = 0;
 		std::string hw_seckey, hw_rconf;
+#if defined(ARGOS_SMD) && (ARGOS_SMD == 1)
+		// SmdSat::read_credentials() writes DIRTY credentials to the module first
+		// and then reads the master RCONF's modulation back into
+		// ARGOS_CACHED_MODULATION — in RAM only. Remember whether that happened so
+		// the corrected cache can be persisted below.
+		bool smd_creds_written = configuration_store->is_credentials_dirty();
+#endif
 		kineis_device_instance->read_credentials(&hw_id, &hw_addr, &hw_seckey, &hw_rconf);
 
 		unsigned int cfg_id = configuration_store->read_param<unsigned int>(ParamID::ARGOS_DECID);
@@ -967,6 +974,15 @@ std::string DTEHandler::SATVF_REQ(int error_code, std::vector<BaseType> &arg_lis
 			kineis_device_instance->read_credentials(&hw_id, &hw_addr, &hw_seckey, &hw_rconf);
 			match = (hw_id == cfg_id && hw_addr == cfg_addr);
 			forced = 1;
+			smd_creds_written = true;
+		}
+		// Persist the modulation cache the credential write just corrected, as
+		// the KIM2 branch does. Without this it stayed in RAM until the 30 min
+		// periodic flush: a reset before that reloaded the stale value at the
+		// next boot, and the first TX of that boot was sized for the wrong
+		// modulation (e.g. a 4 B LDA2 Doppler under an LDK master).
+		if (smd_creds_written) {
+			configuration_store->save_params();
 		}
 #else
 		// KIM2: ID/ADDR are burned in (cannot be written), but force=1 still

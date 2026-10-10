@@ -393,9 +393,8 @@ bool SmdSatCmdSpi::send_command_aplus(uint8_t command, const uint8_t *tx_data, u
 			// but does not speak this protocol version.
 			DEBUG_WARN("SmdSatCmdSpi::%s: unparseable response to cmd 0x%02X — rx: "
 			           "%02X %02X %02X %02X %02X %02X %02X %02X",
-			           __func__, command, response_frame[0], response_frame[1], response_frame[2],
-			           response_frame[3], response_frame[4], response_frame[5], response_frame[6],
-			           response_frame[7]);
+			           __func__, command, response_frame[0], response_frame[1], response_frame[2], response_frame[3],
+			           response_frame[4], response_frame[5], response_frame[6], response_frame[7]);
 		}
 		if (!parsed && !SPI_APLUS_IS_RECOVERABLE(response->status)) {
 			return false;
@@ -1003,6 +1002,21 @@ bool SmdSatCmdSpi::is_tx_finished() {
 
 	if (mac_status == MAC_ERROR) {
 		DEBUG_ERROR("SmdSatCmdSpi::%s: TX error", __func__);
+		m_last_tx_status = mac_status;
+		return true;
+	}
+
+	// Terminal failures too, as poll_tx_result() already treats them. Ignoring
+	// them left the driver polling a TX that would never complete until the
+	// poll budget ran out (TCXO warm-up + 5 s), then entering the error state
+	// and counting a strike toward the 30 min cooldown. A frame mis-sized for
+	// the module's modulation (stale ARGOS_CACHED_MODULATION after a master
+	// change) is the expected source of MAC_TX_SIZE_ERROR. Now it fails in one
+	// poll: is_tx_successful() is false, so SmdSat raises DeviceError and stops
+	// without touching m_error_count — the same outcome as +ERROR on SMD_UART.
+	if (mac_status == MAC_TX_SIZE_ERROR || mac_status == MAC_RF_ABORTED) {
+		DEBUG_ERROR("SmdSatCmdSpi::%s: TX failed, MAC status 0x%02X (%s)", __func__, mac_status,
+		            mac_status == MAC_TX_SIZE_ERROR ? "payload size refused" : "RF aborted");
 		m_last_tx_status = mac_status;
 		return true;
 	}

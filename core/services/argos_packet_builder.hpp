@@ -38,8 +38,17 @@ public:
 	static constexpr unsigned int SHORT_PACKET_BYTES = 12;
 
 	// Long packet (LDA2, firmware-embedded CRC8 at byte 23).
-	// Shares the 3-bit header value 000 with Short Packet — receivers discriminate
-	// by frame size + modulation (12B LDK = Short, 24B LDA2 = Long).
+	// Shares the 3-bit header value 000 with Short Packet (and with the legacy
+	// Doppler, byte0 = 0x00) — receivers discriminate by frame size + modulation.
+	// Sizes ON AIR, after the backend pads (KIM2 and SMD agree in bytes): LDK
+	// frames are always 16 B; LDA2 frames are rounded up to a multiple of 4 B
+	// (min 4, max 24); VLDA4 frames are 3 B. Hence:
+	//   Short (96 b)       : 12 B on LDA2, 16 B on LDK (zero tail)
+	//   Long  (192 b)      : 24 B, LDA2 only
+	//   Doppler (24 b)     :  4 B on LDA2, 16 B on LDK (13 zero bytes), 3 B on VLDA4
+	//   CloudLocate MEAS20 : 24 B, LDA2 only
+	// A Short is therefore NOT identified by "12 B" alone: on an LDK master it is
+	// a 16 B frame, like a padded Doppler.
 	static constexpr unsigned int LONG_PACKET_HEADER = 0b000;
 	static constexpr unsigned int LONG_PACKET_BITS = LDA2_FRAME_BITS;
 	static constexpr unsigned int LONG_PACKET_PAYLOAD_BITS = LDA2_DATA_BITS;

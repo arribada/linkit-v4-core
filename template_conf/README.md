@@ -75,18 +75,44 @@ also spend one of its redundancy slots. The pile then carries nothing and a
 battery budget computed as "three positions per transmission" is wrong by a
 factor of three.
 
-Two conditions, not one:
+The four turtle templates ship `ARGOS_ADAPTIVE_MODULATION = 0` (decision
+2026-10), so adaptive modulation is **no longer a way to reach LDA2** for them.
+Every frame goes on the modulation of the **master RCONF** (`ARGOS_RADIOCONF`),
+and the per-modulation RCONFs (`ARGOS_RADIOCONF_LDK/LDA2/VLDA4`) only matter
+for the rare non-adaptive escalation paths. One condition, then:
 
-1. **LDA2 provisioned** — `ARGOS_RADIOCONF_LDA2` exactly 32 characters. That is
-   the firmware's own test (`refresh_modulation_availability`).
-2. **LDA2 reachable** — either the master RCONF decodes to LDA2, or
-   `ARGOS_ADAPTIVE_MODULATION = 1` lets the service switch to it for the
-   transmission.
+**The master RCONF decodes to LDA2.** On an LDK master, for these templates:
 
-The second is easy to miss. The bench board carries all three RCONFs, its master
-decodes to LDK, and adaptive is off: LDA2 is present and entirely unused, so no
-LONG packet can leave it as configured. The `PROV-01` bench case reads all three
-facts and returns that verdict for a given board.
+- GNSS positions go out **one per transmission** (SHORT, 96 bits padded to the
+  128-bit LDK frame); a pile of 4 is redundancy, not throughput.
+- **CloudLocate MEAS20 is never transmitted.** It is 192 bits, an LDA2-only
+  frame. `turtle_cloudlocate.cfg` and `turtle_argos_surface.cfg` use MEAS20
+  (`GNSS_CLOUDLOCATE_FORMAT = 1`), so on an LDK master they report no
+  CloudLocate at all. The slot is not lost: it falls back to the last cached
+  position or to a Doppler (firmware fix 2026-10 — before it, the slot went out
+  empty, on every ping and heartbeat while the snapshot was held).
+- The Doppler — the low-battery `DOPPLER` fallback included
+  (`LB_ARGOS_TX_REPETITION = 600`) — follows the master too: a 4-byte frame on
+  LDA2, a 128-bit (16-byte) frame with a zero tail on LDK. Count that in any
+  energy estimate, and check that the ground decoder classifies it as a Doppler.
+
+**An empty master is not a fallback, it is a provisioning error.** The factory
+value of `ARGOS_RADIOCONF` is empty, and the templates do not set it (no real
+credentials here, see below). With an empty master the KIM2 programs a
+hard-coded LDK RCONF: the unit silently becomes an LDK-master unit with all of
+the above. A unit that only ever ran with adaptive on may never have had its
+master written, because adaptive used the per-modulation RCONFs instead. Before
+deployment, write the master and read back what it decodes to — `SATVF` (on
+KIM2 `force=1` re-programs it and re-seeds the modulation cache). On SMD, run
+`SATVF` after provisioning so the modulation read back from the module is
+saved before the tag is sealed; and after pushing a template that turns
+adaptive off on an already-deployed SMD unit, reboot it (or rewrite
+`ARGOS_RADIOCONF`) so it reprograms the master.
+
+The bench board is exactly the trap: it carries all three per-modulation RCONFs
+but its master decodes to LDK, so with adaptive off no LONG packet and no MEAS20
+can leave it. The `PROV-01` bench case reads these facts and returns that
+verdict for a given board.
 
 ## Validating a file
 
@@ -121,6 +147,9 @@ refused by the device. The checker closes both gaps — it reads
   the GNSS off, `SURFACING_BURST` without the water sensor, CloudLocate in any
   mode but `SURFACING_BURST`, an empty duty-cycle mask, a critical battery
   threshold above the low one;
+- **provisioning prerequisites** (informational) — what the file needs from
+  the device that no template can state, such as CloudLocate MEAS20 with
+  adaptive off requiring a master RCONF that decodes to LDA2;
 - drift between `tools/pylinkit_map.py`, the firmware, and — when `PYLINKIT`
   points at a checkout — that installation of PyLinkit.
 

@@ -8,8 +8,9 @@ those vectors byte for byte. Firmware: `core/services/dive_behaviour_tracker.hpp
 
 ## 0. Design constraints
 - No adaptive modulation in the design: the Doppler goes on whatever modulation the module actually frames with
-  (master RCONF when adaptive is off). The turtle templates still say `ARGOS_ADAPTIVE_MODULATION = 1`;
-  that is a separate decision (see §7).
+  (master RCONF when adaptive is off). All four turtle templates ship `ARGOS_ADAPTIVE_MODULATION = 0`
+  (decision 2026-10), so the Doppler view follows the master: LDA2 master → 4 B compact view (DRY/DEND + CRC),
+  LDK master → 16 B view with the rich block. The 3 B VLDA4 view only arises from a VLDA4 master.
 - Reuse the existing Doppler message (byte0 = 0x00). No new message type.
 - The payload must be fully built BEFORE surfacing. The surfacing path may only do RAM reads + integer ops
   (< ~100 µs): no ADC, no flash, no DEBUG line, no allocation.
@@ -150,5 +151,6 @@ do NOT enable it in any template.
 - S_LAST/PCT read ~1-2 surface sampling periods high; D_PREV/D_MAX saturate near the SWS escalation (~6 h).
 - Behaviour fields are stale during a surface lock (no dive edge); SURF_SEQ frozen across frames reveals it.
 - RST does not count reboots that never reach Operational.
-- Turtle templates use adaptive=1: on SMD that puts the Doppler on VLDA4 (compact only); the rich block needs
-  adaptive=0 + LDK master RCONF. User decision.
+- Turtle templates use adaptive=0 (2026-10): the view is set by the master RCONF. An LDA2 master gives the 4 B
+  compact view only; the rich block needs an LDK master. That choice is a provisioning decision per unit, and it
+  also decides whether the depth pile and CloudLocate MEAS20 work (both need LDA2, see template_conf/README.md).

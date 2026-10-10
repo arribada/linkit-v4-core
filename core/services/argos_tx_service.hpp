@@ -257,12 +257,22 @@ private:
 
 	// @brief Modulation to use when adaptive is OFF. The user's master RCONF
 	// (ARGOS_RADIOCONF) is encrypted hex — we can't tell locally which
-	// modulation it encodes. The device layer (KIM2) reads back AT+RCONF=? at
-	// init and caches the actual modulation, exposed via get_current_modulation().
-	// SMD doesn't auto-detect (m_modulation stays at LDA2 default), so SMD
-	// users keep today's behavior. Falls back to LDA2 on first cold boot
-	// before init has run.
+	// modulation it encodes, so both backends read it back from the module and
+	// expose it via get_current_modulation(). KIM2: AT+RCONF=? at every
+	// state_init. SMD: READ_RCONF after the master write of the first session of
+	// each nRF boot (write_credentials_from_config), cached across boots in
+	// ARGOS_CACHED_MODULATION and loaded by the SmdSat constructor. Before that
+	// readback (first cold boot, or a stale cache) the value may be wrong for
+	// one TX.
 	KineisModulation resolve_non_adaptive_modulation();
+
+	// CloudLocate MEAS20 (192 b) that the live modulation cannot carry with
+	// adaptive OFF (e.g. LDK master). The slot falls through to the
+	// cached-position / Doppler branches instead of going silent. Logged at INFO
+	// once per surfacing (DEBUG lines also commit to the flash log, and this
+	// runs on the surface for every ping and heartbeat), TRACE afterwards.
+	bool m_cl_unfit_noted = false;
+	void note_cloudlocate_unfit(const char *where, unsigned int size_bits, KineisModulation mode);
 
 	/// @brief Modulation the adaptive Doppler phase transmits on.
 	/// VLDA4 where the backend permits it, LDA2 where it does not (KIM2 gates

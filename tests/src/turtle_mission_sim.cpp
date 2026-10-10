@@ -262,6 +262,11 @@ TEST_GROUP(TurtleMission) {
 		fake_cfg->write_param(ParamID::GNSS_EN, (bool)true);
 		fake_cfg->write_param(ParamID::LB_EN, (bool)false);
 		fake_cfg->write_param(ParamID::ARGOS_TX_JITTER_EN, (bool)false);
+		// As shipped since 2026-10: ARGOS_ADAPTIVE_MODULATION = 0. It is also the
+		// firmware default, written here so the profile does not silently follow a
+		// default change. The frame then goes on the master modulation, which this
+		// sim models as LDA2 (the RecordingKineisDevice's starting modulation).
+		fake_cfg->write_param(ParamID::ARGOS_ADAPTIVE_MODULATION, (bool)false);
 		unsigned int no_cooldown = 0U;  // as shipped: MIN_SURFACE_CYCLE_INTERVAL = 0
 		fake_cfg->write_param(ParamID::MIN_SURFACE_CYCLE_INTERVAL_S, no_cooldown);
 	}

@@ -1527,6 +1527,7 @@ void ArgosTxService::notify_peer_event(ServiceEvent &e) {
 				m_doppler_burst_count = 0;
 				m_has_gnss_fix_since_surfacing = false;
 				m_first_gnss_tx_sent = false;
+				m_cl_unfit_noted = false;  // one INFO line per surfacing, see note_cloudlocate_unfit()
 				// Keep SMD alive between burst pings — default 1s idle timeout
 				// is too short for 5-30s Doppler intervals, causing shutdown+reboot
 				// failures on the 3rd TX
@@ -1569,6 +1570,24 @@ void ArgosTxService::notify_peer_event(ServiceEvent &e) {
 				DEBUG_INFO("ArgosTxService::notify_peer_event: GNSS_CLOUDLOCATE_READY during a device-error hold — "
 				           "deferring to the normal schedule");
 				return;
+			}
+			// 2026-10 — with adaptive OFF the CloudLocate goes on the live
+			// (master) modulation, and process_doppler_burst() hands a frame that
+			// does not fit it (MEAS20 = 192 b on an LDK master) to the
+			// cached-position / Doppler branches. Firing early would then only
+			// pull a plain ping forward, past apply_spacing_guard, and spend a
+			// SURFACING_BURST_MAX_MSG slot for nothing. Keep the burst cadence.
+			// Same fit test as process_doppler_burst(), so both always agree.
+			if (!configuration_store->read_param<bool>(ParamID::ARGOS_ADAPTIVE_MODULATION)) {
+				const unsigned int cl_bits = ArgosPacketBuilder::cloudlocate_packet_bits(
+				    (uint8_t)configuration_store->read_param<unsigned int>(ParamID::GNSS_CLOUDLOCATE_FORMAT));
+				const KineisModulation live = m_kineis.get_current_modulation();
+				if (!size_fits_modulation(cl_bits, live)) {
+					DEBUG_TRACE("ArgosTxService::notify_peer_event: GNSS_CLOUDLOCATE_READY — %u bits do not fit mod %d "
+					            "(ARGOS_AD_MOD=0), no early TX",
+					            cl_bits, (int)live);
+					return;
+				}
 			}
 			DEBUG_INFO("ArgosTxService::notify_peer_event: GNSS_CLOUDLOCATE_READY — rescheduling early CloudLocate TX");
 			m_scheduled_task = [this]() { process_doppler_burst(); };
@@ -1653,11 +1672,13 @@ bool ArgosTxService::size_fits_modulation(unsigned int payload_bits, KineisModul
 /// @brief Modulation honored by the device when adaptive is OFF.
 /// On KIM2, state_init parses AT+RCONF=? and updates m_current_rconf_mode to
 /// the modulation actually encoded in the master RCONF (which is encrypted
-/// hex and not locally decodable). On SMD, m_modulation stays at the LDA2
-/// constructor default — SMD users see today's behavior (master RCONF must
-/// encode LDA2). On first cold boot of KIM2 before init has run, returns the
-/// LDA2 default; the first TX may fail if the master encodes a different
-/// modulation, but state_init will update the cache and subsequent TXs work.
+/// hex and not locally decodable). On SMD, m_modulation is loaded at
+/// construction from ARGOS_CACHED_MODULATION and corrected by the READ_RCONF
+/// readback that follows the master write in the first SMD session of every
+/// nRF boot (write_credentials_from_config) — and by SATVF when the
+/// credentials are dirty. Either backend may report a stale value until that
+/// readback has run once (first cold boot, cache not yet flushed): the first
+/// TX can then be mis-sized, the following ones are right.
 KineisModulation ArgosTxService::resolve_non_adaptive_modulation() {
 	// Deliberately reports what the module actually has loaded, VLDA4 included.
 	// The non-adaptive burst paths rely on that to decide they need NOT
@@ -1665,6 +1686,23 @@ KineisModulation ArgosTxService::resolve_non_adaptive_modulation() {
 	// under the wrong RCONF. The VLDA4 ban is applied by can_transmit_on(),
 	// which routes through the fallback that does call ensure_modulation().
 	return m_kineis.get_current_modulation();
+}
+
+/// @brief One line per surfacing for a CloudLocate the live modulation cannot
+/// carry with adaptive OFF (MEAS20 = 192 b on an LDK master). Not an error: the
+/// slot falls through to a cached position or a Doppler. INFO once, then TRACE —
+/// this runs for every ping and heartbeat of the surfacing, and every DEBUG
+/// line also commits to the flash log.
+void ArgosTxService::note_cloudlocate_unfit(const char *where, unsigned int size_bits, KineisModulation mode) {
+	if (!m_cl_unfit_noted) {
+		m_cl_unfit_noted = true;
+		DEBUG_INFO("ArgosTxService::%s: CloudLocate %u bits does not fit master mod %s (ARGOS_AD_MOD=0, LDA2 "
+		           "master required) — sending position/Doppler instead",
+		           where, size_bits, argos_modulation_to_string((BaseArgosModulation)mode));
+	} else {
+		DEBUG_TRACE("ArgosTxService::%s: CloudLocate %u bits does not fit mod %d — fallback", where, size_bits,
+		            (int)mode);
+	}
 }
 
 /// @brief Modulation the adaptive Doppler phase transmits on.
@@ -1854,13 +1892,12 @@ void ArgosTxService::process_sensor_burst() {
 
 			// Modulation policy:
 			//   adaptive=ON  → pick optimal mod from format (MEASC12→LDK, MEAS20→LDA2)
-			//                  and switch the SMD accordingly.
-			//   adaptive=OFF → respect the master modulation actually configured in
-			//                  the SMD (NOT m_scheduled_mode — line 207 hardcodes
-			//                  LDA2 in SURFACING_BURST regardless of master). Query
-			//                  the live SMD state so send() always matches.
-			//                  Padding fits LDA2 (24 B); the LDK micro-optimization
-			//                  for MEASC12 is opt-in via ARGOS_AD_MOD.
+			//                  and switch the module accordingly.
+			//   adaptive=OFF → respect the master modulation actually loaded in the
+			//                  module (the live value, read back from the module;
+			//                  m_scheduled_mode holds the same thing in non-adaptive
+			//                  scheduling). The LDK micro-optimization for MEASC12
+			//                  is opt-in via ARGOS_AD_MOD.
 			if (argos_config.adaptive_modulation) {
 				m_scheduled_mode = (format_id == (uint8_t)BaseCloudLocateFormat::MEASC12) ? KineisModulation::LDK
 				                                                                          : KineisModulation::LDA2;
@@ -1878,10 +1915,15 @@ void ArgosTxService::process_sensor_burst() {
 			} else {
 				m_scheduled_mode = m_kineis.get_current_modulation();
 				if (!can_transmit_on(m_scheduled_mode, size_bits)) {
-					DEBUG_ERROR("ArgosTxService::process_sensor_burst: CloudLocate payload %u bits doesn't fit master "
-					            "mod %d (ARGOS_AD_MOD=0) — skipping TX",
-					            size_bits, (int)m_scheduled_mode);
-					service_complete();
+					// 2026-10 — MEAS20 on an LDK master: fall through to the Doppler
+					// path (cached position or plain Doppler) instead of a silent
+					// slot. The entry's credit stays SPENT on purpose: this master
+					// can never carry it, so a refund would only bring it back at
+					// every rotation of the pile, each time costing a slot. The next
+					// real fix purges it anyway (purge_non_fix_entries).
+					note_cloudlocate_unfit("process_sensor_burst", size_bits, m_scheduled_mode);
+					m_inflight_gps.clear();
+					process_doppler_burst();
 					return;
 				}
 			}
@@ -2118,9 +2160,10 @@ void ArgosTxService::process_gnss_burst() {
 			                                                      cl_capture, (uint32_t)service_current_time());
 			size_bits = ArgosPacketBuilder::cloudlocate_packet_bits(format_id);
 			// Modulation policy: see process_sensor_burst for full rationale.
-			//   adaptive=ON  → pick optimal mod from format, switch SMD.
-			//   adaptive=OFF → use live SMD modulation, NOT m_scheduled_mode
-			//                  (which line 207 hardcodes to LDA2 in SURFACING_BURST).
+			//   adaptive=ON  → pick optimal mod from format, switch the module.
+			//   adaptive=OFF → the live module modulation (the master RCONF's, read
+			//                  back from the module).
+			bool cl_unfit = false;
 			if (argos_config.adaptive_modulation) {
 				m_scheduled_mode = (format_id == (uint8_t)BaseCloudLocateFormat::MEASC12) ? KineisModulation::LDK
 				                                                                          : KineisModulation::LDA2;
@@ -2137,22 +2180,35 @@ void ArgosTxService::process_gnss_burst() {
 				}
 			} else {
 				m_scheduled_mode = m_kineis.get_current_modulation();
-				if (!can_transmit_on(m_scheduled_mode, size_bits)) {
-					DEBUG_ERROR("ArgosTxService::process_gnss_burst: CloudLocate payload %u bits doesn't fit master "
-					            "mod %d (ARGOS_AD_MOD=0) — skipping TX",
-					            size_bits, (int)m_scheduled_mode);
-					service_complete();
-					return;
-				}
+				cl_unfit = !can_transmit_on(m_scheduled_mode, size_bits);
 			}
-			// Demoted to TRACE: per-TX payload dump.
-			DEBUG_TRACE("ArgosTxService::process_gnss_burst: CloudLocate fmt=%u mode=%s data=%s", format_id,
-			            argos_modulation_to_string((BaseArgosModulation)m_scheduled_mode),
-			            Binascii::hexlify(packet).c_str());
-			m_last_tx_had_gps = true;
-			m_last_val_tx_type = "cloudloc";
-			m_kineis.send(m_scheduled_mode, packet, size_bits);
-			return;
+			if (!cl_unfit) {
+				// Demoted to TRACE: per-TX payload dump.
+				DEBUG_TRACE("ArgosTxService::process_gnss_burst: CloudLocate fmt=%u mode=%s data=%s", format_id,
+				            argos_modulation_to_string((BaseArgosModulation)m_scheduled_mode),
+				            Binascii::hexlify(packet).c_str());
+				m_last_tx_had_gps = true;
+				m_last_val_tx_type = "cloudloc";
+				m_kineis.send(m_scheduled_mode, packet, size_bits);
+				return;
+			}
+			// 2026-10 — MEAS20 on an LDK master with adaptive OFF: this slot used
+			// to end with nothing on air. Drop the CloudLocate and fall through:
+			// to the remaining entries of this retrieve if any (in practice there
+			// are none — the LDK master already capped the retrieve to one entry),
+			// otherwise to the Doppler path (cached position or plain Doppler).
+			// The CloudLocate's credit stays SPENT on purpose: this master can
+			// never carry it, so a refund would only bring it back at every
+			// rotation of the pile, each time costing a slot. The next real fix
+			// purges it anyway (purge_non_fix_entries).
+			note_cloudlocate_unfit("process_gnss_burst", size_bits, m_scheduled_mode);
+			v.pop_back();
+			m_inflight_gps = v;
+			if (v.empty()) {
+				process_doppler_burst();
+				return;
+			}
+			packet.clear();
 		}
 
 		// A fastloc entry produces a full LDA2 frame (FASTLOC_PACKET_BITS equals
@@ -2564,6 +2620,30 @@ void ArgosTxService::process_doppler_burst() {
 			}
 		}
 
+		// 2026-10 — adaptive OFF puts the frame on the master modulation, and
+		// MEAS20 (192 b) only fits LDA2. On an LDK master this slot used to end
+		// with NOTHING on air (DEBUG_ERROR + service_complete), on every ping and
+		// on every heartbeat for as long as the snapshot was held — a silent
+		// burst rather than a missing CloudLocate. Same remedy as the undatable
+		// snapshot above: hand the slot to the fastloc / cached-position /
+		// Doppler branches below. Deliberately NO RCONF escalation to LDA2 from
+		// THIS branch: that switch is sticky on SMD and the operator chose the
+		// master. Caveat: the progressive-fastloc branch below is gated on
+		// fastloc_mode >= DEGRADED_PVT, which CLOUDLOCATE satisfies, and with
+		// adaptive OFF it still escalates to LDA2 when a degraded PVT is held —
+		// exactly as it already did for a ping with no (or an undatable)
+		// snapshot. A degraded PVT is only stored when the hAcc/hDOP filters
+		// reject a fix, and the CloudLocate templates ship both filters off, so
+		// that path stays dormant for them.
+		if (blob && !argos_config.adaptive_modulation) {
+			const unsigned int cl_bits = ArgosPacketBuilder::cloudlocate_packet_bits(format_id);
+			const KineisModulation live = m_kineis.get_current_modulation();
+			if (!size_fits_modulation(cl_bits, live)) {
+				note_cloudlocate_unfit("process_doppler_burst", cl_bits, live);
+				blob = nullptr;
+			}
+		}
+
 		if (blob) {
 			// Demoted to TRACE: per-ping TX_RAW dump on the surfacing-burst hot
 			// path adds ~50-300 ms of LFS commit per emit.
@@ -2576,10 +2656,11 @@ void ArgosTxService::process_doppler_burst() {
 			size_bits = ArgosPacketBuilder::cloudlocate_packet_bits(format_id);
 
 			// Modulation policy: see process_sensor_burst for full rationale.
-			//   adaptive=ON  → pick optimal mod from format, switch SMD.
-			//   adaptive=OFF → use live SMD modulation. m_scheduled_mode is NOT
-			//                  reliable here — line 207 hardcodes LDA2 in
-			//                  SURFACING_BURST regardless of master config.
+			//   adaptive=ON  → pick optimal mod from format, switch the module.
+			//   adaptive=OFF → the live module modulation (= the master RCONF's,
+			//                  which m_scheduled_mode also holds in non-adaptive
+			//                  SURFACING_BURST). The fit was checked above: a
+			//                  frame that does not fit never reaches this block.
 			KineisModulation tx_mode;
 			if (argos_config.adaptive_modulation) {
 				tx_mode = (format_id == (uint8_t)BaseCloudLocateFormat::MEASC12) ? KineisModulation::LDK
@@ -2597,13 +2678,6 @@ void ArgosTxService::process_doppler_burst() {
 				}
 			} else {
 				tx_mode = m_kineis.get_current_modulation();
-				if (!size_fits_modulation(size_bits, tx_mode)) {
-					DEBUG_ERROR("ArgosTxService::process_doppler_burst: CloudLocate payload %u bits doesn't fit master "
-					            "mod %d (ARGOS_AD_MOD=0) — skipping TX",
-					            size_bits, (int)tx_mode);
-					service_complete();
-					return;
-				}
 			}
 
 			DEBUG_TRACE("ArgosTxService::process_doppler_burst: CLOUDLOCATE #%u fmt=%u sz=%u mode=%s",
@@ -2675,10 +2749,15 @@ void ArgosTxService::process_doppler_burst() {
 				}
 			}
 		} else {
-			// Non-adaptive: same safety escalation as the three sibling branches
-			// of this processor (prewarm, CloudLocate, cached position), which do
-			// apply it. Without it the surface ping left in LDA2 on a module still
-			// on the master.
+			// Non-adaptive: escalate to LDA2, since a fastloc frame is a full
+			// 192-bit LDA2 frame. Without it the surface ping left in LDA2 on a
+			// module still on the master. This branch is the ONLY one of this
+			// processor that escalates with adaptive OFF: the prewarm Doppler
+			// ships on the master as is, the cached position falls through to
+			// the Doppler when it does not fit, and the CloudLocate branch above
+			// deliberately does not escalate either — a MEAS20 that does not fit
+			// the master falls through to here and below (see the 2026-10 note
+			// above).
 			if (!ensure_modulation(KineisModulation::LDA2)) {
 				DEBUG_ERROR(
 				    "ArgosTxService::process_doppler_burst: fastloc %u bits need LDA2, not provisioned — skipping TX",
@@ -2811,11 +2890,12 @@ void ArgosTxService::process_doppler_burst() {
 	const bool is_dx1 = (ext != nullptr);
 #endif
 
-	// Adaptive modulation: Doppler = 24 bits = VLDA4.
+	// Adaptive modulation: Doppler = 24 bits = VLDA4 (LDA2 where VLDA4 is not
+	// permitted).
 	// Non-adaptive: honor the master RCONF's modulation (LDK/LDA2/VLDA4 all
-	// accept a 24-bit Doppler payload — KIM2 pads per modulation). LDA2
-	// fallback is for SMD users (m_modulation stays at LDA2) and the very
-	// first KIM2 boot before state_init has read back the actual modulation.
+	// accept a 24-bit Doppler payload — both backends pad per modulation:
+	// 4 B on LDA2, 16 B on LDK, 3 B on VLDA4). The modulation is the one read
+	// back from the module (see resolve_non_adaptive_modulation()).
 	KineisModulation tx_mode;
 	if (argos_config.adaptive_modulation) {
 		tx_mode = adaptive_doppler_modulation();

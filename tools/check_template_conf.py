@@ -371,6 +371,26 @@ def coherence(valeurs):
     return out
 
 
+def prerequis(valeurs):
+    """Provisioning prerequisites: what the file needs from the device.
+
+    Informational only, never a FAIL. A template cannot know how the device is
+    provisioned (the master RCONF is encrypted and decoded only by the module),
+    so these are conditions to verify on each unit, not defects of the file.
+    """
+    v = valeurs.get
+    out = []
+    adaptive = (v("ARGOS_ADAPTIVE_MODULATION") or "0").strip()
+    if (v("GNSS_FASTLOC_MODE") == "2" and v("GNSS_CLOUDLOCATE_FORMAT") == "1"
+            and adaptive != "1"):
+        out.append("CloudLocate MEAS20 (192 b) with ARGOS_ADAPTIVE_MODULATION=0 requires an LDA2 "
+                   "master: ARGOS_RADIOCONF must be provisioned (factory value empty -> KIM2 "
+                   "falls back to a hard-coded LDK RCONF) and must decode to LDA2. On an LDK "
+                   "master no CloudLocate is ever sent; the slot falls back to a cached "
+                   "position or a Doppler. Check with SATVF / bench case PROV-01.")
+    return out
+
+
 def check(path, fw, live=None):
     problems, gated, seen, n = [], [], set(), 0
     non_verifies, valeurs = [], {}
@@ -430,7 +450,7 @@ def check(path, fw, live=None):
         if lo is not None and hi is not None and hi > lo and not (lo <= wire <= hi):
             problems.append(f"{lineno}: {nom} ({key}): {val} outside [{lo}, {hi}]")
     problems.extend(f"coherence: {c}" for c in coherence(valeurs))
-    return n, problems, gated, non_verifies, inertes(valeurs)
+    return n, problems, gated, non_verifies, inertes(valeurs), prerequis(valeurs)
 
 
 def main():
@@ -450,7 +470,7 @@ def main():
         print("no template to check")
         return rc
     for f in files:
-        n, problems, gated, non_verifies, inutiles = check(f, fw, live)
+        n, problems, gated, non_verifies, inutiles, prereqs = check(f, fw, live)
         rel = os.path.relpath(f, ROOT)
         if problems:
             rc = 1
@@ -470,6 +490,11 @@ def main():
             for raison, noms in sorted(par_raison.items()):
                 print(f"         {', '.join(sorted(noms))}")
                 print(f"           ({raison})")
+        if prereqs:
+            print(f"       note: {len(prereqs)} provisioning prerequisite(s) — not checkable "
+                  f"from the file, verify on each unit:")
+            for p in prereqs:
+                print(f"         {p}")
         if gated:
             print(f"       note: {len(gated)} key(s) behind a build flag —")
             for nom, key, gate in gated:
