@@ -193,12 +193,13 @@ bool SmdSatCmdAt::send_at(const std::string &cmd, uint16_t timeout_ms) {
 }
 
 bool SmdSatCmdAt::send_at_with_data(const std::string &cmd, std::string &response_data, uint16_t timeout_ms) {
-	// Replies are not correlated: the first "+OK" ends the wait. A reply that
-	// lands after its own command timed out is then taken as the NEXT command's
-	// answer -- on the UART-AT v1.0.0 module a late empty "+VERSION=" made
-	// AT+FW=? return "" while "+FW=v1.0.0" was still in the buffer (bench
-	// 2026-10-10). Drain what is pending, then accept only "+<KEY>=" for this
-	// query's key followed by "+OK".
+	// Replies used to be matched to nothing: the first "+OK" ended the wait, so
+	// a "+KEY=" line arriving after it was read by the NEXT query. On the
+	// UART-AT v1.0.0 module every field of SMDTST was shifted by one (FW showed
+	// VERSION, ID showed FW...) while reporting 12/12 (bench 2026-10-10).
+	// Now: drain what is pending, then wait for this query's "+<KEY>=" line and
+	// its "+OK" in either order. A query the module answers with "+OK" alone
+	// (AT+PING=?) succeeds with empty data after a short grace period.
 	for (uint8_t i = 0; i < 20; i++) {
 		PMU::delay_ms(1);
 		NrfUartAsync::process_rx();
@@ -217,20 +218,31 @@ bool SmdSatCmdAt::send_at_with_data(const std::string &cmd, std::string &respons
 
 	if (!send_string(cmd + "\r\n")) return false;
 
+	static constexpr uint16_t DATA_GRACE_MS = 150;
+	bool have_data = false;
+	std::string data;
+	uint16_t grace = DATA_GRACE_MS;
 	while (timeout_ms > 0) {
 		PMU::delay_ms(1);
 		NrfUartAsync::process_rx();
 		timeout_ms--;
 		if (m_resp_error) break;
+		if (m_resp_data_ready) {
+			if (key.empty() || m_resp_key == key) {
+				have_data = true;
+				data = m_resp_data;
+			}
+			m_resp_data_ready = false;
+		}
 		if (m_resp_ok) {
-			if (key.empty() || (m_resp_data_ready && m_resp_key == key)) break;
-			m_resp_ok = false;  // stale "+OK" of an earlier command: keep waiting for ours
+			if (have_data || key.empty()) break;
+			if (grace-- == 0) break;  // "+OK" without a data line: empty answer
 		}
 	}
 
 	if (timeout_ms == 0 || m_resp_error) return false;
 
-	response_data = m_resp_data;
+	response_data = data;
 	return true;
 }
 
