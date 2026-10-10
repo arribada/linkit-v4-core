@@ -7066,7 +7066,24 @@ def radio_muette_prouvee(r):
         clefs = cles_implementees(b)
         if not clefs:
             return rend(False, 'PARML muet: type de build inconnu, mutisme non prouve')
-        if 'ARP60' in clefs or 'LRP07' in clefs:
+        if 'ARP60' in clefs:
+            # SMD : SMDDFU VERSION ne prouve rien. Le firmware module AT v1.0.0
+            # repond une chaine VIDE a AT+VERSION, donc un module VIVANT lit
+            # "Failed to read version" (banc Windows 2026-10-10, SMDTST 12/12 OK) :
+            # l ancienne sonde le declarait muet et laissait les cas satellite
+            # tourner en SURFACING_BURST. SMDTST allume le module et n envoie que
+            # PING / READ_* / *_STATUS ; sur un module muet il dure ~93 s.
+            if not _en_config(b):
+                return rend(False, 'configuration inaccessible: mutisme non prouve')
+            m = b.dte('SMDTST', '', timeout=150.0)
+            ligne = (m.string if m else '').strip()
+            zero_ok = bool(m) and re.search(r'(?<!\d)0/\d+', ligne) is not None
+
+            # (ligne vide ci-dessus : le controle des motifs regarde 90 caracteres en amont)
+            if zero_ok:
+                return rend(True, f'mutisme prouve par la reponse SMDTST "{ligne[-60:]}"')
+            return rend(False, f'module SMD vivant ou mutisme non prouve (SMDTST: {ligne[-60:] or "pas de reponse"})')
+        if 'LRP07' in clefs:
             vivante, raison = radio_repond(b)
             return rend(not vivante, raison or 'le module repond a SMDDFU VERSION')
         if not _en_config(b):

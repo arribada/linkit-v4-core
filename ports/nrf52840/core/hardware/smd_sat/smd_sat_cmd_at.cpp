@@ -552,7 +552,10 @@ void SmdSatCmdAt::read_spimac_state(uint8_t *spi_state, uint8_t *mac_state) {
 
 void SmdSatCmdAt::read_version(uint8_t *version) {
 	std::string data;
-	if (send_at_with_data("AT+VERSION=?", data) && !data.empty()) {
+	// Module firmware v1.0.0 (UART-AT) answers AT+VERSION with an empty string;
+	// the version is only in AT+FW. Fall back so SMDDFU VERSION is not "Failed".
+	if ((send_at_with_data("AT+VERSION=?", data) && !data.empty())
+	    || (send_at_with_data("AT+FW=?", data) && !data.empty())) {
 		uint16_t len = std::min(static_cast<uint16_t>(data.size()), static_cast<uint16_t>(63));
 		memcpy(version, data.c_str(), len);
 		version[len] = 0;
@@ -854,13 +857,14 @@ std::string SmdSatCmdAt::run_command_test() {
 	struct CmdTest {
 		const char *cmd;
 		const char *name;
+		bool secret;  // credential: the system log is in flash and readable over DTE (DUMPD)
 	};
 
 	CmdTest tests[] = {
-		{ "AT+PING=?", "PING" }, { "AT+VERSION=?", "VERSION" }, { "AT+FW=?", "FW" },
-		{ "AT+ID=?", "ID" },     { "AT+ADDR=?", "ADDR" },       { "AT+SECKEY=?", "SECKEY" },
-		{ "AT+SN=?", "SN" },     { "AT+RCONF=?", "RCONF" },     { "AT+RCONFRAW=?", "RCONFRAW" },
-		{ "AT+KMAC=?", "KMAC" }, { "AT+LPM=?", "LPM" },         { "AT+TCXO_WU=?", "TCXO_WU" },
+		{ "AT+PING=?", "PING", false }, { "AT+VERSION=?", "VERSION", false }, { "AT+FW=?", "FW", false },
+		{ "AT+ID=?", "ID", false },     { "AT+ADDR=?", "ADDR", false },       { "AT+SECKEY=?", "SECKEY", true },
+		{ "AT+SN=?", "SN", true },      { "AT+RCONF=?", "RCONF", false },     { "AT+RCONFRAW=?", "RCONFRAW", false },
+		{ "AT+KMAC=?", "KMAC", true },  { "AT+LPM=?", "LPM", false },         { "AT+TCXO_WU=?", "TCXO_WU", false },
 	};
 
 	uint8_t pass_count = 0;
@@ -873,7 +877,10 @@ std::string SmdSatCmdAt::run_command_test() {
 
 		if (ok) {
 			pass_count++;
-			DEBUG_INFO("  PASS: %s = %s", tests[i].name, data.c_str());
+			if (tests[i].secret)
+				DEBUG_INFO("  PASS: %s = <%u chars, not logged>", tests[i].name, (unsigned)data.size());
+			else
+				DEBUG_INFO("  PASS: %s = %s", tests[i].name, data.c_str());
 		} else {
 			if (!fails.empty()) fails += " ";
 			fails += tests[i].name;
