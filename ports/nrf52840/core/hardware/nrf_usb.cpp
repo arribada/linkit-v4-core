@@ -8,6 +8,7 @@
 #include "app_usbd.h"
 #include "app_usbd_cdc_acm.h"
 #include "app_usbd_serial_num.h"
+#include "app_util_platform.h"  // CRITICAL_REGION_ENTER/EXIT
 #include "pmu.hpp"
 #include "debug.hpp"
 #include <cstring>
@@ -43,6 +44,51 @@ APP_USBD_CDC_ACM_GLOBAL_DEF(m_app_cdc_acm, cdc_acm_user_ev_handler, CDC_ACM_COMM
                             APP_USBD_CDC_COMM_PROTOCOL_AT_V250);
 }
 
+// TX path. app_usbd_cdc_acm_write() does not copy: the USB peripheral reads the
+// caller's buffer packet by packet, whenever the host polls, and a write made
+// while a transfer is in flight is refused (NRF_ERROR_BUSY) and was silently
+// dropped. Callers pass stack buffers (printf) and temporaries (DTE replies), so
+// a slow host read the transfer out of reused memory: a DTE reply came out as a
+// fragment, RAM bytes and a later log line (bench, 2026-10-10). Every write is
+// now copied into this ring and sent from a static chunk, one transfer at a time,
+// the next one started on TX_DONE.
+static constexpr size_t USB_TX_RING_SIZE = 4096;
+static constexpr size_t USB_TX_CHUNK_SIZE = 256;
+static char s_tx_ring[USB_TX_RING_SIZE];
+static volatile size_t s_tx_head = 0;  ///< next byte written
+static volatile size_t s_tx_tail = 0;  ///< next byte sent
+static char s_tx_chunk[USB_TX_CHUNK_SIZE] __attribute__((aligned(4)));
+static volatile bool s_tx_busy = false;
+static volatile uint32_t s_tx_dropped = 0;  ///< bytes lost to a full ring (host gone or not reading)
+
+/// @brief Start the next transfer if none is in flight (thread context only).
+static void tx_pump() {
+	if (s_tx_busy || !NrfUSB::is_port_open()) return;
+	size_t n = 0;
+	{
+		CRITICAL_REGION_ENTER();
+		while (n < USB_TX_CHUNK_SIZE && s_tx_tail != s_tx_head) {
+			s_tx_chunk[n++] = s_tx_ring[s_tx_tail];
+			s_tx_tail = (s_tx_tail + 1) % USB_TX_RING_SIZE;
+		}
+		CRITICAL_REGION_EXIT();
+	}
+	if (n == 0) return;
+	s_tx_busy = true;
+	if (app_usbd_cdc_acm_write(&m_app_cdc_acm, s_tx_chunk, n) != NRF_SUCCESS) {
+		s_tx_busy = false;
+		s_tx_dropped = s_tx_dropped + n;  // port not ready: nothing sensible to retry with
+	}
+}
+
+static void tx_reset() {
+	CRITICAL_REGION_ENTER();
+	s_tx_head = 0;
+	s_tx_tail = 0;
+	s_tx_busy = false;
+	CRITICAL_REGION_EXIT();
+}
+
 /// @brief Kick off a new async USB CDC read if port is open.
 static void start_usb_read() {
 	if (NrfUSB::is_port_open()) app_usbd_cdc_acm_read_any(&m_app_cdc_acm, s_usb_rx_temp, USB_CDC_READ_SIZE);
@@ -55,7 +101,10 @@ static void cdc_acm_user_ev_handler(app_usbd_class_inst_t const *p_inst, app_usb
 		NrfUSB::set_port_open(true);
 		start_usb_read();
 		break;
-	case APP_USBD_CDC_ACM_USER_EVT_PORT_CLOSE: NrfUSB::set_port_open(false); break;
+	case APP_USBD_CDC_ACM_USER_EVT_PORT_CLOSE:
+		NrfUSB::set_port_open(false);
+		tx_reset();
+		break;
 	case APP_USBD_CDC_ACM_USER_EVT_RX_DONE: {
 		size_t rx_size = app_usbd_cdc_acm_rx_size(&m_app_cdc_acm);
 		if (rx_size > 0) NrfUSB::on_rx_data(s_usb_rx_temp, rx_size);
@@ -63,6 +112,9 @@ static void cdc_acm_user_ev_handler(app_usbd_class_inst_t const *p_inst, app_usb
 		break;
 	}
 	case APP_USBD_CDC_ACM_USER_EVT_TX_DONE:
+		s_tx_busy = false;
+		tx_pump();
+		break;
 	default: break;
 	}
 }
@@ -147,12 +199,50 @@ void NrfUSB::init() {
 //  TX / RX
 // ═══════════════════════════════════════════════════════
 
-/// @brief Blocking write — queue data then flush USB events.
+/// @brief Copy into the TX ring, then send what the USB can take now.
+/// In interrupt context the data is only queued: the USB event queue belongs to
+/// the main loop. In thread context a full ring is drained for up to 50 ms (a
+/// large DTE reply such as a full PARMR exceeds the ring) before bytes are
+/// dropped -- never blocking for long on a host that stopped reading.
 int NrfUSB::write(char *ptr, int len) {
 	if (!m_port_open) return len;
-	app_usbd_cdc_acm_write(&m_app_cdc_acm, ptr, len);
-	usb_queue_process();
+	const bool in_isr = (__get_IPSR() != 0);
+	int i = 0;
+	uint32_t waited_ms = 0;
+	while (i < len) {
+		bool stored = false;
+		{
+			CRITICAL_REGION_ENTER();
+			const size_t next = (s_tx_head + 1) % USB_TX_RING_SIZE;
+			if (next != s_tx_tail) {
+				s_tx_ring[s_tx_head] = ptr[i];
+				s_tx_head = next;
+				stored = true;
+			}
+			CRITICAL_REGION_EXIT();
+		}
+		if (stored) {
+			i++;
+			continue;
+		}
+		if (in_isr || waited_ms >= 50) {
+			s_tx_dropped = s_tx_dropped + (len - i);
+			break;
+		}
+		usb_queue_process();
+		tx_pump();
+		PMU::delay_ms(1);
+		waited_ms++;
+	}
+	if (!in_isr) {
+		usb_queue_process();
+		tx_pump();
+	}
 	return len;
+}
+
+uint32_t NrfUSB::tx_dropped() {
+	return s_tx_dropped;
 }
 
 /// @brief Store received data in ring buffer (called from USB ISR).
@@ -238,6 +328,7 @@ void NrfUSB::process() {
 	}
 #endif
 	usb_queue_process();
+	tx_pump();
 }
 
 /// @brief Update port state and reset ring buffer on close.

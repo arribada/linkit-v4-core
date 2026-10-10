@@ -42,6 +42,9 @@ public:
 	/// @brief True if the USB CDC port is currently open.
 	static bool is_port_open() { return m_port_open; }
 
+	/// @brief Bytes dropped because the TX ring was full (host not reading).
+	static uint32_t tx_dropped();
+
 	/// @brief Called from USB ISR when data arrives — stores in ring buffer.
 	static void on_rx_data(const char *data, size_t len);
 
