@@ -210,6 +210,9 @@ bool SmdSatCmdAt::send_at_with_data(const std::string &cmd, std::string &respons
 		const size_t end = cmd.find_first_of("=?", plus + 1);
 		key = cmd.substr(plus + 1, end == std::string::npos ? std::string::npos : end - plus - 1);
 	}
+	// Module v1.0.0 answers AT+TCXO_WU=? with "+TCXO=<ms>" (bench 2026-10-10:
+	// the reply was dropped as a foreign key and the query returned "").
+	if (key == "TCXO_WU") key = "TCXO";
 	m_resp_ok = false;
 	m_resp_error = false;
 	m_resp_data_ready = false;
@@ -240,6 +243,11 @@ bool SmdSatCmdAt::send_at_with_data(const std::string &cmd, std::string &respons
 		if (m_resp_ok) {
 			if (have_data || key.empty()) break;
 			if (grace-- == 0) break;  // "+OK" without a data line: empty answer
+		} else if (have_data && grace-- == 0) {
+			// The data line came but no "+OK": AT+KMAC=? on module v1.0.0 never
+			// sends it. The answer is there; do not wait out the full timeout.
+			m_resp_ok = true;
+			break;
 		}
 	}
 
