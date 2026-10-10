@@ -595,7 +595,12 @@ class Suite:
         # dans la pile de profondeur — elle ne depend d aucun reglage.
         # (The former alternatives "DepthPileManager: GPS FIX stored" and
         # "service GNSS completed" exist nowhere in the firmware.)
+        # depth_pile.cpp:257 "DepthPileManager: GPS %s stored" is the direct proof;
+        # "first valid GPS fix this session" fires only once per boot, so a second
+        # injection in the same session (flash.py already injected nothing, but a
+        # real fix may have come first) never shows it (2026-10-10, SMD board).
         pipeline = b.expect(r"(first valid GPS fix this session"
+                            r"|DepthPileManager: GPS FIX stored"
                             r"|retry_counter: reset ntry.*PVT fix)",
                             8.0, from_idx=mk)
         self.check("fix accepted into pipeline (PVT)", pipeline is not None,

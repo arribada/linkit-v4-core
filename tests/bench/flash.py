@@ -113,6 +113,15 @@ def disarm_radio(port_timeout=45.0):
         # %AMODE 0 first: RAM write, effective at once, works in OPERATIONAL.
         b._send("%AMODE 0\r\n")
         amode = b.expect(r"%AMODE mode=0", 6.0, from_idx=0)
+        # First boot after a flash: a %CFG sent during BootState is acknowledged,
+        # the board enters ConfigurationState and LEAVES it 0.3 s later on its own
+        # (BootState -> Config -> PreOp -> Operational), so every PARMW lands in
+        # Operational and is ignored (2026-10-10, SMD board). Wait until the
+        # board has settled in OPERATIONAL, then enter config.
+        t_settle = time.monotonic() + 60.0
+        while time.monotonic() < t_settle and b.get_state() != "OPERATIONAL":
+            time.sleep(1.0)
+        time.sleep(2.0)
         if not b.enter_config(timeout=20.0):
             return False, f"%CFG not acknowledged on {port} (%AMODE 0 {'acked' if amode else 'NOT acked'})"
         # The DTE is not served at once after %CFG, and the first boot after
@@ -122,6 +131,10 @@ def disarm_radio(port_timeout=45.0):
         replies = []
         disarmed = False
         for attempt in range(1, 5):
+            if b.get_state() != "CONFIG" and not b.enter_config(timeout=20.0):
+                replies.append(f"#{attempt} not in CONFIG")
+                time.sleep(3.0)
+                continue
             w = b.write_params({"ARGOS_MODE": 0, "CERT_TX_ENABLE": 0}, timeout=15.0, strict=False)
             raw, p = b.read_params(["ARGOS_MODE"], timeout=10.0)
             replies.append(f"#{attempt} PARMW={w.group(0) if w else None!r} PARMR={raw!r}")
