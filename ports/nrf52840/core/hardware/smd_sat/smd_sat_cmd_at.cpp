@@ -193,17 +193,39 @@ bool SmdSatCmdAt::send_at(const std::string &cmd, uint16_t timeout_ms) {
 }
 
 bool SmdSatCmdAt::send_at_with_data(const std::string &cmd, std::string &response_data, uint16_t timeout_ms) {
+	// Replies are not correlated: the first "+OK" ends the wait. A reply that
+	// lands after its own command timed out is then taken as the NEXT command's
+	// answer -- on the UART-AT v1.0.0 module a late empty "+VERSION=" made
+	// AT+FW=? return "" while "+FW=v1.0.0" was still in the buffer (bench
+	// 2026-10-10). Drain what is pending, then accept only "+<KEY>=" for this
+	// query's key followed by "+OK".
+	for (uint8_t i = 0; i < 20; i++) {
+		PMU::delay_ms(1);
+		NrfUartAsync::process_rx();
+	}
+	std::string key;
+	const size_t plus = cmd.find('+');
+	if (plus != std::string::npos) {
+		const size_t end = cmd.find_first_of("=?", plus + 1);
+		key = cmd.substr(plus + 1, end == std::string::npos ? std::string::npos : end - plus - 1);
+	}
 	m_resp_ok = false;
 	m_resp_error = false;
 	m_resp_data_ready = false;
 	m_resp_data.clear();
+	m_resp_key.clear();
 
 	if (!send_string(cmd + "\r\n")) return false;
 
-	while (!m_resp_ok && timeout_ms > 0) {
+	while (timeout_ms > 0) {
 		PMU::delay_ms(1);
 		NrfUartAsync::process_rx();
 		timeout_ms--;
+		if (m_resp_error) break;
+		if (m_resp_ok) {
+			if (key.empty() || (m_resp_data_ready && m_resp_key == key)) break;
+			m_resp_ok = false;  // stale "+OK" of an earlier command: keep waiting for ours
+		}
 	}
 
 	if (timeout_ms == 0 || m_resp_error) return false;
