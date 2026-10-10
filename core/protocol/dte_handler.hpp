@@ -132,10 +132,10 @@ private:
 	bool m_doppler_cal_first_tx = false;  ///< Waiting for first TX result
 	bool m_sattx_needs_restore = false;   ///< SATTX temporarily switched modulation
 	KineisModulation m_sattx_restore_modulation = KineisModulation::LDA2;
-	bool m_gnssi_pending = false;   ///< Waiting for GNSS device info (autonomous GNSSI)
-	Scheduler::TaskHandle m_gnssi_timeout;  ///< Deadline for that wait — see GNSSI_REQ
+	bool m_gnssi_pending = false;                            ///< Waiting for GNSS device info (autonomous GNSSI)
+	Scheduler::TaskHandle m_gnssi_timeout;                   ///< Deadline for that wait — see GNSSI_REQ
 	static constexpr unsigned int GNSSI_TIMEOUT_MS = 90000;  ///< Cold boot + version poll, generously
-	bool m_gps_subscribed = false;  ///< Subscribed to GPS events
+	bool m_gps_subscribed = false;                           ///< Subscribed to GPS events
 	std::function<void(const std::string &)> m_async_write;
 
 	void schedule_doppler_cal_tx();
@@ -216,4 +216,5 @@ public:
 	// GPSEventListener overrides
 	void react(const GPSEventDeviceInfoReady &) override;
 	void react(const GPSEventError &) override;
+	void finish_gnssi(bool ok);  // main-loop half of the async GNSSI reply
 };

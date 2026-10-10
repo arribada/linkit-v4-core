@@ -1980,20 +1980,35 @@ void DTEHandler::react(const GPSEventDeviceInfoReady &) {
 	if (!m_gnssi_pending) return;
 	m_gnssi_pending = false;
 	system_scheduler->cancel_task(m_gnssi_timeout);
+	// This event is raised from the M10Q UART interrupt (SEC-UNIQID parse). The
+	// reply, the log line (LittleFS) and power_off() must not run there: the USB
+	// write and the flash log re-entered main-loop code and a cold GNSSI reply
+	// came out corrupted on the bench (2026-10-10). Finish in the main loop.
+	system_scheduler->post_task_prio([this]() { finish_gnssi(true); }, "DTEGnssiReply");
+}
 
-	DEBUG_INFO("DTEHandler::react: GPSEventDeviceInfoReady — sending GNSSI response");
+void DTEHandler::finish_gnssi(bool ok) {
+	std::string resp;
+	if (!ok) {
+		resp = DTEEncoder::encode(DTECommand::GNSSI_RESP, (int)DTEError::INCORRECT_DATA);
+		if (m_async_write) m_async_write(resp);
+		DEBUG_WARN("DTEHandler::react: GPSEventError — GNSSI failed");
+		gps_device->power_off();
+		return;
+	}
 
 	auto info = gps_device->get_device_info();
-	std::string resp;
 	if (info.valid) {
 		resp = format_gnssi_response(info);
 	} else {
 		resp = DTEEncoder::encode(DTECommand::GNSSI_RESP, (int)DTEError::INCORRECT_DATA);
 	}
 
+	// Reply first, log after: the log line is the slow part (flash).
 	if (m_async_write) {
 		m_async_write(resp);
 	}
+	DEBUG_INFO("DTEHandler::react: GPSEventDeviceInfoReady — GNSSI response sent");
 
 	// Power off GNSS now that we have the info
 	gps_device->power_off();
@@ -2003,15 +2018,7 @@ void DTEHandler::react(const GPSEventError &) {
 	if (!m_gnssi_pending) return;
 	m_gnssi_pending = false;
 	system_scheduler->cancel_task(m_gnssi_timeout);
-
-	DEBUG_WARN("DTEHandler::react: GPSEventError — GNSSI failed");
-
-	if (m_async_write) {
-		m_async_write(DTEEncoder::encode(DTECommand::GNSSI_RESP, (int)DTEError::INCORRECT_DATA));
-	}
-
-	// Power off GNSS to reset state machine back to idle
-	gps_device->power_off();
+	system_scheduler->post_task_prio([this]() { finish_gnssi(false); }, "DTEGnssiError");
 }
 
 std::string DTEHandler::GNSSA_REQ(int error_code) {
