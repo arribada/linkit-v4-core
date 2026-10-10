@@ -8618,8 +8618,15 @@ def c_edge_art_contrat(r, case):
     r.record(case, 'PASS', f'ART12-15 lecture seule et coherentes ({avant})', '\n'.join(trace))
 
 
-def _art12_modele(gnss_en, fastloc, fmt, adaptatif, maitresse_vide, art13):
-    """Copie de ArgosConfigCheck::evaluate (KIM2, is_smd=false)."""
+def _art12_modele(gnss_en, fastloc, fmt, adaptatif, maitresse_vide, art13, is_smd=None):
+    """Copie de ArgosConfigCheck::evaluate.
+
+    is_smd: None = deduit du build (ARP60 dans PARML). Sur SMD le bit2 (IDP14
+    vide) reste pose meme en adaptatif ON, car le SMD refuse d emettre sans
+    maitresse quel que soit ARP54 ; la premiere version (KIM2 seulement) attendait
+    0 et faisait echouer EDG-D4 a tort sur la carte SMD du 2026-10-10."""
+    if is_smd is None:
+        is_smd = bool(_CLES_IMPL) and 'ARP60' in _CLES_IMPL
     masque = 0
     if gnss_en and fastloc == 2:
         if fmt == 2:
@@ -8631,7 +8638,7 @@ def _art12_modele(gnss_en, fastloc, fmt, adaptatif, maitresse_vide, art13):
                 bits = 128 if fmt == 0 else 192
                 if bits > {0: 192, 1: 128, 2: 24}[art13]:
                     masque |= 1
-    if maitresse_vide and not adaptatif:
+    if maitresse_vide and (not adaptatif or is_smd):
         masque |= 4
     return masque
 
@@ -8644,6 +8651,7 @@ def c_edge_art12_parcours(r, case):
     doit etre refuse a cause d un avertissement (le firmware ne refuse jamais).
     IDP14 n est PAS ecrit: pas de provisionnement sur ce banc.
     """
+    cles_implementees(r.b)  # type de build (SMD ?) pour le modele ART12
     b = r.b
     cles = {'GNSS_EN': 'GNP01', 'GNSS_FASTLOC_MODE': 'GNP45', 'GNSS_CLOUDLOCATE_FORMAT': 'GNP46',
             'ARGOS_ADAPTIVE_MODULATION': 'ARP54'}
