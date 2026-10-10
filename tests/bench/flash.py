@@ -42,7 +42,13 @@ def main():
     ap.add_argument("--no-disarm", action="store_true",
                     help="do NOT force ARGOS_MODE=0 after flashing (factory defaults = LEGACY, real RF "
                          "on a KIM2 that answers)")
+    ap.add_argument("--disarm-only", action="store_true",
+                    help="flash nothing: only force ARGOS_MODE=0 on the running board")
     a = ap.parse_args()
+    if a.disarm_only:
+        disarmed, why = disarm_radio()
+        print(("RADIO DISARMED: " if disarmed else "RADIO NOT DISARMED: ") + why)
+        return 0 if disarmed else 4
 
     ids = P.nrfjprog(["--ids"], timeout=30)
     probes = [l.strip() for l in ids.stdout.splitlines() if l.strip().isdigit()]
@@ -109,10 +115,26 @@ def disarm_radio(port_timeout=45.0):
         amode = b.expect(r"%AMODE mode=0", 6.0, from_idx=0)
         if not b.enter_config(timeout=20.0):
             return False, f"%CFG not acknowledged on {port} (%AMODE 0 {'acked' if amode else 'NOT acked'})"
-        b.write_params({"ARGOS_MODE": 0, "CERT_TX_ENABLE": 0}, timeout=15.0)
-        _, p = b.read_params(["ARGOS_MODE"], timeout=10.0)
-        if p.get("ARP01") != "0":
-            return False, f"ARGOS_MODE read back {p.get('ARP01')!r}, not 0"
+        # The DTE is not served at once after %CFG, and the first boot after
+        # --recover also formats the config store: both swallowed the single
+        # PARMW/PARMR of the first version (reply None, exit 4 on 2026-10-10).
+        time.sleep(2.0)
+        replies = []
+        disarmed = False
+        for attempt in range(1, 5):
+            w = b.write_params({"ARGOS_MODE": 0, "CERT_TX_ENABLE": 0}, timeout=15.0, strict=False)
+            raw, p = b.read_params(["ARGOS_MODE"], timeout=10.0)
+            replies.append(f"#{attempt} PARMW={w.group(0) if w else None!r} PARMR={raw!r}")
+            if p.get("ARP01") == "0":
+                disarmed = True
+                break
+            time.sleep(3.0)
+        if not disarmed:
+            with b._lock:
+                tail = [l for _, l in b.history[-15:]]
+            return False, ("ARGOS_MODE not read back as 0 after 4 attempts (%AMODE 0 "
+                           f"{'acked' if amode else 'NOT acked'}): " + " | ".join(replies)
+                           + " || last lines: " + " / ".join(tail))
         if guard.seen:
             return False, (f"ARGOS_MODE=0 is set, but a REAL EMISSION happened before it: "
                            f"{guard.seen.strip()[-100:]}")
