@@ -554,8 +554,16 @@ void SmdSatCmdAt::read_version(uint8_t *version) {
 	std::string data;
 	// Module firmware v1.0.0 (UART-AT) answers AT+VERSION with an empty string;
 	// the version is only in AT+FW. Fall back so SMDDFU VERSION is not "Failed".
-	if ((send_at_with_data("AT+VERSION=?", data) && !data.empty())
-	    || (send_at_with_data("AT+FW=?", data) && !data.empty())) {
+	const bool ver_ok = send_at_with_data("AT+VERSION=?", data);
+	const size_t ver_len = data.size();
+	bool fw_ok = false;
+	if (!ver_ok || data.empty()) {
+		data.clear();
+		fw_ok = send_at_with_data("AT+FW=?", data);
+	}
+	DEBUG_INFO("SmdSatCmdAt::read_version: VERSION ok=%u len=%u, FW ok=%u len=%u", ver_ok, (unsigned)ver_len, fw_ok,
+	           (unsigned)(fw_ok ? data.size() : 0));
+	if (!data.empty()) {
 		uint16_t len = std::min(static_cast<uint16_t>(data.size()), static_cast<uint16_t>(63));
 		memcpy(version, data.c_str(), len);
 		version[len] = 0;

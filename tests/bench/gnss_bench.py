@@ -483,6 +483,14 @@ def t9_gnssi(b):
 
 def t10_inject(b):
     """Injection d'un fix : la chaîne post-fix doit se dérouler et clore la session."""
+    # %OP OK is acknowledged before the FSM reaches OperationalState: a %GPS sent
+    # right after T9 got "%GPS ERR not-operational" (2026-10-10). Wait for the state.
+    t_end = time.monotonic() + 30
+    while time.monotonic() < t_end:
+        i = b.mark(); b.send("%STATE")
+        if b.wait(r"%STATE OPERATIONAL", 3, since=i):
+            break
+        time.sleep(1.0)
     idx = b.mark()
     b.send("%GPS -21.0097 55.2707")
     acc = b.wait(r"bench_inject_fix|retry_counter: reset", 25, since=idx)

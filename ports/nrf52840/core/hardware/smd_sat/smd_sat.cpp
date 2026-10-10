@@ -2751,6 +2751,8 @@ std::string SmdSat::get_firmware_version() {
 			}
 			version = std::string((char *)ver, len);
 			DEBUG_INFO("SmdSat::%s: Firmware version: %s", __func__, version.c_str());
+		} else {
+			DEBUG_WARN("SmdSat::%s: module did not answer the ping", __func__);
 		}
 	} catch (...) {
 		DEBUG_ERROR("SmdSat::%s: Failed to read firmware version", __func__);
