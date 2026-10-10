@@ -76,6 +76,7 @@ BUILD_TYPE=Release
 METRICS=OFF
 VALIDATION=OFF
 BENCH=OFF
+BENCH_PWRDN=OFF
 SMD_UART=OFF
 for arg in "$@"; do
     case $arg in
@@ -83,6 +84,9 @@ for arg in "$@"; do
         --recover) RECOVER=true ;;
         --debug) BUILD_TYPE=Debug ;;
         --bench) BENCH=ON; BUILD_TYPE=Debug ;;
+        # Bench + REAL powerdown (%STORE): storage / spurious-wake tests. The
+        # board really sleeps and the USB link drops.
+        --bench-storage) BENCH=ON; BENCH_PWRDN=ON; BUILD_TYPE=Debug ;;
         # AT/UART transport instead of the default SPI. Own build directory:
         # sharing LINKIT_SMD's CMake cache would keep whichever transport was
         # configured first, and the swap is a source-file swap, not a flag.
@@ -211,6 +215,7 @@ cmake -DCMAKE_TOOLCHAIN_FILE=../../toolchain_arm_gcc_nrf52.cmake \
       -DMETRIC_LATENCY_LOG_ENABLE=$([ "$METRICS" = "ON" ] && echo 1 || echo 0) \
       -DVALIDATION_LOG_ENABLE=$([ "$VALIDATION" = "ON" ] && echo 1 || echo 0) \
       -DBENCH_TEST=${BENCH} \
+      -DBENCH_ALLOW_POWERDOWN=${BENCH_PWRDN} \
       ../..
 
 make -j 20

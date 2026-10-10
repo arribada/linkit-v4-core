@@ -22,6 +22,9 @@ le geste, compte le temps, et enregistre ce que la carte fait ensuite.
 
 import argparse, glob, subprocess, sys, time
 from datetime import datetime
+import os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import bench_platform as P  # noqa: E402
 
 NORDIC_VID = "1915:"
 POLL_S     = 0.25
@@ -41,16 +44,19 @@ def log(msg: str) -> None:
 
 
 def port_path():
-    """Chemin du CDC de la carte, ou None si elle n'est pas énumérée."""
-    ports = sorted(glob.glob("/dev/ttyACM*"))
+    """Port CDC de la carte (VID:PID 1915:520F, Windows ou Linux), ou None si elle
+    n'est pas enumeree -- en System OFF le peripherique USB du nRF disparait."""
+    ports = P.find_ports()
     return ports[0] if ports else None
 
 
 def usb_present() -> bool:
-    """Vrai tant que le nRF est énuméré. Double contrôle node + bus : sous WSL le
-    node peut survivre quelques centaines de ms à la disparition réelle."""
+    """Vrai tant que le nRF est enumere. Sous Linux on garde en plus lsusb, parce
+    que sous WSL le noeud peut survivre quelques centaines de ms a la disparition."""
     if port_path():
         return True
+    if P.IS_WINDOWS:
+        return False
     try:
         out = subprocess.run(["lsusb"], capture_output=True, text=True, timeout=5).stdout
         return NORDIC_VID in out
@@ -124,8 +130,15 @@ def enter_storage_via_console() -> bool:
 
 
 def prompt(msg: str) -> None:
-    print(f"\n>>> {msg}")
-    input("    [Entrée quand c'est fait] ")
+    print(f"\n>>> {msg}", flush=True)
+    # STORAGE_PROMPT_S=<n> : pas de clavier (agent distant) -> le geste est
+    # annonce, puis on laisse n secondes a l'operateur au lieu d'attendre Entree.
+    wait = os.environ.get("STORAGE_PROMPT_S")
+    if wait:
+        log(f"    (geste attendu dans les {wait} s)")
+        time.sleep(float(wait))
+    else:
+        input("    [Entrée quand c'est fait] ")
 
 
 def cmd_t2() -> None:
@@ -202,6 +215,31 @@ def cmd_t8() -> None:
         log("VERDICT T8 : FAIL — réveillée puis rendormie : le maintien n'a pas été pris.")
 
 
+def cmd_soak(seconds: float) -> int:
+    """Stockage sans aimant : verifie les sources de reveil, entre en System OFF,
+    puis surveille pendant `seconds` qu'AUCUN reveil ne se produit. 0 = PASS."""
+    log(f"=== SOAK — aucun reveil inopine pendant {seconds:.0f} s ===")
+    if not usb_present():
+        log("Carte deja endormie : reveille-la (aimant ~4 s) puis relance.")
+        return 2
+    lines = send("%SENSE", 3.0)
+    autres = [l for l in lines if l.startswith("%SENSE pin=")]
+    log(f"sources de reveil armees : {autres or 'aucune ligne pin='}")
+    send("%RST", 2.0)
+    if not enter_storage_via_console():
+        return 1
+    t0 = time.time()
+    while time.time() - t0 < seconds:
+        if usb_present():
+            log(f"VERDICT SOAK : FAIL — REVEIL INOPINE a t+{time.time()-t0:.1f} s")
+            time.sleep(8)
+            send("%RST", 2.0)
+            return 1
+        time.sleep(POLL_S)
+    log(f"VERDICT SOAK : PASS — aucune re-enumeration USB en {seconds:.0f} s")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--watch", nargs="?", const=60, type=float)
@@ -211,6 +249,8 @@ def main() -> int:
     ap.add_argument("--t2", action="store_true")
     ap.add_argument("--t3", nargs="?", const=12, type=float)
     ap.add_argument("--t8", action="store_true")
+    ap.add_argument("--soak", nargs="?", const=3600, type=float,
+                    help="%STORE puis surveillance sans aimant (defaut 3600 s)")
     a = ap.parse_args()
 
     if a.watch is not None: cmd_watch(a.watch)
@@ -220,6 +260,7 @@ def main() -> int:
     elif a.t2:              cmd_t2()
     elif a.t3 is not None:  cmd_t3(a.t3)
     elif a.t8:              cmd_t8()
+    elif a.soak is not None: return cmd_soak(a.soak)
     else:                   ap.print_help()
     return 0
 
