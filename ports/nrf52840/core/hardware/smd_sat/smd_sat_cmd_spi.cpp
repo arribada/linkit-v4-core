@@ -15,6 +15,7 @@
 #include "timer.hpp"
 #include "binascii.hpp"
 #include "smd_sat_cmd_spi.hpp"
+#include "modulation_guard.hpp"
 #include "pmu.hpp"
 
 #include "nrf_delay.h"
@@ -718,7 +719,7 @@ void SmdSatCmdSpi::set_radio_conf(smd_uint8_array_t *radio_conf) {
 	}
 }
 
-void SmdSatCmdSpi::read_radio_conf(SmdArgosModulation *modulation) {
+bool SmdSatCmdSpi::read_radio_conf(SmdArgosModulation *modulation) {
 	DEBUG_TRACE("SmdSatCmdSpi::%s", __func__);
 	uint8_t rx[SMDSAT_CMD_READCONF_LEN] = { 0 };
 	uint16_t rx_len = sizeof(rx);
@@ -737,17 +738,17 @@ void SmdSatCmdSpi::read_radio_conf(SmdArgosModulation *modulation) {
 	// A direct cast would silently produce wrong values (e.g. KNS LDA2=2 cast
 	// gives ARGOS_MOD_VLDA4=2). Same mapping as init_and_get_mod() in
 	// smd_spi_test().
+	// HDA4 (5) and unknown codes are NOT mapped: the old "safe fallback" to
+	// LDA2 silently mis-sized every frame of an unrecognised master. enum=-1 in
+	// the log line below means "not recognised, caller keeps its value".
 	uint8_t kineis_mod = rx[9];
-	switch (kineis_mod) {
-	case 2:
-	case 3: *modulation = ARGOS_MOD_LDA2; break;   // KNS_TX_MOD_LDA2 / LDA2L
-	case 4: *modulation = ARGOS_MOD_VLDA4; break;  // KNS_TX_MOD_VLDA4
-	case 6: *modulation = ARGOS_MOD_LDK; break;    // KNS_TX_MOD_LDK
-	default: *modulation = ARGOS_MOD_LDA2; break;  // safe fallback
-	}
+	const std::optional<unsigned int> code = ModulationGuard::smd_kns_code_to_code(kineis_mod);
+	if (code.has_value()) *modulation = static_cast<SmdArgosModulation>(code.value());
 
 	DEBUG_INFO("SmdSatCmdSpi::%s: KineisMod=%u (-> enum=%d) | Min Freq: %u | Max Freq: %u | RF Level %d", __func__,
-	           kineis_mod, static_cast<int>(*modulation), min_frequency, max_frequency, rf_level);
+	           kineis_mod, code.has_value() ? static_cast<int>(*modulation) : -1, min_frequency, max_frequency,
+	           rf_level);
+	return code.has_value();
 }
 
 bool SmdSatCmdSpi::save_radio_conf() {

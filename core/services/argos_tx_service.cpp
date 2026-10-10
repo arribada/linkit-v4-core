@@ -18,6 +18,9 @@
 #include "rate_limiter.hpp"
 #include "rgb_led.hpp"
 #include "dive_behaviour_tracker.hpp"
+#include "argos_config_check.hpp"
+#include "modulation_guard.hpp"
+#include "battery.hpp"
 #if ENABLE_SWS_ANALOG
 #include "sws_analog_service.hpp"
 #endif
@@ -37,6 +40,15 @@ static constexpr bool VLDA4_PERMITTED = false;  // KIM2
 static constexpr bool VLDA4_PERMITTED = true;  // SMD
 #endif
 
+// Backend flavour for the modulation guard and the configuration check. The
+// host unit tests are not SMD builds; they drive the SMD branch through the
+// public static enforce_modulation_state() instead.
+#if defined(ARGOS_SMD) && (ARGOS_SMD == 1)
+static constexpr bool ARGOS_TX_IS_SMD = true;
+#else
+static constexpr bool ARGOS_TX_IS_SMD = false;
+#endif
+
 // Pre-deploy validation channel — see hauled_mode_service.cpp header comment.
 // Enables grep-friendly [VAL-TX] tags on every TX completion with type + spacing
 // from previous [VAL-TX]. Critical for short-surface Doppler validation campaigns.
@@ -47,6 +59,7 @@ extern ConfigurationStore *configuration_store;
 extern Scheduler *system_scheduler;
 extern GPSDevice *gps_device;
 extern RGBLed *status_led;
+extern BatteryMonitor *battery_monitor;
 #if defined(BOARD_RSPB) && ENABLE_MORTALITY_SENSOR
 #include "mortality_service.hpp"
 
@@ -128,17 +141,24 @@ void ArgosTxService::service_init() {
 	uint8_t lpm = static_cast<uint8_t>(configuration_store->read_param<unsigned int>(ParamID::SMD_LPM_MODE));
 	m_kineis.set_lpm_mode(lpm);
 
-#if !defined(ARGOS_SMD) || (ARGOS_SMD != 1)
-	// KIM2 ONLY (not compiled for SMD): seed the modulation cache from the live
-	// radio at startup so the FIRST non-adaptive TX is sized for the master
-	// RCONF's true modulation — even on a fresh / stale-cache module (avoids the
-	// aborted first TX). NON-ADAPTIVE only: in adaptive mode the service drives
-	// the modulation per cycle via switch_modulation(), so the cache is not used
-	// for frame sizing and must not be force-seeded here.
-	if (!argos_config.adaptive_modulation) {
-		m_kineis.resync_rconf_cache();
+	// Modulation state after a reset, adaptive OFF only (see
+	// enforce_modulation_state): KIM2 keeps its unconditional boot resync; a
+	// trusted master modulation (ART13) restores the driver cache; SMD resyncs
+	// at most once per master. Then the configuration-time warning (ART12), one
+	// line per boot or exit from configuration, and only when it changed. One
+	// save, only if something changed -- not on the surfacing path.
+	{
+		const ModulationStateOutcome mod_state = enforce_modulation_state(
+		    m_kineis, *configuration_store, ARGOS_TX_IS_SMD, battery_monitor && service_is_battery_level_low());
+		const ArgosConfigCheck::Refresh cfg_check = ArgosConfigCheck::refresh(*configuration_store, ARGOS_TX_IS_SMD);
+		if (mod_state.changed || cfg_check.changed) {
+			try {
+				configuration_store->save_params();
+			} catch (...) {
+				DEBUG_ERROR("ArgosTxService::service_init: could not save the modulation state");
+			}
+		}
 	}
-#endif
 
 	// Warn if SURFACING_BURST mode is configured without underwater detection
 	if (argos_config.mode == BaseArgosMode::SURFACING_BURST && !argos_config.underwater_en) {
@@ -236,6 +256,72 @@ void ArgosTxService::service_init() {
 	// to skip a TX cleanly when the fallback modulation can't hold the packet
 	// — better than KIM2's silent payload-too-long drop + 30 s service timeout.
 	refresh_modulation_availability();
+}
+
+ArgosTxService::ModulationStateOutcome ArgosTxService::enforce_modulation_state(KineisDevice &device,
+                                                                                ConfigurationStore &store, bool is_smd,
+                                                                                bool battery_low) {
+	ModulationStateOutcome out;
+	try {
+		out.adaptive = store.read_param<bool>(ParamID::ARGOS_ADAPTIVE_MODULATION);
+		// Adaptive ON: the service drives the modulation per cycle through
+		// switch_modulation(); the cache does not size frames, leave it alone.
+		if (out.adaptive) return out;
+
+		const unsigned int smp01_before = store.read_param<unsigned int>(ParamID::ARGOS_CACHED_MODULATION);
+		const unsigned int art13_before = store.read_param<unsigned int>(ParamID::ARGOS_MASTER_MODULATION);
+		const unsigned int art14_before = store.read_param<unsigned int>(ParamID::ARGOS_MASTER_RCONF_FP);
+		const std::string master = store.read_param<std::string>(ParamID::ARGOS_RADIOCONF);
+
+		if (!is_smd) {
+			// KIM2: seed the cache from the live radio so the FIRST TX is sized for
+			// the master's true modulation (fix bcb42980, validated, kept as is). A
+			// genuine read-back of the master also refreshes ART13/ART14.
+			try {
+				out.resync_ok = device.resync_rconf_cache();
+			} catch (...) {
+				DEBUG_ERROR("ArgosTxService: KIM2 RCONF resync threw — keeping the cached modulation");
+			}
+		}
+
+		unsigned int trusted = store.trusted_master_modulation();
+		if (trusted == ModulationGuard::CODE_UNKNOWN && is_smd
+		    && ModulationGuard::should_attempt_init_resync(
+		        false, master, store.read_param<unsigned int>(ParamID::ARGOS_MASTER_SYNC_ATTEMPT_FP), battery_low)) {
+			// Persist the attempt BEFORE the module is powered: if powering the SMD
+			// resets the MCU (boards that Hard-Reset on SMD power-on), the next boot
+			// sees this fingerprint and does not try again.
+			out.attempted = true;
+			store.write_param(ParamID::ARGOS_MASTER_SYNC_ATTEMPT_FP,
+			                  static_cast<unsigned int>(ModulationGuard::rconf_fingerprint(master)));
+			store.save_params();
+			try {
+				out.resync_ok = device.resync_rconf_cache();
+			} catch (...) {
+				DEBUG_ERROR("ArgosTxService: SMD RCONF resync threw — first session will read the master back");
+			}
+			trusted = store.trusted_master_modulation();
+		}
+
+		out.trusted = (trusted != ModulationGuard::CODE_UNKNOWN);
+		if (out.trusted) {
+			const std::optional<KineisModulation> master_mod = ModulationGuard::from_code(trusted);
+			if (master_mod.has_value()
+			    && (device.get_current_modulation() != master_mod.value()
+			        || store.read_param<unsigned int>(ParamID::ARGOS_CACHED_MODULATION) != trusted)) {
+				device.restore_cached_modulation(master_mod.value());
+				store.write_cached_modulation(trusted);
+				out.restored = true;
+			}
+		}
+
+		out.changed = store.read_param<unsigned int>(ParamID::ARGOS_CACHED_MODULATION) != smp01_before
+		              || store.read_param<unsigned int>(ParamID::ARGOS_MASTER_MODULATION) != art13_before
+		              || store.read_param<unsigned int>(ParamID::ARGOS_MASTER_RCONF_FP) != art14_before;
+	} catch (...) {
+		DEBUG_ERROR("ArgosTxService: modulation state not enforced (config store unreadable)");
+	}
+	return out;
 }
 
 /// @brief Terminate: power off device immediately.
@@ -1661,12 +1747,10 @@ bool ArgosTxService::is_modulation_provisioned(KineisModulation mode) const {
 /// what tells the burst processor whether the fallback is viable or whether
 /// the TX must be skipped to avoid KIM2's silent payload-too-long drop.
 bool ArgosTxService::size_fits_modulation(unsigned int payload_bits, KineisModulation mode) {
-	switch (mode) {
-	case KineisModulation::LDK: return payload_bits <= 128;
-	case KineisModulation::LDA2: return payload_bits <= 192;
-	case KineisModulation::VLDA4: return payload_bits <= 24;
-	default: return false;
-	}
+	// One size table for the service guards, the configuration check and the
+	// drivers' late framing.
+	const unsigned int max_bits = ModulationGuard::max_payload_bits(mode);
+	return max_bits != 0 && payload_bits <= max_bits;
 }
 
 /// @brief Modulation honored by the device when adaptive is OFF.
@@ -1676,9 +1760,11 @@ bool ArgosTxService::size_fits_modulation(unsigned int payload_bits, KineisModul
 /// construction from ARGOS_CACHED_MODULATION and corrected by the READ_RCONF
 /// readback that follows the master write in the first SMD session of every
 /// nRF boot (write_credentials_from_config) — and by SATVF when the
-/// credentials are dirty. Either backend may report a stale value until that
-/// readback has run once (first cold boot, cache not yet flushed): the first
-/// TX can then be mis-sized, the following ones are right.
+/// credentials are dirty. At service_init, enforce_modulation_state() puts the
+/// cache back to the trusted master modulation (ART13) or, on SMD, resyncs once
+/// per master; what still slips through (a failed or skipped resync) is caught
+/// by the drivers' late framing, which re-pads the raw payload for the
+/// modulation the module reports, or refuses it without RF if it cannot fit.
 KineisModulation ArgosTxService::resolve_non_adaptive_modulation() {
 	// Deliberately reports what the module actually has loaded, VLDA4 included.
 	// The non-adaptive burst paths rely on that to decide they need NOT
@@ -2388,11 +2474,9 @@ void ArgosTxService::process_gnss_burst_from_cached() {
 	m_kineis.send(m_scheduled_mode, packet, size_bits);
 }
 
-const ArgosPacketBuilder::DopplerExt *ArgosTxService::doppler_ext() {
+const ArgosPacketBuilder::DopplerExt *ArgosTxService::doppler_ext(bool enabled) {
 #if DX1_DOPPLER_EXT_BUILD
-	if (!configuration_store->read_param<bool>(ParamID::UNDERWATER_EN)
-	    || !configuration_store->read_param<bool>(ParamID::ARGOS_DOPPLER_EXT_EN))
-		return nullptr;
+	if (!enabled) return nullptr;
 	const uint64_t now_ms = PMU::get_timestamp_ms();
 	const SWSAnalogService::Status st = SWSAnalogService::get_status();
 	const SWSAnalogService::Diagnostics diag = SWSAnalogService::get_diagnostics();
@@ -2410,6 +2494,7 @@ const ArgosPacketBuilder::DopplerExt *ArgosTxService::doppler_ext() {
 	                                      diag.stuck_recovery_count, delay_min, delay_max, adcf);
 	return &m_dx1_ext;
 #else
+	(void)enabled;
 	return nullptr;
 #endif
 }
@@ -2461,7 +2546,7 @@ void ArgosTxService::prepare_doppler_packet() {
 	m_prepared_doppler_is_dx1 = false;
 #else
 	// DX1 when enabled: the full 16-byte image; the send path cuts the view.
-	const ArgosPacketBuilder::DopplerExt *ext = doppler_ext();
+	const ArgosPacketBuilder::DopplerExt *ext = doppler_ext(argos_config.sws_tx_doppler_ext);
 	packet =
 	    ArgosPacketBuilder::build_doppler_packet(service_get_voltage(), service_is_battery_level_low(), size_bits, ext);
 	m_prepared_doppler_is_dx1 = (ext != nullptr);
@@ -2511,7 +2596,11 @@ void ArgosTxService::process_doppler_burst() {
 		if (m_is_surfacing_burst && m_doppler_burst_count == 1 && pw_cfg.mode == BaseArgosMode::SURFACING_BURST
 		    && !m_prepared_doppler_packet.empty() && m_prepared_at_ms != 0
 		    && prep_age_ms < PREPARED_DOPPLER_REFRESH_MS) {
-			KineisModulation tx_mode = m_prepared_doppler_mode;
+			// Adaptive OFF: the modulation the driver holds NOW, not the dive-time
+			// snapshot -- a restore, a resync or a read-back may have corrected it
+			// since the Doppler was prepared. Adaptive ON re-picks it just below;
+			// m_prepared_doppler_mode only records what the preparation saw.
+			KineisModulation tx_mode = resolve_non_adaptive_modulation();
 			if (pw_cfg.adaptive_modulation) {
 				tx_mode = adaptive_doppler_modulation();
 				if (!ensure_modulation(tx_mode)) {
@@ -2884,7 +2973,7 @@ void ArgosTxService::process_doppler_burst() {
 	// Standard Doppler: battery voltage only
 	DEBUG_TRACE("TX_RAW: DOPP batt=%umV low_batt=%u", (unsigned)service_get_voltage(),
 	            service_is_battery_level_low() ? 1U : 0U);
-	const ArgosPacketBuilder::DopplerExt *ext = doppler_ext();
+	const ArgosPacketBuilder::DopplerExt *ext = doppler_ext(argos_config.sws_tx_doppler_ext);
 	packet =
 	    ArgosPacketBuilder::build_doppler_packet(service_get_voltage(), service_is_battery_level_low(), size_bits, ext);
 	const bool is_dx1 = (ext != nullptr);

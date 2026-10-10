@@ -43,6 +43,27 @@ public:
 	/// encodes -- ramp versus fixed -- is worth asserting on directly.
 	static unsigned int doppler_interval_s(const ArgosConfig &argos_config, unsigned int msg_index);
 
+	/// @brief What enforce_modulation_state() did (for tests and the caller's save).
+	struct ModulationStateOutcome {
+		bool adaptive = false;   ///< adaptive modulation ON: nothing was done
+		bool trusted = false;    ///< ART13 trusted for the current master (after any resync)
+		bool restored = false;   ///< the driver's cache was put back to ART13
+		bool attempted = false;  ///< SMD init-time resync attempted (ART15 written + saved first)
+		bool resync_ok = false;  ///< the resync reported a genuine master read-back
+		bool changed = false;    ///< SMP01 / ART13 / ART14 differ from their values on entry
+	};
+	/// @brief Enforce the right modulation state after a reset, adaptive OFF
+	/// only, "only when needed". Called by service_init; public and static so
+	/// the host tests drive it with any backend flavour. Never throws.
+	///  - KIM2 (@p is_smd false): the existing unconditional resync (fix bcb42980).
+	///  - Trusted ART13: restore the driver cache and SMP01 to it (undoes a sticky
+	///    escalation or a stale cache). RAM only.
+	///  - SMD, untrusted, IDP14 set, battery not low, ART15 != fp(IDP14): write
+	///    and SAVE ART15 first, then resync once; never again for that master.
+	/// Does not save the result: the caller saves once if @c changed.
+	static ModulationStateOutcome enforce_modulation_state(KineisDevice &device, ConfigurationStore &store, bool is_smd,
+	                                                       bool battery_low);
+
 protected:
 	void service_init() override;
 	void service_term() override;
@@ -168,10 +189,12 @@ private:
 	bool m_prepared_doppler_is_dx1 = false;
 	/// @brief DX1 field codes for the image being built (see doppler_ext()).
 	ArgosPacketBuilder::DopplerExt m_dx1_ext;
-	/// @brief nullptr (legacy Doppler) unless the build has the SWS tracker,
-	/// UNDERWATER_EN is set AND ARGOS_DOPPLER_EXT_EN is set. Otherwise fills
-	/// m_dx1_ext from the tracker latch and the SWS status (RAM reads only).
-	const ArgosPacketBuilder::DopplerExt *doppler_ext();
+	/// @brief nullptr (legacy Doppler) unless the build has the SWS tracker and
+	/// @p enabled, which is the caller's ArgosConfig::sws_tx_doppler_ext
+	/// (SWS_SENSOR_ENABLE_TX_MODE / UNP26 resolved with UNDERWATER_EN and the
+	/// release gate in get_argos_configuration(); no param read here). Otherwise
+	/// fills m_dx1_ext from the tracker latch and the SWS status (RAM reads only).
+	const ArgosPacketBuilder::DopplerExt *doppler_ext(bool enabled);
 	/// @brief DEND from the tracker and the SWS counters as they are now.
 	static unsigned int dx1_dive_end_now();
 

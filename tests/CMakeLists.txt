@@ -285,6 +285,7 @@ target_sources(${PROJECT_NAME} PRIVATE
     "src/dx1_doppler_test.cpp"
     "src/argos_rx_test.cpp"
     "src/kim2_modulation_test.cpp"
+    "src/modulation_guard_test.cpp"
     "src/lora_packet_builder_test.cpp"
     "src/lora_tx_test.cpp"
     "src/lora_linkcheck_test.cpp"

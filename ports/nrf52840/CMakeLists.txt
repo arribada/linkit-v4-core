@@ -62,6 +62,7 @@ set(BOOL_BUILD_FLAGS
     ARGOS_SMD LORA_RAK3172 LORA_DCS_ENABLE LORA_POWER_OFF_UNDERWATER LORA_MOTION_EXT LORA_LINKCHECK
     SMDSAT_USE_SAFE_TIMINGS SMDSAT_AUTOFALLBACK SMDSAT_TXTRACE DEBUG_NO_SYSTEMLOG
     BENCH_TEST BENCH_ALLOW_POWERDOWN BENCH_FORCE_LPM_NONE SMD_FLASH_HOLD SMD_UART KIM2_BLIND_WKUP_RELEASE
+    DX1_GROUND_DECODER_READY
     CAM_ENABLE BUZZER_ENABLE
     METRIC_LATENCY_LOG_ENABLE VALIDATION_LOG_ENABLE RSPB_VSENSORS_FLOOR)
 
@@ -96,6 +97,13 @@ option(BENCH_FORCE_LPM_NONE "Bench: force SMD LPM=NONE (isolate SPI from STOP-mo
 # 122,6 s d'éveil pour trois émissions espacées de 60 s. Ce flag relâche la pin
 # pendant la salve. Défaut OFF : comportement inchangé.
 option(KIM2_BLIND_WKUP_RELEASE "KIM2: release SAT_EXTWAKEUP during a module-paced BLIND burst" OFF)
+# DX1 (Doppler extension tortue) : verrou de publication de
+# SWS_SENSOR_ENABLE_TX_MODE = AUTO (UNP26, défaut des balises). OFF = AUTO émet le
+# Doppler historique au bit près ; seul FORCE (2, banc/pilotes) émet DX1. À ne
+# passer à ON qu'une fois le décodeur DX1 déployé sur la plateforme : le décodeur
+# actuel perd les vues LDA2 et lit les vues LDK comme des positions GNSS.
+# Voir dx1_effective() dans core/services/dive_behaviour_tracker.hpp.
+option(DX1_GROUND_DECODER_READY "DX1: AUTO emits the Doppler extension (ground decoder deployed)" OFF)
 
 # SMD timing safety knobs.
 #
@@ -840,6 +848,9 @@ target_compile_definitions(${TARGET_NAME} PRIVATE
     # de rester éveillé toute la séquence. Défaut OFF = pin maintenue haute, le
     # comportement d'avant. Voir KIM2Device::release_wkup_for_burst().
     $<$<BOOL:${KIM2_BLIND_WKUP_RELEASE}>:KIM2_BLIND_WKUP_RELEASE=1>
+    # DX1 release gate for SWS_SENSOR_ENABLE_TX_MODE = AUTO. Undefined = 0
+    # (#ifndef default in dive_behaviour_tracker.hpp).
+    $<$<BOOL:${DX1_GROUND_DECODER_READY}>:DX1_GROUND_DECODER_READY=1>
     # RSPB: keep VSENSORS always on (I2C pull-ups live on it). 1=floor (default),
     # 0=allow cut (test). Only forwarded when set (build_rspb.sh); other boards
     # fall back to the #ifndef default in nrf_gpio.cpp.

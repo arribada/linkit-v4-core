@@ -55,4 +55,15 @@ if git diff --cached --name-only | grep -qE '^(core/|ports/nrf52840/(core/|main\
     fi
 fi
 
+# SMP01 (ARGOS_CACHED_MODULATION) a un seul ecrivain: un ecrivain direct
+# sauterait la tenue de ART13/ART14 et laisserait un cache perime "de
+# confiance" pour toujours. Les pilotes concernes n ont aucun test hote.
+if git diff --cached --name-only | grep -qE '^(core/|ports/nrf52840/|tests/)'; then
+    echo "=== Pre-commit: Checking ARGOS_CACHED_MODULATION has one writer ==="
+    if ! python3 "$REPO_ROOT/tools/check_cached_modulation_writes.py"; then
+        echo "ERROR: ARGOS_CACHED_MODULATION written outside its helper. Commit aborted."
+        exit 1
+    fi
+fi
+
 echo "=== Pre-commit: Build OK ==="

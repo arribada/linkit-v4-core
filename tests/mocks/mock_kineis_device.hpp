@@ -3,6 +3,8 @@
 #include "kineis_device.hpp"
 #include "CppUTestExt/MockSupport.h"
 
+#include <functional>
+
 class MockKineisDevice : public KineisDevice {
 public:
 	MockKineisDevice() {}
@@ -11,6 +13,7 @@ public:
 	void send(const KineisModulation mode, const KineisPacket &packet, const unsigned int size_bits) override {
 		last_packet = packet;
 		last_size_bits = size_bits;
+		last_mode = mode;
 		send_count++;
 		mock()
 		    .actualCall("send")
@@ -65,7 +68,27 @@ public:
 	unsigned int cooldown_remaining_ms() const override { return m_cooldown_remaining_ms; }
 	void test_set_cooldown_remaining_ms(unsigned int ms) { m_cooldown_remaining_ms = ms; }
 
+	// Modulation guard hooks. Deliberately NOT mock() calls: service_init runs
+	// them in every ArgosTxService test, and most tests set no expectation.
+	// resync_rconf_cache() counts, may throw, and runs test_on_resync (which
+	// plays the driver: sets the module modulation, records a genuine read-back
+	// in the store...) for its return value. Default: false, like the base.
+	bool resync_rconf_cache() override {
+		resync_calls++;
+		if (test_resync_throws) throw 1;
+		return test_on_resync ? test_on_resync() : false;
+	}
+	void restore_cached_modulation(KineisModulation mode) override {
+		restore_calls++;
+		m_current_mod = mode;
+	}
+	unsigned int resync_calls = 0;
+	unsigned int restore_calls = 0;
+	bool test_resync_throws = false;
+	std::function<bool()> test_on_resync;
+
 	// Test helpers: the last frame handed to send(), and how many frames were.
+	KineisModulation last_mode = KineisModulation::LDA2;
 	KineisPacket last_packet;
 	unsigned int last_size_bits = 0;
 	unsigned int send_count = 0;

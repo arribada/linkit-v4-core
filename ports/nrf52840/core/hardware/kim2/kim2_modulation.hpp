@@ -57,4 +57,31 @@ inline ModulationVerdict verify_modulation(KineisModulation requested, const std
 	return v;
 }
 
+/// @brief Built-in RCONF the driver programs when the master is EMPTY with
+///        adaptive modulation off: ESS4 - LDK - 27 dBm. Shared by state_init
+///        and resync_rconf_cache so both program -- and cache -- the same thing.
+///        It is NOT written back into ARGOS_RADIOCONF: an empty master must stay
+///        detectable (ARGOS_CFG_WARNINGS bit2), and the same string is also a
+///        legitimate master that a unit can be provisioned with on purpose.
+constexpr const char *BUILTIN_LDK_RCONF = "03921fb104b92859209b18abd009de96";
+
+/// @brief Is this read-back a GENUINE read-back of the configured master?
+///        Only then may it set ARGOS_MASTER_MODULATION (ART13/ART14); every
+///        other read-back only caches the modulation (SMP01).
+/// @param adaptive          ARGOS_ADAPTIVE_MODULATION: ON programs per-modulation RCONFs, not the master.
+/// @param master_programmed the configured (non-empty) master is what was just programmed --
+///                          false when the built-in default was substituted for an empty one.
+/// @param decoded_valid     AT+RCONF=? answered and parsed (a write accepted WITHOUT read-back is not one).
+/// @param readback_name     the modulation name it reported.
+/// @param vlda4_allowed     the regulatory gate (a VLDA4 that was just gated off is never cached).
+/// @return the master modulation, or nullopt when this is not a genuine master read-back.
+inline std::optional<KineisModulation> genuine_master_readback(bool adaptive, bool master_programmed,
+                                                               bool decoded_valid, const std::string &readback_name,
+                                                               bool vlda4_allowed) {
+	if (adaptive || !master_programmed || !decoded_valid) return std::nullopt;
+	std::optional<KineisModulation> m = mod_from_name(readback_name);
+	if (m.has_value() && m.value() == KineisModulation::VLDA4 && !vlda4_allowed) return std::nullopt;
+	return m;
+}
+
 }  // namespace KIM2

@@ -486,11 +486,21 @@ enum class ParamID {
 	PP_POSITION_MARGIN_KM                    = 265,  // uint km: beacon position uncertainty, widens the visibility circle
 
 	// 2026-10 — DX1 turtle Doppler extension (SWS health + dive behaviour in the
-	// existing Doppler). Release gate, default OFF: the ground decoder must know
-	// DX1 before any tag emits it.
-	ARGOS_DOPPLER_EXT_EN                     = 266,  // bool: Doppler carries the DX1 extension (needs UNDERWATER_EN and an SWS-analog build)
+	// existing Doppler). Renamed in place from ARGOS_DOPPLER_EXT_EN / ARP47
+	// before any release. UINT 0 OFF / 1 AUTO (default) / 2 FORCE; AUTO only
+	// emits DX1 on a build with DX1_GROUND_DECODER_READY=1. Always needs
+	// UNDERWATER_EN and an SWS-analog build (see dx1_effective()).
+	SWS_SENSOR_ENABLE_TX_MODE                = 266,  // uint: 0 OFF, 1 AUTO, 2 FORCE -- Doppler carries the DX1 extension
+
+	// 2026-10 — Argos modulation guard (adaptive modulation OFF). Read-only,
+	// persisted, never written over DTE. See core/hardware/modulation_guard.hpp
+	// and core/services/argos_config_check.hpp.
+	ARGOS_CFG_WARNINGS                       = 267,  // uint bitmask: configuration-time warnings (bit0 CL exceeds master, bit1 CL master unverified, bit2 master RCONF empty, bit3 MEAS50 on Argos)
+	ARGOS_MASTER_MODULATION                  = 268,  // uint: master RCONF modulation from a GENUINE read-back, 0 LDA2 / 1 LDK / 2 VLDA4 / 3 unknown
+	ARGOS_MASTER_RCONF_FP                    = 269,  // uint: fingerprint of the IDP14 that ARGOS_MASTER_MODULATION was read back from
+	ARGOS_MASTER_SYNC_ATTEMPT_FP             = 270,  // uint: fingerprint of the IDP14 for which an init-time SMD resync was last attempted
 	// === Sentinel (fixed regardless of #ifdef combinations) ===
-	__PARAM_SIZE                             = 267,
+	__PARAM_SIZE                             = 271,
 	__NULL_PARAM                             = 0xFFFF
 };
 // clang-format on

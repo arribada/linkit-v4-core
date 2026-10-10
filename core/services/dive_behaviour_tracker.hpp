@@ -33,6 +33,30 @@
 #define DX1_DOPPLER_EXT_BUILD 0
 #endif
 
+// Release gate for SWS_SENSOR_ENABLE_TX_MODE = AUTO (UNP26). Stays 0 until the
+// platform decoder that knows DX1 is deployed: today's decoder drops the 4-byte
+// LDA2 view and reads the 16-byte LDK view as a GNSS position. Set by the CMake
+// option DX1_GROUND_DECODER_READY (OFF). Tags store AUTO, so the first release
+// built with 1 turns DX1 on across the fleet without rewriting any config.
+#ifndef DX1_GROUND_DECODER_READY
+#define DX1_GROUND_DECODER_READY 0
+#endif
+
+/// @brief SWS_SENSOR_ENABLE_TX_MODE values (BaseEncoding::UINT, 0..2).
+namespace SwsTxMode {
+constexpr unsigned int OFF = 0;    ///< legacy Doppler, bit-exact 006400 on every modulation
+constexpr unsigned int AUTO = 1;   ///< DX1 once the ground decoder is released (default)
+constexpr unsigned int FORCE = 2;  ///< DX1 regardless of the release gate: bench / pilots only
+}  // namespace SwsTxMode
+
+/// @brief Does the Doppler carry the DX1 extension? Pure, so the whole truth
+/// table runs on the host in one build. @p build is DX1_DOPPLER_EXT_BUILD and
+/// @p ready DX1_GROUND_DECODER_READY at the call site. Any mode outside 0..2
+/// (the DTE refuses it, but a stored value is not re-validated) means OFF.
+constexpr bool dx1_effective(unsigned int mode, bool uw_en, bool build, bool ready) {
+	return build && uw_en && (mode == SwsTxMode::FORCE || (mode == SwsTxMode::AUTO && ready));
+}
+
 /// @brief Behaviour fields latched at the last dive edge, as RAW values.
 /// ArgosPacketBuilder::dx1_encode_behaviour() turns them into codes. Kept
 /// outside the build guard: it is plain data, and the packet builder compiles

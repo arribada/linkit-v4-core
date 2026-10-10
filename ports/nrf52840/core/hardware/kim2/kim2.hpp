@@ -114,10 +114,19 @@ private:
 	///        re-tried on the next boot instead of being latched off forever.
 	bool m_vlda4_allowed = true;
 
+	/// @brief The "master RCONF empty, built-in LDK used" warning was already
+	///        logged this boot. IDP14 is no longer back-filled with the built-in
+	///        RCONF (so an empty master stays detectable), so without this the
+	///        line would go to the flash log at every TX power-on, i.e. on the
+	///        surfacing path. ART12 bit2 reports the condition to the operator.
+	bool m_empty_master_warned = false;
+
 	/// @name TX state
 	/// @{
 	KineisPacket m_tx_buffer;               ///< Hex string queued for AT+TX
 	KineisPacket m_packet_buffer;           ///< Incoming packet from send()
+	KineisPacket m_raw_payload;             ///< RAW payload of the last send(), for late re-framing
+	unsigned int m_raw_bits = 0;            ///< its size in bits
 	KineisModulation m_tx_mode;             ///< Modulation for current TX
 	KineisModulation m_current_rconf_mode;  ///< Last RCONF modulation written
 	std::atomic<bool> m_tx_done;            ///< Set by ISR on +TX= response
@@ -238,6 +247,9 @@ private:
 	/// module is off. Called on a master-RCONF PARMW edit / force-SATVF so the
 	/// first TX is sized for the right modulation (no aborted first cycle).
 	bool resync_rconf_cache() override;
+	/// @brief Put m_current_rconf_mode back to the trusted master modulation
+	/// (service_init, adaptive off). Powered off only; never to a gated VLDA4.
+	void restore_cached_modulation(KineisModulation mode) override;
 	/// @}
 
 	/// @name Internal helpers
@@ -295,5 +307,8 @@ private:
 	///        packet on an LDK/VLDA4 master). Mirrors SmdSat's cached-modulation
 	///        persistence. No-op if configuration_store is unavailable.
 	void cache_current_modulation();
+	/// @brief Same, for a GENUINE read-back of the master (adaptive off): also
+	///        records ARGOS_MASTER_MODULATION + the master's fingerprint (ART13/14).
+	void cache_master_readback();
 	/// @}
 };

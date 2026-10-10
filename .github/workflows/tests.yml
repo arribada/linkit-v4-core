@@ -107,7 +107,7 @@ jobs:
           fi
 
   # ---------------------------------------------------------------------------
-  # Static consistency checks. Both run in seconds, need nothing but python3,
+  # Static consistency checks. They run in seconds, need nothing but python3,
   # and are green on main today -- they exist to keep it that way.
   # ---------------------------------------------------------------------------
   consistency:
@@ -122,6 +122,11 @@ jobs:
       # Only one of them has a compile-time guard; this is the other two.
       - name: Parameter tables in sync
         run: python3 scripts/check_param_tables.py
+
+      # ARGOS_CACHED_MODULATION (SMP01) has one writer; a direct write_param()
+      # would skip the master-modulation bookkeeping (ART13/ART14).
+      - name: Cached modulation has a single writer
+        run: python3 tools/check_cached_modulation_writes.py
 
       # Catches READMEs that point at files which were renamed or deleted.
       - name: Documentation links resolve

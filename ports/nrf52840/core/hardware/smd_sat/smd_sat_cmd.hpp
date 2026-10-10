@@ -56,7 +56,13 @@ public:
 	// Radio configuration
 	// ========================================================================
 	virtual void set_radio_conf(smd_uint8_array_t *radio_conf) = 0;
-	virtual void read_radio_conf(SmdArgosModulation *modulation) = 0;
+	/// @brief Read the modulation the module's RCONF decodes to.
+	/// @return true only when the module reported a modulation we RECOGNISE
+	///         (LDA2/LDA2L, LDK, VLDA4); @p modulation is then updated. False for
+	///         anything else (HDA4, an unknown code, an AT reply without a
+	///         modulation field): @p modulation is left untouched -- never a
+	///         silent LDA2. Throws on a communication failure.
+	virtual bool read_radio_conf(SmdArgosModulation *modulation) = 0;
 	virtual bool save_radio_conf() = 0;
 	virtual void read_rconf_raw(uint8_t *rconf_raw, uint16_t *len) = 0;
 

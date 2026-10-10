@@ -69,9 +69,11 @@ private:
 	bool m_credentials_written = false;
 	bool m_rconf_recovery_attempted = false;
 
-	// (m_modulation is now loaded from ParamID::ARGOS_CACHED_MODULATION at
-	//  construction and updated only in the credentials-dirty path. No runtime
-	//  readback is needed on the TX critical path.)
+	// (m_modulation is loaded from ParamID::ARGOS_CACHED_MODULATION at
+	//  construction, put back to the trusted master modulation by
+	//  restore_cached_modulation() at service start, and corrected by the
+	//  credentials-dirty read-back. No extra readback on the TX critical path:
+	//  a disagreement found by that read-back is absorbed by late framing.)
 
 	/// @brief Consecutive error count — after MAX errors, enter long cooldown to prevent SPI spam.
 	/// Aligned with ArgosTxService::DEVICE_ERROR_MAX_CONSECUTIVE (3) so the SmdSat-level
@@ -144,6 +146,19 @@ private:
 	KineisPacket m_packet_buffer;
 	SmdArgosModulation m_modulation;
 	std::string m_pending_rconf;  // Deferred RCONF for next power-on
+	/// @brief Late framing: the RAW payload of the last send() and the
+	/// modulation m_packet_buffer was padded for. At the TX hand-off, after the
+	/// session's master read-back, a mismatch re-pads the raw payload for the
+	/// modulation the module actually reports, or refuses it (no RF) if it
+	/// cannot fit -- instead of handing the module a wrong-length frame.
+	KineisPacket m_raw_payload;
+	SmdArgosModulation m_framed_for = ARGOS_MOD_LDA2;
+	/// @brief Set by write_credentials_from_config() when it read back the
+	/// master it had just written (adaptive off, recognised code).
+	bool m_master_readback_ok = false;
+	/// @brief Re-frame m_packet_buffer for m_modulation when it was padded for
+	/// another one. False = does not fit: the caller refuses the TX.
+	bool reframe_for_actual();
 	unsigned int m_tx_power;
 	double m_tx_freq;
 	bool m_is_first_tx;
@@ -295,4 +310,13 @@ public:
 	bool switch_modulation(KineisModulation mode, const std::string &rconf_hex) override;
 	KineisModulation get_current_modulation() const override;
 	unsigned int cooldown_remaining_ms() const override;
+	/// @brief Init-time resync, service_init only (once per master, see
+	/// ArgosTxService::enforce_modulation_state): power the module, write the
+	/// credentials, read the master back, power off. Clears credentials-dirty
+	/// ONLY when the write succeeded. Never throws; stopped state only.
+	bool resync_rconf_cache() override;
+	/// @brief Put m_modulation back to the trusted master modulation. Stopped
+	/// state only; drops a pending deferred switch, and marks the credentials
+	/// dirty when it changed something so the next session rewrites the master.
+	void restore_cached_modulation(KineisModulation mode) override;
 };

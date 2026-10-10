@@ -7,6 +7,7 @@
  */
 
 #include "smd_sat_cmd_at.hpp"
+#include "modulation_guard.hpp"
 #include "debug.hpp"
 #include "pmu.hpp"
 #include "binascii.hpp"
@@ -356,27 +357,18 @@ void SmdSatCmdAt::set_radio_conf(smd_uint8_array_t *radio_conf) {
 	}
 }
 
-void SmdSatCmdAt::read_radio_conf(SmdArgosModulation *modulation) {
+bool SmdSatCmdAt::read_radio_conf(SmdArgosModulation *modulation) {
 	std::string data;
 	if (send_at_with_data("AT+RCONF=?", data) && !data.empty()) {
-		// Response: <min_freq>,<max_freq>,<rf_level>,<modulation>
-		// Extract modulation string (last field)
-		size_t last_comma = data.rfind(',');
-		if (last_comma != std::string::npos) {
-			std::string mod_str = data.substr(last_comma + 1);
-			if (mod_str == "LDA2" || mod_str == "LDA2L") {
-				*modulation = ARGOS_MOD_LDA2;
-			} else if (mod_str == "LDK") {
-				*modulation = ARGOS_MOD_LDK;
-			} else if (mod_str == "VLDA4") {
-				*modulation = ARGOS_MOD_VLDA4;
-			} else {
-				*modulation = ARGOS_MOD_LDA2;  // Default
-			}
-		}
-	} else {
-		throw ErrorCode::RESOURCE_NOT_AVAILABLE;
+		// Response: <min_freq>,<max_freq>,<rf_level>,<modulation>. A reply with
+		// no comma, or a name we do not know (HDA4...), is NOT recognised: the
+		// caller keeps its modulation instead of the old silent LDA2 default.
+		const std::optional<unsigned int> code = ModulationGuard::smd_at_rconf_reply_to_code(data);
+		if (!code.has_value()) return false;
+		*modulation = static_cast<SmdArgosModulation>(code.value());
+		return true;
 	}
+	throw ErrorCode::RESOURCE_NOT_AVAILABLE;
 }
 
 bool SmdSatCmdAt::save_radio_conf() {

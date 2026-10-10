@@ -652,8 +652,10 @@ TEST_GROUP(Dx1ArgosTx) {
 		ServiceManager::notify_peer_event(e);
 	}
 
-	void gate(bool on) {
-		fake_config_store->write_param(ParamID::ARGOS_DOPPLER_EXT_EN, on);
+	/// SWS_SENSOR_ENABLE_TX_MODE (UNP26). FORCE is the only value that emits
+	/// DX1 on a build where DX1_GROUND_DECODER_READY is 0 (the host default).
+	void gate(unsigned int mode) {
+		fake_config_store->write_param(ParamID::SWS_SENSOR_ENABLE_TX_MODE, mode);
 	}
 
 	/// Dive, stay down @p down_s, surface, run the scheduler: the first send
@@ -674,11 +676,21 @@ TEST_GROUP(Dx1ArgosTx) {
 };
 
 TEST(Dx1ArgosTx, GateOffIsLegacyOnEveryModulation) {
+	struct {
+		unsigned int mode;
+		bool uw_en;
+	} variants[] = {
+		{ SwsTxMode::OFF, true },     // OFF
+		{ SwsTxMode::FORCE, false },  // FORCE, but UNDERWATER_EN off
+		{ 3U, true },                 // out of range (a stale stored value): OFF
+#if !DX1_GROUND_DECODER_READY
+		{ SwsTxMode::AUTO, true },  // AUTO before the ground decoder is released
+#endif
+	};
 	for (KineisModulation m : { KineisModulation::LDA2, KineisModulation::LDK, KineisModulation::VLDA4 }) {
-		for (int variant = 0; variant < 2; variant++) {
-			// variant 0: gate off; variant 1: gate on but UNDERWATER_EN off.
-			gate(variant == 1);
-			fake_config_store->write_param(ParamID::UNDERWATER_EN, (bool)(variant == 0));
+		for (const auto &v : variants) {
+			gate(v.mode);
+			fake_config_store->write_param(ParamID::UNDERWATER_EN, v.uw_en);
 			mock_kineis->test_set_current_modulation(m);
 			ArgosTxService serv(*mock_kineis);
 			serv.start();
@@ -706,7 +718,7 @@ TEST(Dx1ArgosTx, PrewarmCarriesTheViewOfTheModulation) {
 		{ KineisModulation::LDK, 128, "00644161900000000000000000000000" },
 		{ KineisModulation::VLDA4, 24, "006441" },
 	};
-	gate(true);
+	gate(SwsTxMode::FORCE);
 	for (const auto &c : cases) {
 		DiveBehaviourTracker::reset();
 		mock_kineis->test_set_current_modulation(c.m);
@@ -728,7 +740,7 @@ TEST(Dx1ArgosTx, PrewarmCarriesTheViewOfTheModulation) {
 }
 
 TEST(Dx1ArgosTx, PrewarmRefreshesDiveEndAfterAForcedSurface) {
-	gate(true);
+	gate(SwsTxMode::FORCE);
 	mock_kineis->test_set_current_modulation(KineisModulation::LDK);
 	ArgosTxService serv(*mock_kineis);
 	serv.start();
@@ -763,7 +775,7 @@ TEST(Dx1ArgosTx, PrewarmRefreshesDiveEndAfterAForcedSurface) {
 }
 
 TEST(Dx1ArgosTx, NothingTouchesTheBatteryBetweenSurfaceAndFirstSend) {
-	gate(true);
+	gate(SwsTxMode::FORCE);
 	mock_kineis->test_set_current_modulation(KineisModulation::LDA2);
 	ArgosTxService serv(*mock_kineis);
 	serv.start();
@@ -781,7 +793,7 @@ TEST(Dx1ArgosTx, NothingTouchesTheBatteryBetweenSurfaceAndFirstSend) {
 }
 
 TEST(Dx1ArgosTx, UwSensorEventsOnlyRefreshFromAnUnderwaterSampleEnd) {
-	gate(true);
+	gate(SwsTxMode::FORCE);
 	mock_kineis->test_set_current_modulation(KineisModulation::LDA2);
 	ArgosTxService serv(*mock_kineis);
 	serv.start();
@@ -810,7 +822,7 @@ TEST(Dx1ArgosTx, LatchedAdcFaultSampleEndDoesNotRefresh) {
 	// the last valid "underwater" while the detector forces the surface: the
 	// INACTIVE of the read that latches the fault is the surfacing one.
 	SWSAnalogService sws;  // outlives serv; teardown clears s_instance
-	gate(true);
+	gate(SwsTxMode::FORCE);
 	mock_kineis->test_set_current_modulation(KineisModulation::LDA2);
 	ArgosTxService serv(*mock_kineis);
 	serv.start();
@@ -846,7 +858,7 @@ TEST(Dx1ArgosTx, LatchedAdcFaultSampleEndDoesNotRefresh) {
 }
 
 TEST(Dx1ArgosTx, ModulationMismatchSendsTheViewTheModuleFrames) {
-	gate(true);
+	gate(SwsTxMode::FORCE);
 	mock_kineis->test_set_current_modulation(KineisModulation::LDK);  // prepared on LDK
 	ArgosTxService serv(*mock_kineis);
 	serv.start();
@@ -862,4 +874,123 @@ TEST(Dx1ArgosTx, ModulationMismatchSendsTheViewTheModuleFrames) {
 	CHECK_EQUAL(4U, (unsigned int)mock_kineis->last_packet.size());
 	check_crc(mock_kineis->last_packet);
 	serv.stop();
+}
+
+// The Doppler was prepared while the driver said LDA2; by the time the tag
+// surfaces the driver holds LDK (restore / resync / read-back). The prewarm
+// send must go out as LDK -- the dive-time snapshot would hand an LDK radio an
+// LDA2-tagged frame. Legacy and DX1 alike.
+TEST(Dx1ArgosTx, PrewarmSendsOnTheSendTimeModulationLegacy) {
+	gate(SwsTxMode::OFF);
+	mock_kineis->test_set_current_modulation(KineisModulation::LDA2);  // prepared on LDA2
+	ArgosTxService serv(*mock_kineis);
+	serv.start();
+	uw(true);
+	set_time(t + 1200000ULL);
+	mock_kineis->test_set_current_modulation(KineisModulation::LDK);  // module now LDK
+	const unsigned int updates = fake_battery_monitor->update_calls;
+	uw(false);
+	system_scheduler->run();
+	CHECK_EQUAL(updates, fake_battery_monitor->update_calls);  // prewarm path
+	CHECK_EQUAL(1U, mock_kineis->send_count);
+	CHECK_EQUAL((int)KineisModulation::LDK, (int)mock_kineis->last_mode);
+	CHECK_EQUAL(24U, mock_kineis->last_size_bits);
+	serv.stop();
+}
+
+TEST(Dx1ArgosTx, PrewarmSendsOnTheSendTimeModulationDx1) {
+	gate(SwsTxMode::FORCE);
+	mock_kineis->test_set_current_modulation(KineisModulation::LDA2);  // prepared on LDA2
+	ArgosTxService serv(*mock_kineis);
+	serv.start();
+	uw(true);
+	set_time(t + 1200000ULL);
+	mock_kineis->test_set_current_modulation(KineisModulation::LDK);  // module now LDK
+	const unsigned int updates = fake_battery_monitor->update_calls;
+	uw(false);
+	system_scheduler->run();
+	CHECK_EQUAL(updates, fake_battery_monitor->update_calls);  // prewarm path
+	CHECK_EQUAL(1U, mock_kineis->send_count);
+	CHECK_EQUAL((int)KineisModulation::LDK, (int)mock_kineis->last_mode);
+	CHECK_EQUAL(128U, mock_kineis->last_size_bits);
+	CHECK_EQUAL(16U, (unsigned int)mock_kineis->last_packet.size());
+	serv.stop();
+}
+
+TEST(Dx1ArgosTx, ConfigResolvesTheSwsTxGateOnEveryRegime) {
+	// Not gated by GNSS, the low-battery regime or ARGOS_MODE: DX1 rides the
+	// Doppler, which is only built where it already exists.
+	for (unsigned int mode = 0; mode <= 3; mode++) {
+		for (int uw = 0; uw < 2; uw++) {
+			for (int gnss = 0; gnss < 2; gnss++) {
+				for (int lb = 0; lb < 2; lb++) {
+					for (BaseArgosMode am : { BaseArgosMode::LEGACY, BaseArgosMode::DOPPLER,
+					                          BaseArgosMode::SURFACING_BURST, BaseArgosMode::OFF }) {
+						gate(mode);
+						fake_config_store->write_param(ParamID::UNDERWATER_EN, (bool)uw);
+						fake_config_store->write_param(ParamID::GNSS_EN, (bool)gnss);
+						fake_config_store->write_param(ParamID::LB_GNSS_EN, (bool)gnss);
+						fake_config_store->write_param(ParamID::LB_EN, (bool)lb);
+						fake_config_store->set_is_battery_level_low((bool)lb);
+						fake_config_store->write_param(ParamID::ARGOS_MODE, am);
+						fake_config_store->write_param(ParamID::LB_ARGOS_MODE, am);
+						ArgosConfig cfg;
+						configuration_store->get_argos_configuration(cfg);
+						CHECK_EQUAL((bool)lb, cfg.is_lb);
+						CHECK_EQUAL((bool)gnss, cfg.gnss_en);
+						// Host builds: SWS tracker compiled in, release gate as configured.
+						const bool expect =
+						    uw && (mode == SwsTxMode::FORCE || (mode == SwsTxMode::AUTO && DX1_GROUND_DECODER_READY));
+						CHECK_EQUAL(expect, cfg.sws_tx_doppler_ext);
+					}
+				}
+			}
+		}
+	}
+}
+
+TEST(Dx1ArgosTx, DefaultIsAutoAndAutoFollowsTheReleaseGate) {
+	FakeConfigurationStore fresh;
+	fresh.init();
+	CHECK_EQUAL(SwsTxMode::AUTO, fresh.read_param<unsigned int>(ParamID::SWS_SENSOR_ENABLE_TX_MODE));
+	gate(SwsTxMode::AUTO);
+	ArgosConfig cfg;
+	configuration_store->get_argos_configuration(cfg);
+	CHECK_EQUAL((bool)DX1_GROUND_DECODER_READY, cfg.sws_tx_doppler_ext);
+}
+
+// =============================================================== SWS TX gate
+TEST_GROUP(Dx1Gate){};
+
+TEST(Dx1Gate, EffectiveTruthTable) {
+	// The only combinations that emit DX1, written out rather than derived
+	// from the function under test.
+	struct Row {
+		unsigned int mode;
+		bool uw, build, ready;
+	};
+	const Row on[] = {
+		{ SwsTxMode::FORCE, true, true, false },
+		{ SwsTxMode::FORCE, true, true, true },
+		{ SwsTxMode::AUTO, true, true, true },
+	};
+	unsigned int n_on = 0;
+	for (unsigned int mode = 0; mode <= 3; mode++) {
+		for (int uw = 0; uw < 2; uw++) {
+			for (int build = 0; build < 2; build++) {
+				for (int ready = 0; ready < 2; ready++) {
+					bool expect = false;
+					for (const Row &r : on)
+						if (r.mode == mode && r.uw == (bool)uw && r.build == (bool)build && r.ready == (bool)ready)
+							expect = true;
+					CHECK_EQUAL(expect, dx1_effective(mode, uw, build, ready));
+					n_on += expect ? 1U : 0U;
+				}
+			}
+		}
+	}
+	CHECK_EQUAL(3U, n_on);
+	CHECK_FALSE(dx1_effective(0xFFFFFFFFU, true, true, true));  // garbage stored value = OFF
+	static_assert(!dx1_effective(SwsTxMode::AUTO, true, true, false), "AUTO is inert until the release gate");
+	static_assert(SwsTxMode::OFF == 0 && SwsTxMode::AUTO == 1 && SwsTxMode::FORCE == 2, "DTE values are frozen");
 }

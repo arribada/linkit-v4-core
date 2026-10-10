@@ -13,11 +13,42 @@
 #include "scheduler.hpp"
 #include "pmu.hpp"
 #include "rgb_led.hpp"
+#include "argos_config_check.hpp"
 #include <cmath>
 
 extern RGBLed *status_led;
 
 extern Scheduler *system_scheduler;
+
+#if defined(ARGOS_SMD) && (ARGOS_SMD == 1)
+static constexpr bool DTE_ARGOS_IS_SMD = true;
+#else
+static constexpr bool DTE_ARGOS_IS_SMD = false;
+#endif
+
+#if !defined(LORA_RAK3172) || (LORA_RAK3172 != 1)
+/// @brief Argos builds only: refresh ARGOS_CFG_WARNINGS (ART12), one log line
+/// when it changes. Returns whether the stored mask changed.
+static bool dte_refresh_argos_cfg_warnings() {
+	return ArgosConfigCheck::refresh(*configuration_store, DTE_ARGOS_IS_SMD).changed;
+}
+#endif
+
+/// @brief Did this PARMW entry change the stored value? A re-push of the same
+/// template must not throw away a verified master modulation.
+/// Only TEXT and BOOLEAN are compared (IDP14, ARP54); anything else counts as
+/// changed.
+static bool dte_param_changes(ParamID id, const BaseType &incoming) {
+	try {
+		const BaseType &current = configuration_store->read_param<BaseType>(id);
+		if (current.index() != incoming.index()) return true;
+		if (const std::string *s = std::get_if<std::string>(&current)) return *s != std::get<std::string>(incoming);
+		if (const bool *b = std::get_if<bool>(&current)) return *b != std::get<bool>(incoming);
+		return true;
+	} catch (...) {
+		return true;
+	}
+}
 
 DTEHandler::DTEHandler() {
 	m_dumpd_NNN = 0;
@@ -178,7 +209,23 @@ std::string DTEHandler::PARMW_REQ(int error_code, std::vector<ParamValue> &param
 				rejected_keys.push_back(param_map[(int)param_values[i].param].key);
 				continue;
 			}
+			// Modulation guard: a new master, or a flip of the adaptive setting,
+			// means the stored master modulation (ART13) no longer describes what
+			// a TX session will program. No radio traffic here -- the KIM2 resync
+			// below and the next SATVF / service start re-learn it.
+			const bool master_changed = param_values[i].param == ParamID::ARGOS_RADIOCONF
+			                            && dte_param_changes(ParamID::ARGOS_RADIOCONF, param_values[i].value);
+			const bool adaptive_changed =
+			    param_values[i].param == ParamID::ARGOS_ADAPTIVE_MODULATION
+			    && dte_param_changes(ParamID::ARGOS_ADAPTIVE_MODULATION, param_values[i].value);
 			configuration_store->write_param(param_values[i].param, param_values[i].value);
+			if (master_changed || adaptive_changed) configuration_store->invalidate_master_modulation();
+			if (adaptive_changed) {
+				// Allow one init-time resync for the new setting (SMD), and make the
+				// first SMD session rewrite the master and read it back.
+				configuration_store->write_param(ParamID::ARGOS_MASTER_SYNC_ATTEMPT_FP, 0U);
+				configuration_store->mark_credentials_dirty();
+			}
 #if !defined(ARGOS_SMD) || (ARGOS_SMD != 1)
 			if (param_values[i].param == ParamID::ARGOS_RADIOCONF
 			    || param_values[i].param == ParamID::ARGOS_RADIOCONF_LDK
@@ -206,6 +253,12 @@ std::string DTEHandler::PARMW_REQ(int error_code, std::vector<ParamValue> &param
 	if (rconf_edited && kineis_device_instance) {
 		kineis_device_instance->resync_rconf_cache();
 	}
+#endif
+
+#if !defined(LORA_RAK3172) || (LORA_RAK3172 != 1)
+	// Configuration-time warning (ART12), never a refusal. No radio traffic:
+	// on SMD the new master reads "not verified" until SATVF or the next start.
+	(void)dte_refresh_argos_cfg_warnings();
 #endif
 
 	// Save all the parameters (incl. the re-seeded modulation cache above)
@@ -247,6 +300,10 @@ std::string DTEHandler::STATR_REQ(int error_code, std::vector<ParamID> &params,
 	if (rtc) {
 		configuration_store->write_param(ParamID::RTC_CURRENT_TIME, static_cast<unsigned int>(rtc->gettime()));
 	}
+#if !defined(LORA_RAK3172) || (LORA_RAK3172 != 1)
+	// ART12 as of now (a PARMW / SATVF earlier in this session already logged it).
+	(void)dte_refresh_argos_cfg_warnings();
+#endif
 	return read_params_by_filter(error_code, params, rejected_keys, 'T', DTECommand::STATR_RESP);
 }
 
@@ -976,12 +1033,16 @@ std::string DTEHandler::SATVF_REQ(int error_code, std::vector<BaseType> &arg_lis
 			forced = 1;
 			smd_creds_written = true;
 		}
+		// Configuration-time warning (ART12), now that the master may have been
+		// read back by the dirty credential write.
+		const bool cfg_changed = dte_refresh_argos_cfg_warnings();
 		// Persist the modulation cache the credential write just corrected, as
 		// the KIM2 branch does. Without this it stayed in RAM until the 30 min
 		// periodic flush: a reset before that reloaded the stale value at the
 		// next boot, and the first TX of that boot was sized for the wrong
-		// modulation (e.g. a 4 B LDA2 Doppler under an LDK master).
-		if (smd_creds_written) {
+		// modulation (e.g. a 4 B LDA2 Doppler under an LDK master). One save
+		// covers the ART12 refresh too.
+		if (smd_creds_written || cfg_changed) {
 			configuration_store->save_params();
 		}
 #else
@@ -993,7 +1054,6 @@ std::string DTEHandler::SATVF_REQ(int error_code, std::vector<BaseType> &arg_lis
 		if (force == 1 && kineis_device_instance) {
 			DEBUG_INFO("SATVF(KIM2): force=1 — re-programming RCONF + re-seeding modulation cache");
 			kineis_device_instance->resync_rconf_cache();
-			configuration_store->save_params();  // persist the re-seeded modulation cache across reboot
 			hw_id = 0;
 			hw_addr = 0;
 			hw_seckey.clear();
@@ -1002,6 +1062,13 @@ std::string DTEHandler::SATVF_REQ(int error_code, std::vector<BaseType> &arg_lis
 			match = (hw_id == cfg_id && hw_addr == cfg_addr);
 			forced = 1;
 		}
+		// Configuration-time warning (ART12), now that the master may have been
+		// read back (force=1 only -- the unforced read sees the module's
+		// power-on RCONF, not the master). Then ONE save: force=1 always
+		// persists the re-seeded modulation cache across reboot; the unforced
+		// path saves only if ART12 changed.
+		const bool cfg_changed = dte_refresh_argos_cfg_warnings();
+		if (forced == 1 || cfg_changed) configuration_store->save_params();
 #endif
 
 		DEBUG_INFO("SATVF: hw_id=%u cfg_id=%u hw_addr=0x%08X cfg_addr=0x%08X match=%d forced=%u", hw_id, cfg_id,

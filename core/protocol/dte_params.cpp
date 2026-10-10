@@ -539,11 +539,41 @@ const BaseMap param_map[] = {
 	// 100 km ceiling: past that the widened visibility circle predicts passes
 	// the beacon cannot actually use.
 	{ "PP_POSITION_MARGIN_KM", "PPP12", BaseEncoding::UINT, 0U, 100U, {}, true, true },
-	// ARP47: DX1 Doppler extension. OFF keeps the legacy 006400-style frame
-	// bit-exact on every modulation. Do NOT enable before the ground decoder
-	// knows DX1: today's decoder drops DX1 LDA2 frames and reads DX1 LDK frames
-	// as GNSS positions. Inert without UNDERWATER_EN or on a build without SWS.
-	{ "ARGOS_DOPPLER_EXT_EN", "ARP47", BaseEncoding::BOOLEAN, false, false, {}, true, true },
+	// UNP26: DX1 Doppler extension (was ARP47, renamed before any release; UNP14-18
+	// and UNP21 carried other meanings in released firmware / PyLinkit / the
+	// platform and must never be reused). 0 OFF keeps the legacy 006400-style
+	// frame bit-exact on every modulation. 1 AUTO (default) is DX1 only on a
+	// build with DX1_GROUND_DECODER_READY=1, legacy otherwise. 2 FORCE is DX1
+	// regardless: bench and pilots with a patched decoder ONLY, never in a
+	// template -- today's decoder drops DX1 LDA2 frames and reads DX1 LDK frames
+	// as GNSS positions. Inert without UNDERWATER_EN, on a build without SWS,
+	// and on LoRa builds (no ArgosTxService is instantiated there).
+	{ "SWS_SENSOR_ENABLE_TX_MODE", "UNP26", BaseEncoding::UINT, 0U, 2U, { 0U, 1U, 2U }, true, true },
+	// ART12-ART15: Argos modulation guard (adaptive modulation OFF). All
+	// read-only status keys (key[2]=='T', returned by STATR, refused by PARMW),
+	// written by the firmware only, and absent from LoRa builds where no Argos
+	// radio exists. GUI flow: PARMW -> SATVF (force=1 on KIM2) -> STATR
+	// ART12,ART13 -> warn the operator when ART12 != 0. Nothing is refused.
+	//
+	// ART12 ARGOS_CFG_WARNINGS, bitmask, 0 = nothing to report:
+	//   bit0 CloudLocate frame does not fit the VERIFIED master modulation
+	//        (MEAS20 on LDK/VLDA4, MEASC12 on VLDA4), adaptive off: never sent
+	//   bit1 CloudLocate configured, adaptive off, master modulation not
+	//        verified yet (run SATVF, force=1 on KIM2)
+	//   bit2 master RCONF (IDP14) empty, adaptive off or any SMD build
+	//   bit3 CloudLocate MEAS50 on an Argos build (LoRa only, never sent);
+	//        exclusive of bit0/bit1
+	{ "ARGOS_CFG_WARNINGS", "ART12", BaseEncoding::UINT, 0U, 15U, {}, (LORA_RAK3172 != 1), false },
+	// ART13 ARGOS_MASTER_MODULATION: 0 LDA2, 1 LDK, 2 VLDA4 (SMP01 order),
+	// 3 unknown. Set ONLY by a genuine read-back of the master RCONF with
+	// adaptive off; reset to 3 when PARMW changes IDP14 or ARP54.
+	{ "ARGOS_MASTER_MODULATION", "ART13", BaseEncoding::UINT, 0U, 3U, {}, (LORA_RAK3172 != 1), false },
+	// ART14: fingerprint of the IDP14 that ART13 was read back from. ART13 is
+	// trusted only while ART14 == fingerprint(current IDP14).
+	{ "ARGOS_MASTER_RCONF_FP", "ART14", BaseEncoding::UINT, 0U, 0xFFFFFFFFU, {}, (LORA_RAK3172 != 1), false },
+	// ART15: fingerprint of the IDP14 for which the SMD init-time resync was
+	// last ATTEMPTED (saved before the module is powered: one attempt per master).
+	{ "ARGOS_MASTER_SYNC_ATTEMPT_FP", "ART15", BaseEncoding::UINT, 0U, 0xFFFFFFFFU, {}, (LORA_RAK3172 != 1), false },
 };
 // clang-format on
 

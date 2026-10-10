@@ -107,9 +107,20 @@ public:
 	}
 	/// @brief Program the configured RCONF, read it back, and re-seed the
 	/// modulation cache so the next TX is sized for the radio's true modulation.
-	/// Called after a master-RCONF edit (PARMW) or force-SATVF. Default no-op:
-	/// SMD re-pushes via its own credentials-dirty flow; only KIM2 needs this.
+	/// A genuine read-back of the master (adaptive off) also records ART13/ART14
+	/// through ConfigurationStore::write_master_modulation_readback().
+	/// KIM2: after a master-RCONF edit (PARMW), force-SATVF and at every
+	/// ArgosTxService::service_init. SMD: only from service_init, at most once
+	/// per master fingerprint (ART15), when ART13 cannot be trusted.
+	/// Blocking (up to ~1.5 s), only while the radio is powered off, never on
+	/// the surfacing path. Returns true only when the cache now reflects a live
+	/// read-back of the configured master.
 	virtual bool resync_rconf_cache() { return false; }
+	/// @brief Put the driver's cached modulation back to @p mode -- the
+	/// trusted master modulation (ART13) -- after a reset, undoing a sticky
+	/// escalation or a stale cache. RAM only, no radio traffic; a no-op unless
+	/// the radio is powered off. Default no-op (LoRa, nothing cached).
+	virtual void restore_cached_modulation(KineisModulation mode) { (void)mode; }
 	// Switch radio modulation at runtime: write RCONF, save to flash, reload KMAC.
 	// rconf_hex: 32-char hex string for the target modulation's radio configuration.
 	// Returns true on success.

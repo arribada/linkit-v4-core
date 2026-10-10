@@ -387,7 +387,8 @@ def prerequis(valeurs):
                    "master: ARGOS_RADIOCONF must be provisioned (factory value empty -> KIM2 "
                    "falls back to a hard-coded LDK RCONF) and must decode to LDA2. On an LDK "
                    "master no CloudLocate is ever sent; the slot falls back to a cached "
-                   "position or a Doppler. Check with SATVF / bench case PROV-01.")
+                   "position or a Doppler. Check with SATVF (force=1 on KIM2), then STATR "
+                   "ART12 must be 0 and ART13 0 (LDA2); bench case PROV-01.")
     return out
 
 

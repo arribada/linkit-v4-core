@@ -16,6 +16,7 @@
 #include "binascii.hpp"
 #include "smd_sat.hpp"
 #include "pmu.hpp"
+#include "modulation_guard.hpp"
 
 #include "nrf_delay.h"
 #include "nrf_gpio.h"
@@ -128,6 +129,12 @@ static SmdArgosModulation kineis_to_smd_mod(KineisModulation mode) {
 	}
 }
 
+// SmdArgosModulation IS the SMP01/ART13 code: the modulation guard casts
+// between them, so the two orders must never drift apart.
+static_assert(static_cast<unsigned int>(ARGOS_MOD_LDA2) == ModulationGuard::CODE_LDA2, "SMP01 order");
+static_assert(static_cast<unsigned int>(ARGOS_MOD_LDK) == ModulationGuard::CODE_LDK, "SMP01 order");
+static_assert(static_cast<unsigned int>(ARGOS_MOD_VLDA4) == ModulationGuard::CODE_VLDA4, "SMP01 order");
+
 static KineisModulation smd_to_kineis_mod(SmdArgosModulation mode) {
 	switch (mode) {
 	case ARGOS_MOD_LDK: return KineisModulation::LDK;
@@ -152,12 +159,7 @@ SmdSat::SmdSat(SmdSatCmd &cmd, unsigned int idle_shutdown_ms) : m_cmd(cmd) {
 	m_modulation = ARGOS_MOD_LDA2;
 	if (configuration_store) {
 		unsigned int cached = configuration_store->read_param<unsigned int>(ParamID::ARGOS_CACHED_MODULATION);
-		switch (cached) {
-		case 0: m_modulation = ARGOS_MOD_LDA2; break;
-		case 1: m_modulation = ARGOS_MOD_LDK; break;
-		case 2: m_modulation = ARGOS_MOD_VLDA4; break;
-		default: m_modulation = ARGOS_MOD_LDA2; break;
-		}
+		m_modulation = kineis_to_smd_mod(ModulationGuard::from_code(cached).value_or(KineisModulation::LDA2));
 		DEBUG_INFO("SmdSat::ctor: loaded cached modulation=%u (-> enum=%d)", cached, static_cast<int>(m_modulation));
 	}
 	m_state = SmdSatState::stopped;
@@ -895,7 +897,14 @@ void SmdSat::state_load_kmac() {
 		// after state_idle_enter + 30 ms wait after state_idle_exit + a scheduler
 		// context switch). Falls back to the regular idle transition when no
 		// packet is pending (e.g. DTE-initiated set_credentials boot).
-		if (m_packet_buffer.length() > 0) {
+		if (m_packet_buffer.length() > 0 && !reframe_for_actual()) {
+			// The session read-back says the module is on a modulation the queued
+			// payload cannot fit: refuse it, no RF, no truncation. Not a module
+			// fault -- m_error_count is left alone; the service reschedules.
+			m_packet_buffer.clear();
+			notify(KineisEventDeviceError({}));
+			SMD_STATE_CHANGE(load_kmac, idle);
+		} else if (m_packet_buffer.length() > 0) {
 			m_tx_buffer = m_packet_buffer;
 			m_packet_buffer.clear();
 			SMD_STATE_CHANGE(load_kmac, transmit_pending);
@@ -1142,10 +1151,17 @@ void SmdSat::state_idle() {
 			SMD_STATE_CHANGE(idle, idle_pending);
 			return;
 		}
-		TXTRACE("state_idle: packet pending -> transmit_pending");
-		m_tx_buffer = m_packet_buffer;
-		m_packet_buffer.clear();
-		SMD_STATE_CHANGE(idle, transmit_pending);
+		if (!reframe_for_actual()) {
+			// Same refusal as at the load_kmac hand-off: no RF, stay idle.
+			m_packet_buffer.clear();
+			notify(KineisEventDeviceError({}));
+			m_next_delay = SMDSAT_DELAY_TICK_INTERRUPT_MS;
+		} else {
+			TXTRACE("state_idle: packet pending -> transmit_pending");
+			m_tx_buffer = m_packet_buffer;
+			m_packet_buffer.clear();
+			SMD_STATE_CHANGE(idle, transmit_pending);
+		}
 	} else if (m_stopping) {
 		SMD_STATE_CHANGE(idle, stopped);
 	} else {
@@ -1508,32 +1524,31 @@ void SmdSat::send(const KineisModulation mode, const KineisPacket &user_payload,
 		           static_cast<int>(requested), static_cast<int>(m_modulation));
 	}
 
-	unsigned int max_payload_size = 0;
 	switch (m_modulation) {
-	case ARGOS_MOD_LDA2: max_payload_size = ARGOS_TX_LDA2_PAYLOAD_BYTE_SIZE; break;
-	case ARGOS_MOD_LDK: max_payload_size = ARGOS_TX_LDK_PAYLOAD_BYTE_SIZE; break;
-	case ARGOS_MOD_VLDA4: max_payload_size = ARGOS_TX_VLDA4_PAYLOAD_BYTE_SIZE; break;
+	case ARGOS_MOD_LDA2:
+	case ARGOS_MOD_LDK:
+	case ARGOS_MOD_VLDA4: break;
 	default: DEBUG_TRACE("SmdSat::%s: Unknown modulation type %d", __func__, m_modulation); return;
 	}
 
-	unsigned int effective_payload_length = std::min(payload_length, static_cast<unsigned int>(user_payload.size()));
-	if (effective_payload_length > max_payload_size) {
-		DEBUG_ERROR("SmdSat::%s: Payload truncated from %u to %u bytes", __func__, effective_payload_length,
-		            max_payload_size);
-		effective_payload_length = max_payload_size;
+	// Pad for the cached modulation (LDA2: 4 B steps, min 4, max 24; LDK 16;
+	// VLDA4 3 -- ModulationGuard::frame_for_modulation, the same rules as
+	// before). A payload that does not fit is REFUSED, no RF: it used to be
+	// truncated, which put a corrupt frame on the air. The raw payload is kept
+	// so the hand-off can re-pad it if the session read-back disagrees.
+	const unsigned int effective_payload_length =
+	    std::min(payload_length, static_cast<unsigned int>(user_payload.size()));
+	const std::optional<KineisPacket> framed = ModulationGuard::frame_for_modulation(
+	    user_payload, effective_payload_length * 8U, smd_to_kineis_mod(m_modulation));
+	if (!framed.has_value()) {
+		DEBUG_ERROR("SmdSat::%s: %u B payload does not fit modulation %d — refused, nothing sent", __func__,
+		            effective_payload_length, static_cast<int>(m_modulation));
+		notify(KineisEventDeviceError({}));
+		return;
 	}
-
-	unsigned int padded_size = max_payload_size;
-	if (m_modulation == ARGOS_MOD_LDA2) {
-		padded_size = ((effective_payload_length + ARGOS_TX_LDA2_SIZE_STEP - 1) / ARGOS_TX_LDA2_SIZE_STEP)
-		              * ARGOS_TX_LDA2_SIZE_STEP;
-		if (padded_size < ARGOS_TX_LDA2_MIN_BYTE_SIZE) padded_size = ARGOS_TX_LDA2_MIN_BYTE_SIZE;
-		if (padded_size > max_payload_size) padded_size = max_payload_size;
-		DEBUG_TRACE("SmdSat::%s: LDA2 padded %u -> %u bytes", __func__, effective_payload_length, padded_size);
-	}
-
-	m_packet_buffer.assign(padded_size, 0);
-	std::copy(user_payload.begin(), user_payload.begin() + effective_payload_length, m_packet_buffer.begin());
+	m_raw_payload = user_payload.substr(0, effective_payload_length);
+	m_framed_for = m_modulation;
+	m_packet_buffer = framed.value();
 
 	DEBUG_TRACE("SmdSat::%s: raw data[%u]=%s", __func__, effective_payload_length,
 	            Binascii::hexlify(m_packet_buffer).c_str());
@@ -1596,6 +1611,7 @@ bool SmdSat::can_transmit() const {
 	return seckey.size() == 32 && radioconf.size() >= 2 && (radioconf.size() % 2) == 0;
 }
 bool SmdSat::write_credentials_from_config() {
+	m_master_readback_ok = false;
 	if (!configuration_store) return false;
 
 	// Flash write operations need ~100ms for persistence.
@@ -1680,6 +1696,7 @@ bool SmdSat::write_credentials_from_config() {
 	// PARMW on ARGOS_RADIOCONF, SATVF with force) — otherwise the STM32 flash
 	// may contain invalid RCONF data and KMAC init will fail with MAC_ERROR.
 	// After the first successful write, ensure_modulation() takes over.
+	bool master_written = false;  // the master RCONF was written AND saved in this call
 	if (!radioconf.empty()) {
 		bool adaptive = false;
 		if (configuration_store) {
@@ -1711,6 +1728,13 @@ bool SmdSat::write_credentials_from_config() {
 				return false;
 			}
 			wait_cmd();
+			master_written = true;
+			// Adaptive off: the master supersedes any deferred per-modulation
+			// switch. Left pending, the next state_load_kmac would apply it over
+			// the master (step 1a) with nothing to write the master back -- e.g.
+			// after an init-time resync cleared credentials-dirty. In a session
+			// step 1a has already consumed it, so this changes nothing there.
+			if (!adaptive) m_pending_rconf.clear();
 		} else {
 			DEBUG_INFO("SmdSat::%s: adaptive modulation ON — skipping master RCONF write", __func__);
 		}
@@ -1759,16 +1783,27 @@ bool SmdSat::write_credentials_from_config() {
 	// subsequent boots load the correct modulation at SmdSat construction
 	// without needing a runtime SPI readback on the surface-burst critical
 	// path. Failure here is non-fatal — m_modulation keeps its prior value.
+	//
+	// Only a RECOGNISED code is believed (an unknown one -- HDA4, a malformed AT
+	// reply -- leaves m_modulation as it was: never a silent LDA2). And only a
+	// read-back of the master written in THIS call, adaptive off, is recorded
+	// as the master's modulation (ART13/ART14); anything else caches SMP01.
+	// RAM writes only, no new log line: this runs in the first TX session.
 	try {
 		SmdArgosModulation reported = m_modulation;
-		m_cmd.read_radio_conf(&reported);
-		if (reported != m_modulation) {
-			DEBUG_INFO("SmdSat::%s: cached modulation update %d -> %d (master RCONF readback)", __func__,
-			           static_cast<int>(m_modulation), static_cast<int>(reported));
-			m_modulation = reported;
-		}
-		if (configuration_store) {
-			configuration_store->write_param(ParamID::ARGOS_CACHED_MODULATION, static_cast<unsigned int>(m_modulation));
+		if (m_cmd.read_radio_conf(&reported)) {
+			if (reported != m_modulation) {
+				DEBUG_INFO("SmdSat::%s: cached modulation update %d -> %d (master RCONF readback)", __func__,
+				           static_cast<int>(m_modulation), static_cast<int>(reported));
+				m_modulation = reported;
+			}
+			const bool adaptive_now = configuration_store->read_param<bool>(ParamID::ARGOS_ADAPTIVE_MODULATION);
+			if (!adaptive_now && master_written) {
+				configuration_store->write_master_modulation_readback(static_cast<unsigned int>(m_modulation));
+				m_master_readback_ok = true;
+			} else {
+				configuration_store->write_cached_modulation(static_cast<unsigned int>(m_modulation));
+			}
 		}
 	} catch (...) {
 		DEBUG_WARN("SmdSat::%s: read_radio_conf failed — cached modulation not refreshed", __func__);
@@ -2196,9 +2231,11 @@ bool SmdSat::switch_modulation(KineisModulation mode, const std::string &rconf_h
 		MODSWITCH_LOG(modswitch_elapsed(), "SMD stopped, DEFERRED switch to %d (no SPI)", static_cast<int>(target));
 		m_modulation = target;
 		m_pending_rconf = rconf_hex;
-		// Persist so the next boot loads this modulation directly.
+		// Persist so the next boot loads this modulation directly. SMP01 only:
+		// a switch is not a read-back of the master (with adaptive off, the
+		// next service_init restores the trusted master modulation).
 		if (configuration_store) {
-			configuration_store->write_param(ParamID::ARGOS_CACHED_MODULATION, static_cast<unsigned int>(m_modulation));
+			configuration_store->write_cached_modulation(static_cast<unsigned int>(m_modulation));
 		}
 		// Force state_load_kmac on next boot so the deferred RCONF gets applied.
 		// Without this, idle_pending skips to idle and the RCONF is never written.
@@ -2258,9 +2295,9 @@ bool SmdSat::switch_modulation(KineisModulation mode, const std::string &rconf_h
 	// Update cached modulation
 	m_modulation = target;
 	is_kmac_profil_loaded = true;
-	// Persist so the next boot loads this modulation directly.
+	// Persist so the next boot loads this modulation directly (SMP01 only).
 	if (configuration_store) {
-		configuration_store->write_param(ParamID::ARGOS_CACHED_MODULATION, static_cast<unsigned int>(m_modulation));
+		configuration_store->write_cached_modulation(static_cast<unsigned int>(m_modulation));
 	}
 
 	MODSWITCH_LOG(modswitch_elapsed(), "modulation switched to %d OK — TOTAL", static_cast<int>(target));
@@ -2269,6 +2306,85 @@ bool SmdSat::switch_modulation(KineisModulation mode, const std::string &rconf_h
 
 KineisModulation SmdSat::get_current_modulation() const {
 	return smd_to_kineis_mod(m_modulation);
+}
+
+// ============================================================================
+// Modulation guard (adaptive modulation OFF) -- see modulation_guard.hpp
+// ============================================================================
+
+bool SmdSat::reframe_for_actual() {
+	if (m_framed_for == m_modulation) return true;
+	const std::optional<KineisPacket> framed = ModulationGuard::frame_for_modulation(
+	    m_raw_payload, static_cast<unsigned int>(m_raw_payload.size()) * 8U, smd_to_kineis_mod(m_modulation));
+	if (!framed.has_value()) {
+		DEBUG_ERROR("SmdSat: %u B payload does not fit the module's modulation %d (framed for %d) — TX refused, no RF",
+		            static_cast<unsigned>(m_raw_payload.size()), static_cast<int>(m_modulation),
+		            static_cast<int>(m_framed_for));
+		return false;
+	}
+	// The one line this safety net costs, and only when it actually fires.
+	DEBUG_INFO("SmdSat: re-framed %u -> %u B (cache %d -> module %d)", static_cast<unsigned>(m_packet_buffer.size()),
+	           static_cast<unsigned>(framed->size()), static_cast<int>(m_framed_for), static_cast<int>(m_modulation));
+	m_packet_buffer = framed.value();
+	m_framed_for = m_modulation;
+	return true;
+}
+
+void SmdSat::restore_cached_modulation(KineisModulation mode) {
+	if (m_state != SmdSatState::stopped) return;
+	const SmdArgosModulation target = kineis_to_smd_mod(mode);
+	// A deferred switch would re-apply a per-modulation RCONF before the master.
+	const bool changed = (target != m_modulation) || !m_pending_rconf.empty();
+	m_modulation = target;
+	m_pending_rconf.clear();
+	// The module itself may still hold an escalation RCONF in its flash (a live
+	// switch saves it there): make the next session rewrite the master and read
+	// it back. At boot the flag is already set; this covers a re-entry into
+	// operation within the same boot.
+	if (changed && configuration_store) configuration_store->mark_credentials_dirty();
+}
+
+bool SmdSat::resync_rconf_cache() {
+	if (m_state != SmdSatState::stopped || !configuration_store || !can_transmit()) return false;
+
+	DEBUG_INFO("SmdSat::%s: master modulation not trusted — one-time read-back of the master RCONF", __func__);
+	bool ok = false;
+	try {
+		power_on_blocking();
+		PMU::kick_watchdog();
+		if (m_cmd.ping()) {
+			// Dirty until the master is written AND read back: a partial write,
+			// or a read-back that threw or returned an unrecognised code, must
+			// leave the first TX session to write and read it back again --
+			// that session read-back is what arms the late re-framing.
+			configuration_store->mark_credentials_dirty();
+			const bool written = write_credentials_from_config();
+			if (written && m_master_readback_ok) {
+				configuration_store->clear_credentials_dirty();
+				ok = true;
+			} else if (written) {
+				DEBUG_WARN("SmdSat::%s: master written but not read back — first session will write and read it back",
+				           __func__);
+			} else {
+				DEBUG_WARN("SmdSat::%s: credential write failed — first session will retry", __func__);
+			}
+		} else {
+			DEBUG_WARN("SmdSat::%s: module did not answer — first session will read the master back", __func__);
+		}
+	} catch (...) {
+		DEBUG_WARN("SmdSat::%s: aborted — first session will read the master back", __func__);
+	}
+	// Always the same teardown as read_credentials(). m_needs_explicit_kmac_load
+	// is left as it is: the RCONF is in the STM32 flash, and the first session
+	// pushes the KMAC profile anyway.
+	try {
+		m_cmd.deinit();
+	} catch (...) {}
+	shutdown();
+	GPIOPins::release_sensors_pwr();
+	nrf_gpio_cfg_default(BSP::GPIO_Inits[SAT_RESET].pin_number);
+	m_last_power_off_ms = PMU::get_timestamp_ms();
+	return ok;
 }
 
 // ============================================================================

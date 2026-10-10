@@ -99,15 +99,31 @@ for the rare non-adaptive escalation paths. One condition, then:
 **An empty master is not a fallback, it is a provisioning error.** The factory
 value of `ARGOS_RADIOCONF` is empty, and the templates do not set it (no real
 credentials here, see below). With an empty master the KIM2 programs a
-hard-coded LDK RCONF: the unit silently becomes an LDK-master unit with all of
-the above. A unit that only ever ran with adaptive on may never have had its
-master written, because adaptive used the per-modulation RCONFs instead. Before
-deployment, write the master and read back what it decodes to — `SATVF` (on
-KIM2 `force=1` re-programs it and re-seeds the modulation cache). On SMD, run
-`SATVF` after provisioning so the modulation read back from the module is
-saved before the tag is sealed; and after pushing a template that turns
-adaptive off on an already-deployed SMD unit, reboot it (or rewrite
-`ARGOS_RADIOCONF`) so it reprograms the master.
+hard-coded LDK RCONF: the unit transmits as an LDK-master unit with all of the
+above, and an SMD unit does not transmit at all. (The KIM2 no longer writes
+that default back into `ARGOS_RADIOCONF`, so the master stays visibly empty.)
+A unit that only ever ran with adaptive on may never have had its master
+written, because adaptive used the per-modulation RCONFs instead.
+
+Before deployment, write the master and read back what it decodes to, then
+read the firmware's own verdict:
+
+1. `PARMW` the configuration (template + `ARGOS_RADIOCONF`);
+2. `SATVF` — with `force=1` on KIM2, which re-programs the master and reads it
+   back (the unforced KIM2 read only sees the module's power-on RCONF and does
+   not count); on SMD the dirty credentials are written and read back;
+3. `STATR ART12,ART13` — `ART13` is the master modulation from that genuine
+   read-back (0 LDA2, 1 LDK, 2 VLDA4, 3 not verified), `ART12` the warning
+   bitmask: bit0 the CloudLocate format does not fit the master (MEAS20 needs
+   LDA2), bit1 not verified yet, bit2 master empty, bit3 MEAS50 on Argos.
+   **`ART12` must read 0.** The firmware warns, it never refuses.
+
+The read-back is persisted (`ART13` with the fingerprint of the master it came
+from, `ART14`), so after a reset the firmware puts its modulation cache back to
+it by itself; an SMD unit whose master was never read back tries once, at the
+next start, per master. Changing `ARGOS_RADIOCONF` or
+`ARGOS_ADAPTIVE_MODULATION` over `PARMW` invalidates `ART13` until the next
+read-back.
 
 The bench board is exactly the trap: it carries all three per-modulation RCONFs
 but its master decodes to LDK, so with adaptive off no LONG packet and no MEAS20

@@ -66,3 +66,25 @@ TEST(Kim2Modulation, VerifyUnrecognizedMakesNoDecision) {
 	CHECK_FALSE(v2.recognized);
 	CHECK_FALSE(v2.mismatch);
 }
+
+TEST(Kim2Modulation, BuiltinLdkRconfIsTheEss4Default) {
+	STRCMP_EQUAL("03921fb104b92859209b18abd009de96", KIM2::BUILTIN_LDK_RCONF);
+}
+
+TEST(Kim2Modulation, GenuineMasterReadbackTruthTable) {
+	// Only the configured master, programmed with adaptive off and read back
+	// with a recognised, permitted modulation, may set ART13/ART14.
+	for (int adaptive = 0; adaptive < 2; adaptive++)
+		for (int programmed = 0; programmed < 2; programmed++)
+			for (int valid = 0; valid < 2; valid++)
+				for (const char *name : { "LDK", "LDA2", "VLDA4", "LDA2L", "HDA4", "" })
+					for (int vlda4_ok = 0; vlda4_ok < 2; vlda4_ok++) {
+						std::optional<KineisModulation> g =
+						    KIM2::genuine_master_readback(adaptive, programmed, valid, name, vlda4_ok);
+						const bool known = KIM2::mod_from_name(name).has_value();
+						const bool gated = std::string(name) == "VLDA4" && !vlda4_ok;
+						const bool expect = !adaptive && programmed && valid && known && !gated;
+						CHECK_EQUAL(expect, g.has_value());
+						if (expect) CHECK_EQUAL((int)KIM2::mod_from_name(name).value(), (int)g.value());
+					}
+}

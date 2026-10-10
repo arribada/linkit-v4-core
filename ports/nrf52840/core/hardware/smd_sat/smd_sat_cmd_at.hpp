@@ -40,7 +40,7 @@ public:
 
 	// Radio configuration
 	void set_radio_conf(smd_uint8_array_t *radio_conf) override;
-	void read_radio_conf(SmdArgosModulation *modulation) override;
+	bool read_radio_conf(SmdArgosModulation *modulation) override;
 	bool save_radio_conf() override;
 	void read_rconf_raw(uint8_t *rconf_raw, uint16_t *len) override;
 

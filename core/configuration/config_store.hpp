@@ -21,6 +21,8 @@
 #include "service_scheduler.hpp"
 #include "hauled_mode_service.hpp"
 #include "moored_mode_service.hpp"
+#include "dive_behaviour_tracker.hpp"  // DX1_DOPPLER_EXT_BUILD, DX1_GROUND_DECODER_READY, dx1_effective()
+#include "modulation_guard.hpp"        // master-RCONF fingerprint + trust rule (ART13/ART14)
 
 #if VALIDATION_LOG_ENABLE
 // The [VAL-*] traces in this header timestamp using the global RTC. Without
@@ -119,6 +121,11 @@ struct ArgosConfig {
 	unsigned int cert_tx_repetition;
 	unsigned int argos_tcxo_warmup_time;
 	unsigned int sensor_tx_enable;
+	/// @brief The Doppler carries the DX1 extension (SWS health + dive behaviour).
+	/// Resolved once from SWS_SENSOR_ENABLE_TX_MODE (UNP26), UNDERWATER_EN and the
+	/// build/release gates (dx1_effective()). NOT gated by gnss_en, the regime or
+	/// ARGOS_MODE: DX1 lives in the Doppler, which only exists where it already does.
+	bool sws_tx_doppler_ext = false;
 	unsigned int shutdown_ntime_sat;
 	bool adaptive_modulation;
 	std::string radioconf_ldk;
@@ -176,6 +183,16 @@ protected:
 	// nothing in the logs to say why.
 	// 0x20 KEPT in 2026-10 for slot 266 (ARGOS_DOPPLER_EXT_EN, ARP47): pure
 	// append again, same reasoning.
+	// 0x20 KEPT when slot 266 was renamed in place to SWS_SENSOR_ENABLE_TX_MODE
+	// (UNP26, BOOLEAN -> UINT) before any release: no index moves and
+	// __PARAM_SIZE stays 267. Records are fixed-size and key-checked, so on a
+	// bench board that stored ARP47 the key no longer matches and THIS slot
+	// alone falls back to its default (AUTO); nothing else is touched.
+	// 0x20 KEPT in 2026-10 for slots 267-270 (ARGOS_CFG_WARNINGS, ARGOS_MASTER_
+	// MODULATION, ARGOS_MASTER_RCONF_FP, ARGOS_MASTER_SYNC_ATTEMPT_FP, ART12-15):
+	// pure append, __PARAM_SIZE 267 -> 271. An older file ends before them, so
+	// they come back at their defaults (unknown / untrusted), which costs at most
+	// one init-time resync attempt on SMD and nothing on KIM2.
 	static inline const unsigned int m_config_version_code = 0x1c07e800 | 0x20;
 	static inline const unsigned int m_config_version_code_aop = 0x1c07e800 | 0x03;
 	// Board-conditional default for slot [240] GNSS_DEEP_IDLE_AFTER_OFF_S. Kept as a
@@ -485,7 +502,11 @@ protected:
 		/* [263] PP_MIN_CULMINATION */ 0U,         // TX: keep every pass the elevation filter accepted (previous hardcoded value)
 		/* [264] PP_RX_MIN_CULMINATION */ 20U,     // RX: a downlink needs a good pass — a grazing one wastes the whole window (previous hardcoded value)
 		/* [265] PP_POSITION_MARGIN_KM */ 0U,      // no position uncertainty by default
-		/* [266] ARGOS_DOPPLER_EXT_EN */ (bool)false,  // legacy Doppler until the ground decoder knows DX1
+		/* [266] SWS_SENSOR_ENABLE_TX_MODE */ 1U,  // AUTO: DX1 once DX1_GROUND_DECODER_READY; legacy Doppler until then
+		/* [267] ARGOS_CFG_WARNINGS */ 0U,            // nothing reported until the first evaluation
+		/* [268] ARGOS_MASTER_MODULATION */ 3U,       // unknown until a genuine master read-back
+		/* [269] ARGOS_MASTER_RCONF_FP */ 0U,         // 0 never matches a non-empty master: untrusted
+		/* [270] ARGOS_MASTER_SYNC_ATTEMPT_FP */ 0U,  // no init-time resync attempted yet
 	};
 	// clang-format on
 
@@ -868,6 +889,53 @@ public:
 	/// @note Used by SATVF force-write path to re-trigger state_load_kmac without
 	///       rewriting individual params.
 	void mark_credentials_dirty() { m_credentials_dirty = true; }
+
+	/// @name Argos modulation state (adaptive modulation OFF)
+	/// ARGOS_CACHED_MODULATION (SMP01) has exactly ONE writer: write_cached_
+	/// modulation() below. tools/check_cached_modulation_writes.py fails the
+	/// pre-commit hook and CI if a direct write_param() of it appears anywhere
+	/// else -- a writer that forgot the master-modulation bookkeeping would
+	/// leave a stale cache "trusted" for good. RAM only: the caller decides
+	/// when to save_params(), never on the surfacing path.
+	/// @{
+
+	/// @brief Cache the modulation the driver now uses (SMP01 only). For
+	/// escalations, deferred switches, the adaptive per-modulation restore and
+	/// read-backs that are not of the master. Codes outside 0..2 are ignored.
+	void write_cached_modulation(unsigned int code) {
+		if (code > ModulationGuard::CODE_VLDA4) return;
+		write_param(ParamID::ARGOS_CACHED_MODULATION, code);
+	}
+
+	/// @brief A GENUINE read-back of the MASTER RCONF with adaptive off: the
+	/// master was programmed in this very call and the module reported a
+	/// recognised modulation. Caches it (SMP01) and records it as the master's
+	/// (ART13) together with the fingerprint of the IDP14 it belongs to (ART14).
+	void write_master_modulation_readback(unsigned int code) {
+		if (code > ModulationGuard::CODE_VLDA4) return;
+		write_cached_modulation(code);
+		write_param(ParamID::ARGOS_MASTER_MODULATION, code);
+		write_param(ParamID::ARGOS_MASTER_RCONF_FP, static_cast<unsigned int>(ModulationGuard::rconf_fingerprint(
+		                                                read_param<std::string>(ParamID::ARGOS_RADIOCONF))));
+	}
+
+	/// @brief The master or the adaptive setting changed: ART13 no longer
+	/// describes what a TX session will program.
+	void invalidate_master_modulation() {
+		write_param(ParamID::ARGOS_MASTER_MODULATION, ModulationGuard::CODE_UNKNOWN);
+	}
+
+	/// @brief ART13 if it can be believed for the master configured NOW
+	/// (see ModulationGuard::modulation_cache_trusted), else CODE_UNKNOWN.
+	unsigned int trusted_master_modulation() {
+		const unsigned int art13 = read_param<unsigned int>(ParamID::ARGOS_MASTER_MODULATION);
+		const uint32_t art14 = read_param<unsigned int>(ParamID::ARGOS_MASTER_RCONF_FP);
+		const bool trusted =
+		    ModulationGuard::modulation_cache_trusted(art13, art14, read_param<std::string>(ParamID::ARGOS_RADIOCONF),
+			                                          read_param<bool>(ParamID::ARGOS_ADAPTIVE_MODULATION));
+		return trusted ? art13 : ModulationGuard::CODE_UNKNOWN;
+	}
+	/// @}
 
 	/// @brief Persist all parameters to flash.
 	void save_params() {
@@ -1397,6 +1465,13 @@ public:
 		argos_config.radioconf_ldk = read_param<std::string>(ParamID::ARGOS_RADIOCONF_LDK);
 		argos_config.radioconf_lda2 = read_param<std::string>(ParamID::ARGOS_RADIOCONF_LDA2);
 		argos_config.radioconf_vlda4 = read_param<std::string>(ParamID::ARGOS_RADIOCONF_VLDA4);
+
+		// SWS TX (DX1 Doppler extension). Regime-independent on purpose, and
+		// outside the gnss_en block below: DX1 rides the Doppler, not GNSS.
+		const unsigned int sws_tx_mode = read_param<unsigned int>(ParamID::SWS_SENSOR_ENABLE_TX_MODE);
+		const bool sws_uw_en = read_param<bool>(ParamID::UNDERWATER_EN);
+		argos_config.sws_tx_doppler_ext =
+		    dx1_effective(sws_tx_mode, sws_uw_en, DX1_DOPPLER_EXT_BUILD, DX1_GROUND_DECODER_READY);
 
 		// Set sensor TX enable based on configuration
 		argos_config.sensor_tx_enable = 0;

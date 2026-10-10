@@ -14,9 +14,22 @@ those vectors byte for byte. Firmware: `core/services/dive_behaviour_tracker.hpp
 - Reuse the existing Doppler message (byte0 = 0x00). No new message type.
 - The payload must be fully built BEFORE surfacing. The surfacing path may only do RAM reads + integer ops
   (< ~100 µs): no ADC, no flash, no DEBUG line, no allocation.
-- Release gate: new boolean param `ARGOS_DOPPLER_EXT_EN`, DTE key `ARP47`, default **false**. When false
-  (or UNDERWATER_EN false, or the build lacks the SWS guard) the Doppler is the legacy 3-byte frame,
-  bit-exact (006400 / 24 bits), on every modulation, exactly as today.
+- Release gate: param `SWS_SENSOR_ENABLE_TX_MODE`, DTE key `UNP26`, UINT 0..2, default **1 (AUTO)**
+  (replaced the unreleased boolean `ARGOS_DOPPLER_EXT_EN` / `ARP47` in place, slot 266):
+  - 0 OFF: legacy Doppler;
+  - 1 AUTO: DX1 only on a firmware built with `DX1_GROUND_DECODER_READY=1` (compile-time, CMake option,
+    default OFF), legacy otherwise;
+  - 2 FORCE: DX1 regardless of the release gate — bench and pilots whose decoder is already patched,
+    **never in a template**.
+
+  `effective = DX1_DOPPLER_EXT_BUILD && UNDERWATER_EN && (mode == 2 || (mode == 1 && DX1_GROUND_DECODER_READY))`
+  (`dx1_effective()`, `core/services/dive_behaviour_tracker.hpp`). Whenever it is false the Doppler is the legacy
+  3-byte frame, bit-exact (006400 / 24 bits), on every modulation, exactly as today. With today's default build
+  (READY=0) no tag emits DX1 unless it is explicitly set to FORCE. Tags store AUTO, so the first release built with
+  READY=1 (after the platform decoder below is deployed) turns DX1 on across the fleet with no config rewrite.
+  The key UNP26 was checked unused in firmware history, PyLinkit and the platform (UNP14-18 and UNP21 carried
+  other meanings in released versions and must never be reused). Inert on LoRa builds: there
+  `DX1_DOPPLER_EXT_BUILD` is 1 but no ArgosTxService is instantiated, so no Doppler is ever built.
 
 ## 1. Frame layout (MSB-first)
 ```
@@ -109,7 +122,9 @@ State ∈ {UNKNOWN, UW, SURF}, plus `blind`.
   (verify the RSPB host simulation target either compiles it out or keeps legacy output; it must stay legacy).
 
 ## 4. ArgosTx integration
-- `doppler_ext()` returns nullptr unless guard && UNDERWATER_EN && ARGOS_DOPPLER_EXT_EN.
+- `doppler_ext(enabled)` returns nullptr unless guard && `enabled`; `enabled` is the caller's
+  `ArgosConfig::sws_tx_doppler_ext`, resolved once in `ConfigurationStore::get_argos_configuration()` from
+  `dx1_effective()` (not gated by gnss_en, the regime or ARGOS_MODE). No param read in doppler_ext().
 - prepare_doppler_packet (dive + hourly refresh): build the DX1 image (16 B) when the ext is on; store image + flag.
 - Underwater refresh block (argos_tx_service.cpp ~1224): never runs on UW_SENSOR events EXCEPT
   SERVICE_INACTIVE when `SWSAnalogService::get_status().is_underwater` is true (status is pushed before
@@ -122,12 +137,17 @@ State ∈ {UNKNOWN, UW, SURF}, plus `blind`.
 - RSPB branch untouched. dte_handler SATDP / build_doppler_packet default argument keeps legacy.
 
 ## 5. Param
-`ARGOS_DOPPLER_EXT_EN`, "ARP47", BOOLEAN, default false, appended at the END of all three tables
-(base_types.hpp enum before __PARAM_SIZE → 267; dte_params.cpp last entry; config_store.hpp default_params last
-entry). NO config version bump (read the comment above the constant). Run `python3 scripts/check_param_tables.py`.
-Update the DTE golden string in tests/src/dte_handler_test.cpp if PARMR output changes. Check
-`tools/check_template_conf.py` / pylinkit map: add ARP47 to the map if the tool requires every firmware param;
-do NOT enable it in any template.
+`SWS_SENSOR_ENABLE_TX_MODE`, "UNP26", UINT 0..2 (permitted {0,1,2}), default 1 (AUTO), slot 266 at the END of all
+three tables (base_types.hpp enum before __PARAM_SIZE = 267; dte_params.cpp last entry; config_store.hpp
+default_params last entry). It replaced `ARGOS_DOPPLER_EXT_EN` / "ARP47" (BOOLEAN, never released) in place: NO
+config version bump (read the comment above the constant); a bench board that stored ARP47 falls back to AUTO for
+this slot alone, so write `UNP26=2` again to keep testing DX1. Run `python3 scripts/check_param_tables.py`.
+DTE golden string (tests/src/dte_handler_test.cpp): `ARP47=0` became `UNP26=1`, same length (#846).
+`tools/pylinkit_map.py` maps UNP26 -> SWS_SENSOR_ENABLE_TX_MODE / UINT. Not added to any template yet: upstream
+PyLinkit does not know the name (a `config push` would drop the line) and the default is already AUTO. Platform:
+add UNP26 to dteParamTable.ts and LinkitConfig, as a 0/1/2 selector (not a boolean checkbox) in the Underwater
+section. Release order: deploy the platform decoder (section 6), verify a real FORCE frame of each view, then ship a
+firmware built with `-DDX1_GROUND_DECODER_READY=ON`.
 
 ## 6. Platform decoder contract (arribada-web-platform packages/core/src/argosDecoder.ts)
 - New terminal branch for byte0 == 0x00 at bitLength ∈ {24, 32, 128}, placed before the zero-tail heuristic and the
@@ -154,3 +174,10 @@ do NOT enable it in any template.
 - Turtle templates use adaptive=0 (2026-10): the view is set by the master RCONF. An LDA2 master gives the 4 B
   compact view only; the rich block needs an LDK master. That choice is a provisioning decision per unit, and it
   also decides whether the depth pile and CloudLocate MEAS20 work (both need LDA2, see template_conf/README.md).
+- Late framing (2026-10, adaptive off). The drivers keep the RAW payload; when the session read-back shows the module
+  on another modulation than the frame was padded for, they re-pad the raw payload for the real one (SMD at the TX
+  hand-off, KIM2 in `state_transmit_enter`), or refuse it with no RF when it cannot fit. They do NOT re-cut the DX1
+  view (no view table). Accepted, rare residual — it only happens when the cached modulation was wrong despite the
+  restore/resync at service start: a stale 3 B VLDA4 view padded onto LDA2/LDK has byte 3 = 0 and decodes as a
+  CRC-failed (corrupt) Doppler; a 4 B LDA2 view padded to a 16 B LDK frame (LATCH = 0) and a 16 B LDK view sent as
+  a 16 B LDA2 frame decode compact-only per section 6; a 4 B or 16 B view on VLDA4 does not fit and is refused.

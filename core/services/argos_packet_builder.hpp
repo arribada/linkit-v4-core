@@ -109,10 +109,10 @@ public:
 	static constexpr unsigned int DOPPLER_PACKET_PAYLOAD_BITS = 24;
 	static constexpr unsigned int DOPPLER_PACKET_BYTES = 3;
 
-	// DX1 Doppler extension (turtle SWS health + behaviour), opt-in through
-	// ARGOS_DOPPLER_EXT_EN. ONE 16-byte image is built; each modulation sends a
-	// prefix of it (doppler_view), so a modulation change can never cut a field
-	// in half or leave a stale CRC:
+	// DX1 Doppler extension (turtle SWS health + behaviour), selected by
+	// SWS_SENSOR_ENABLE_TX_MODE (UNP26, see dx1_effective()). ONE 16-byte
+	// image is built; each modulation sends a prefix of it (doppler_view), so
+	// a modulation change can never cut a field in half or leave a stale CRC:
 	//   byte2      VER(2)=01 | EXT(1)=0 | DRY(3) | DEND(2)
 	//   byte3      CRC8 over bytes 0..2       (views of 32 bits and more)
 	//   bits 32-111 rich block                (LDK view only)

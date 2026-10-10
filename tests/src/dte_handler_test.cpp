@@ -218,6 +218,8 @@ TEST(DTEHandler, PARMR_REQ_CheckEmptyRequest) {
 	// now compiles the camera (ENABLE_CAM_SENSOR=1) like every other sensor,
 	// so cam_service.cpp is under test and its keys are advertised here.
 	// #83E -> #846 (2026-10): +ARP47 (DX1 Doppler extension gate) appended.
+	// #846 unchanged (2026-10): slot 266 renamed in place ARP47=0 -> UNP26=1
+	// (SWS_SENSOR_ENABLE_TX_MODE, default AUTO), same length.
 	STRCMP_EQUAL(
 	    "$O;PARMR#846;IDP12=0,IDP11=FACTORY,ARP05=60,ARP01=2,ARP19=0,ARP18=0,GNP01=1,ARP11=1,ARP16=10,GNP02=1,GNP03=5,"
 	    "GNP05=120,GNP04=0,UNP01=0,UNP02=0,UNP03=1,LBP01=0,LBP02=10,ARP06=240,LBP04=2,LBP05=0,LBP06=1,ARP12=4,LBP07=5,"
@@ -239,8 +241,9 @@ TEST(DTEHandler, PARMR_REQ_CheckEmptyRequest) {
 	    "550b4bec21009c7a7b5bebaa937cdb41,ARP54=0,UNP20=2700,ARP43=0,UNP30=3,UNP09=200,UNP10=10000,GNP44=5,GNP45=0,"
 	    "GNP46=0,AXP10=0,AXP11=50,LDP03=01/01/1970 "
 	    "00:00:00,SMP01=0,GNP50=86400,RLP01=0,RLP02=3600,RLP03=10,HMP00=0,HMP01=24,HMP02=3,HMP10=2,HMP11=7200,"
-	    "HMP12=0,HMP13=1,GNP51=0,GNP52=4294967295,GNP53=0,GNP54=0,ARP44=0,ARP45=4,ARP46=60,PPP07=0,PPP08=14,PPP09=0,MRP00=0,"
-	    "MRP01=150,MRP02=3,MRP03=2,MRP04=900,MRP05=4,MRP06=3600,MRP07=1,MRP08=1,PPP10=0,PPP11=20,PPP12=0,ARP47=0\r",
+	    "HMP12=0,HMP13=1,GNP51=0,GNP52=4294967295,GNP53=0,GNP54=0,ARP44=0,ARP45=4,ARP46=60,PPP07=0,PPP08=14,PPP09=0,"
+	    "MRP00=0,MRP01=150,MRP02=3,MRP03=2,MRP04=900,MRP05=4,MRP06=3600,MRP07=1,MRP08=1,PPP10=0,PPP11=20,PPP12=0,"
+	    "UNP26=1\r",
 	    resp.c_str());
 }
 
@@ -681,6 +684,131 @@ TEST(DTEHandler, WritingOutOfRangeValue) {
 	STRCMP_EQUAL("$N;PARMW#005;PPP01\r", resp.c_str());
 }
 
+TEST(DTEHandler, SwsTxModeKeyAndRange) {
+	// SWS_SENSOR_ENABLE_TX_MODE replaced ARP47 in place (slot 266). The old key
+	// is unknown now: a script still writing it must see it rejected by name,
+	// not have it silently ignored.
+	std::string resp;
+	std::string req = "$PARMW#007;UNP26=2\r";
+	CHECK_TRUE(DTEAction::CONFIG_UPDATED == dte_handler->handle_dte_message(req, resp));
+	STRCMP_EQUAL("$O;PARMW#000;\r", resp.c_str());
+	CHECK_EQUAL(2U, configuration_store->read_param<unsigned int>(ParamID::SWS_SENSOR_ENABLE_TX_MODE));
+
+	req = "$PARMW#007;UNP26=3\r";
+	dte_handler->handle_dte_message(req, resp);
+	STRCMP_EQUAL("$N;PARMW#005;UNP26\r", resp.c_str());
+	CHECK_EQUAL(2U, configuration_store->read_param<unsigned int>(ParamID::SWS_SENSOR_ENABLE_TX_MODE));
+
+	req = "$PARMW#00F;ARP47=1,UNP26=0\r";
+	dte_handler->handle_dte_message(req, resp);
+	STRCMP_EQUAL("$N;PARMW#005;ARP47\r", resp.c_str());
+	CHECK_EQUAL(0U, configuration_store->read_param<unsigned int>(ParamID::SWS_SENSOR_ENABLE_TX_MODE));
+}
+
+static std::string parmw(const std::string &payload) {
+	char hdr[16];
+	snprintf(hdr, sizeof(hdr), "$PARMW#%03X;", (unsigned int)payload.size());  // HEX length
+	return std::string(hdr) + payload + "\r";
+}
+
+TEST(DTEHandler, ParmwOfTheMasterOrAdaptiveInvalidatesTheMasterModulation) {
+	// Modulation guard: ART13 describes the master it was read back from. A new
+	// IDP14, or a flip of ARP54, makes it stale -- PARMW resets it to 3
+	// (unknown) without any radio traffic. A re-push of the same values, or of
+	// anything else, keeps a verified master verified.
+	const std::string master_a = "2c93600d6be3bac0ccfe9047c02c058e";
+	const std::string master_b = "03921fb104b92859209b18abd009de96";
+	std::string resp;
+	std::string req = parmw("IDP14=" + master_a);
+	CHECK_TRUE(DTEAction::CONFIG_UPDATED == dte_handler->handle_dte_message(req, resp));
+	STRCMP_EQUAL("$O;PARMW#000;\r", resp.c_str());
+	configuration_store->write_master_modulation_readback(ModulationGuard::CODE_LDK);
+	configuration_store->write_param(ParamID::ARGOS_MASTER_SYNC_ATTEMPT_FP, 1234U);
+	CHECK_EQUAL(ModulationGuard::CODE_LDK, configuration_store->trusted_master_modulation());
+
+	// Same master again, plus an unrelated parameter: still trusted.
+	req = parmw("IDP14=" + master_a + ",ARP05=60");
+	dte_handler->handle_dte_message(req, resp);
+	STRCMP_EQUAL("$O;PARMW#000;\r", resp.c_str());
+	CHECK_EQUAL(ModulationGuard::CODE_LDK,
+	            configuration_store->read_param<unsigned int>(ParamID::ARGOS_MASTER_MODULATION));
+	CHECK_EQUAL(ModulationGuard::CODE_LDK, configuration_store->trusted_master_modulation());
+
+	// ARP54 rewritten with its current value (0): still trusted.
+	req = parmw("ARP54=0");
+	dte_handler->handle_dte_message(req, resp);
+	CHECK_EQUAL(ModulationGuard::CODE_LDK, configuration_store->trusted_master_modulation());
+	CHECK_EQUAL(1234U, configuration_store->read_param<unsigned int>(ParamID::ARGOS_MASTER_SYNC_ATTEMPT_FP));
+
+	// A new master: ART13 back to unknown.
+	req = parmw("IDP14=" + master_b);
+	dte_handler->handle_dte_message(req, resp);
+	CHECK_EQUAL(ModulationGuard::CODE_UNKNOWN,
+	            configuration_store->read_param<unsigned int>(ParamID::ARGOS_MASTER_MODULATION));
+	CHECK_EQUAL(ModulationGuard::CODE_UNKNOWN, configuration_store->trusted_master_modulation());
+
+	// Re-learnt, then ARP54 flipped: unknown again, one init resync allowed
+	// again (ART15 cleared) and the SMD credentials marked dirty.
+	configuration_store->write_master_modulation_readback(ModulationGuard::CODE_LDA2);
+	configuration_store->clear_credentials_dirty();
+	req = parmw("ARP54=1");
+	dte_handler->handle_dte_message(req, resp);
+	CHECK_EQUAL(ModulationGuard::CODE_UNKNOWN,
+	            configuration_store->read_param<unsigned int>(ParamID::ARGOS_MASTER_MODULATION));
+	CHECK_EQUAL(0U, configuration_store->read_param<unsigned int>(ParamID::ARGOS_MASTER_SYNC_ATTEMPT_FP));
+	CHECK_TRUE(configuration_store->is_credentials_dirty());
+	// The cached modulation (SMP01) itself is left alone by PARMW.
+	CHECK_EQUAL(ModulationGuard::CODE_LDA2,
+	            configuration_store->read_param<unsigned int>(ParamID::ARGOS_CACHED_MODULATION));
+}
+
+TEST(DTEHandler, ModulationGuardStatusKeysAreReadOnly) {
+	// ART12-ART15 are written by the firmware only. Whatever the build, PARMW
+	// names them as refused and leaves them alone.
+	std::string resp;
+	for (const char *key : { "ART12", "ART13", "ART14", "ART15" }) {
+		std::string req = parmw(std::string(key) + "=1");
+		dte_handler->handle_dte_message(req, resp);
+		STRCMP_EQUAL(("$N;PARMW#005;" + std::string(key) + "\r").c_str(), resp.c_str());
+	}
+	CHECK_EQUAL(0U, configuration_store->read_param<unsigned int>(ParamID::ARGOS_CFG_WARNINGS));
+	CHECK_EQUAL(ModulationGuard::CODE_UNKNOWN,
+	            configuration_store->read_param<unsigned int>(ParamID::ARGOS_MASTER_MODULATION));
+	CHECK_EQUAL(0U, configuration_store->read_param<unsigned int>(ParamID::ARGOS_MASTER_RCONF_FP));
+	CHECK_EQUAL(0U, configuration_store->read_param<unsigned int>(ParamID::ARGOS_MASTER_SYNC_ATTEMPT_FP));
+}
+
+TEST(DTEHandler, ModulationGuardStateSurvivesARebootOnArgosBuildsOnly) {
+	// ART12-ART15 are persisted like any implemented parameter -- what makes
+	// the restore at service start possible after a reset. They are declared
+	// (LORA_RAK3172 != 1): a LoRa build has no Argos radio, does not store them,
+	// and its config.dat (which carries the LoRaWAN credentials) is unchanged.
+	// The host tests are LoRa builds, so they check that half; the Argos half is
+	// the same generic serialisation every other parameter goes through.
+	const std::string master_a = "2c93600d6be3bac0ccfe9047c02c058e";
+	configuration_store->write_param(ParamID::ARGOS_RADIOCONF, master_a);
+	configuration_store->write_master_modulation_readback(ModulationGuard::CODE_LDK);
+	configuration_store->write_param(ParamID::ARGOS_MASTER_SYNC_ATTEMPT_FP, 77U);
+	configuration_store->write_param(ParamID::ARGOS_CFG_WARNINGS, 5U);
+	configuration_store->save_params();
+	delete store;
+	store = new LFSConfigurationStore(*ram_filesystem);
+	store->init();
+	configuration_store = store;
+#if defined(LORA_RAK3172) && (LORA_RAK3172 == 1)
+	CHECK_EQUAL(ModulationGuard::CODE_UNKNOWN, configuration_store->trusted_master_modulation());
+	CHECK_EQUAL(0U, configuration_store->read_param<unsigned int>(ParamID::ARGOS_MASTER_RCONF_FP));
+	CHECK_EQUAL(0U, configuration_store->read_param<unsigned int>(ParamID::ARGOS_MASTER_SYNC_ATTEMPT_FP));
+	CHECK_EQUAL(0U, configuration_store->read_param<unsigned int>(ParamID::ARGOS_CFG_WARNINGS));
+	STRCMP_EQUAL(master_a.c_str(), configuration_store->read_param<std::string>(ParamID::ARGOS_RADIOCONF).c_str());
+#else
+	CHECK_EQUAL(ModulationGuard::CODE_LDK, configuration_store->trusted_master_modulation());
+	CHECK_EQUAL(ModulationGuard::rconf_fingerprint(master_a),
+	            configuration_store->read_param<unsigned int>(ParamID::ARGOS_MASTER_RCONF_FP));
+	CHECK_EQUAL(77U, configuration_store->read_param<unsigned int>(ParamID::ARGOS_MASTER_SYNC_ATTEMPT_FP));
+	CHECK_EQUAL(5U, configuration_store->read_param<unsigned int>(ParamID::ARGOS_CFG_WARNINGS));
+#endif
+}
 
 TEST(DTEHandler, LengthFieldIsHexadecimalNotDecimal) {
 	/*
