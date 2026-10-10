@@ -2740,7 +2740,17 @@ std::string SmdSat::get_firmware_version() {
 	std::string version = "";
 
 	try {
-		bool smd_ready = !was_stopped || m_cmd.ping();  // Already pinged in power_on_blocking
+		// A single ping right after power_on_blocking() failed on the UART-AT module
+		// (v1.0.0): its AT parser is not ready yet, while SMDTST, which spaces its
+		// commands, read FW fine (bench 2026-10-10). Retry before giving up.
+		bool smd_ready = !was_stopped;
+		for (uint8_t attempt = 0; !smd_ready && attempt < 5; attempt++) {
+			if (attempt) {
+				PMU::kick_watchdog();
+				nrf_delay_ms(200);
+			}
+			smd_ready = m_cmd.ping();
+		}
 
 		if (smd_ready) {
 			uint8_t ver[64] = { 0 };
