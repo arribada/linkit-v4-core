@@ -83,12 +83,24 @@ def send(cmd: str, wait_reply_s: float = 2.0) -> list[str]:
         log("ERREUR : carte non énumérée (endormie ?) — impossible d'envoyer " + cmd)
         return []
     out = []
-    with serial.Serial(p, 115200, timeout=0.3) as s:
+    try:
+        s = serial.Serial(p, 115200, timeout=0.3)
+    except serial.SerialException as e:
+        log(f"  port {p} inaccessible ({e})")
+        return []
+    with s:
         s.reset_input_buffer()
         s.write((cmd + "\r\n").encode())
         t0 = time.time()
         while time.time() - t0 < wait_reply_s:
-            line = s.readline().decode(errors="replace").strip()
+            try:
+                raw = s.readline()
+            except serial.SerialException:
+                # %STORE : la carte part en System OFF et le port disparait sous
+                # nos pieds (Windows : ClearCommError, PermissionError 13).
+                log("  (port disparu pendant la lecture -- attendu apres %STORE)")
+                break
+            line = raw.decode(errors="replace").strip()
             if not line:
                 continue
             if line.startswith("%"):
@@ -250,7 +262,7 @@ def main() -> int:
     ap.add_argument("--t3", nargs="?", const=12, type=float)
     ap.add_argument("--t8", action="store_true")
     ap.add_argument("--soak", nargs="?", const=3600, type=float,
-                    help="%STORE puis surveillance sans aimant (defaut 3600 s)")
+                    help="%%STORE puis surveillance sans aimant (defaut 3600 s)")
     a = ap.parse_args()
 
     if a.watch is not None: cmd_watch(a.watch)

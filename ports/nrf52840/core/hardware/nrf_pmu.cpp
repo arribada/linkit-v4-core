@@ -238,6 +238,15 @@ void PMU::storage_off_check() {
 #endif
 	GPIOPins::clear(BSP::GPIO_VSYS_SEL);  // SEL low → VSYS = 2.3 V
 
+	// Only the reed may wake a stored tag. Any other pin left with a SENSE field
+	// (the bootloader arms P0.11 for its DFU button, audit 2026-08 D6) is a
+	// spurious-wake source in the box: disarm every SENSE before arming the reed.
+	for (uint32_t pin = 0; pin < 48; pin++) {
+		NRF_GPIO_Type *port = (pin < 32) ? NRF_P0 : NRF_P1;
+		const uint32_t cnf = port->PIN_CNF[pin & 31];
+		if (cnf & GPIO_PIN_CNF_SENSE_Msk) port->PIN_CNF[pin & 31] = cnf & ~GPIO_PIN_CNF_SENSE_Msk;
+	}
+
 	// Configure REED_SW as a SENSE wake source (PORT event on level match).
 	// init_pin set it to GPIOTE TOGGLE in the BSP — we override with SENSE
 	// since GPIOTE peripherals stop in System OFF, only SENSE wakes.
