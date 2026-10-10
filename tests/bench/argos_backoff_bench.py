@@ -50,7 +50,9 @@ RX_BACKOFF = r"ArgosTxService: backoff (\d+) ms before next TX attempt"
 RX_SUSPEND = r"ArgosTxService: (\d+) consecutive device errors .* suspending TX for (\d+) s"
 RX_HELD = r"service_initiate: skipping TX .* suspended for another (\d+) s"
 RX_PROBE = r"service_initiate: suspension elapsed .* probing with one TX"
-RX_CLEAR_GPS = r"clearing (\d+)-error suspension on new GPS session"
+# Firmware (argos_tx_service.cpp:1404) clears on a new GPS FIX, not session:
+# "clearing %u-error suspension on a new GPS fix — fresh TX opportunity".
+RX_CLEAR_GPS = r"clearing (\d+)-error suspension on a new GPS fix"
 RX_CLEAR_SURF = r"clearing (\d+)-error suspension on surface event"
 
 

@@ -29,6 +29,70 @@ the `%` route in [gentracker.cpp](../../core/sm/gentracker.cpp), wiring in
 [main.cpp](../../ports/nrf52840/main.cpp). All behind `#ifdef BENCH_TEST` — **zero
 footprint in production builds**.
 
+## Native Windows bench (no WSL/usbip)
+
+WSL/usbip dropped the USB link; the harness now runs natively on Windows (and
+still on Linux). Needs Python 3.8+, `pip install pyserial`, `nrfjprog.exe` on
+PATH, the J-Link driver. Close nRF Connect for Desktop and kill `nrfutil-device`
+before flashing (they hold the probe). Platform specifics live in
+`bench_platform.py` (port by USB VID:PID 1915:520F, guarded nrfjprog, portable
+lock, UTF-8 logs).
+
+Commands below are given for **cmd.exe** and **PowerShell**. Paths use forward
+slashes, which all three shells (cmd, PowerShell, Git Bash) accept; in Git Bash
+run the same `python` lines and set variables with `export X=1` / `unset X`. In
+PowerShell `set X=1` is an alias of `Set-Variable` and exports NOTHING (the sky
+cases would then SKIP silently).
+
+cmd.exe:
+
+```bat
+set PYTHONUTF8=1
+python tests/bench/flash.py
+python tests/bench/kim_bench.py --run
+python tests/bench/dte_campaign.py --list
+python tests/bench/dte_campaign.py --suite edge-2026-10
+set DTE_CIEL=1
+python tests/bench/dte_campaign.py --cases EDG-G1,EDG-T3
+set DTE_CIEL=
+```
+
+PowerShell:
+
+```powershell
+$env:PYTHONUTF8 = '1'
+python tests/bench/flash.py
+python tests/bench/kim_bench.py --run
+python tests/bench/dte_campaign.py --list
+python tests/bench/dte_campaign.py --suite edge-2026-10
+$env:DTE_CIEL = '1'
+python tests/bench/dte_campaign.py --cases EDG-G1,EDG-T3
+Remove-Item Env:DTE_CIEL
+```
+
+What each step does: `flash.py` = `--recover` (120 s max, never retried) +
+program the merged hex + verify, then **disarms the radio**: it waits for the
+CDC port, sends `%AMODE 0`, writes and reads back `ARGOS_MODE=0`,
+`CERT_TX_ENABLE=0`. Until it prints `RADIO DISARMED` the board runs the factory
+defaults left by `--recover` (`ARGOS_MODE=LEGACY`, TR_NOM 60 s), and a KIM2 that
+answers transmits on its built-in LDK RCONF even without credentials. Exit code
+4 = flashed but NOT disarmed: unplug the USB. `kim_bench.py --run` = smoke
+suite (also forces ARGOS_MODE=0). **Unset `DTE_CIEL` after the sky run**: left
+set, a later `--suite edge-2026-10` silently includes the sky cases.
+
+Env: `BENCH_PORT=COM5` forces the port, `NRFJPROG_SNR` picks the probe,
+`DTE_CAMPAIGN_OUT` the results folder (default `%TEMP%\dte_campaign`).
+RF guard: any `AT+TX` / `TX START` / `TX EMITTED OK` / `TX SUCCESS` line sends
+`%AMODE 0` at once, fails the case and skips every remaining emitting case.
+Satellite cases marked `radio_muette` (EDG-T1/S3/S4/T3) let the Argos service
+try to transmit; they run ONLY when the module is **proven** mute: on KIM2, the
+harness leaves configuration with `ARGOS_MODE=0` and requires
+`KIM2Device::resync_rconf_cache: ping failed` before `service_init: Argos ID=`.
+A KIM2 that answers (or any doubt) makes them SKIP. `SMDDFU VERSION` is NOT a
+liveness probe on KIM2: in configuration the module is always powered off and
+answers `Failed to read version` either way.
+`fake_bench.py` runs the edge suite against a simulated board, offline.
+
 ## One-time setup (WSL2)
 
 USB isn't native to WSL2; bridge the board's CDC port and the J-Link probe from

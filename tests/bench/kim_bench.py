@@ -25,14 +25,24 @@ Usage:
     ./kim_bench.py --shell               interactive: type % or $ commands
     ./kim_bench.py --run                 run the full validation suite, report PASS/FAIL
     ./kim_bench.py --gps -21.0097 55.2707   one-shot: go operational + inject a fix
-    ./kim_bench.py --port /dev/ttyACM0   override auto-detection
+    ./kim_bench.py --port /dev/ttyACM0   override auto-detection (Windows: --port COM5)
+    ./kim_bench.py --run --allow-rf      do NOT force ARGOS_MODE=0 before the fix injection
+
+Runs natively on Windows (python kim_bench.py --run) and on Linux/WSL: the board
+is found by its USB VID:PID 1915:520F (env BENCH_PORT overrides), and every
+text file is written in UTF-8 (bench_platform.py).
+
+NO REAL RF by default: --run writes ARGOS_MODE=0 before leaving configuration,
+so the injected fix cannot unlock a transmission. A KIM2 that answers with an
+empty master RCONF transmits on its built-in LDK RCONF and its factory ID --
+"no credentials" does not mean "no RF". Any AT+TX / TX START / TX EMITTED OK
+seen in the session FAILS the run and %AMODE 0 is sent at once.
 
 Every session is transcript-logged to tests/bench/logs/<timestamp>.log.
 """
 
 import argparse
 import datetime
-import glob
 import os
 import re
 import sys
@@ -45,6 +55,9 @@ except ImportError:
     sys.exit("pyserial not installed. Run: pip install pyserial")
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import bench_platform as P  # noqa: E402
+
 REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
 DTE_PARAMS = os.path.join(REPO, "core", "protocol", "dte_params.cpp")
 LOGDIR = os.path.join(HERE, "logs")
@@ -70,7 +83,7 @@ def load_coded_params(path=DTE_PARAMS):
     """{ NAME: (encoding, {permitted codes}) } for code-table parameters."""
     out = {}
     try:
-        src = open(path).read()
+        src = P.read_text(path)
     except OSError:
         return out
     for m in _CODED_RE.finditer(src):
@@ -84,7 +97,7 @@ def load_coded_params(path=DTE_PARAMS):
 def load_param_map(path=DTE_PARAMS):
     name2key, key2name = {}, {}
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8", errors="replace") as f:
             for line in f:
                 m = _PARAM_RE.search(line)
                 if m:
@@ -94,6 +107,43 @@ def load_param_map(path=DTE_PARAMS):
     except OSError as e:
         print(f"[warn] could not read {path}: {e} (friendly param names unavailable)")
     return name2key, key2name
+
+
+# Firmware lines that mean a frame is going on air, or has gone. All ASCII on
+# purpose (the firmware's em dashes are not): kim2.cpp:1394/1397 (AT+TX about
+# to be sent -- the module answered its init, so it WILL transmit),
+# kim2.cpp:1481, argos_tx_service.cpp:3030/3041. A mute KIM2 never reaches
+# state_transmit_enter (its init ping fails first), so on this bench any of
+# them means real RF.
+RF_SIGNATURES = (
+    "KIM2Device::state_transmit_enter: TX START",
+    "KIM2Device::state_transmit_enter: AT+TX=",
+    "KIM2Device::state_transmit: TX EMITTED OK",
+    "ArgosTxService: TX START",
+    "ArgosTxService: TX SUCCESS",
+)
+
+
+class RFGuard:
+    """Watches every line; on the first RF signature it records the line and
+    sends %AMODE 0 at once (RAM write of ARGOS_MODE, no config round trip) so
+    no second frame follows. Callers decide what to fail."""
+
+    def __init__(self, bench):
+        self.b = bench
+        self.seen = None
+        bench.line_hooks.append(self)
+
+    def __call__(self, line):
+        if self.seen is None and any(sig in line for sig in RF_SIGNATURES):
+            self.seen = line
+            try:
+                self.b._send("%AMODE 0\r\n")
+            except Exception:
+                pass
+
+    def reset(self):
+        self.seen = None
 
 
 class Bench:
@@ -107,21 +157,26 @@ class Bench:
         self._stop = threading.Event()
         self._reader_thread = None
         self._buf = b""
+        # Called from the reader thread with every line (RF guard, counters).
+        # A hook that raises is ignored: it must never kill the reader.
+        self.line_hooks = []
+        self._wlock = threading.Lock()
         self.name2key, self.key2name = load_param_map()
         self._coded = load_coded_params()
         os.makedirs(LOGDIR, exist_ok=True)
         stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         self.logpath = os.path.join(LOGDIR, f"{stamp}.log")
-        self._logf = open(self.logpath, "a", buffering=1)
+        self._logf = P.utf8_open(self.logpath, "a", buffering=1)
 
     # ---- connection -------------------------------------------------------
     def open(self):
         if self.port is None:
-            self.port = self._autodetect()
+            self.port = os.environ.get("BENCH_PORT") or self._autodetect()
             if self.port is None:
                 raise RuntimeError(
-                    "No bench board found. Is it plugged in and attached to WSL "
-                    "(see wsl_usb.sh)? Is the firmware built with --bench?")
+                    "No bench board found (USB 1915:520F). Is it plugged in (under WSL: "
+                    "attached with wsl_usb.sh; on Windows: nothing else holding the COM "
+                    "port)? Is the firmware built with --bench?")
         # write_timeout n est pas un detail: sur un CDC a moitie mort — le
         # noeud /dev/ttyACM existe, mais l endpoint ne draine plus — un write()
         # sans borne BLOQUE POUR TOUJOURS. Mesure du 2026-08-27: une campagne
@@ -134,7 +189,9 @@ class Bench:
         return self
 
     def _candidate_ports(self):
-        return sorted(glob.glob("/dev/ttyACM*") + glob.glob("/dev/ttyUSB*"))
+        # VID:PID first (Windows and Linux), then the Linux glob newest first:
+        # sorted by name, ttyACM10 came before ttyACM2.
+        return P.find_ports()
 
     def _autodetect(self):
         for p in self._candidate_ports():
@@ -203,9 +260,19 @@ class Bench:
                 ts = time.monotonic()
                 with self._lock:
                     self.history.append((ts, line))
-                self._logf.write(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]}  {line}\n")
-                if not self.quiet:
-                    print(f"  | {line}")
+                # Nothing below may raise out of the reader: a dead reader thread
+                # is a "mute board" for every following wait.
+                try:
+                    self._logf.write(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]}  {line}\n")
+                    if not self.quiet:
+                        print(f"  | {line}")
+                except Exception:
+                    pass
+                for hook in list(self.line_hooks):
+                    try:
+                        hook(line)
+                    except Exception:
+                        pass
 
     def close(self):
         self._stop.set()
@@ -218,11 +285,16 @@ class Bench:
 
     # ---- low-level send ---------------------------------------------------
     def _send(self, s):
-        self._logf.write(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]}  >> {s!r}\n")
+        try:
+            self._logf.write(f"{datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]}  >> {s!r}\n")
+        except Exception:
+            pass
         if not self.quiet:
             print(f">> {s!r}")
-        self.ser.write(s.encode())
-        self.ser.flush()
+        # Serialised: the RF guard may send %AMODE 0 from the reader thread.
+        with self._wlock:
+            self.ser.write(s.encode())
+            self.ser.flush()
 
     # ---- expect -----------------------------------------------------------
     def expect(self, pattern, timeout=5.0, from_idx=None):
@@ -412,13 +484,15 @@ class Bench:
 #  Validation suite
 # =====================================================================
 class Suite:
-    def __init__(self, b: Bench):
+    def __init__(self, b: Bench, allow_rf=False):
         self.b = b
+        self.allow_rf = allow_rf
+        self.guard = RFGuard(b)
         self.results = []  # (name, ok, detail)
 
     def check(self, name, ok, detail=""):
         self.results.append((name, bool(ok), detail))
-        tag = "\033[1;32mPASS\033[0m" if ok else "\033[1;31mFAIL\033[0m"
+        tag = P.colour("PASS", "1;32") if ok else P.colour("FAIL", "1;31")
         print(f"[{tag}] {name}" + (f"  — {detail}" if detail else ""))
         return ok
 
@@ -454,10 +528,28 @@ class Suite:
                    w is not None and w.group(1) == "O" and got == target,
                    f"wrote {target}, read {got}")
 
-        # 6. Satellite credentials verify (KIM2 modulation / RCONF health).
+        # 6. SATVF answers. This proves the DTE path to the radio, NOT that
+        # credentials are valid: $N is the expected answer on a mute KIM2 or an
+        # unprovisioned master, and the check says which one it got rather than
+        # pretending to verify credentials.
         r = b.dte("SATVF", timeout=15.0)
-        self.check("SATVF credentials verify", r is not None,
-                   r.group(0) if r else "no response (check KIM2 UART)")
+        if r is not None:
+            sens = ("verified" if r.group(1) == "O"
+                    else "NOT verified (expected: mute KIM2 or no master RCONF)")
+        self.check("SATVF answers (radio path)", r is not None,
+                   f"{r.group(0)} -> {sens}" if r else "no response (check KIM2 UART)")
+
+        # 6b. No real RF from here on: the fix injected below unlocks Argos TX
+        # in every mode, and a KIM2 that answers transmits on its built-in LDK
+        # RCONF with its factory ID even without credentials.
+        if not self.allow_rf:
+            try:
+                b.write_params({"ARGOS_MODE": 0, "CERT_TX_ENABLE": 0})
+                _, am = b.read_params(["ARGOS_MODE"])
+                self.check("ARGOS_MODE=0 forced (no RF)", am.get(b._key("ARGOS_MODE")) == "0",
+                           f"ARP01={am.get(b._key('ARGOS_MODE'))}")
+            except Exception as e:
+                self.check("ARGOS_MODE=0 forced (no RF)", False, f"{type(e).__name__}: {e}")
 
         # 7. Back to operational.
         #
@@ -478,7 +570,7 @@ class Suite:
         # 20 s, not 5: the console can still be behind the service start-up here.
         mk = b.mark()
         m = b.inject_gps(-21.0097, 55.2707, timeout=20.0)
-        logline = b.expect(r"bench_inject_fix: lat=-21", 20.0, from_idx=mk)
+        logline = b.expect(r"GPSService::bench_inject_fix: lat=" r"-21", 20.0, from_idx=mk)
         self.check("GPS injection (%GPS)", m is not None and logline is not None,
                    "injected -21.0097,55.2707")
         # Assert on an INFO/WARN log (task_process_gnss_data itself is TRACE-level,
@@ -491,32 +583,34 @@ class Suite:
         # GNSS_SESSION_SINGLE_FIX, qui ne replanifie pas apres le premier fix.
         # La preuve DIRECTE que le fix a traverse le pipeline est son entree
         # dans la pile de profondeur — elle ne depend d aucun reglage.
-        pipeline = b.expect(r"(DepthPileManager: GPS FIX stored"
-                            r"|first valid GPS fix this session"
-                            r"|retry_counter: reset ntry.*PVT fix"
-                            r"|service GNSS completed)",
+        # (The former alternatives "DepthPileManager: GPS FIX stored" and
+        # "service GNSS completed" exist nowhere in the firmware.)
+        pipeline = b.expect(r"(first valid GPS fix this session"
+                            r"|retry_counter: reset ntry.*PVT fix)",
                             8.0, from_idx=mk)
         self.check("fix accepted into pipeline (PVT)", pipeline is not None,
                    pipeline.group(0).split(']')[-1].strip() if pipeline else "no PVT-accept log")
 
-        # 9. Argos TX subsystem. The TX service arms at boot; whether it can actually
-        # transmit depends on device state (KIM2 RCONF credentials + a GPS-synced RTC).
-        # Scan the whole session: confirm the service is alive, then report readiness.
-        # A held TX on an uncredentialed board is a correct observation, not a failure.
+        # 9. Argos TX service started (service_init runs even with ARGOS_MODE=0)
+        # and what the KIM2 said at its boot resync. Scan the whole session.
         alive = b.expect(r"ArgosTxService::service_init: Argos ID=(\d+)", 1.0, from_idx=0)
-        tx = b.expect(r"(ArgosTx.*(sent|TX done|transmit)|AT\+TX|Argos.*frame OK)",
-                      1.0, from_idx=0)
-        gate = b.expect(r"(no RCONF configured|TX held until first GPS fix|clock yet)",
-                        1.0, from_idx=0)
-        if tx:
-            self.check("Argos TX subsystem (fired)", True, tx.group(0).split(']')[-1].strip())
-        elif alive and gate:
-            self.check("Argos TX subsystem alive, TX gated", True,
-                       f"ID={alive.group(1)} — held: needs KIM2 RCONF credentials + GPS-synced RTC")
-        elif alive:
-            self.check("Argos TX subsystem alive", True, f"ID={alive.group(1)} (no TX in window)")
+        mute = b.expect(r"KIM2Device::resync_rconf_cache: ping failed", 1.0, from_idx=0)
+        empty = b.expect(r"(KIM2Device::resync_rconf_cache: master RCONF empty"
+                         r"|KIM2Device::resync_rconf_cache: no RCONF configured)", 1.0, from_idx=0)
+        etat = ("KIM2 MUTE (resync ping failed)" if mute else
+                "KIM2 answers, master RCONF empty -> built-in LDK" if empty else "KIM2 answers")
+        self.check("Argos TX service started", alive is not None,
+                   f"ID={alive.group(1)} -- {etat}" if alive else "no ArgosTxService init log seen")
+
+        # 10. No real RF anywhere in the session (guard armed since the start).
+        time.sleep(5.0)
+        if self.allow_rf:
+            self.check("RF guard (--allow-rf: informative)", True,
+                       f"RF seen: {self.guard.seen}" if self.guard.seen else "no RF seen")
         else:
-            self.check("Argos TX subsystem", False, "no ArgosTxService init log seen")
+            self.check("no real RF in the session", self.guard.seen is None,
+                       f"RF SEEN, %AMODE 0 sent: {self.guard.seen}" if self.guard.seen
+                       else "no AT+TX / TX START / TX EMITTED OK")
 
         # summary
         npass = sum(1 for _, ok, _ in self.results if ok)
@@ -536,7 +630,10 @@ def main():
     ap.add_argument("--run", action="store_true", help="run validation suite")
     ap.add_argument("--gps", nargs=2, metavar=("LAT", "LON"),
                     help="go operational + inject a fix, then stream logs")
+    ap.add_argument("--allow-rf", action="store_true",
+                    help="--run: do not force ARGOS_MODE=0 (a live KIM2 WILL transmit)")
     args = ap.parse_args()
+    P.setup_stdio()
 
     b = Bench(port=args.port, baud=args.baud,
               quiet=not (args.monitor or args.shell or args.gps))
@@ -572,7 +669,7 @@ def main():
                 b._send(line)
                 time.sleep(0.3)
         if args.run:
-            ok = Suite(b).run()
+            ok = Suite(b, allow_rf=args.allow_rf).run()
             return 0 if ok else 1
     except KeyboardInterrupt:
         pass

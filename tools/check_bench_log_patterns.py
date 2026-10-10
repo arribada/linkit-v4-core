@@ -16,6 +16,15 @@ case waiting on a message the firmware never emits.
 A missing string is silent in the worst direction: the test goes green (or red)
 for a reason unrelated to the firmware.
 
+Two passes:
+  1. heuristic: quoted literals that read like log sentences, in a search
+     context (re.search, expect(), motifs = ...);
+  2. explicit: EVERY literal passed to _fw('...') (dte_campaign.py wave 33 and
+     later) must appear verbatim in the firmware sources -- no heuristic, no
+     character-class filter, so "[VAL-GNSS]"-style fragments are checked too.
+     A _fw literal must also not be a DEBUG_TRACE-only string: those are
+     compiled out at DEBUG_LEVEL=3 and can never be seen on a bench build.
+
     python3 tools/check_bench_log_patterns.py
 """
 import os
@@ -24,7 +33,10 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BENCH = [os.path.join(ROOT, "tests/bench", f)
-         for f in ("dte_campaign.py", "endurance.py", "log_harvest.py")]
+         for f in ("dte_campaign.py", "endurance.py", "log_harvest.py", "kim_bench.py")]
+# Pass 2 (_fw literals) covers every bench script.
+BENCH_ALL = sorted(os.path.join(ROOT, "tests/bench", f) for f in os.listdir(os.path.join(ROOT, "tests/bench"))
+                   if f.endswith(".py"))
 SOURCES = ("core", "ports/nrf52840/core")
 
 # Literals that are not firmware log text: bench console replies, our own
@@ -38,7 +50,7 @@ IGNORE = re.compile(
 CANDIDATE = re.compile(r"^(?=.*[a-z])(?!.*%[sdulx])[\w\- :=/,'()\.]{12,}$")
 
 
-def firmware_text():
+def firmware_files():
     out = []
     for rel in SOURCES:
         for dirpath, dirnames, filenames in os.walk(os.path.join(ROOT, rel)):
@@ -46,20 +58,58 @@ def firmware_text():
             for fn in filenames:
                 if fn.endswith((".cpp", ".hpp", ".c", ".h")):
                     try:
-                        out.append(open(os.path.join(dirpath, fn), errors="ignore").read())
+                        out.append(open(os.path.join(dirpath, fn), encoding="utf-8", errors="ignore").read())
                     except OSError:
                         pass
-    return "\n".join(out)
+    return out
+
+
+def firmware_text():
+    return "\n".join(firmware_files())
+
+
+def trace_only(lit, files):
+    """True if every firmware line containing `lit` is a DEBUG_TRACE call."""
+    hits = []
+    for src in files:
+        start = 0
+        while True:
+            i = src.find(lit, start)
+            if i < 0:
+                break
+            # The macro name is on the same statement, at most a few lines up.
+            ctx = src[max(0, i - 300):i]
+            call = max(ctx.rfind("DEBUG_"), ctx.rfind("VAL_GNSS"), ctx.rfind("TXTRACE"))
+            hits.append(ctx[call:call + 11] if call >= 0 else "")
+            start = i + 1
+    return bool(hits) and all(h.startswith("DEBUG_TRACE") for h in hits)
+
+
+FW_CALL = re.compile(r"""_fw\(\s*r?(['"])((?:(?!\1).)+)\1\s*\)""")
 
 
 def main():
-    fw = firmware_text()
+    files = firmware_files()
+    fw = "\n".join(files)
     manquants = []
     verifies = 0
+    # Pass 2: explicit _fw() literals.
+    for path in BENCH_ALL:
+        if not os.path.exists(path):
+            continue
+        src = open(path, encoding="utf-8").read()
+        for m in FW_CALL.finditer(src):
+            lit = m.group(2)
+            verifies += 1
+            lineno = src[:m.start()].count("\n") + 1
+            if lit not in fw:
+                manquants.append((os.path.relpath(path, ROOT), lineno, lit))
+            elif trace_only(lit, files):
+                manquants.append((os.path.relpath(path, ROOT), lineno, lit + "  [DEBUG_TRACE only]"))
     for path in BENCH:
         if not os.path.exists(path):
             continue
-        src = open(path).read()
+        src = open(path, encoding="utf-8").read()
         for m in re.finditer(r"""r?['"]([^'"\\\n]{12,120})['"]""", src):
             lit = m.group(1)
             if IGNORE.match(lit) or not CANDIDATE.match(lit):

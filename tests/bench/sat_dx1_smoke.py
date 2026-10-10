@@ -31,7 +31,8 @@ DIVE_S, SURF_S = 120, 100
 RX_ATTX = re.compile(r"AT\+TX=([0-9A-Fa-f]+)\)")
 RX_PREWARM = re.compile(r"PREWARM mode=(\S+) sz=(\d+)")
 RX_EMIT = re.compile(r"TX EMITTED OK")
-RX_TXFAIL = re.compile(r"TX failed status=(-?\d+)|\+ERROR=(\d+)")
+# + kim2.cpp:1308 (c5de1408): frame that does not fit the module mode -> TX refused, no RF.
+RX_TXFAIL = re.compile(r"TX failed status=(-?\d+)|\+ERROR=(\d+)|does not fit the module|aborting TX")
 RX_FIX = re.compile(r"GNSS time persisted|reset ntry=\d+->0 \(PVT", re.I)
 RX_NOSYNC = re.compile(r"failed to sync", re.I)
 RX_SURF = re.compile(r"%SURFACE OK surfaced")
@@ -129,7 +130,9 @@ def main():
     ap.add_argument("--cycles", type=int, default=4)
     ap.add_argument("--allow-rf", action="store_true", help="run phase B even if the KIM2 really emits")
     a = ap.parse_args()
-    b = Board()
+    # Le garde RF de Board (%AMODE 0 a la premiere emission) n est leve que sur
+    # --allow-rf: la phase A sert justement a savoir si le KIM2 emet.
+    b = Board(rf_guard=not a.allow_rf)
     print("port:", b.port, flush=True)
     time.sleep(1.0)
     i = b.mark(); b.send("%AMODE 5"); print("AMODE:", b.wait(r"%AMODE mode=", 6, since=i), flush=True)

@@ -14,11 +14,14 @@ de rail. Tout est observable depuis les logs, sans antenne et sans fix.
 Prérequis : firmware construit avec `./scripts/build_linkitv4_kim.sh --bench
 --validation` (la campagne s'appuie sur les lignes [VAL-GNSS]).
 """
-import argparse, datetime, glob, os, re, subprocess, sys, threading, time
+import argparse, datetime, os, re, sys, threading, time
 
 import serial
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import bench_platform as P  # noqa: E402
+from kim_bench import RF_SIGNATURES  # noqa: E402
 LOGDIR = os.path.join(HERE, "logs")
 PORT_GLOB = None       # None = autodétection (le nœud change de numéro à chaque reset)
 
@@ -28,50 +31,51 @@ class Board:
 
     @staticmethod
     def find_port(timeout=30):
-        """Trouve le port CDC du tag. Cross-plateforme :
-          - Windows (banc natif, sans usbip) : COMx via serial.tools.list_ports,
-            en preferant le VID Nordic (0x1915) puis le J-Link (0x1366) ;
-          - Linux/WSL : /dev/ttyACM*, le plus recemment apparu qui s'ouvre
-            (le nœud change de numero a chaque re-enumeration).
-        Le VID est le discriminateur stable ; le glob reste le repli sous Linux."""
-        NORDIC_VID, JLINK_VID = 0x1915, 0x1366
+        """Trouve le port CDC du tag. Cross-plateforme (bench_platform.find_ports) :
+          - VID:PID 1915:520F via serial.tools.list_ports (Windows ET Linux) ;
+          - Linux/WSL : repli /dev/ttyACM*, le plus recemment apparu.
+        Plus de J-Link (VID 1366) en repli : son port COM virtuel s'ouvre sans
+        erreur et ne dit jamais rien — pendant une re-enumeration le lecteur s'y
+        accrochait et un run de 6 h lisait le vide sans jamais se reconnecter.
+        Plus de VID seul non plus : le bootloader DFU (1915:521F) passait.
+        Variable BENCH_PORT : force le port."""
+        forced = os.environ.get("BENCH_PORT")
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            # 1) Voie portable (fonctionne Windows ET Linux) : filtrer par VID.
-            try:
-                from serial.tools import list_ports
-                ports = list(list_ports.comports())
-                ranked = ([p.device for p in ports if (p.vid == NORDIC_VID)]
-                          + [p.device for p in ports if (p.vid == JLINK_VID)])
-                for dev in ranked:
-                    try:
-                        serial.Serial(dev, 115200, timeout=0.1).close()
-                        return dev
-                    except Exception:
-                        continue
-            except Exception:
-                pass
-            # 2) Repli Linux/WSL : /dev/ttyACM* le plus recent.
-            for c in sorted(glob.glob("/dev/ttyACM*"),
-                            key=lambda p: os.stat(p).st_mtime, reverse=True):
+            for dev in ([forced] if forced else P.find_ports()):
                 try:
-                    serial.Serial(c, 115200, timeout=0.1).close()
-                    return c
+                    serial.Serial(dev, 115200, timeout=0.1, write_timeout=5).close()
+                    return dev
                 except Exception:
                     continue
             time.sleep(0.5)
         return None
 
-    def __init__(self, port=PORT_GLOB, baud=115200):
+    def __init__(self, port=PORT_GLOB, baud=115200, rf_guard=True):
+        """rf_guard (défaut) : à la première ligne d'émission réelle (AT+TX, TX START,
+        TX EMITTED OK, TX SUCCESS — kim_bench.RF_SIGNATURES) le lecteur envoie
+        %AMODE 0 et note la ligne dans self.rf_seen. Un KIM2 qui répond émet sur
+        sa RCONF LDK intégrée même sans credentials : cl_aging / gps_validate en
+        AMODE 5 n'émettaient « pas » seulement parce que le module était muet."""
         self.baud = baud
+        self.rf_guard = rf_guard
+        self.rf_seen = None
         port = port or self.find_port()
         if not port:
-            raise RuntimeError("aucun port CDC — la carte est-elle attachée à WSL ?")
+            raise RuntimeError("aucun port CDC 1915:520F — carte branchée ? (WSL : attachée ? "
+                               "Windows : port tenu par un autre programme ?)")
         self.port = port
-        self.ser = serial.Serial(port, baud, timeout=0.1)
+        # write_timeout : sur un CDC à moitié mort, un write() sans borne bloque
+        # pour toujours (kim_bench, mesure du 2026-08-27).
+        self.ser = serial.Serial(port, baud, timeout=0.1, write_timeout=5)
         self.lines = []                     # (t_relatif, texte)
         self._buf = b""
         self._lock = threading.Lock()
+        # Toutes les ecritures passent par _write() sous ce verrou : le garde RF
+        # ecrit %AMODE 0 depuis le thread lecteur pendant que le thread principal
+        # ecrit ses commandes — deux write() entrelaces corrompaient les deux,
+        # y compris le %AMODE 0 cense couper la radio (kim_bench.Bench._wlock).
+        self._wlock = threading.Lock()
         self._stop = threading.Event()
         self.link_down = False
         self.outages = 0
@@ -79,7 +83,7 @@ class Board:
         os.makedirs(LOGDIR, exist_ok=True)
         stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         self.logpath = os.path.join(LOGDIR, f"gnss_{stamp}.log")
-        self._logf = open(self.logpath, "a", buffering=1)
+        self._logf = P.utf8_open(self.logpath, "a", buffering=1)
         self._t = threading.Thread(target=self._reader, daemon=True)
         self._t.start()
 
@@ -107,7 +111,7 @@ class Board:
                     p = self.find_port(timeout=60)
                     if p:
                         try:
-                            self.ser = serial.Serial(p, self.baud, timeout=0.1)
+                            self.ser = serial.Serial(p, self.baud, timeout=0.1, write_timeout=5)
                             self.port = p
                             self.link_down = False
                             self._note(f"[bench] reconnecté sur {p} après ~{down_s // 60} min")
@@ -121,20 +125,41 @@ class Board:
             if not data:
                 continue
             self._buf += data
-            while b"\n" in self._buf:
-                raw, _, self._buf = self._buf.partition(b"\n")
-                line = raw.decode("utf-8", "replace").rstrip("\r")
+            # Découpe sur \r OU \n : une réponse DTE finit par \r seul et restait
+            # collée à la ligne de log suivante (ou coincée dans le tampon).
+            while True:
+                cuts = [i for i in (self._buf.find(b"\r"), self._buf.find(b"\n")) if i >= 0]
+                if not cuts:
+                    break
+                idx = min(cuts)
+                raw, self._buf = self._buf[:idx], self._buf[idx + 1:]
+                if not raw:
+                    continue
+                line = raw.decode("utf-8", "replace")
                 t = time.monotonic() - self.t0
                 with self._lock:
                     self.lines.append((t, line))
-                self._logf.write(f"[{t:8.2f}] {line}\n")
+                if self.rf_guard and self.rf_seen is None and any(sig in line for sig in RF_SIGNATURES):
+                    self.rf_seen = line
+                    try:
+                        self._write(b"%AMODE 0\r\n")
+                    except Exception:
+                        pass
+                    self._note(f"[bench] ÉMISSION RÉELLE détectée — %AMODE 0 envoyé : {line[-90:]}")
+                try:
+                    self._logf.write(f"[{t:8.2f}] {line}\n")
+                except Exception:
+                    pass
 
     def _note(self, text):
         t = time.monotonic() - self.t0
         with self._lock:
             self.lines.append((t, text))
-        self._logf.write(f"[{t:8.2f}] {text}\n")
-        print(f"      {text}", flush=True)
+        try:
+            self._logf.write(f"[{t:8.2f}] {text}\n")
+            print(f"      {text}", flush=True)
+        except Exception:
+            pass
 
     def close(self):
         self._stop.set()
@@ -145,10 +170,14 @@ class Board:
             pass
 
     # ---- émission ---------------------------------------------------------
+    def _write(self, data: bytes):
+        with self._wlock:
+            self.ser.write(data)
+            self.ser.flush()
+
     def send(self, text):
         try:
-            self.ser.write((text + "\r\n").encode())
-            self.ser.flush()
+            self._write((text + "\r\n").encode())
         except Exception:
             self._note(f"[bench] envoi impossible ({text}) — lien en reconnexion")
             return
@@ -158,8 +187,7 @@ class Board:
     def raw(self, data: bytes):
         """Écrit des octets bruts — bridge (`+++`) et trames UBX."""
         try:
-            self.ser.write(data)
-            self.ser.flush()
+            self._write(data)
         except Exception:
             self._note("[bench] écriture brute impossible")
             return
@@ -221,9 +249,14 @@ class Board:
 
 
 def reset_board():
-    """Reset matériel par le J-Link — le seul vrai redémarrage à froid du nRF."""
-    subprocess.run(["nrfjprog", "--reset"], check=False,
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    """Reset matériel par le J-Link — le seul vrai redémarrage à froid du nRF.
+
+    Borné (60 s, arbre de processus tué) et le code retour est rendu : un reset
+    raté (sonde tenue par nRF Connect, rc -102) ne passe plus pour un reset."""
+    r = P.nrfjprog(["--reset"], timeout=60)
+    if not r.ok:
+        print(f"      [bench] nrfjprog --reset ÉCHEC ({r!r}) : {r.stdout.strip()[-200:]}", flush=True)
+    return r.ok
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -235,8 +268,8 @@ RESULTS = []
 def record(tid, name, ok, detail, evidence=()):
     """ok = True (PASS) / False (FAIL) / None (SKIP — non concluant sur ce banc)."""
     RESULTS.append((tid, name, ok, detail, list(evidence)))
-    tag = ("\033[32mPASS\033[0m" if ok is True else
-           "\033[33mSKIP\033[0m" if ok is None else "\033[31mFAIL\033[0m")
+    tag = (P.colour("PASS", "32") if ok is True else
+           P.colour("SKIP", "33") if ok is None else P.colour("FAIL", "31"))
     print(f"  [{tag}] {tid} — {name}")
     print(f"         {detail}")
     for e in evidence[:4]:
@@ -351,7 +384,9 @@ def t6_deep_idle(b):
 
     idx = b.mark()
     entered = b.wait(r"enterbackup|deep-idle|PMREQ", 200, since=idx)
-    woke = b.wait(r"wake from deep-idle via EXTINT", 200, since=idx) if entered else None
+    # "wake from deep-idle via EXTINT" est un DEBUG_TRACE, compilé hors du binaire
+    # à DEBUG_LEVEL=3 : on guette les lignes [VAL-GNSS] du réveil (--validation).
+    woke = b.wait(r"extint_wake_presync|extint_pulse_wake", 200, since=idx) if entered else None
     # au réveil, les compteurs doivent repartir de zéro : pas d'abandon
     # "no satellite detected after N" avec un N hérité de la session précédente
     early = None
@@ -419,7 +454,7 @@ def t8_pwron_leak(b):
     """Un PWRON GNSS oublié doit être coupé à la sortie du mode configuration."""
     b.send("%CFG"); b.wait(r"%CFG OK|ConfigurationState", 15); time.sleep(1)
     idx = b.mark()
-    b.dte("PWRON", "2")                 # ComponentPower::GNSS
+    b.dte("PWRON", "1")                 # ComponentPower::GNSS = 1 (2 = SENSORS)
     b.wait(r"PWRON|power_on", 15, since=idx)
     time.sleep(2)
     b.send("%OP")
@@ -488,6 +523,7 @@ def main():
     ap.add_argument("--only", default="")
     ap.add_argument("--port", default=PORT_GLOB)
     a = ap.parse_args()
+    P.setup_stdio()
 
     b = Board(a.port)
     print(f"Journal : {b.logpath}\n")

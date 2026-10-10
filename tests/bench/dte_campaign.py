@@ -8,19 +8,33 @@ qu'un depouillement soit possible sans relire le log brut.
 
 CONTRAINTE ASSUMEE: aucun cas de ce fichier ne declenche d'emission Argos. Le
 mode est force a OFF et la certification desarmee au debut de chaque cas.
+Cette contrainte n est PAS garantie par l absence de credentials: un KIM2 qui
+repond, RCONF maitresse vide, emet sur sa RCONF LDK integree avec son ID usine.
+D ou le garde RF du Runner: toute ligne AT+TX / TX START / TX EMITTED OK / TX
+SUCCESS envoie %AMODE 0 sur-le-champ, met le cas en FAIL et SAUTE tous les cas
+emetteurs restants. Les cas qui emettent par construction (OUT-04, GPS-C8)
+sont sautes sauf DTE_RF_AUTORISE=1 — a ne jamais poser sur ce banc.
+
+Point d entree unique (Windows natif comme Linux):
+    python tests/bench/dte_campaign.py --list
+    python tests/bench/dte_campaign.py --suite edge-2026-10
+    python tests/bench/dte_campaign.py --suite v1,v2 --exclude PAR-05,ROB-01
+    python tests/bench/dte_campaign.py --cases EDG-D1,EDG-D3
+Variables: BENCH_PORT (COMx force), DTE_CAMPAIGN_OUT (dossier de sortie, defaut
+<temp>/dte_campaign), DTE_CIEL=1 (cas de plein air), NRFJPROG_SNR (sonde).
 """
-import sys, time, json, re, subprocess, os, glob, fcntl
+import sys, time, json, re, subprocess, os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from kim_bench import Bench
+import bench_platform as P
+from kim_bench import Bench, RF_SIGNATURES
 
-import os
-OUT = os.environ.get('DTE_CAMPAIGN_OUT', '/tmp/dte_campaign')
+OUT = os.environ.get('DTE_CAMPAIGN_OUT', os.path.join(P.temp_dir(), 'dte_campaign'))
 os.makedirs(OUT, exist_ok=True)
-RESULTS = f'{OUT}/campaign_results.jsonl'
-LOG     = f'{OUT}/campaign.log'
+RESULTS = os.path.join(OUT, 'campaign_results.jsonl')
+LOG     = os.path.join(OUT, 'campaign.log')
 
-def _nrfjprog(args, timeout=180):
-    """Appelle nrfjprog SANS chemin graphique et SANS stdin.
+def _nrfjprog(args, timeout=180, check=True):
+    """Appelle nrfjprog SANS chemin graphique, SANS stdin, SANS pipe herite.
 
     JLinkGUIServerExe ouvre une boite de dialogue (deverrouillage, mise a jour
     de la sonde...) sur un affichage qui n existe pas en session non
@@ -31,18 +45,30 @@ def _nrfjprog(args, timeout=180):
     Mesure du 2026-08-29: quatre --recover bloques d affilee, puis rc=0 du
     premier coup une fois DISPLAY et stdin coupes. Le timeout monte aussi a
     180 s: un --recover legitime depasse regulierement les 60 s d origine.
-    """
-    import os
-    env = {k: v for k, v in os.environ.items()
-           if k not in ('DISPLAY', 'WAYLAND_DISPLAY')}
-    with open(os.devnull, 'rb') as devnull:
-        return subprocess.run(['nrfjprog'] + args, capture_output=True,
-                              timeout=timeout, env=env, stdin=devnull)
 
-BENCH_LOCK = '/tmp/dte_campaign.lock'
+    Desormais via bench_platform.nrfjprog (Windows et Linux: arbre de processus
+    tue a l expiration, sortie dans un fichier et non un pipe). Et le code
+    retour COMPTE: check=True leve si nrfjprog echoue. Avant, un reset rate
+    (sonde tenue par nRF Connect, rc -102) laissait PAR-05 passer au vert sans
+    que la carte ait jamais redemarre.
+    """
+    r = P.nrfjprog(args, timeout=timeout)
+    if check and not r.ok:
+        raise RuntimeError(f'nrfjprog {" ".join(args)}: '
+                           f'{"TIMEOUT" if r.timed_out else "rc=%d" % r.returncode} '
+                           f'{r.stdout.strip()[-160:]}')
+    return r
 
 class BancOccupe(RuntimeError):
     pass
+
+# Cas qui posent ARGOS_MODE != 0 (ou la certification) et peuvent donc faire
+# emettre un module qui repond: apres une emission reelle observee, ils sont
+# tous sautes. Prefixes d identifiants, plus tout cas marque satellite=True.
+_PREFIXES_EMETTEURS = ('SWS-01', 'SWS-02', 'ARG-', 'AXL-01', 'DC-01', 'SURF-', 'ZONE-',
+                       'HAULED-', 'HAUL-', 'BATT-R2', 'OUT-', 'GPS-C', 'MOD-', 'DEP-', 'RL-',
+                       'DP-01', 'BLIND-', 'SHUT-01', 'DUTY-', 'RX-01', 'PP-', 'AOP-',
+                       'TPL-', 'CMD-43', 'PAR-06')
 
 class Runner:
     def __init__(self):
@@ -51,19 +77,41 @@ class Runner:
         # appelle recover(), donc `nrfjprog --reset`, et REDEMARRE la carte
         # sous l autre. Le symptome est une "carte muette" au beau milieu d un
         # cas qui n a rien fait de mal — un faux defaut tres convaincant, et
-        # c est exactement ce qui est arrive le 2026-08-27. Le verrou est un
-        # fcntl sur un fichier: il tombe tout seul si le processus meurt.
-        self._lockf = open(BENCH_LOCK, 'w')
+        # c est exactement ce qui est arrive le 2026-08-27. Le verrou tombe
+        # tout seul si le processus meurt (fcntl sous Linux, msvcrt sous
+        # Windows: bench_platform.BenchLock, dans le dossier temporaire).
         try:
-            fcntl.flock(self._lockf, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:
-            raise BancOccupe(
-                'une autre campagne detient deja le banc (verrou %s). '
-                'Arreter le processus en cours avant de relancer.' % BENCH_LOCK)
-        self._lockf.write(str(os.getpid())); self._lockf.flush()
+            self._lock = P.BenchLock('dte_campaign.lock')
+        except P.BenchBusy as e:
+            raise BancOccupe(f'{e}. Arreter le processus en cours avant de relancer.')
         self.b = None
-        self.logf = open(LOG, 'a', buffering=1)
+        self.logf = P.utf8_open(LOG, 'a', buffering=1)
         self.n_pass = self.n_fail = self.n_error = self.n_skip = 0
+        self.bilan = []            # (id, verdict, detail) de CETTE execution
+        # Garde RF: premiere ligne d emission vue de la passe (None tant que
+        # rien), et celle du cas en cours (remise a None a chaque cas).
+        self.rf_vu = None
+        self.rf_courant = None
+        self.rf_cas = None
+
+    # ---- garde RF, branche sur le lecteur de chaque lien ----
+    def _garde_rf(self, ligne):
+        """Appele par le thread lecteur pour CHAQUE ligne recue."""
+        if any(sig in ligne for sig in RF_SIGNATURES):
+            if self.rf_vu is None:
+                self.rf_vu = ligne
+            if self.rf_courant is not None:
+                return                         # deja signale pour ce cas
+            self.rf_courant = ligne
+            b = self.b
+            if b is not None:
+                try:
+                    b._send('%AMODE 0\r\n')       # RAM, effet immediat
+                except Exception:
+                    pass
+
+    def rf_detectee(self):
+        return self.rf_vu is not None
 
     def say(self, s):
         line = f"{time.strftime('%H:%M:%S')}  {s}"
@@ -81,7 +129,10 @@ class Runner:
                 # numero a chaque re-enumeration (ttyACM0 -> ttyACM1...), et
                 # un port code en dur fait echouer la campagne sur
                 # 'carte injoignable' alors que la carte va tres bien.
-                b = Bench(port=None, quiet=True)
+                # BENCH_PORT force le port (COM5...); sinon detection par
+                # VID:PID 1915:520F puis, sous Linux, le glob /dev/ttyACM*.
+                b = Bench(port=os.environ.get('BENCH_PORT'), quiet=True)
+                b.line_hooks.append(self._garde_rf)
                 b.open()
                 try: b.ser.write_timeout = 5
                 except Exception: pass
@@ -115,6 +166,64 @@ class Runner:
         return None
 
     def relink(self):
+        """Repare le lien USB. Windows natif / Linux sans usbipd: _relink_natif.
+        WSL avec usbipd: la sequence historique ci-dessous."""
+        if P.IS_WINDOWS or not P.is_wsl():
+            return self._relink_natif()
+        return self._relink_usbip()
+
+    def _ping_rapide(self, port):
+        """La carte repond-elle a %PING sur ce port ? Ouvre et referme."""
+        b = None
+        try:
+            b = Bench(port=os.environ.get('BENCH_PORT') or port, quiet=True)
+            b.open()
+            return bool(b.ping(timeout=4))
+        except Exception:
+            return False
+        finally:
+            if b is not None:
+                try: b.close()
+                except Exception: pass
+
+    def _relink_natif(self):
+        """Banc natif (Windows, Linux sans usbip): pas d usbip.
+
+        On n est appele que sur une carte MUETTE. Si le port est present ET que
+        la carte repond a un %PING, la re-enumeration etait simplement finie.
+        Sinon — port absent, ou present mais CDC qui ne draine plus (le cas que
+        cette reparation existe pour traiter) — on rebranche le CDC par SWD
+        (bascule USBPULLUP), sans reset, donc sans perdre l etat .noinit.
+        Rendre True sur la seule presence du port sautait ce rebranchement et
+        laissait recover() tomber sur `nrfjprog --reset`."""
+        if self.b:
+            try: self.b.close()
+            except Exception: pass
+            self.b = None
+        port = P.wait_for_port(10.0)
+        if port and self._ping_rapide(port):
+            self.say('   port CDC present et carte qui repond (re-enumeration terminee)')
+            return True
+        self.say('   port CDC ' + ('present mais carte muette' if port else 'absent')
+                 + ' — rebranchement logiciel par SWD (USBPULLUP)')
+        try:
+            swd_ok = P.soft_replug()
+        except Exception as e:
+            self.say(f'   SWD indisponible: {type(e).__name__}: {e}')
+            return False
+        if not swd_ok:
+            self.say('   nrfjprog a refuse une ecriture USBPULLUP (sonde occupee ou absente ?) — '
+                     'rebranchement NON fait')
+            return False
+        time.sleep(2.0)            # laisser Windows/Linux re-enumerer le CDC
+        port = P.wait_for_port(15.0)
+        ok = port is not None and self._ping_rapide(port)
+        self.say('   lien retabli par rebranchement SWD' if ok else
+                 ('   port revenu mais carte toujours muette apres SWD' if port
+                  else '   port toujours absent apres SWD'))
+        return ok
+
+    def _relink_usbip(self):
         """Repare le lien USB-over-IP sans toucher au J-Link.
 
         Le lien meurt en cours de campagne: usbipd affiche encore "Attached"
@@ -144,7 +253,7 @@ class Runner:
         # a lui-meme echoue une fois faute d avoir vu CM_PROB_NONE a temps.
         ps(f'usbipd attach --busid {busid} --wsl')
         time.sleep(5)
-        if glob.glob('/dev/ttyACM*') or glob.glob('/dev/ttyUSB*'):
+        if P.find_ports():
             self.say('   lien retabli par simple rattachement')
             return True
         # ATTENTION: `usbipd detach` peut laisser le peripherique NON PARTAGE,
@@ -174,7 +283,7 @@ class Runner:
             if n.isdigit() and int(n) >= 1:
                 ps(f'usbipd attach --busid {busid} --wsl')
                 time.sleep(6)
-                return bool(glob.glob('/dev/ttyACM*') or glob.glob('/dev/ttyUSB*'))
+                return bool(P.find_ports())
         # Le peripherique n est jamais repasse CM_PROB_NONE. S il a aussi quitte
         # la liste usbipd, seul un debranchement PHYSIQUE le ramenera: on le dit
         # plutot que de boucler.
@@ -207,7 +316,7 @@ class Runner:
             self.say(f"!! reparation du lien: {type(e).__name__}: {e}")
         self.say("   la carte reste muette — reset materiel")
         try:
-            _nrfjprog(['--reset'])
+            _nrfjprog(['--reset'], timeout=60)
         except Exception as e:
             self.say(f"!! nrfjprog: {e}")
         time.sleep(12)
@@ -281,8 +390,9 @@ class Runner:
                'titre': case['titre'], 'risque': case['risque'],
                'verdict': verdict, 'detail': detail}
         if evidence: rec['trace'] = evidence[:2000]
-        with open(RESULTS, 'a') as f:
+        with P.utf8_open(RESULTS, 'a') as f:
             f.write(json.dumps(rec, ensure_ascii=False) + '\n')
+        self.bilan.append((case['id'], verdict, detail))
         mark = {'PASS':'ok  ', 'FAIL':'ECHEC', 'ERROR':'err ', 'SKIP':'saute'}.get(verdict, '?')
         self.say(f"  {mark} [{case['risque'][:4]}] {case['id']}: {detail}")
         if verdict == 'PASS': self.n_pass += 1
@@ -295,13 +405,43 @@ class Runner:
         elif verdict == 'SKIP': self.n_skip += 1
         else: self.n_error += 1
 
+    @staticmethod
+    def _est_emetteur(case):
+        return bool(case.get('satellite')) or case['id'].startswith(_PREFIXES_EMETTEURS)
+
     def run(self, cases):
+        try:
+            self._run(cases)
+        except KeyboardInterrupt:
+            self.say('!! interrompu (Ctrl-C) — port ferme, verrou libere')
+        finally:
+            # Un port laisse ouvert sous Windows est EXCLUSIF: la passe suivante
+            # (ou nrfjprog) le trouverait occupe.
+            if self.b:
+                try: self.b.close()
+                except Exception: pass
+                self.b = None
+            self._lock.release()
+        return self.resume()
+
+    def _run(self, cases):
         if not self.connect():
             self.say("ABANDON: carte injoignable au demarrage"); return
-        self.say(f"=== campagne demarree — {len(cases)} cas ===")
+        self.say(f"=== campagne demarree — {len(cases)} cas — resultats: {RESULTS} ===")
         for i, case in enumerate(cases, 1):
             self.say(f"[{i}/{len(cases)}] {case['id']} — {case['titre']}")
             try:
+                # Garde RF: apres une emission reelle, plus aucun cas emetteur.
+                if self.rf_detectee() and self._est_emetteur(case):
+                    self.record(case, 'SKIP',
+                                f'partie satellite ABANDONNEE: emission reelle vue pendant '
+                                f'{self.rf_cas} ({self.rf_vu.strip()[-90:]})')
+                    continue
+                if case.get('emet') and not os.environ.get('DTE_RF_AUTORISE'):
+                    self.record(case, 'SKIP',
+                                'cas EMETTEUR par construction (emission reelle voulue) — '
+                                'interdit sur ce banc sans credentials; DTE_RF_AUTORISE=1 pour le jouer')
+                    continue
                 if self.b is None or not self.b.ping(timeout=4):
                     if not self.recover():
                         self.record(case, 'ERROR', 'carte injoignable, campagne interrompue')
@@ -327,7 +467,10 @@ class Runner:
                 if case.get('radio') and saute_si_radio_muette(
                         self, case, 'le dialogue avec le module'):
                     continue
+                if case.get('radio_muette') and saute_si_radio_vivante(self, case):
+                    continue
                 avant = self.n_pass + self.n_fail + self.n_error + self.n_skip
+                self.rf_courant = None
                 case['fn'](self, case)
                 # Un cas qui sort sans rien enregistrer DISPARAIT de la campagne:
                 # le total baisse, aucun rouge n apparait, et personne ne le voit.
@@ -339,12 +482,55 @@ class Runner:
                     self.record(case, 'ERROR',
                                 'le cas s est termine SANS rendre de verdict — '
                                 'chemin sans record(), a corriger dans le harnais')
+                if self.rf_courant is not None:
+                    self.rf_cas = self.rf_cas or case['id']
+                    self.record(dict(case, id=case['id'] + '/RF'), 'FAIL',
+                                'EMISSION REELLE observee pendant ce cas — %AMODE 0 envoye, '
+                                'tous les cas emetteurs suivants seront sautes',
+                                self.rf_vu)
+                    try:
+                        self.baseline()
+                    except Exception:
+                        pass
+                    time.sleep(10)   # la fin de la trame en vol (TX EMITTED OK) arrive ici,
+                                     # pas dans le cas suivant
+            except RFDetectee as e:
+                self.rf_cas = self.rf_cas or case['id']
+                self.record(case, 'FAIL', f'EMISSION REELLE — cas interrompu: {e}', self.rf_vu)
+                try:
+                    self.baseline()
+                except Exception:
+                    pass
+                time.sleep(10)
+                self.rf_courant = None
             except Exception as e:
                 self.record(case, 'ERROR', f'exception {type(e).__name__}: {e}')
                 if not self.recover():
                     self.say("ABANDON: recuperation impossible"); return
+
+    def resume(self):
         saute = f", {self.n_skip} sautes" if self.n_skip else ""
         self.say(f"=== fin — {self.n_pass} ok, {self.n_fail} echecs, {self.n_error} erreurs{saute} ===")
+        rouges = [(i, v, d) for i, v, d in self.bilan if v in ('FAIL', 'ERROR')]
+        if rouges:
+            self.say('--- a instruire ---')
+            for i, v, d in rouges:
+                self.say(f'  {v:5s} {i}: {d[:150]}')
+        if self.rf_vu:
+            self.say(f'!!! EMISSION REELLE OBSERVEE (cas {self.rf_cas}): {self.rf_vu.strip()[-120:]}')
+        self.say(f'resultats JSONL: {RESULTS}  journal: {LOG}')
+        return 0 if not rouges and not self.rf_vu else 1
+
+
+class RFDetectee(RuntimeError):
+    """Levee par un cas qui voit une emission reelle: on n attend pas la fin."""
+
+
+def verifier_rf(r):
+    """A appeler dans les boucles d attente: leve si une emission a ete vue
+    PENDANT le cas en cours (pas une emission d un cas precedent)."""
+    if getattr(r, 'rf_courant', None) is not None:
+        raise RFDetectee(r.rf_courant.strip()[-120:])
 
 
 # =====================================================================
@@ -658,13 +844,41 @@ def c_cle_inconnue(r, case):
              else ('la configuration ENTIERE est renvoyee au lieu d une erreur: ' + m.group(0)[:60]))
 
 def c_ecriture_lecture_seule(r, case):
-    """Un parametre non inscriptible doit refuser l'ecriture."""
-    lines, err = r.raw("$PARMW#00E;IDP01=DEADBEEF\r", wait=2.0)
-    if err: return r.record(case, 'ERROR', err)
-    m = _resp(lines, 'PARMW')
-    if not m: return r.record(case, 'FAIL', 'aucune reponse', '\n'.join(lines))
-    r.record(case, 'PASS' if m.group(1)=='N' else 'FAIL',
-             'ecriture refusee' if m.group(1)=='N' else f'ECRITURE ACCEPTEE sur un parametre en lecture seule: {m.group(0)}')
+    """Un parametre non inscriptible doit refuser l'ecriture — ET le nommer.
+
+    L ancienne version ecrivait IDP01, qui N EXISTE PAS dans la table: elle
+    passait au vert sur "clef inconnue" sans jamais eprouver le refus en
+    lecture seule. On ecrit maintenant de vraies clefs is_writable=false
+    (IDT03 FW_APP_VERSION, ART02 TX_COUNTER) et on exige que la reponse NOMME
+    la clef et que sa valeur n ait pas bouge.
+    """
+    b = r.b
+    defauts, vus = [], []
+    for cle, val in (('IDT03', 'DEADBEEF'), ('ART02', '7')):
+        try:
+            _, avant = b.read_params([cle])
+        except Exception:
+            avant = {}
+        payload = f'{cle}={val}'
+        lines, err = r.raw(f"$PARMW#{len(payload):03X};{payload}\r", wait=2.0)
+        if err: return r.record(case, 'ERROR', err)
+        m = _resp(lines, 'PARMW')
+        if not m:
+            defauts.append(f'{cle}: aucune reponse'); continue
+        vus.append(m.group(0)[:60])
+        if m.group(1) != 'N':
+            defauts.append(f'{cle}: ECRITURE ACCEPTEE ({m.group(0)[:50]})')
+        elif cle not in m.group(3):
+            defauts.append(f'{cle}: refus sans nommer la clef ({m.group(0)[:50]})')
+        try:
+            _, apres = b.read_params([cle])
+        except Exception:
+            apres = {}
+        if avant.get(cle) is not None and apres.get(cle) != avant.get(cle):
+            defauts.append(f'{cle}: valeur changee {avant.get(cle)} -> {apres.get(cle)}')
+    if defauts:
+        return r.record(case, 'FAIL', '; '.join(defauts), '\n'.join(vus))
+    r.record(case, 'PASS', 'IDT03 et ART02 refuses par nom, valeurs inchangees', '\n'.join(vus))
 
 def c_etats(r, case):
     """Transitions configuration <-> operationnel, plusieurs fois."""
@@ -722,8 +936,8 @@ CASES = [
  dict(id='ROB-01', risque='BLOQUANT', titre='Redemarrages repetes',                      fn=c_redemarrages),
 ]
 
-if __name__ == '__main__':
-    Runner().run(CASES)
+# (Le point d entree est en FIN de fichier: place ici, il lancait la vague 1
+#  seule, avant meme que les vagues 2 a 33 soient definies.)
 
 
 # =====================================================================
@@ -864,7 +1078,9 @@ def c_pont_kim(r, case):
 CASES_V2 = [
  dict(id='CMD-25', risque='BLOQUANT', titre='PWRON: composants et valeur hors borne', fn=c_pwron),
  dict(id='CMD-27', risque='BLOQUANT', titre='Commandes emettrices refusees sur build KIM2', fn=c_cmd_emettrices_refusees),
- dict(id='PAR-04', risque='BLOQUANT', titre='Lecture individuelle de tous les parametres', fn=c_lecture_exhaustive),
+ # Ex-"PAR-04" (doublon de l identifiant de la vague 1, les resultats JSONL se
+ # melangeaient): renomme PAR-08.
+ dict(id='PAR-08', risque='BLOQUANT', titre='Lecture individuelle de tous les parametres', fn=c_lecture_exhaustive),
  dict(id='CMD-37', risque='BLOQUANT', titre='Pont serie KIM2 et sortie par +++', fn=c_pont_kim),
 ]
 
@@ -890,7 +1106,7 @@ def _cles_non_inscriptibles():
     chemin = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           '..', '..', 'core', 'protocol', 'dte_params.cpp')
     try:
-        src = open(chemin).read()
+        src = P.read_text(chemin)
     except OSError:
         return set()
     cles = set()
@@ -4253,7 +4469,7 @@ def _adc_pleine_echelle():
         os.path.dirname(os.path.abspath(__file__)))),
         'core', 'services', 'sws_analog_constants.hpp')
     try:
-        m = re.search(r'#define\s+ADC_INVALID_MAX\s+(\d+)', open(chemin).read())
+        m = re.search(r'#define\s+ADC_INVALID_MAX\s+(\d+)', P.read_text(chemin))
         if m:
             return int(m.group(1))
     except OSError:
@@ -5234,13 +5450,27 @@ CASES_V22 = [
 #  cinquieme redemarrage. La sonde %BOOT est le seul point d observation.
 # =====================================================================
 
+# bench_console.cpp porte DEUX branches "%BOOT": la premiere (cause/crash/
+# uptime, ligne ~479) masque la seconde (compteur d echecs, ligne ~793), qui est
+# donc INATTEIGNABLE. Les cas BOOT-01/02 et DEP-06 rendaient "%BOOT sans
+# reponse" — un faux ERROR suivi d un recover(). On reconnait la reponse de la
+# premiere branche et on SAUTE avec la vraie raison, jusqu a ce que la sonde
+# soit renommee cote firmware (%BOOTFAIL par exemple).
+_BOOT_MASQUE = False
+_RAISON_BOOT_MASQUE = ('sonde %BOOT du compteur d echecs INATTEIGNABLE: masquee par la branche '
+                       '%BOOT cause= (bench_console.cpp ~479 vs ~793) — correctif firmware de banc requis')
+
 def _boot(b, timeout=10.0, essais=4):
     """%BOOT -> (echecs, tentatives de reset usine), ou (None, None)."""
+    global _BOOT_MASQUE
     for _ in range(essais):
         mk = b.mark(); b._send('%BOOT\r')
-        m = b.expect(r'%BOOT failures=(\d+) factory_attempted=(\d+)', timeout, from_idx=mk)
+        m = b.expect(r'%BOOT (failures=(\d+) factory_attempted=(\d+)|cause=)', timeout, from_idx=mk)
+        if m and m.group(2) is not None:
+            return int(m.group(2)), int(m.group(3))
         if m:
-            return int(m.group(1)), int(m.group(2))
+            _BOOT_MASQUE = True
+            return None, None
         time.sleep(2)
     return None, None
 
@@ -5257,6 +5487,8 @@ def c_boot_compteur_efface(r, case):
     b = r.b
     echecs, usine = _boot(b)
     if echecs is None:
+        if _BOOT_MASQUE:
+            return r.record(case, 'SKIP', _RAISON_BOOT_MASQUE)
         return r.record(case, 'ERROR', '%BOOT sans reponse (sonde absente du build ?)')
     trace = f'failures={echecs} factory_attempted={usine}'
     if echecs > 0:
@@ -5295,6 +5527,8 @@ def c_boot_survit_redemarrage(r, case):
     apres = _boot(b)
     trace = f'avant: failures={avant[0]} usine={avant[1]}\napres: failures={apres[0]} usine={apres[1]}'
     if apres[0] is None:
+        if _BOOT_MASQUE:
+            return r.record(case, 'SKIP', _RAISON_BOOT_MASQUE, trace)
         return r.record(case, 'ERROR', '%BOOT sans reponse apres redemarrage', trace)
     if apres[0] > 0:
         return r.record(case, 'FAIL',
@@ -5424,7 +5658,7 @@ def c_aop_kineis_accepte(r, case):
     import os
     chemin = os.path.join(os.path.dirname(__file__), '..', '..', _AOP_KINEIS_HEX)
     try:
-        with open(os.path.normpath(chemin)) as f:
+        with open(os.path.normpath(chemin), encoding='utf-8', errors='replace') as f:
             binaire = bytes.fromhex(f.read().strip())
     except OSError as e:
         return r.record(case, 'ERROR', f'vecteur introuvable: {e}')
@@ -5438,7 +5672,8 @@ def c_aop_kineis_accepte(r, case):
     trame = f'$PASPW#{len(binaire):03X};'.encode() + binaire + b'\r'
     mk = b.mark()
     try:
-        b.ser.write(trame); b.ser.flush()
+        with b._wlock:                 # le garde RF ecrit depuis le lecteur
+            b.ser.write(trame); b.ser.flush()
     except Exception as e:
         return r.record(case, 'ERROR', f'envoi impossible: {type(e).__name__}: {e}')
     m = b.expect(r'\$([ON]);PASPW#([0-9A-F]{3});(\d*)', timeout=25.0, from_idx=mk)
@@ -5481,7 +5716,8 @@ def c_aop_ancien_format_refuse(r, case):
     trame = f'$PASPW#{len(faux):03X};'.encode() + faux + b'\r'
     mk = b.mark()
     try:
-        b.ser.write(trame); b.ser.flush()
+        with b._wlock:                 # le garde RF ecrit depuis le lecteur
+            b.ser.write(trame); b.ser.flush()
     except Exception as e:
         return r.record(case, 'ERROR', f'envoi impossible: {type(e).__name__}: {e}')
     m = b.expect(r'\$([ON]);PASPW#', timeout=20.0, from_idx=mk)
@@ -5835,8 +6071,9 @@ def c_pont_gnss(r, case):
     # seulement prouver que des octets FONT LE TRAJET.
     mk = b.mark()
     try:
-        b.ser.write(bytes.fromhex('B5620A0400000E34'))
-        b.ser.flush()
+        with b._wlock:                 # le garde RF ecrit depuis le lecteur
+            b.ser.write(bytes.fromhex('B5620A0400000E34'))
+            b.ser.flush()
     except Exception as e:
         return r.record(case, 'ERROR', f'ecriture sur le pont impossible: {type(e).__name__}: {e}')
     time.sleep(6)
@@ -6174,7 +6411,7 @@ CASES_V26 = [
     dict(id='OUT-03', risque='MAJEUR',   titre='Le second fix est plus rapide que le premier',
          fn=c_ciel_fix_chaud),
     dict(id='OUT-04', risque='BLOQUANT', titre='Une position reelle part reellement par satellite',
-         fn=c_ciel_emission_reelle),
+         emet=True, fn=c_ciel_emission_reelle),
     dict(id='OUT-05', risque='MAJEUR',   titre='La prepasse calcule un passage sur AOP fraiche',
          fn=c_ciel_prepasse_reelle),
 ]
@@ -6348,6 +6585,8 @@ def c_credentials_survivent(r, case):
         return r.record(case, 'ERROR', f'lecture impossible: {type(e).__name__}: {e}')
     echecs, usine = _boot(b)
     if echecs is None:
+        if _BOOT_MASQUE:
+            return r.record(case, 'SKIP', _RAISON_BOOT_MASQUE)
         return r.record(case, 'ERROR', '%BOOT sans reponse')
     decid = avant.get(b._key('ARGOS_DECID'), '')
     if not decid or decid == '0':
@@ -6738,6 +6977,12 @@ def radio_repond(b):
     mecanismes differents et une seule cause. Un rouge qui n accuse rien coute
     plus de temps qu il n en fait gagner.
 
+    LIMITE KIM2: la sonde est faite EN CONFIGURATION, ou le KIM2 est toujours
+    hors tension; KIM2Device::get_firmware_version() y rend "" et la reponse est
+    "Failed to read version" meme sur un module vivant. Sur KIM2 cette mesure
+    dit donc toujours "muette": sans danger pour saute_si_radio_muette (le cas
+    saute), FAUX pour l inverse — d ou radio_muette_prouvee().
+
     Rend (vivante, raison). La raison est vide quand la radio repond.
     """
     global _RADIO_ETAT
@@ -6775,6 +7020,104 @@ def saute_si_radio_muette(r, case, quoi):
     if vivante:
         return False
     r.record(case, 'SKIP', f'{raison} — {quoi} ne peut pas etre eprouve sur cette carte')
+    return True
+
+
+_MUET_PROUVE = None   # None = pas encore mesure; sinon (muet_prouve: bool, raison: str)
+
+
+
+def radio_muette_prouvee(r):
+    """Le module satellite est-il PROUVE muet ? Mesure une seule fois par passe.
+
+    Sert aux cas qui laissent l ArgosTxService tenter des emissions: une
+    erreur ici est une emission reelle, donc seule une PREUVE positive de
+    mutisme compte; tout le reste (doute, sonde impossible) vaut "vivant".
+
+    POURQUOI PAS SMDDFU VERSION SUR KIM2. radio_repond() demande la version en
+    configuration. Sur KIM2, KIM2Device::get_firmware_version() rend "" des que
+    le module est hors tension (kim2.cpp:1209-1213) — et il l est TOUJOURS en
+    configuration (etat initial power_off, resync_rconf_cache le recoupe). Un
+    KIM2 qui repond y lit donc "Failed to read version", exactement comme un
+    KIM2 muet: la sonde classait muet un module vivant, et les cas
+    radio_muette le faisaient emettre en SURFACING_BURST.
+
+    LA PREUVE RETENUE (KIM2, adaptatif off). ArgosTxService::service_init
+    appelle enforce_modulation_state -> resync_rconf_cache, qui ALLUME le
+    module et le pingue, puis journalise "service_init: Argos ID=" (dans
+    cette fonction, apres le resync). On sort donc de configuration avec
+    ARGOS_MODE=0 (aucune emission possible), on attend la ligne Argos ID, et
+    on ne declare muet que si "resync_rconf_cache: ping failed" est apparu
+    entre le %OP et elle. Adaptatif ON: pas de resync au boot, donc pas de
+    preuve -> vivant (le cas saute). Builds SMD / LoRa: radio_repond(), dont
+    la sonde allume le module (SmdSat::get_firmware_version -> power_on_blocking).
+    """
+    global _MUET_PROUVE
+    if _MUET_PROUVE is not None:
+        return _MUET_PROUVE
+    b = r.b
+
+    def rend(muet, raison):
+        global _MUET_PROUVE
+        _MUET_PROUVE = (muet, raison)
+        return _MUET_PROUVE
+
+    try:
+        clefs = cles_implementees(b)
+        if not clefs:
+            return rend(False, 'PARML muet: type de build inconnu, mutisme non prouve')
+        if 'ARP60' in clefs or 'LRP07' in clefs:
+            vivante, raison = radio_repond(b)
+            return rend(not vivante, raison or 'le module repond a SMDDFU VERSION')
+        if not _en_config(b):
+            return rend(False, 'configuration inaccessible: mutisme non prouve')
+        _, p = b.read_params(['ARGOS_MODE', 'ARGOS_ADAPTIVE_MODULATION'], timeout=10.0)
+        if p.get('ARP01') != '0':
+            return rend(False, f'ARGOS_MODE={p.get("ARP01")!r} (0 exige pour sonder sans RF): '
+                               'mutisme non prouve')
+        if p.get('ARP54') not in ('0', None):
+            return rend(False, 'modulation adaptative ON: pas de resync au boot, mutisme non prouvable')
+        mk = b.mark()
+        b.exit_config()
+        # b.expect et non _guette: _guette leve sur une emission d un cas
+        # PRECEDENT (rf_courant n est remis a zero qu apres les portes).
+        init = b.expect(_fw('ArgosTxService::service_init: Argos ID='), 45.0, from_idx=mk)
+        time.sleep(2.0)
+        ko = _lignes(b, mk, _fw('KIM2Device::resync_rconf_cache: ping failed'))
+        rf = [l for _, l in _lignes(b, mk) if any(sig in l for sig in RF_SIGNATURES)]
+        try:
+            b.enter_config()
+        except Exception:
+            pass
+        if rf:
+            return rend(False, f'EMISSION vue pendant la sonde: module VIVANT ({rf[0].strip()[-80:]})')
+        if init is None:
+            return rend(False, 'pas de ligne "service_init: Argos ID=" dans les 45 s apres %OP: '
+                               'mutisme non prouve')
+        if ko:
+            return rend(True, 'KIM2 muet: "resync_rconf_cache: ping failed" au service_init (ARGOS_MODE=0)')
+        return rend(False, 'KIM2 VIVANT: le resync du service_init a eu sa reponse au ping')
+    except Exception as e:
+        return rend(False, f'sonde impossible ({type(e).__name__}): mutisme non prouve')
+
+
+def saute_si_radio_vivante(r, case):
+    """Inverse de saute_si_radio_muette, pour les cas satellite SANS RF.
+
+    Ces cas laissent l ArgosTxService tenter des emissions (ARGOS_MODE != 0) et
+    n observent que ce que le firmware journalise AVANT le module (PREWARM,
+    TX FAILED, backoff, CloudLocate qui ne tient pas...). Sur un KIM2 muet
+    rien ne part: l init echoue au ping. Sur un KIM2 qui REPOND, meme sans
+    credentials, la RCONF LDK integree et l ID usine suffisent a emettre
+    (kim2.cpp:1097-1104): le cas serait une emission reelle. On ne joue donc
+    que sur PREUVE de mutisme (radio_muette_prouvee), jamais sur un doute.
+    """
+    muet, raison = radio_muette_prouvee(r)
+    if muet:
+        r.say(f'   {raison}')
+        return False
+    r.record(case, 'SKIP', f'mutisme du module non prouve ({raison}): ce cas le ferait emettre '
+                           'reellement — reserve a un KIM2 muet')
     return True
 
 
@@ -7229,7 +7572,7 @@ CASES_V30 = [
     dict(id='GPS-C7', risque='MAJEUR',   titre='Le fix a chaud est plus rapide que le froid',
          fn=c_ciel_fix_chaud),
     dict(id='GPS-C8', risque='BLOQUANT', titre='Une position reelle part par satellite',
-         fn=c_ciel_emission_reelle),
+         emet=True, fn=c_ciel_emission_reelle),
 ]
 
 
@@ -7324,7 +7667,7 @@ def _encode_template(nom):
         os.path.dirname(os.path.abspath(__file__)))), 'template_conf', f'{nom}.cfg')
     cfg = configparser.RawConfigParser()
     cfg.optionxform = lambda o: o
-    cfg.read(chemin)
+    cfg.read(chemin, encoding='utf-8')
     params = dict(cfg['PARAM'])
 
     racine = os.environ.get('PYLINKIT')
@@ -7725,8 +8068,9 @@ def c_budget_session_ignore_sur_kim(r, case):
              'avertissement — la balise ne se tait pas', trace)
 
 
-def _cas_commande_simple(cmd, charge, motif, quoi):
-    """Une commande DTE doit REPONDRE — pas se taire — et etre lisible."""
+def _cas_commande_simple(cmd, charge, motif, quoi, apres=None):
+    """Une commande DTE doit REPONDRE — pas se taire — et etre lisible.
+    `apres` = (commande, charge) a envoyer ensuite pour defaire l effet."""
     def cas(r, case):
         b = r.b
         if not _en_config(b):
@@ -7736,6 +8080,11 @@ def _cas_commande_simple(cmd, charge, motif, quoi):
         except Exception as e:
             return r.record(case, 'ERROR', f'{cmd} impossible: {type(e).__name__}: {e}')
         finally:
+            if apres:
+                try:
+                    b.dte(apres[0], apres[1], timeout=20.0)
+                except Exception:
+                    pass
             try:
                 b.exit_config()
             except Exception:
@@ -7823,8 +8172,12 @@ CASES_V32 = [
     # On n en teste que la REPONSE: SWSCAL et SWSTST demandent une electrode
     # qu on mouille a la main, GNSSBCKP immobilise le rail GNSS, et SMDDFU n a
     # que son action VERSION de disponible hors SMD.
+    # SWSTST 1 puis SWSTST 0: le mode test SURVIT a la sortie de configuration
+    # (jusqu a 1 h), aveugle le suivi DX1 et detourne chaque %DIVE/%SURFACE vers
+    # on_test_event. Le laisser allume empoisonnait tous les cas suivants.
     dict(id='CMD-40', risque='MAJEUR', titre='SWSTST repond (mode test du detecteur d eau)',
-         fn=_cas_commande_simple('SWSTST', '1', r'\$[ON];SWSTST', 'demarrage du mode test')),
+         fn=_cas_commande_simple('SWSTST', '1', r'\$[ON];SWSTST', 'demarrage du mode test',
+                                 apres=('SWSTST', '0'))),
     dict(id='CMD-41', risque='MAJEUR', titre='SWSCAL repond (calibration guidee)',
          fn=_cas_commande_simple('SWSCAL', '1', r'\$[ON];SWSCAL', 'annulation de calibration')),
     dict(id='CMD-42', risque='MAJEUR', titre='GNSSBCKP repond (charge de la pile de sauvegarde)',
@@ -7833,3 +8186,1432 @@ CASES_V32 = [
          radio=True,
          fn=_cas_commande_simple('SMDDFU', '5', r'\$[ON];SMDDFU', 'action VERSION')),
 ]
+
+
+# =====================================================================
+#  Vague 33 — 'edge-2026-10': cas limites SWS, GPS, satellite, capteurs
+#
+#  Couvre les commits 26ab5c6a/16d35058 (chaine de demarrage a chaud, start_class,
+#  ANO conditionnel), 9ec1aff2 (suivi DX1), 8ecd41af (CloudLocate qui ne tient
+#  pas dans la maitresse) et c5de1408 (UNP26 0/1/2, ART12-ART15).
+#
+#  Regles, toutes payees ailleurs:
+#   - chaque cas pose TOUTES ses preconditions et RESTAURE ce qu il a change
+#     (_Params): un cas ne doit rien laisser au suivant (fuite DP-01);
+#   - les motifs firmware litteraux passent par _fw(), que
+#     tools/check_bench_log_patterns.py verifie contre les sources; aucun motif
+#     DEBUG_TRACE (compile hors du binaire a DEBUG_LEVEL=3); pas de tiret
+#     cadratin dans les motifs (on ne depend pas de l encodage du flux);
+#   - AUCUNE emission reelle: les cas "satellite" exigent un module MUET
+#     (radio_muette=True) et n observent que ce que le firmware journalise
+#     avant le module; le garde RF (verifier_rf) les interrompt sinon.
+#   - les lignes [VAL-*] exigent un build --validation: sans elles, SKIP.
+# =====================================================================
+
+def _fw(lit):
+    """Texte LITTERAL d une ligne firmware, echappe pour une regex.
+
+    tools/check_bench_log_patterns.py verifie chaque litteral passe a _fw contre les
+    sources: un motif qui n existe pas dans le firmware ne peut ni passer ni
+    echouer pour une raison qui le concerne."""
+    return re.escape(lit)
+
+
+def _trame(cmd, payload, entete=None):
+    lg = f'{len(payload):03X}' if entete is None else entete
+    return f'${cmd}#{lg};{payload}\r'
+
+
+def _dte_brut(r, cmd, payload, entete=None, timeout=12.0):
+    """Trame DTE brute -> (code 'O'/'N'/None, corps, ligne).
+
+    Le champ longueur est HEXADECIMAL ("%03X"): calcule, jamais ecrit a la main.
+    `entete` force un champ longueur (pour eprouver le piege decimal)."""
+    m, err = r.raw_until(_trame(cmd, payload, entete),
+                         rf'\$([ON]);{cmd}#([0-9A-Fa-f]{{3}});?([^\r]*)', timeout)
+    if err or not m:
+        return None, err or '', ''
+    return m.group(1), m.group(3).strip(), m.string
+
+
+def _lit1(b, cle):
+    """PARMR d une clef -> valeur (str) ou None si absente / refusee."""
+    try:
+        _, p = b.read_params([cle], timeout=10.0)
+    except Exception:
+        return None
+    return p.get(b._key(cle))
+
+
+class _Params:
+    """Pose un jeu de parametres et le RESTAURE ensuite (meme si le cas echoue)."""
+
+    def __init__(self, r, kv):
+        self.r, self.kv, self.avant = r, dict(kv), {}
+
+    def poser(self, timeout=40.0):
+        b = self.r.b
+        if not _en_config(b):
+            raise RuntimeError('mode configuration inaccessible')
+        cles = [b._key(k) for k in self.kv]
+        for i in range(0, len(cles), 12):
+            _, lus = b.read_params(cles[i:i + 12], timeout=15.0)
+            self.avant.update(lus)
+        # strict: un refus leve — un cas ne tourne JAMAIS sur une precondition
+        # a moitie posee. 40 s: une RCONF ecrite resynchronise le KIM2.
+        b.write_params(self.kv, timeout=timeout)
+
+    def restaurer(self):
+        b = self.r.b
+        if b is None or not self.avant:
+            return
+        try:
+            if _en_config(b):
+                b.write_params(self.avant, timeout=40.0, strict=False)
+        except Exception:
+            pass
+
+
+def _lignes(b, depuis, motif=None):
+    with b._lock:
+        lot = list(b.history[depuis:])
+    if motif is None:
+        return lot
+    rx = re.compile(motif)
+    return [(t, l) for t, l in lot if rx.search(l)]
+
+
+def _guette(r, motif, secondes, depuis=None):
+    """Attend une ligne (ts, ligne) en surveillant le garde RF. None au delai."""
+    b = r.b
+    rx = re.compile(motif)
+    i = b.mark() if depuis is None else depuis
+    fin = time.time() + secondes
+    while True:
+        verifier_rf(r)
+        with b._lock:
+            lot = list(b.history[i:])
+            i = len(b.history)
+        for t, l in lot:
+            if rx.search(l):
+                return t, l
+        if time.time() >= fin:
+            return None
+        time.sleep(0.25)
+
+
+def _patiente(r, secondes):
+    fin = time.time() + secondes
+    while time.time() < fin:
+        verifier_rf(r)
+        time.sleep(min(1.0, max(0.0, fin - time.time())))
+    verifier_rf(r)
+
+
+def _console(r, cmd, motif, timeout=10.0):
+    """Commande % -> ligne de reponse (ou None)."""
+    b = r.b
+    mk = b.mark()
+    b._send(cmd + '\r\n')
+    m = b.expect(motif, timeout, from_idx=mk)
+    return m.string if m else None
+
+
+def _operationnel(r):
+    b = r.b
+    if not b.exit_config():
+        raise RuntimeError('la carte ne passe pas en OPERATIONAL')
+    b.settle_console(25.0)
+
+
+def _operationnel_sws(r):
+    """%OP puis attente de la PREMIERE emission du vrai SWS (electrodes seches).
+
+    A chaque demarrage des services le SWS re-emet son etat — "surface" a sec —
+    et l ArgosTxService le prend pour une emersion: salve, PREWARM consomme,
+    refroidissement arme (AT_SURFACE). Un %DIVE envoye avant cette emission est
+    suivi d une "emersion" fantome qui fausse tout le cas. Rend l index
+    d historique pris avant le %OP."""
+    b = r.b
+    mk = b.mark()
+    _operationnel(r)
+    _guette(r, _fw('UWDetectorService: state changed: state='), 45.0, mk)
+    _patiente(r, 3)
+    return mk
+
+
+def _plonge(r, attente=0.0):
+    _console(r, '%DIVE', r'%DIVE OK', 10.0)
+    if attente:
+        _patiente(r, attente)
+
+
+def _emerge(r):
+    """%SURFACE -> (index d historique avant l envoi, ts de la reponse)."""
+    b = r.b
+    mk = b.mark()
+    b._send('%SURFACE\r\n')
+    m = _guette(r, r'%SURFACE OK surfaced', 10.0, mk)
+    return mk, (m[0] if m else time.monotonic())
+
+
+def _val_present(b, depuis=0):
+    return bool(_lignes(b, depuis, r'\[VAL-'))
+
+
+# Configuration satellite de reference, SANS RF sur un module muet: la salve
+# d emersion (le seul chemin PREWARM) avec la GNSS active (GNSS_EN=0 desactive
+# toute planification en SURFACING_BURST) mais incapable de fixer
+# (GNSS_MIN_ELEV=90): un fix effacerait la suspension et promouvrait la salve.
+_EDGE_SAT = {
+    'ARGOS_MODE': 5, 'UNDERWATER_EN': 1, 'GNSS_EN': 1, 'GNSS_MIN_ELEV': 90,
+    'GNSS_ACQ_TIMEOUT': 60, 'GNSS_FASTLOC_MODE': 0, 'ARGOS_ADAPTIVE_MODULATION': 0,
+    'MIN_SURFACE_CYCLE_INTERVAL_S': 0, 'COOLDOWN_TRIGGER_MODE': 3, 'DRY_TIME_BEFORE_TX': 1,
+    'SURFACING_BURST_MAX_MSG': 3, 'SURFACING_BURST_INIT_S': 5, 'SURFACING_BURST_STEP_S': 0,
+    'SURFACING_BURST_MAX_S': 30, 'SAT_PREPASS_EN': 0, 'RATE_LIMIT_EN': 0, 'LB_EN': 0,
+    'NTRY_PER_MESSAGE': 0, 'DUTY_CYCLE': 16777215, 'CERT_TX_ENABLE': 0, 'ARGOS_DEPTH_PILE': 1,
+    'ARGOS_TX_JITTER_EN': 0, 'SWS_SENSOR_ENABLE_TX_MODE': 0,
+}
+
+# Base GNSS de gps_validate.py, en noms clairs.
+_EDGE_GNSS = {
+    'ARGOS_MODE': 0, 'GNSS_EN': 1, 'UNDERWATER_EN': 1, 'GNSS_HDOPFILT_EN': 0,
+    'GNSS_HACCFILT_EN': 0, 'GNSS_ACQ_TIMEOUT': 120, 'GNSS_COLD_ACQ_TIMEOUT': 300,
+    'GNSS_ASSISTNOW_EN': 1, 'GNSS_DEEP_IDLE_AFTER_OFF_S': 4294967295,
+    'MIN_SURFACE_CYCLE_INTERVAL_S': 0, 'GNSS_CONSTELLATION_MASK': 7, 'LB_EN': 0,
+    'GNSS_FASTLOC_MODE': 0, 'GNSS_MIN_ELEV': 10, 'GNSS_MIN_CNO': 10,
+}
+
+_RX_TX_ECHEC = r'ArgosTxService: TX FAILED . type=(\S+) mode=(\d+)'
+_RX_PREWARM = _fw('ArgosTxService::process_doppler_burst: PREWARM mode=') + r'(\S+) sz=(\d+) age=(\d+)'
+_TAILLE_DX1 = {'LDK': 128, 'LDA2': 32, 'VLDA4': 24}
+_NOM_KINEIS = {'0': 'LDK', '1': 'LDA2', '2': 'VLDA4'}   # "mode=N" des lignes TX (KineisModulation)
+
+
+# ---------------------------------------------------------------- DTE / config
+
+def c_edge_unp26_matrice(r, case):
+    """UNP26 (SWS_SENSOR_ENABLE_TX_MODE): 0/1/2 acceptes, tout le reste refuse.
+
+    La GUI et PyLinkit vont l ajouter en selecteur 0/1/2. Une case a cocher qui
+    ecrirait true/false doit etre REFUSEE, pas convertie en silence. L ancienne
+    clef ARP47 doit etre refusee par son nom. Et le piege du champ longueur:
+    hexadecimal et decimal ne divergent qu a partir de 10 caracteres.
+    """
+    b = r.b
+    if not _en_config(b):
+        return r.record(case, 'ERROR', 'mode configuration inaccessible')
+    init = _lit1(b, 'UNP26')
+    if init is None:
+        return r.record(case, 'SKIP', 'UNP26 absent de ce build (LoRa ?)')
+    defauts, trace = [], [f'UNP26 initial={init}']
+    try:
+        for val, attendu in (('0', '0'), ('1', '1'), ('2', '2')):
+            code, corps, _ = _dte_brut(r, 'PARMW', f'UNP26={val}')
+            lu = _lit1(b, 'UNP26')
+            trace.append(f'UNP26={val!r} -> {code};{corps} relu={lu}')
+            if code != 'O' or lu != attendu:
+                defauts.append(f'{val!r} devait etre accepte (reponse {code};{corps}, relu {lu})')
+        # Observation seulement: un espace avant la valeur (sscanf le saute).
+        code, corps, _ = _dte_brut(r, 'PARMW', 'UNP26= 1')
+        trace.append(f"UNP26=' 1' (observation) -> {code};{corps} relu={_lit1(b, 'UNP26')}")
+        _dte_brut(r, 'PARMW', 'UNP26=2')
+        for val in ('3', 'true', 'false', '', '-1'):
+            code, corps, _ = _dte_brut(r, 'PARMW', f'UNP26={val}')
+            lu = _lit1(b, 'UNP26')
+            trace.append(f'UNP26={val!r} -> {code};{corps} relu={lu}')
+            if code != 'N':
+                defauts.append(f'{val!r} ACCEPTE (reponse {code};{corps})')
+            elif 'UNP26' not in corps:
+                trace.append(f'   (refus par code trame {corps}, sans nommer la clef)')
+            if lu != '2':
+                defauts.append(f'{val!r}: valeur changee 2 -> {lu}')
+        code, corps, _ = _dte_brut(r, 'PARMW', 'ARP47=1')
+        trace.append(f'ARP47=1 -> {code};{corps}')
+        if code != 'N' or 'ARP47' not in corps:
+            defauts.append(f'ancienne clef ARP47 non refusee par son nom ({code};{corps})')
+        gnp40 = _lit1(b, 'GNP40') or '7'
+        p = f'UNP26=2,GNP40={gnp40}'
+        code, corps, _ = _dte_brut(r, 'PARMW', p)
+        trace.append(f'{p} #{len(p):03X} -> {code};{corps}')
+        if code != 'O':
+            defauts.append(f'trame correcte (longueur hexa) refusee: {code};{corps}')
+        dec = f'{len(p):03d}'
+        if dec != f'{len(p):03X}':
+            code, corps, _ = _dte_brut(r, 'PARMW', p, entete=dec)
+            trace.append(f'{p} #{dec} (DECIMAL) -> {code};{corps}')
+            if not (code == 'N' and corps == '4'):
+                defauts.append(f'longueur decimale #{dec}: attendu $N;PARMW#001;4 '
+                               f'(DATA_LENGTH_MISMATCH), recu {code};{corps}')
+    finally:
+        _dte_brut(r, 'PARMW', f'UNP26={init.strip()}')
+    if defauts:
+        return r.record(case, 'FAIL', f'{len(defauts)} defaut(s): ' + '; '.join(defauts)[:300],
+                        '\n'.join(trace))
+    r.record(case, 'PASS', 'UNP26: 0/1/2 acceptes; 3, true, false, vide, -1 et ARP47 refuses; '
+                           'longueur decimale -> code 4', '\n'.join(trace))
+
+
+def c_edge_uint_fin_ignoree(r, case):
+    """Une valeur entiere suivie de dechets doit etre refusee.
+
+    Le decodeur UINT (safe_sscanf, dte_protocol.hpp) ignore combien de
+    caracteres il a consommes: 'UNP26=2x' est predit ACCEPTE et stocke 2. Une
+    GUI qui ecrirait '2 (FORCE)' ou '60s' ecrirait donc une valeur sans erreur.
+    """
+    b = r.b
+    if not _en_config(b):
+        return r.record(case, 'ERROR', 'mode configuration inaccessible')
+    init26, init05 = _lit1(b, 'UNP26'), _lit1(b, 'GNP05')
+    if init26 is None:
+        return r.record(case, 'SKIP', 'UNP26 absent de ce build')
+    acceptes, trace = [], []
+    try:
+        for cle, base, val, piege in (('UNP26', '0', '2x', '2'), ('UNP26', '0', '1.9', '1'),
+                                      ('GNP05', '120', '60s', '60')):
+            _dte_brut(r, 'PARMW', f'{cle}={base}')
+            code, corps, _ = _dte_brut(r, 'PARMW', f'{cle}={val}')
+            lu = _lit1(b, cle)
+            trace.append(f'{cle}={val!r} -> {code};{corps} relu={lu}')
+            if code == 'O' or lu == piege:
+                acceptes.append(f'{cle}={val!r} accepte, stocke {lu}')
+    finally:
+        _dte_brut(r, 'PARMW', f'UNP26={init26},GNP05={init05 or 120}')
+    if acceptes:
+        return r.record(case, 'FAIL', 'le decodeur entier ignore la fin de la valeur: '
+                        + '; '.join(acceptes), '\n'.join(trace))
+    r.record(case, 'PASS', 'valeurs entieres suivies de dechets refusees', '\n'.join(trace))
+
+
+def c_edge_modes_tx_capteurs(r, case):
+    """*_ENABLE_TX_MODE et booleens: pas de true/false, refus par clef, lot partiel.
+
+    Seul AXP05 est compile sur le build KIM (ENABLE_AXL_SENSOR=1). Un booleen
+    est decode en '%u': une GUI qui serialise ses cases a cocher en true/false
+    perd TOUS les booleens, pas seulement les modes TX.
+    """
+    b = r.b
+    if not _en_config(b):
+        return r.record(case, 'ERROR', 'mode configuration inaccessible')
+    i05, i01 = _lit1(b, 'AXP05'), _lit1(b, 'AXP01')
+    if i05 is None:
+        return r.record(case, 'SKIP', 'AXP05 absent (build sans accelerometre)')
+    defauts, notes, trace = [], [], []
+    try:
+        for v in '0123':
+            code, corps, _ = _dte_brut(r, 'PARMW', f'AXP05={v}')
+            lu = _lit1(b, 'AXP05')
+            trace.append(f'AXP05={v} -> {code};{corps} relu={lu}')
+            if code != 'O' or lu != v:
+                defauts.append(f'AXP05={v} refuse ou mal relu ({code};{corps}, {lu})')
+        _dte_brut(r, 'PARMW', 'AXP05=1')
+        for v in ('true', 'false', '4', '01'):
+            code, corps, _ = _dte_brut(r, 'PARMW', f'AXP05={v}')
+            lu = _lit1(b, 'AXP05')
+            trace.append(f'AXP05={v} -> {code};{corps} relu={lu}')
+            if v == '01':
+                notes.append(f"'01' {'refuse' if code == 'N' else 'ACCEPTE'} (correspondance exacte attendue)")
+                continue
+            if code != 'N' or 'AXP05' not in corps:
+                defauts.append(f'AXP05={v} non refuse par nom ({code};{corps})')
+            if lu != '1':
+                defauts.append(f'AXP05={v}: valeur changee 1 -> {lu}')
+        code, corps, _ = _dte_brut(r, 'PARMW', 'AXP01=true')
+        trace.append(f'AXP01=true -> {code};{corps}')
+        if code != 'N':
+            defauts.append(f'booleen AXP01=true ACCEPTE ({code};{corps})')
+        _dte_brut(r, 'PARMW', 'AXP01=0')
+        code, corps, _ = _dte_brut(r, 'PARMW', 'AXP05=true,AXP01=1')
+        lu01 = _lit1(b, 'AXP01')
+        trace.append(f'AXP05=true,AXP01=1 -> {code};{corps} AXP01 relu={lu01}')
+        if code != 'N' or 'AXP05' not in corps or 'AXP01' in corps:
+            defauts.append(f'lot mixte: refus attendu de AXP05 seul ({code};{corps})')
+        if lu01 != '1':
+            defauts.append(f'lot mixte: AXP01 aurait du etre ecrit malgre le refus d AXP05 (relu {lu01})')
+        code, corps, _ = _dte_brut(r, 'PARMW', 'STP04=1')
+        trace.append(f'STP04=1 -> {code};{corps}')
+        if code != 'N':
+            defauts.append(f'STP04 (capteur non compile) ACCEPTE ({code};{corps})')
+    finally:
+        _dte_brut(r, 'PARMW', f'AXP05={i05},AXP01={i01 or 0}')
+    det = ('; '.join(notes) + ' | ') if notes else ''
+    if defauts:
+        return r.record(case, 'FAIL', det + '; '.join(defauts)[:300], '\n'.join(trace))
+    r.record(case, 'PASS', det + 'AXP05 0..3 seuls acceptes, true/false refuses, lot partiel '
+                                 'correct, STP04 refuse', '\n'.join(trace))
+
+
+def c_edge_art_contrat(r, case):
+    """ART12-ART15: lecture seule, rendues par STATR, absentes du PARMR vide.
+
+    Le flux GUI sera PARMW -> SATVF -> STATR ART12,ART13. Ces clefs n ont ete
+    eprouvees que sur des builds hote LoRa.
+    """
+    b = r.b
+    if not _en_config(b):
+        return r.record(case, 'ERROR', 'mode configuration inaccessible')
+    defauts, trace = [], []
+    avant = _statr(b, ['ART12', 'ART13', 'ART14', 'ART15'])
+    trace.append(f'STATR avant: {avant}')
+    if not avant:
+        return r.record(case, 'FAIL', 'STATR ART12..ART15 sans reponse', '\n'.join(trace))
+    manquantes = [k for k in ('ART12', 'ART13', 'ART14', 'ART15') if k not in avant]
+    if manquantes:
+        defauts.append(f'STATR ne rend pas {manquantes}')
+    try:
+        if not (0 <= int(avant.get('ART12', '0')) <= 15 and 0 <= int(avant.get('ART13', '3')) <= 3):
+            defauts.append(f'ART12/ART13 hors domaine: {avant}')
+    except ValueError:
+        defauts.append(f'ART12/ART13 non numeriques: {avant}')
+    for cle, val in (('ART12', '0'), ('ART13', '1'), ('ART14', '1'), ('ART15', '1')):
+        code, corps, _ = _dte_brut(r, 'PARMW', f'{cle}={val}')
+        trace.append(f'{cle}={val} -> {code};{corps}')
+        if code != 'N' or cle not in corps:
+            defauts.append(f'{cle} ecrit ou refus muet ({code};{corps})')
+    apres = _statr(b, ['ART12', 'ART13', 'ART14', 'ART15'])
+    for k in ('ART13', 'ART14', 'ART15'):
+        if avant.get(k) != apres.get(k):
+            defauts.append(f'{k} a change apres les PARMW refuses: {avant.get(k)} -> {apres.get(k)}')
+    v13 = _lit1(b, 'ART13')
+    trace.append(f'PARMR ART13 -> {v13}')
+    if v13 is None:
+        defauts.append('PARMR explicite de ART13 refuse (le filtre T/P ne vaut que pour la liste vide)')
+    for cmd, timeout in (('PARMR', 40.0), ('STATR', 30.0)):
+        code, corps, ligne = _dte_brut(r, cmd, '', timeout=timeout)
+        m = re.search(rf'\$[ON];{cmd}#([0-9A-Fa-f]{{3}});(.*)$', ligne or '')
+        if not m:
+            defauts.append(f'{cmd} vide sans reponse en {timeout:.0f} s')
+            continue
+        declaree, reelle = int(m.group(1), 16), len(m.group(2))
+        trace.append(f'{cmd} vide: #{m.group(1)} ({declaree}) pour {reelle} octets')
+        if declaree != reelle:
+            defauts.append(f'{cmd} vide: longueur declaree {declaree} != recue {reelle}')
+        if cmd == 'PARMR':
+            if 'UNP26=' not in m.group(2):
+                defauts.append('PARMR vide sans UNP26')
+            for k in ('ARP47=', 'ART12=', 'ART13=', 'ART14=', 'ART15='):
+                if k in m.group(2):
+                    defauts.append(f'PARMR vide contient {k[:-1]}')
+        else:
+            for k in ('ART12=', 'ART13=', 'ART14=', 'ART15='):
+                if k not in m.group(2):
+                    defauts.append(f'STATR vide sans {k[:-1]}')
+    if defauts:
+        return r.record(case, 'FAIL', '; '.join(defauts)[:300], '\n'.join(trace))
+    r.record(case, 'PASS', f'ART12-15 lecture seule et coherentes ({avant})', '\n'.join(trace))
+
+
+def _art12_modele(gnss_en, fastloc, fmt, adaptatif, maitresse_vide, art13):
+    """Copie de ArgosConfigCheck::evaluate (KIM2, is_smd=false)."""
+    masque = 0
+    if gnss_en and fastloc == 2:
+        if fmt == 2:
+            masque |= 8
+        elif not adaptatif:
+            if art13 not in (0, 1, 2):
+                masque |= 2
+            else:
+                bits = 128 if fmt == 0 else 192
+                if bits > {0: 192, 1: 128, 2: 24}[art13]:
+                    masque |= 1
+    if maitresse_vide and not adaptatif:
+        masque |= 4
+    return masque
+
+
+def c_edge_art12_parcours(r, case):
+    """ART12 suit la configuration pas a pas, ART13 est invalide par ARP54.
+
+    Independant du module: on compare chaque ART12 lu au modele exact de
+    ArgosConfigCheck::evaluate, avec l ART13 lu au meme instant. Aucun PARMW ne
+    doit etre refuse a cause d un avertissement (le firmware ne refuse jamais).
+    IDP14 n est PAS ecrit: pas de provisionnement sur ce banc.
+    """
+    b = r.b
+    cles = {'GNSS_EN': 'GNP01', 'GNSS_FASTLOC_MODE': 'GNP45', 'GNSS_CLOUDLOCATE_FORMAT': 'GNP46',
+            'ARGOS_ADAPTIVE_MODULATION': 'ARP54'}
+    pas_ = [
+        ('CloudLocate MEAS20, adaptatif off', dict(GNSS_EN=1, GNSS_FASTLOC_MODE=2,
+                                                   GNSS_CLOUDLOCATE_FORMAT=1, ARGOS_ADAPTIVE_MODULATION=0)),
+        ('MEAS50 (LoRa seulement)', dict(GNSS_CLOUDLOCATE_FORMAT=2)),
+        ('MEASC12', dict(GNSS_CLOUDLOCATE_FORMAT=0)),
+        ('MEAS20 + adaptatif ON', dict(GNSS_CLOUDLOCATE_FORMAT=1, ARGOS_ADAPTIVE_MODULATION=1)),
+        ('adaptatif off, CloudLocate off', dict(ARGOS_ADAPTIVE_MODULATION=0, GNSS_FASTLOC_MODE=0)),
+        ('CloudLocate, GNSS_EN=0', dict(GNSS_FASTLOC_MODE=2, GNSS_EN=0)),
+    ]
+    prm = _Params(r, {k: v for k, v in pas_[0][1].items()})
+    defauts, trace = [], []
+    try:
+        prm.poser()
+        maitresse = _lit1(b, 'IDP14')
+        if maitresse is None:
+            return r.record(case, 'ERROR', 'IDP14 illisible')
+        vide = (maitresse.strip() == '')
+        etat = {}
+        for k in cles:
+            etat[k] = int(_lit1(b, k) or 0)
+        for i, (nom, kv) in enumerate(pas_):
+            if i:
+                adapt_change = 'ARGOS_ADAPTIVE_MODULATION' in kv and \
+                    kv['ARGOS_ADAPTIVE_MODULATION'] != etat['ARGOS_ADAPTIVE_MODULATION']
+                b.write_params(kv, timeout=20.0)
+                etat.update(kv)
+            else:
+                adapt_change = False
+            st = _statr(b, ['ART12', 'ART13'])
+            try:
+                a12, a13 = int(st['ART12']), int(st['ART13'])
+            except (KeyError, ValueError):
+                defauts.append(f'{nom}: STATR illisible {st}'); continue
+            attendu = _art12_modele(etat['GNSS_EN'], etat['GNSS_FASTLOC_MODE'],
+                                    etat['GNSS_CLOUDLOCATE_FORMAT'], etat['ARGOS_ADAPTIVE_MODULATION'],
+                                    vide, a13)
+            # ART13 n est retenu par le firmware que si ART14 == empreinte(IDP14)
+            # (trusted_master_modulation). Un ART13 lu mais non approuve compte
+            # comme inconnu (3): on accepte ce second modele, en le disant.
+            if a12 != attendu and a13 != 3:
+                attendu3 = _art12_modele(etat['GNSS_EN'], etat['GNSS_FASTLOC_MODE'],
+                                         etat['GNSS_CLOUDLOCATE_FORMAT'],
+                                         etat['ARGOS_ADAPTIVE_MODULATION'], vide, 3)
+                if a12 == attendu3:
+                    trace.append(f'   ({nom}: ART13={a13} lu mais non approuve -> traite comme inconnu)')
+                    attendu = attendu3
+            trace.append(f'{nom}: ART12={a12} (modele {attendu}) ART13={a13}')
+            if a12 != attendu:
+                defauts.append(f'{nom}: ART12={a12}, modele {attendu} (ART13={a13}, IDP14 '
+                               f'{"vide" if vide else "pose"})')
+            if adapt_change and a13 != 3:
+                defauts.append(f'{nom}: ARP54 a change mais ART13={a13} (attendu 3, invalide)')
+    except Exception as e:
+        return r.record(case, 'ERROR', f'{type(e).__name__}: {e}', '\n'.join(trace))
+    finally:
+        prm.restaurer()
+    if defauts:
+        return r.record(case, 'FAIL', '; '.join(defauts)[:300], '\n'.join(trace))
+    r.record(case, 'PASS', f'ART12 conforme au modele sur {len(pas_)} configurations, '
+                           'ART13 invalide par ARP54, aucun refus', '\n'.join(trace))
+
+
+def _empreinte_rconf(rconf):
+    """Copie de ModulationGuard::rconf_fingerprint: CRC32 IEEE (zlib) de la
+    chaine hexa, A-F passes en minuscules, bit 0 force a 1; 0 si vide."""
+    import zlib
+    if not rconf:
+        return 0
+    s = ''.join(chr(ord(c) - ord('A') + ord('a')) if 'A' <= c <= 'F' else c for c in rconf)
+    return (zlib.crc32(s.encode('latin-1', 'replace')) & 0xFFFFFFFF) | 1
+
+
+def _relecture_maitresse_legitime(st, pr, kv):
+    """(bool, raison): l etat ART12-14 lu `st` est-il celui d une relecture de
+    la maitresse IDP14 par le KIM2 (kim2.cpp cache_master_readback) ?"""
+    maitresse = (pr.get('IDP14') or '').strip()
+    if not maitresse:
+        return False, 'IDP14 vide: aucune relecture de maitresse possible'
+    try:
+        a12, a13 = int(st.get('ART12')), int(st.get('ART13'))
+    except (TypeError, ValueError):
+        return False, f'ART12/ART13 illisibles ({st})'
+    if a13 not in (0, 1, 2):
+        return False, f'ART13={a13}: pas un code de modulation relu'
+    fp = _empreinte_rconf(maitresse)
+    brut = (st.get('ART14') or '').strip()
+    lus = set()
+    for base in (10, 16):
+        try:
+            lus.add(int(brut, base))
+        except ValueError:
+            pass
+    if fp not in lus:
+        return False, f'ART14={brut!r} != empreinte(IDP14)={fp}'
+    attendu = _art12_modele(kv['GNSS_EN'], kv['GNSS_FASTLOC_MODE'], kv['GNSS_CLOUDLOCATE_FORMAT'],
+                            kv['ARGOS_ADAPTIVE_MODULATION'], False, a13)
+    if a12 != attendu:
+        return False, f'ART12={a12}, modele {attendu} avec ART13={a13} relu'
+    return True, (f'relecture de la maitresse au boot (ART13={a13}, ART14=fp(IDP14), '
+                  f'ART12={a12} conforme au modele) — attendu sur un KIM2 qui repond')
+
+
+def c_edge_persistance_art(r, case):
+    """ART12-15, SMP01, UNP26 et une maitresse vide survivent a un RSTBW (build Argos).
+
+    Le test hote de persistance est un build LoRa: rien n a prouve que les slots
+    267-270 se serialisent sur un build KIM. Et une maitresse vide doit RESTER
+    vide (l ancienne reecriture de la RCONF integree masquait l avertissement).
+    """
+    b = r.b
+    kv = dict(GNSS_EN=1, GNSS_FASTLOC_MODE=2, GNSS_CLOUDLOCATE_FORMAT=1,
+              ARGOS_ADAPTIVE_MODULATION=0, SWS_SENSOR_ENABLE_TX_MODE=2, ARGOS_MODE=0)
+    prm = _Params(r, kv)
+    trace = []
+    try:
+        prm.poser()
+        st_av = _statr(b, ['ART12', 'ART13', 'ART14', 'ART15'])
+        _, pr_av = b.read_params(['SMP01', 'IDP14', 'UNP26', 'GNP45', 'GNP46'], timeout=15.0)
+        trace.append(f'avant: {st_av} {pr_av}')
+        b.dte('RSTBW', '', timeout=8.0)
+        time.sleep(6)
+        if not r.connect():
+            return r.record(case, 'ERROR', 'la carte ne revient pas apres RSTBW', '\n'.join(trace))
+        b = r.b
+        if not b.wait_state('OPERATIONAL', timeout=90):
+            return r.record(case, 'ERROR', 'pas de retour en OPERATIONAL apres RSTBW', '\n'.join(trace))
+        boot = _console(r, '%BOOT', r'%BOOT cause=', 10.0) or ''
+        m = re.search(r'uptime_ms=(\d+)', boot)
+        trace.append(f'%BOOT: {boot.strip()}')
+        if m and int(m.group(1)) > 300000:
+            return r.record(case, 'FAIL', f'RSTBW n a pas redemarre la carte ({boot.strip()})',
+                            '\n'.join(trace))
+        if not _en_config(b):
+            return r.record(case, 'ERROR', 'configuration inaccessible apres RSTBW', '\n'.join(trace))
+        st_ap = _statr(b, ['ART12', 'ART13', 'ART14', 'ART15'])
+        _, pr_ap = b.read_params(['SMP01', 'IDP14', 'UNP26', 'GNP45', 'GNP46'], timeout=15.0)
+        trace.append(f'apres: {st_ap} {pr_ap}')
+    except Exception as e:
+        return r.record(case, 'ERROR', f'{type(e).__name__}: {e}', '\n'.join(trace))
+    finally:
+        prm.restaurer()
+    # Un KIM2 qui REPOND relit sa maitresse au boot (service_init ->
+    # enforce_modulation_state -> resync_rconf_cache -> cache_master_readback):
+    # ART13 passe alors de 3 (invalide, p. ex. par l ARP54 d EDG-D4) au code
+    # relu, ART14 a fp(IDP14), et ART12 suit. C est le comportement voulu, pas
+    # une perte: on l accepte quand la relecture est COHERENTE (ART14 ==
+    # empreinte de l IDP14 relu, ART12 == modele avec l ART13 relu), et on le
+    # dit dans la trace.
+    arts = ('ART12', 'ART13', 'ART14', 'ART15')
+    if any(st_av.get(k) != st_ap.get(k) for k in ('ART12', 'ART13', 'ART14')):
+        relu, pourquoi = _relecture_maitresse_legitime(st_ap, pr_ap, kv)
+        if relu:
+            trace.append(f'ART12-14 {[st_av.get(k) for k in arts[:3]]} -> '
+                         f'{[st_ap.get(k) for k in arts[:3]]}: {pourquoi}')
+            arts = ('ART15',)
+        else:
+            trace.append(f'changement ART12-14 non explique par une relecture: {pourquoi}')
+    perdus = [f'{k}: {st_av.get(k)} -> {st_ap.get(k)}' for k in arts
+              if st_av.get(k) != st_ap.get(k)]
+    perdus += [f'{k}: {pr_av.get(k)!r} -> {pr_ap.get(k)!r}' for k in ('IDP14', 'UNP26', 'GNP45', 'GNP46')
+               if pr_av.get(k) != pr_ap.get(k)]
+    # SMP01 (cache de modulation) peut LEGITIMEMENT changer au boot: un KIM2 qui
+    # repond relit sa RCONF et corrige le cache. Constate, pas juge.
+    if pr_av.get('SMP01') != pr_ap.get('SMP01'):
+        trace.append(f'SMP01 {pr_av.get("SMP01")} -> {pr_ap.get("SMP01")} (resynchronisation au boot)')
+    if perdus:
+        return r.record(case, 'FAIL', 'perdu ou change au redemarrage: ' + '; '.join(perdus),
+                        '\n'.join(trace))
+    if arts == ('ART15',):
+        return r.record(case, 'PASS', f'ART15, UNP26 et IDP14 identiques apres RSTBW; ART12-14 mis a jour par '
+                                      f'la relecture legitime de la maitresse au boot ({st_ap})',
+                        '\n'.join(trace))
+    r.record(case, 'PASS', f'ART12-15, SMP01, UNP26 et IDP14 identiques apres RSTBW ({st_ap})',
+             '\n'.join(trace))
+
+
+# ---------------------------------------------------------------- capteurs
+
+def c_edge_axl_selection(r, case):
+    """AXP05 selectionne vraiment le capteur pour l emission, et le BMA400 vit.
+
+    sensor_tx (bit 12 = AXL) n est pose que si GNSS_EN, AXP01 ET AXP05 != OFF.
+    %ARGOSCFG est la seule fenetre sur ce masque. Aucun ARGOS_MODE != 0.
+    """
+    b = r.b
+    if not _en_config(b) or _lit1(b, 'AXP05') is None:
+        return r.record(case, 'SKIP', 'AXP05 absent (build sans accelerometre)')
+    prm = _Params(r, dict(ARGOS_MODE=0, GNSS_EN=1, AXL_SENSOR_ENABLE=1,
+                          AXL_SENSOR_ENABLE_TX_MODE=1, AXL_SENSOR_PERIODIC=60))
+    defauts, trace = [], []
+    try:
+        prm.poser()
+        for nom, kv, attendu in (
+                ('AXP01=1 AXP05=1 GNP01=1', {}, True),
+                ('AXP05=3 (MEDIAN)', dict(AXL_SENSOR_ENABLE_TX_MODE=3), True),
+                ('AXP05=0', dict(AXL_SENSOR_ENABLE_TX_MODE=0), False),
+                ('GNP01=0, AXP05=1', dict(AXL_SENSOR_ENABLE_TX_MODE=1, GNSS_EN=0), False),
+                ('AXP01=0, GNP01=1', dict(GNSS_EN=1, AXL_SENSOR_ENABLE=0), False)):
+            if kv:
+                b.write_params(kv)
+            c = _argoscfg(b)
+            vu = None if c is None else bool(c['sensor_tx'] & BIT_AXL)
+            trace.append(f'{nom}: sensor_tx={None if c is None else hex(c["sensor_tx"])}')
+            if vu is None:
+                defauts.append(f'{nom}: %ARGOSCFG sans reponse')
+            elif vu != attendu:
+                defauts.append(f'{nom}: bit AXL {"present" if vu else "absent"}, attendu '
+                               f'{"present" if attendu else "absent"}')
+        b.write_params(dict(AXL_SENSOR_ENABLE=1))
+        i2c = _console(r, '%I2C', r'%I2C bus=', 10.0) or ''
+        trace.append(i2c.strip())
+        if not re.search(r'addrs=.*\b(14|15)\b', i2c):
+            defauts.append(f'BMA400 (0x14/0x15) absent du bus: {i2c.strip()[:80]}')
+        # "BMA400: config" n est journalise qu au constructeur (boot): on guette
+        # une vraie lecture, cadencee par AXL_SENSOR_PERIODIC=60 s.
+        mk = b.mark()
+        _operationnel(r)
+        lu = _guette(r, _fw('BMA400: raw('), 80.0, mk)
+        trace.append(lu[1].strip()[-90:] if lu else 'pas de lecture BMA400')
+        if not lu:
+            defauts.append('aucune lecture "BMA400: raw(" en 80 s apres %OP (AXP02=60 s)')
+        else:
+            m = re.search(r'g\((-?[\d.]+)\|(-?[\d.]+)\|(-?[\d.]+)\)', lu[1])
+            if m:
+                norme = sum(float(x) ** 2 for x in m.groups()) ** 0.5
+                trace.append(f'|g| = {norme:.2f}')
+                if not 0.7 <= norme <= 1.3:
+                    defauts.append(f'|g| = {norme:.2f} au repos (attendu ~1)')
+    except Exception as e:
+        return r.record(case, 'ERROR', f'{type(e).__name__}: {e}', '\n'.join(trace))
+    finally:
+        prm.restaurer()
+    if defauts:
+        return r.record(case, 'FAIL', '; '.join(defauts)[:300], '\n'.join(trace))
+    r.record(case, 'PASS', 'bit AXL pose exactement quand GNSS_EN+AXP01+AXP05, BMA400 lu (|g|~1)',
+             '\n'.join(trace))
+
+
+def c_edge_seuils_batterie(r, case):
+    """%LB juge la paire de seuils LB / critique, dans les deux sens.
+
+    Sous USB la mesure flotte: on ne joue que la coherence (jamais LBP12 haut, le
+    chemin critique met la carte en BatteryCritical et le banc ne s eteint pas).
+    """
+    b = r.b
+    prm = _Params(r, dict(LB_EN=1, LB_THRESHOLD=30, LB_CRITICAL_THRESH=10))
+    trace, defauts = [], []
+    try:
+        prm.poser()
+        for lb, crit, attendu in ((30, 10, '1'), (10, 20, '0'), (15, 15, None), (30, 0, '1')):
+            b.write_params({'LB_THRESHOLD': lb, 'LB_CRITICAL_THRESH': crit}, strict=False)
+            rep = _console(r, '%LB', r'%LB coherent=', 8.0) or ''
+            m = re.search(r'coherent=(\d) lb=(\d+) crit=(\d+)', rep)
+            trace.append(f'lb={lb} crit={crit}: {rep.strip()}')
+            if not m:
+                defauts.append(f'%LB sans reponse pour {lb}/{crit}'); continue
+            if (m.group(2), m.group(3)) != (str(lb), str(crit)):
+                defauts.append(f'seuils relus {m.group(2)}/{m.group(3)} au lieu de {lb}/{crit}')
+            if attendu is not None and m.group(1) != attendu:
+                defauts.append(f'{lb}/{crit}: coherent={m.group(1)}, attendu {attendu}')
+    except Exception as e:
+        return r.record(case, 'ERROR', f'{type(e).__name__}: {e}', '\n'.join(trace))
+    finally:
+        prm.restaurer()
+    if defauts:
+        return r.record(case, 'FAIL', '; '.join(defauts), '\n'.join(trace))
+    r.record(case, 'PASS', 'coherence des seuils LB/critique jugee dans les deux sens', '\n'.join(trace))
+
+
+# ---------------------------------------------------------------- SWS
+
+def c_edge_sws_sec(r, case):
+    """Electrodes SECHES: une seule emission d etat (surface), puis rien.
+
+    Le vrai SWS n emet qu au changement ou a la premiere mesure. Toute autre
+    ligne en 4 min est un front fantome — qui, en mer, compterait une plongee
+    et fausserait les champs DX1.
+    """
+    b = r.b
+    prm = _Params(r, dict(ARGOS_MODE=0, UNDERWATER_EN=1, GNSS_EN=0, SAMPLING_SURF_FREQ=10))
+    try:
+        prm.poser()
+        b.dte('SWSTST', '0', timeout=10.0)    # aucun mode test herite
+        mk = b.mark()
+        _operationnel(r)
+        premier = _guette(r, _fw('UWDetectorService: state changed: state='), 90.0, mk)
+        if not premier:
+            return r.record(case, 'ERROR', 'aucune emission d etat du SWS en 90 s apres %OP '
+                            '(premiere mesure attendue)')
+        _patiente(r, 240)
+        fronts = _lignes(b, mk, _fw('UWDetectorService: state changed: state='))
+    except Exception as e:
+        return r.record(case, 'ERROR', f'{type(e).__name__}: {e}')
+    finally:
+        prm.restaurer()
+    etats = [re.search(r'state=(\d)', l).group(1) for _, l in fronts]
+    trace = '\n'.join(l.strip()[-80:] for _, l in fronts)
+    if etats[0] != '0':
+        return r.record(case, 'FAIL', f'electrodes seches lues IMMERGEES (state={etats[0]})', trace)
+    if len(etats) > 1:
+        return r.record(case, 'FAIL', f'{len(etats) - 1} front(s) fantome(s) en 4 min a sec: {etats}', trace)
+    r.record(case, 'PASS', 'a sec: une emission state=0 au demarrage, aucun front en 4 min', trace)
+
+
+def c_edge_swstst_survit(r, case):
+    """SWSTST,1 oublie survit-il a la sortie de configuration ?
+
+    Rien n arrete le mode test au %OP, seule l auto-extinction d 1 h. Pendant ce
+    temps chaque %DIVE/%SURFACE part vers on_test_event: le suivi DX1 marque la
+    surface BLIND et ne compte aucun front. Un operateur qui oublie SWSTST,0
+    avant deploiement aveugle les champs de comportement jusqu a 24 h.
+    """
+    b = r.b
+    prm = _Params(r, dict(ARGOS_MODE=0, UNDERWATER_EN=1, GNSS_EN=0))
+    try:
+        prm.poser()
+        code, corps, _ = _dte_brut(r, 'SWSTST', '1', timeout=15.0)
+        if code != 'O':
+            return r.record(case, 'SKIP' if code == 'N' else 'ERROR',
+                            f'SWSTST,1 refuse ou muet ({code};{corps}) — build sans SWS ?')
+        mk = b.mark()
+        _operationnel(r)
+        _patiente(r, 30)
+        pousses = _lignes(b, mk, r'\$O;SWSST#')
+        arret = _lignes(b, mk, _fw('SWSAnalog: Test mode stopped'))
+    except Exception as e:
+        return r.record(case, 'ERROR', f'{type(e).__name__}: {e}')
+    finally:
+        try:
+            if _en_config(b):
+                _dte_brut(r, 'SWSTST', '0', timeout=15.0)
+        except Exception:
+            pass
+        prm.restaurer()
+    trace = f'{len(pousses)} poussee(s) SWSST en Operational, arret={bool(arret)}'
+    if pousses:
+        return r.record(case, 'FAIL',
+                        f'le mode test SURVIT a la sortie de configuration ({len(pousses)} poussees '
+                        'SWSST en 30 s): DX1 aveugle et aucun front compte jusqu a l auto-arret (1 h)',
+                        trace)
+    if arret:
+        return r.record(case, 'PASS', 'le mode test s arrete a la sortie de configuration', trace)
+    r.record(case, 'ERROR', 'ni poussee SWSST ni arret journalise: non concluant', trace)
+
+
+# ---------------------------------------------------------------- satellite (module MUET)
+
+def c_edge_prewarm_dx1(r, case):
+    """Table de verite UNP26 sur le chemin PREWARM, sans emission.
+
+    Le Doppler pre-construit en plongee part au premier ping de la salve. Sa
+    taille dit tout: historique = 24 bits quelle que soit la modulation; DX1 =
+    vue de l image 16 octets (LDK 128, LDA2 32). UNP26=1 (AUTO) doit rester
+    historique sur un build DX1_GROUND_DECODER_READY=0 — les balises deployees
+    stockent AUTO: leur trame ne doit pas changer d un bit. Un second %SURFACE
+    sans plongee ne doit pas rejouer le PREWARM (deja consomme).
+    """
+    b = r.b
+    prm = _Params(r, _EDGE_SAT)
+    lignes, defauts, latences = [], [], []
+    try:
+        prm.poser()
+        for mode in (0, 1, 2):
+            if not _en_config(b):
+                raise RuntimeError('configuration inaccessible')
+            b.write_params({'SWS_SENSOR_ENABLE_TX_MODE': mode})
+            _operationnel_sws(r)
+            _plonge(r, 20)
+            mk, t_surf = _emerge(r)
+            pw = _guette(r, _RX_PREWARM, 40.0, mk)
+            if mode == 2 and pw:
+                mk2, _ = _emerge(r)
+                if _guette(r, _RX_PREWARM, 12.0, mk2):
+                    defauts.append('UNP26=2: un second %SURFACE sans plongee a REJOUE le PREWARM')
+            echec = _lignes(b, mk, _RX_TX_ECHEC)
+            _plonge(r, 6)
+            if not pw:
+                if echec:
+                    defauts.append(f'UNP26={mode}: tentative sans PREWARM ({echec[0][1].strip()[-70:]})')
+                else:
+                    defauts.append(f'UNP26={mode}: ni PREWARM ni tentative en 40 s')
+                continue
+            m = re.search(_RX_PREWARM, pw[1])
+            mod, sz = m.group(1), int(m.group(2))
+            latences.append(pw[0] - t_surf)
+            lignes.append(f'UNP26={mode}: PREWARM mode={mod} sz={sz} age={m.group(3)} ms '
+                          f'(+{pw[0] - t_surf:.2f} s apres %SURFACE OK)')
+            if mode in (0, 1) and sz != 24:
+                defauts.append(f'UNP26={mode}: {sz} bits au lieu des 24 historiques'
+                               + (' — build DX1_GROUND_DECODER_READY=1 ?' if mode == 1 else ''))
+            if mode == 2:
+                att = _TAILLE_DX1.get(mod)
+                if mod == 'VLDA4':
+                    lignes.append('   (VLDA4: vue DX1 de 24 bits, indiscernable de l historique)')
+                elif att != sz:
+                    defauts.append(f'UNP26=2 en {mod}: {sz} bits au lieu de {att}')
+            _console(r, '%CFG', r'%CFG OK', 5.0)
+    except RFDetectee:
+        raise
+    except Exception as e:
+        return r.record(case, 'ERROR', f'{type(e).__name__}: {e}', '\n'.join(lignes))
+    finally:
+        prm.restaurer()
+    if latences:
+        lignes.append(f'latence console %SURFACE -> PREWARM: max {max(latences):.2f} s')
+    if defauts:
+        return r.record(case, 'FAIL', '; '.join(defauts)[:300], '\n'.join(lignes))
+    r.record(case, 'PASS', 'UNP26 0/1 = 24 bits historiques, 2 = vue DX1 de la modulation, '
+                           'PREWARM non rejoue', '\n'.join(lignes))
+
+
+def c_edge_cooldown_aveugle(r, case):
+    """Refroidissement (RTC posee): surfaces ignorees, aucune tentative, sortie propre.
+
+    Pendant le refroidissement la porte SWS refuse de mesurer et DX1 marque la
+    fenetre BLIND. Une emersion dans la fenetre ne doit rien declencher; a la
+    sortie, le SWS repart et re-emet son etat (surface a sec) — ce qui lance une
+    salve non sollicitee, notee ici.
+    """
+    b = r.b
+    kv = dict(_EDGE_SAT, SWS_SENSOR_ENABLE_TX_MODE=2, MIN_SURFACE_CYCLE_INTERVAL_S=120,
+              COOLDOWN_TRIGGER_MODE=0)
+    prm = _Params(r, kv)
+    trace, defauts = [], []
+    try:
+        prm.poser()
+        if not _rtcw(b, int(time.time())):
+            return r.record(case, 'ERROR', 'RTCW sans reponse: la porte RTC ne peut etre armee')
+        # La re-emission "surface" du SWS au %OP arme deja le refroidissement.
+        mk = _operationnel_sws(r)
+        arme = _guette(r, _fw('ArgosTxService: cooldown armed (AT_SURFACE)'), 5.0, mk)
+        if not arme:
+            _plonge(r, 15)
+            mk, _ = _emerge(r)
+            arme = _guette(r, _fw('ArgosTxService: cooldown armed (AT_SURFACE)'), 20.0, mk)
+        trace.append('arme' if arme else 'PAS ARME')
+        if not arme:
+            return r.record(case, 'FAIL', 'cooldown non arme a l emersion (AT_SURFACE)', '\n'.join(trace))
+        _patiente(r, 20)
+        mkd = b.mark()
+        _plonge(r)
+        debut = _guette(r, _fw('ServiceManager: cycle complete at '), 20.0, mkd)
+        trace.append(debut[1].strip()[-70:] if debut else 'pas de cycle complete')
+        if not debut:
+            return r.record(case, 'FAIL', 'la plongee n a pas demarre le refroidissement', '\n'.join(trace))
+        _patiente(r, 5)
+        mkc, _ = _emerge(r)
+        saute = _guette(r, _fw('skipped (cooldown active)'), 15.0, mkc)
+        trace.append('emersion ignoree' if saute else 'emersion NON ignoree')
+        if not saute:
+            defauts.append('emersion pendant le refroidissement non ignoree')
+        sortie = _guette(r, _fw('ServiceManager: exiting cooldown sleep (RTC='), 170.0, mkd)
+        if not sortie:
+            defauts.append('pas de sortie de refroidissement en 170 s (intervalle 120 s)')
+        fin = b.mark() if not sortie else None
+        pendant = [l for t, l in _lignes(b, mkc)
+                   if (sortie is None or t < sortie[0])
+                   and (re.search(_RX_PREWARM, l) or 'KIM2Device::state_power_on' in l)]
+        if pendant:
+            defauts.append(f'{len(pendant)} tentative(s) radio PENDANT le refroidissement')
+        if sortie:
+            _patiente(r, 45)
+            mks = [i for i, (t, _) in enumerate(_lignes(b, 0)) if t >= sortie[0]]
+            depuis = mks[0] if mks else (fin or b.mark())
+            reemis = _lignes(b, depuis, _fw('UWDetectorService: state changed: state='))
+            salve = _lignes(b, depuis, r'KIM2Device::state_power_on|' + _RX_PREWARM)
+            trace.append(f'apres sortie: re-emission SWS={len(reemis)} tentative(s) radio={len(salve)}'
+                         ' (salve non sollicitee si > 0)')
+        # PAS de %DIVE final: la re-emission de sortie a re-arme le
+        # refroidissement, une plongee le relancerait pour 120 s et le cas
+        # suivant trouverait ses emersions ignorees. On sort par la configuration.
+        _console(r, '%CFG', r'%CFG OK', 5.0)
+    except RFDetectee:
+        raise
+    except Exception as e:
+        return r.record(case, 'ERROR', f'{type(e).__name__}: {e}', '\n'.join(trace))
+    finally:
+        prm.restaurer()
+    if defauts:
+        return r.record(case, 'FAIL', '; '.join(defauts), '\n'.join(trace))
+    r.record(case, 'PASS', 'refroidissement arme, emersion ignoree sans tentative, sortie a l heure',
+             '\n'.join(trace))
+
+
+def c_edge_echelle_echecs(r, case):
+    """Module muet: echelle d echecs, suspension, pas d acharnement, levee a l emersion.
+
+    C est le socle de tous les cas satellite de ce banc: la signature exacte de
+    l echec y est relevee. Backoffs croissants, suspension au 3e echec, aucune
+    remise sous tension du module pendant la suspension, et un %SURFACE qui
+    lave tout et relance immediatement.
+    """
+    b = r.b
+    prm = _Params(r, dict(_EDGE_SAT, SURFACING_BURST_MAX_MSG=6))
+    trace, defauts = [], []
+    try:
+        prm.poser()
+        _operationnel_sws(r)
+        _plonge(r, 10)
+        mk, _ = _emerge(r)
+        susp = _guette(r, _fw('consecutive device errors'), 360.0, mk)
+        erreurs = _lignes(b, mk, _fw('ArgosTxService::react: KineisEventDeviceError (consecutive='))
+        backoffs = [int(re.search(r'backoff (\d+) ms', l).group(1))
+                    for _, l in _lignes(b, mk, _fw('ArgosTxService: backoff '))]
+        signature = (_lignes(b, mk, _fw('KIM2Device::send_AT: timeout'))
+                     or _lignes(b, mk, r'AT\+TX rejected|TX failed status='))
+        trace.append(f'{len(erreurs)} erreur(s) module, backoffs={backoffs}, '
+                     f'signature={signature[0][1].strip()[-60:] if signature else "?"}')
+        if not erreurs:
+            return r.record(case, 'ERROR', 'aucune tentative radio en 6 min: echelle non observable',
+                            '\n'.join(trace))
+        if not susp:
+            return r.record(case, 'FAIL', f'pas de suspension apres {len(erreurs)} erreur(s) en 6 min',
+                            '\n'.join(trace))
+        if len(backoffs) < 2 or any(b2 <= b1 for b1, b2 in zip(backoffs, backoffs[1:])):
+            defauts.append(f'backoffs non croissants: {backoffs}')
+        mks = b.mark()
+        _patiente(r, 60)
+        spin = _lignes(b, mks, _fw('KIM2Device::state_power_on'))
+        if spin:
+            defauts.append(f'{len(spin)} remise(s) sous tension du module PENDANT la suspension')
+        _plonge(r, 5)
+        mke, _ = _emerge(r)
+        leve = _guette(r, _fw('error suspension on surface event'), 20.0, mke)
+        relance = _guette(r, _fw('KIM2Device::state_power_on'), 45.0, mke)
+        trace.append(f'levee={bool(leve)} relance={bool(relance)}')
+        if not leve:
+            defauts.append('la suspension n est pas levee par une emersion')
+        if not relance:
+            defauts.append('aucune nouvelle tentative apres la levee')
+        _plonge(r, 3)
+    except RFDetectee:
+        raise
+    except Exception as e:
+        return r.record(case, 'ERROR', f'{type(e).__name__}: {e}', '\n'.join(trace))
+    finally:
+        prm.restaurer()
+    if defauts:
+        return r.record(case, 'FAIL', '; '.join(defauts), '\n'.join(trace))
+    r.record(case, 'PASS', 'echecs -> backoffs croissants -> suspension sans acharnement -> '
+                           'levee et relance a l emersion', '\n'.join(trace))
+
+
+def c_edge_cloudlocate_format(r, case):
+    """CloudLocate injecte: format strict (MEASC12 stocke, MEAS20 -> sentinelle).
+
+    %GPSCL n injecte que du MEASC12. Configure en MEASC12 il est stocke; configure
+    en MEAS20 il ne doit PAS etre substitue (politique stricte 2026-06): la
+    sentinelle 0xFF part a la place, et aucun MEASC12 n est emis. ARGOS_MODE=0:
+    seul le stockage cote GNSS est eprouve, sans aucune emission.
+    """
+    b = r.b
+    prm = _Params(r, dict(ARGOS_MODE=0, GNSS_EN=1, UNDERWATER_EN=0, GNSS_FASTLOC_MODE=2,
+                          GNSS_CLOUDLOCATE_FORMAT=0))
+    trace, defauts = [], []
+    try:
+        prm.poser()
+        for fmt in (0, 1):
+            if fmt:
+                _en_config(b)
+                b.write_params({'GNSS_CLOUDLOCATE_FORMAT': fmt})
+            _operationnel(r)
+            mk = b.mark()
+            rep = _console(r, '%GPSCL', r'%GPSCL (OK|ERR)', 10.0) or ''
+            if 'OK' not in rep:
+                return r.record(case, 'ERROR', f'%GPSCL refuse: {rep.strip()}', '\n'.join(trace))
+            inj = _guette(r, _fw('GPSService::bench_inject_cloudlocate: MEASC12 raw measurement injected'),
+                          10.0, mk)
+            _patiente(r, 8)
+            stocke = _lignes(b, mk, _fw('GPSService::task_process_cloudlocate_data: stored MEASC12 (12 bytes)'))
+            indispo = _lignes(b, mk, _fw('task_process_cloudlocate_data: configured format ') + r'1 UNAVAILABLE')
+            trace.append(f'format {fmt}: injecte={bool(inj)} stocke_MEASC12={len(stocke)} '
+                         f'indisponible={len(indispo)}')
+            if not inj:
+                defauts.append(f'format {fmt}: injection non journalisee')
+            if fmt == 0 and (not stocke or indispo):
+                defauts.append('MEASC12 configure: non stocke')
+            if fmt == 1:
+                if stocke:
+                    defauts.append('MEAS20 configure: un MEASC12 a ete SUBSTITUE')
+                if not indispo:
+                    defauts.append('MEAS20 configure: pas de "format 1 UNAVAILABLE"')
+    except Exception as e:
+        return r.record(case, 'ERROR', f'{type(e).__name__}: {e}', '\n'.join(trace))
+    finally:
+        prm.restaurer()
+    if defauts:
+        return r.record(case, 'FAIL', '; '.join(defauts), '\n'.join(trace))
+    r.record(case, 'PASS', 'MEASC12 stocke quand configure, jamais substitue a MEAS20', '\n'.join(trace))
+
+
+def c_edge_meas20_ciel(r, case):
+    """MEAS20 reel (ciel) sur la modulation vivante: une ligne par emersion, pas de tir avance a vide.
+
+    %GPSCL ne peut pas atteindre ce chemin (il n injecte que MEASC12, sans
+    GNSS_CLOUDLOCATE_READY). MEAS20 = 192 bits: il tient en LDA2, pas en LDK. Sur
+    LDK le firmware doit le dire UNE fois par emersion et NE PAS avancer le tir
+    (qui ne ferait partir qu un ping ordinaire). Sur LDA2 le tir avance est
+    legitime. La modulation vivante est lue dans les lignes du service.
+    """
+    b = r.b
+    kv = dict(_EDGE_SAT, GNSS_MIN_ELEV=10, GNSS_FASTLOC_MODE=2, GNSS_CLOUDLOCATE_FORMAT=1,
+              GNSS_CLOUDLOCATE_ALWAYS=1, GNSS_CLOUDLOCATE_ONLY=1, GNSS_ACQ_TIMEOUT=120,
+              GNSS_DEEP_IDLE_AFTER_OFF_S=4294967295, SURFACING_BURST_MAX_MSG=4)
+    prm = _Params(r, kv)
+    trace, defauts, conclus, retenue = [], [], 0, 0
+    try:
+        prm.poser()
+        _operationnel_sws(r)
+        for k in range(3):
+            _plonge(r, 60)
+            mk, _ = _emerge(r)
+            _patiente(r, 150)
+            meas20 = _lignes(b, mk, _fw('GPSService::task_process_cloudlocate_data: stored MEAS20 (20 bytes)'))
+            hors = _lignes(b, mk, _fw('bits does not fit master mod'))
+            avance = _lignes(b, mk, _fw('rescheduling early CloudLocate TX'))
+            tenue = _lignes(b, mk, _fw('GNSS_CLOUDLOCATE_READY during a device-error hold'))
+            modes = [m.group(2) for _, l in _lignes(b, mk, _RX_TX_ECHEC)
+                     for m in [re.search(_RX_TX_ECHEC, l)] if m]
+            vivante = _NOM_KINEIS.get(modes[0]) if modes else None
+            pw = [re.search(_RX_PREWARM, l).group(1) for _, l in _lignes(b, mk, _RX_PREWARM)]
+            vivante = vivante or (pw[0] if pw else None)
+            trace.append(f'emersion {k + 1}: MEAS20={len(meas20)} hors_maitresse={len(hors)} '
+                         f'tir_avance={len(avance)} retenu_par_backoff={len(tenue)} modulation={vivante}')
+            retenue += len(tenue)
+            if not meas20:
+                continue
+            conclus += 1
+            if len(hors) > 1:
+                defauts.append(f'emersion {k + 1}: {len(hors)} lignes "does not fit" (une seule attendue)')
+            if vivante == 'LDK':
+                if avance:
+                    defauts.append(f'emersion {k + 1}: tir avance alors que MEAS20 ne tient pas en LDK')
+            elif vivante == 'LDA2' and hors:
+                defauts.append(f'emersion {k + 1}: "does not fit" alors que MEAS20 tient en LDA2')
+        _plonge(r, 3)
+    except RFDetectee:
+        raise
+    except Exception as e:
+        return r.record(case, 'ERROR', f'{type(e).__name__}: {e}', '\n'.join(trace))
+    finally:
+        prm.restaurer()
+    if retenue:
+        trace.append(f'{retenue} CLOUDLOCATE_READY retenu(s) par le backoff: la porte de tir avance '
+                     'est masquee sur un module muet — non concluant pour ceux-la')
+    if defauts:
+        return r.record(case, 'FAIL', '; '.join(defauts), '\n'.join(trace))
+    if not conclus:
+        return r.record(case, 'ERROR', 'aucun MEAS20 en 3 emersions (ciel insuffisant ?)', '\n'.join(trace))
+    r.record(case, 'PASS', f'{conclus} emersion(s) MEAS20 conformes a la modulation vivante',
+             '\n'.join(trace))
+
+
+# ---------------------------------------------------------------- GNSS
+
+_RX_FIX = _fw('M10QAsyncReceiver: GNSS time persisted') + '|' + \
+    _fw('GPSService::retry_counter: reset ntry=') + r'\d+->0 \(PVT'
+_RX_CLASSE = _fw('start_class=') + r'(S\d_\w+) bbr=(\d)'
+
+
+def _session(b, depuis):
+    """Resume d une session GNSS depuis l index `depuis`."""
+    ls = _lignes(b, depuis)
+    def premier(motif):
+        for t, l in ls:
+            m = re.search(motif, l)
+            if m:
+                return t, l, m
+        return None
+    classe = premier(_RX_CLASSE)
+    return {
+        'classe': classe[2].group(1) if classe else None,
+        'bbr': classe[2].group(2) if classe else None,
+        'extint': bool(premier(_fw('extint_wake_presync baud=')) or premier(_fw('extint_pulse_wake'))),
+        'boot_sync': premier(_fw('boot_sync_ok baud=') + r'(\d+) step=\d+ bbr=(\d)'),
+        'frais': bool(premier(r'state configure->startreceive')),
+        'perime': bool(premier(r'state configure->sendofflinedatabase')),
+        'ano': bool(premier(_fw('ano_sent file='))),
+        'dbd': bool(premier(_fw('M10QAsyncReceiver::state_senddatabase: injecting '))),
+        'nosync': bool(premier(_fw('M10QAsyncReceiver: failed to sync comms'))),
+        'fix': premier(_RX_FIX),
+        't0': ls[0][0] if ls else None,
+    }
+
+
+def c_edge_gnss_chaine_chaude(r, case):
+    """Chaine de demarrage a chaud sur vrai ciel: S0 a froid, puis EXTINT + S1..S4 sans ANO ni DBD.
+
+    Apres la configuration (rail coupe) la premiere session est froide (bbr=0).
+    Ensuite, plongees courtes: reveil EXTINT, classe chaude, chemin frais
+    (configure->startreceive): ni ANO, ni rejeu DBD (reserve a bbr=0), et
+    jamais "failed to sync". Puis un aller-retour configuration remet a froid
+    (cout documente). Aucun %GPS: il empoisonnerait la decision ANO.
+    """
+    b = r.b
+    prm = _Params(r, dict(_EDGE_GNSS, GNSS_SESSION_SINGLE_FIX=1))
+    trace, defauts, sans_classe = [], [], 0
+    try:
+        prm.poser()
+        mk = b.mark()
+        _operationnel(r)
+        if not _guette(r, _RX_FIX, 240.0, mk):
+            return r.record(case, 'ERROR', 'pas de premier fix en 240 s (ciel ?)')
+        s = _session(b, mk)
+        if not _val_present(b, mk):
+            return r.record(case, 'SKIP', 'aucune ligne [VAL-*]: build sans --validation')
+        trace.append(f'session 1 (apres config): classe={s["classe"]} bbr={s["bbr"]} '
+                     f'boot_sync={bool(s["boot_sync"])} ttff={s["fix"][0] - s["t0"]:.0f} s')
+        if s['classe'] and s['classe'] != 'S0_cold':
+            defauts.append(f'session apres configuration classee {s["classe"]} (S0_cold attendu)')
+        for k in range(3):
+            _plonge(r, 60)
+            mk, t_s = _emerge(r)
+            fix = _guette(r, _RX_FIX, 120.0, mk)
+            _patiente(r, 3)
+            s = _session(b, mk)
+            sans_classe += s['classe'] is None
+            trace.append(f'cycle {k + 1}: classe={s["classe"]} extint={s["extint"]} frais={s["frais"]} '
+                         f'perime={s["perime"]} ano={s["ano"]} dbd={s["dbd"]} nosync={s["nosync"]} '
+                         f'ttff={(fix[0] - t_s) if fix else -1:.1f} s')
+            if s['nosync']:
+                defauts.append(f'cycle {k + 1}: failed to sync comms')
+            if not s['extint'] or (s['boot_sync'] and s['boot_sync'][2].group(2) == '0'):
+                defauts.append(f'cycle {k + 1}: pas de reveil EXTINT a chaud (rail coupe ?)')
+            if s['classe'] in ('S0_cold',):
+                defauts.append(f'cycle {k + 1}: classe S0_cold apres une plongee de 60 s')
+            if s['perime'] or s['ano']:
+                defauts.append(f'cycle {k + 1}: ANO injecte alors que les orbites sont fraiches')
+            if s['dbd']:
+                defauts.append(f'cycle {k + 1}: rejeu DBD alors que la BBR est retenue')
+            if not fix:
+                trace.append(f'   cycle {k + 1}: pas de fix en 120 s')
+        _console(r, '%CFG', r'%CFG OK', 5.0)
+        mk = b.mark()
+        _operationnel(r)
+        _guette(r, _RX_FIX, 240.0, mk)
+        s = _session(b, mk)
+        trace.append(f'apres aller-retour configuration: classe={s["classe"]} bbr={s["bbr"]} '
+                     '(S0 attendu: la configuration coupe le rail)')
+        _plonge(r, 2)
+    except RFDetectee:
+        raise
+    except Exception as e:
+        return r.record(case, 'ERROR', f'{type(e).__name__}: {e}', '\n'.join(trace))
+    finally:
+        prm.restaurer()
+    if sans_classe:
+        trace.append(f'{sans_classe}/3 session(s) sans start_class (fix avant 3 NAV-SAT: trou du classifieur)')
+    if defauts:
+        return r.record(case, 'FAIL', '; '.join(defauts)[:300], '\n'.join(trace))
+    r.record(case, 'PASS', 'S0 apres configuration, puis EXTINT + classe chaude + chemin frais sur '
+                           '3 cycles', '\n'.join(trace))
+
+
+_RX_GNSS_INTERDIT = '|'.join([_fw('pmreq_verify_giveup_rail_cycle'), _fw('poweroff_from_deep_idle cutting_rail'),
+                              _fw('ubx_init_throw'), _fw('M10QAsyncReceiver: failed to sync comms')])
+
+
+def _pmreq(r):
+    rep = _console(r, '%PMREQ', r'%PMREQ flags=', 8.0) or ''
+    m = re.search(r'flags=(\d+).*giveup=(\d+)', rep)
+    return (int(m.group(1)), int(m.group(2))) if m else (None, None)
+
+
+def c_edge_gnss_veille_extint(r, case):
+    """GNP52 sentinelle (defaut LinkIt): veille PMREQ et reveil EXTINT, 4 cycles, sans ciel.
+
+    Chaque plongee coupe la session: never_off, enterbackup rail chaud,
+    pmreq_verify_ok; chaque emersion: reveil EXTINT. Aucun abandon PMREQ, aucune
+    coupure de rail, aucun echec de synchronisation.
+    """
+    b = r.b
+    prm = _Params(r, dict(_EDGE_GNSS))
+    trace, defauts = [], []
+    try:
+        prm.poser()
+        f0, g0 = _pmreq(r)
+        mk0 = b.mark()
+        _operationnel(r)
+        _patiente(r, 40)
+        mk = mk0
+        for k in range(4):
+            # Fenetre = depuis l emersion precedente: au vrai ciel la session
+            # finit souvent sur un FIX avant la plongee, et c est alors la que
+            # la veille est engagee — pas au %DIVE.
+            _plonge(r, 25)
+            if k == 0 and not _val_present(b, mk0):
+                return r.record(case, 'SKIP', 'aucune ligne [VAL-*]: build sans --validation')
+            inhibe = _lignes(b, mk0, _fw('dispatch=wdt_inhibit'))
+            if inhibe:
+                return r.record(case, 'SKIP', 'inhibition deep-idle post-WDT active (levee par un vrai '
+                                'fix seulement): ' + inhibe[0][1].strip()[-60:])
+            disp = _lignes(b, mk, _fw('dispatch=never_off GNP52=sentinel')) or \
+                _lignes(b, mk, _fw('dispatch=deep_idle_armed_via_poweroff_chain'))
+            entree = _lignes(b, mk, _fw('enterbackup_enter rail_warm=') + '1')
+            ok = _lignes(b, mk, _fw('pmreq_verify_ok'))
+            mke, _ = _emerge(r)
+            reveil = _guette(r, _fw('extint_pulse_wake') + '|' + _fw('extint_wake_presync baud='), 30.0, mke)
+            _patiente(r, 30)
+            mk = mke
+            trace.append(f'cycle {k + 1}: dispatch={bool(disp)} enterbackup_chaud={bool(entree)} '
+                         f'pmreq_ok={bool(ok)} reveil_extint={bool(reveil)}')
+            if not (disp and entree and ok):
+                defauts.append(f'cycle {k + 1}: veille incomplete (dispatch={bool(disp)}, '
+                               f'enterbackup={bool(entree)}, verify={bool(ok)})')
+            if not reveil:
+                defauts.append(f'cycle {k + 1}: pas de reveil EXTINT')
+        _plonge(r, 5)
+        interdits = _lignes(b, mk0, _RX_GNSS_INTERDIT)
+        f1, g1 = _pmreq(r)
+        trace.append(f'%PMREQ flags {f0}->{f1}, giveup {g0}->{g1}')
+        if interdits:
+            defauts.append(f'{len(interdits)} ligne(s) interdite(s): {interdits[0][1].strip()[-70:]}')
+        if g0 is not None and g1 is not None and g1 > g0:
+            defauts.append(f'{g1 - g0} abandon(s) PMREQ')
+        if f1 is not None and f1 != 6:
+            defauts.append(f'flags PMREQ={f1} (6 = BACKUP|FORCE attendu)')
+    except RFDetectee:
+        raise
+    except Exception as e:
+        return r.record(case, 'ERROR', f'{type(e).__name__}: {e}', '\n'.join(trace))
+    finally:
+        prm.restaurer()
+    if defauts:
+        return r.record(case, 'FAIL', '; '.join(defauts)[:300], '\n'.join(trace))
+    r.record(case, 'PASS', '4 cycles veille PMREQ / reveil EXTINT sans abandon ni coupure de rail',
+             '\n'.join(trace))
+
+
+def c_edge_gnss_coupure_immediate(r, case):
+    """GNP52=0: coupure immediate a chaque fin de session, demarrage froid (bbr=0) ensuite."""
+    b = r.b
+    prm = _Params(r, dict(_EDGE_GNSS, GNSS_DEEP_IDLE_AFTER_OFF_S=0))
+    trace, defauts = [], []
+    try:
+        prm.poser()
+        mk0 = b.mark()
+        _operationnel(r)
+        _patiente(r, 40)
+        mk = mk0
+        for k in range(2):
+            _plonge(r, 20)
+            if k == 0 and not _val_present(b, mk0):
+                return r.record(case, 'SKIP', 'aucune ligne [VAL-*]: build sans --validation')
+            coupe = _lignes(b, mk, _fw('dispatch=immediate_off GNP52=0'))
+            mke, _ = _emerge(r)
+            _guette(r, _fw('boot_sync_ok baud='), 40.0, mke)
+            _patiente(r, 5)
+            s = _session(b, mke)
+            mk = mke
+            sync = s['boot_sync']
+            trace.append(f'cycle {k + 1}: immediate_off={bool(coupe)} extint={s["extint"]} '
+                         f'boot_sync={sync[1].strip()[-40:] if sync else None}')
+            if not coupe:
+                defauts.append(f'cycle {k + 1}: pas de dispatch=immediate_off')
+            if s['extint']:
+                defauts.append(f'cycle {k + 1}: reveil EXTINT alors que le rail devait etre coupe')
+            if sync and sync[2].group(2) != '0':
+                defauts.append(f'cycle {k + 1}: bbr={sync[2].group(2)} apres coupure du rail')
+            if s['nosync']:
+                defauts.append(f'cycle {k + 1}: failed to sync comms')
+        _plonge(r, 3)
+    except RFDetectee:
+        raise
+    except Exception as e:
+        return r.record(case, 'ERROR', f'{type(e).__name__}: {e}', '\n'.join(trace))
+    finally:
+        prm.restaurer()
+    if defauts:
+        return r.record(case, 'FAIL', '; '.join(defauts), '\n'.join(trace))
+    r.record(case, 'PASS', 'GNP52=0: coupure immediate et redemarrage froid a chaque cycle', '\n'.join(trace))
+
+
+CASES_V33 = [
+    # --- DTE / configuration (rien d autre que le port) ---
+    dict(id='EDG-D1', risque='MAJEUR', titre='UNP26: 0/1/2 acceptes, true/false/3/-1/ARP47 refuses',
+         fn=c_edge_unp26_matrice),
+    dict(id='EDG-D1b', risque='MINEUR', titre='Entier suivi de dechets (UNP26=2x) refuse',
+         fn=c_edge_uint_fin_ignoree),
+    dict(id='EDG-D2', risque='MAJEUR', titre='Modes TX capteurs et booleens: pas de true/false, lot partiel',
+         fn=c_edge_modes_tx_capteurs),
+    dict(id='EDG-D3', risque='MAJEUR', titre='ART12-ART15: lecture seule, STATR, PARMR vide coherent',
+         fn=c_edge_art_contrat),
+    dict(id='EDG-D4', risque='MAJEUR', titre='ART12 suit la configuration (modele exact), ART13 invalide',
+         fn=c_edge_art12_parcours),
+    dict(id='EDG-D5', risque='BLOQUANT', titre='ART12-15/SMP01/UNP26/IDP14 survivent a un RSTBW (Argos)',
+         fn=c_edge_persistance_art),
+    # --- capteurs ---
+    dict(id='EDG-X1', risque='MAJEUR', titre='AXP05 selectionne l AXL dans sensor_tx; BMA400 vivant',
+         fn=c_edge_axl_selection),
+    dict(id='EDG-X2', risque='MINEUR', titre='Coherence des seuils batterie (%LB)',
+         fn=c_edge_seuils_batterie),
+    # --- SWS ---
+    dict(id='EDG-S1', risque='MAJEUR', titre='SWS a sec: une emission, aucun front fantome en 4 min',
+         fn=c_edge_sws_sec),
+    dict(id='EDG-S2', risque='MAJEUR', titre='SWSTST,1 oublie survit-il a la sortie de configuration',
+         fn=c_edge_swstst_survit),
+    # --- GNSS sans ciel ---
+    dict(id='EDG-G2', risque='BLOQUANT', titre='GNP52 sentinelle: veille PMREQ / reveil EXTINT x4',
+         fn=c_edge_gnss_veille_extint),
+    dict(id='EDG-G3', risque='MINEUR', titre='GNP52=0: coupure immediate et demarrage froid',
+         fn=c_edge_gnss_coupure_immediate),
+    dict(id='EDG-T2', risque='MAJEUR', titre='CloudLocate injecte: format strict, jamais substitue',
+         fn=c_edge_cloudlocate_format),
+    # --- satellite SANS RF (module muet exige) ---
+    dict(id='EDG-T1', risque='BLOQUANT', titre='Module muet: echelle d echecs, suspension, levee',
+         satellite=True, radio_muette=True, fn=c_edge_echelle_echecs),
+    dict(id='EDG-S3', risque='BLOQUANT', titre='PREWARM: UNP26 0/1 = 24 bits, 2 = vue DX1',
+         satellite=True, radio_muette=True, fn=c_edge_prewarm_dx1),
+    dict(id='EDG-S4', risque='MAJEUR', titre='Refroidissement (RTC): emersions ignorees, sortie',
+         satellite=True, radio_muette=True, fn=c_edge_cooldown_aveugle),
+    # --- plein air (DTE_CIEL=1) ---
+    dict(id='EDG-G1', risque='BLOQUANT', titre='Chaine a chaud: S0 puis EXTINT/S1 sans ANO ni DBD',
+         ciel=True, fn=c_edge_gnss_chaine_chaude),
+    dict(id='EDG-T3', risque='MAJEUR', titre='MEAS20 reel: une ligne par emersion, pas de tir avance a vide',
+         ciel=True, satellite=True, radio_muette=True, fn=c_edge_meas20_ciel),
+]
+
+
+# =====================================================================
+#  Point d entree unique
+# =====================================================================
+
+def _suites():
+    vagues = [('v1', CASES)] + [(f'v{n}', globals()[f'CASES_V{n}']) for n in range(2, 34)
+                                if f'CASES_V{n}' in globals()]
+    s = dict(vagues)
+    tout = []
+    for _, lst in vagues:
+        tout += lst
+    # DEP-06 (reset usine) en DERNIER: joue au milieu, il laissait les vagues
+    # suivantes tourner sur les valeurs d usine.
+    tout = [c for c in tout if c['id'] != 'DEP-06'] + [c for c in tout if c['id'] == 'DEP-06']
+    s['edge-2026-10'] = CASES_V33
+    s['all'] = tout
+    s['interieur'] = [c for c in tout if not c.get('ciel') and c['id'] != 'DEP-06']
+    s['sans-radio'] = [c for c in s['interieur'] if not Runner._est_emetteur(c)]
+    return s
+
+
+def main(argv=None):
+    import argparse
+    P.setup_stdio()
+    ap = argparse.ArgumentParser(description='Campagne DTE sur carte reelle (Windows natif ou Linux)')
+    ap.add_argument('--suite', default='', help='suite(s), separees par des virgules (voir --list)')
+    ap.add_argument('--cases', default='', help='identifiants de cas, separes par des virgules')
+    ap.add_argument('--exclude', default='', help='identifiants a exclure')
+    ap.add_argument('--list', action='store_true', help='lister suites et cas, ne rien jouer')
+    a = ap.parse_args(argv)
+    suites = _suites()
+    if a.list:
+        for nom, lst in suites.items():
+            print(f'{nom:14s} {len(lst):3d} cas')
+        print('\nedge-2026-10:')
+        for c in CASES_V33:
+            drap = ''.join(f' [{k}]' for k in ('ciel', 'satellite', 'radio_muette') if c.get(k))
+            print(f"  {c['id']:8s} {c['risque']:8s} {c['titre']}{drap}")
+        return 0
+    choisis = []
+    for nom in [x.strip() for x in a.suite.split(',') if x.strip()]:
+        if nom not in suites:
+            print(f'suite inconnue: {nom} (voir --list)'); return 2
+        choisis += suites[nom]
+    if a.cases:
+        index = {c['id']: c for c in suites['all']}
+        for i in [x.strip() for x in a.cases.split(',') if x.strip()]:
+            if i not in index:
+                print(f'cas inconnu: {i}'); return 2
+            choisis.append(index[i])
+    if not choisis:
+        print('rien a jouer: --suite NOM ou --cases ID (voir --list)'); return 2
+    exclus = {x.strip() for x in a.exclude.split(',') if x.strip()}
+    vus, cas = set(), []
+    for c in choisis:
+        if c['id'] not in vus and c['id'] not in exclus:
+            vus.add(c['id']); cas.append(c)
+    try:
+        r = Runner()
+    except BancOccupe as e:
+        print(e); return 3
+    return r.run(cas)
+
+
+if __name__ == '__main__':
+    sys.exit(main())
