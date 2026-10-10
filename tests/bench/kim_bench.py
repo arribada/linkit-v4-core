@@ -121,6 +121,7 @@ RF_SIGNATURES = (
     "KIM2Device::state_transmit: TX EMITTED OK",
     "ArgosTxService: TX START",
     "ArgosTxService: TX SUCCESS",
+    "SmdSat: TXSTART ms=",           # SMD builds: the module was asked to transmit
 )
 
 
