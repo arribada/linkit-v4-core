@@ -170,6 +170,7 @@ import dx1_ref as DX1  # noqa: E402
 TEMPLATE = os.path.join(REPO, "template_conf", "turtle_gps.cfg")
 DTE_PARAMS = os.path.join(REPO, "core", "protocol", "dte_params.cpp")
 UINT_MAX = 0xFFFFFFFF
+INJECT_ACK_S = 5.0      # "GPS FIX stored" -> accuse "%GPS OK" (mesure : 1 a 2,1 s)
 
 
 def _fw(lit):
@@ -857,6 +858,7 @@ class PileReplay:
         self.credit_bad = []
         self.pile_bad = []
         self.pending_nofix = False
+        self.unlabelled = None            # (t, [entree de chaque modele]) : dernier FIX sans %GPS
 
     def label_of(self, p):
         if p is None:
@@ -883,7 +885,17 @@ class PileReplay:
                 self._store("NOFIX", "nofix", credit_for(self.mode, self.ntry))
         m = RX_GPSOK.search(l)
         if m:
-            self.pending_inj.append((float(m.group(1)), float(m.group(2))))
+            la, lo = float(m.group(1)), float(m.group(2))
+            # L injection est synchrone : "GPS FIX stored" sort AVANT l accuse %GPS OK
+            # (journal 20261011_160008, 1 a 2 s d ecart). Le fix tout juste stocke sans
+            # etiquette est donc celui-ci : on le renomme au lieu de decaler la file.
+            if self.unlabelled and t - self.unlabelled[0] <= INJECT_ACK_S:
+                for ent in self.unlabelled[1]:
+                    ent[0] = self.label_of((la, lo))
+                self.real_n -= 1
+                self.unlabelled = None
+            else:
+                self.pending_inj.append((la, lo))
             return
         if RX_OPENTRY.search(l):
             for mm in self.models.values():
@@ -899,6 +911,7 @@ class PileReplay:
             if credit != want:
                 self.credit_bad.append(f"+{t:.1f}s credit={credit} attendu {want} (mode={self.mode} NTRY={self.ntry})")
             if m.group(1) == "FIX":
+                self.unlabelled = None
                 if self.pending_inj:
                     la, lo = self.pending_inj.pop(0)
                     lab = self.label_of((la, lo))
@@ -906,6 +919,8 @@ class PileReplay:
                     self.real_n += 1
                     lab = "REAL"
                 self._store(lab, "fix", credit)
+                if lab == "REAL":
+                    self.unlabelled = (t, [mm.e[-1] for mm in self.models.values()])
             else:
                 self._store("NOFIX", "nofix", credit)
             return
