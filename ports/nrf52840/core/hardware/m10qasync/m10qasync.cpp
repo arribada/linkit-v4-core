@@ -1452,7 +1452,9 @@ void M10QAsyncReceiver::state_poweron_enter() {
 	m_unrecoverable_error = false;
 
 
-	DEBUG_INFO("M10QAsyncReceiver::state_poweron_enter");
+	// TRACE (2026-10-11): every INFO is a LittleFS commit (~110 ms) and this one sits
+	// on the surface -> GNSS-listening path, carrying nothing the state lines don't.
+	DEBUG_TRACE("M10QAsyncReceiver::state_poweron_enter");
 	exit_shutdown();
 	notify<GPSEventPowerOn>({});
 }
@@ -2861,11 +2863,14 @@ void M10QAsyncReceiver::state_senddatabase_enter() {
 	}
 
 	m_ubx_comms.start_dbd_filter();
-	// INFO rather than TRACE: this is the ONLY trace that says whether assistance
-	// was actually injected into the receiver. Without it you have to infer the
-	// answer from the time spent in the state — which is what we had to do on the
-	// bench on 2026-08-25 for want of anything better.
-	DEBUG_INFO("M10QAsyncReceiver::state_senddatabase: injecting %u bytes of assistance", m_ana_database_len);
+	// TRACE since 2026-10-11, by operator decision: every INFO is a LittleFS commit
+	// (~110 ms) and this one sits between the surface and the receiver listening,
+	// where the first fix of a turtle surfacing is paid for. The trade-off is
+	// knowingly accepted: it was the only PRODUCTION trace saying whether assistance
+	// was injected. Validation builds still say it ([VAL-GNSS] state
+	// senddatabase->startreceive, and the n_eph/n_aop counts of start_class); in
+	// production, infer it from the TTFF.
+	DEBUG_TRACE("M10QAsyncReceiver::state_senddatabase: injecting %u bytes of assistance", m_ana_database_len);
 }
 
 void M10QAsyncReceiver::state_senddatabase() {

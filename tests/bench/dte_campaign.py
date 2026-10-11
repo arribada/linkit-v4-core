@@ -9388,7 +9388,9 @@ def _session(b, depuis):
         'frais': bool(premier(r'state configure->startreceive')),
         'perime': bool(premier(r'state configure->sendofflinedatabase')),
         'ano': bool(premier(_fw('ano_sent file='))),
-        'dbd': bool(premier(_fw('M10QAsyncReceiver::state_senddatabase: injecting '))),
+        # Entree dans senddatabase (ligne [VAL-GNSS]) : le "injecting N bytes" est TRACE
+        # depuis 2026-10-11 (commit flash sur le chemin emersion -> ecoute GNSS).
+        'dbd': bool(premier(r'state \w+->senddatabase users=')),
         'nosync': bool(premier(_fw('M10QAsyncReceiver: failed to sync comms'))),
         'fix': premier(_RX_FIX),
         't0': ls[0][0] if ls else None,
