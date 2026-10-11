@@ -183,6 +183,17 @@ void ConfigurationState::exit() {
 
 	// Released FIRST, so the rail is freed even if the shutdown below throws.
 	GPIOPins::set_config_mode_active(false);
+#if ENABLE_SWS_ANALOG
+	// SWSTST is a configuration tool. Left running it survived into operation
+	// for up to its 1 h auto-stop (bench 2026-10-10: ~350 test pushes in 30 s
+	// after %OP), and while it runs the DX1 tracker ignores every UW event, so a
+	// tag configured right after a test was blind to its first dives.
+	try {
+		if (SWSAnalogService::is_test_running()) SWSAnalogService::stop_test_mode();
+	} catch (...) {
+		DEBUG_ERROR("exit: ConfigurationState: SWS test stop failed");
+	}
+#endif
 	// Shut the BLE down FIRST, and under protection. This call used to be the LAST
 	// instruction of exit() and had no try/catch: if stop_bridge() or
 	// power_off_immediate() threw, we never got there and the beacon went back to

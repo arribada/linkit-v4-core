@@ -705,6 +705,28 @@ TEST(DTEHandler, SwsTxModeKeyAndRange) {
 	CHECK_EQUAL(0U, configuration_store->read_param<unsigned int>(ParamID::SWS_SENSOR_ENABLE_TX_MODE));
 }
 
+TEST(DTEHandler, NumericValueMustBeConsumedWhole) {
+	// sscanf stopped at the first unusable character: "2x" was stored as 2,
+	// "1.9" as 1, "60s" as 60 (bench EDG-D1b, 2026-10-10). Now refused by name,
+	// the stored value untouched; the other keys of the frame still apply.
+	std::string resp;
+	std::string req = "$PARMW#007;UNP26=1\r";
+	dte_handler->handle_dte_message(req, resp);
+	CHECK_EQUAL(1U, configuration_store->read_param<unsigned int>(ParamID::SWS_SENSOR_ENABLE_TX_MODE));
+	for (const char *bad : { "UNP26=2x", "UNP26=1.9", "UNP26=2 " }) {
+		char frame[48];
+		snprintf(frame, sizeof(frame), "$PARMW#%03X;%s\r", (unsigned int)strlen(bad), bad);
+		req = frame;
+		dte_handler->handle_dte_message(req, resp);
+		STRCMP_EQUAL("$N;PARMW#005;UNP26\r", resp.c_str());
+		CHECK_EQUAL(1U, configuration_store->read_param<unsigned int>(ParamID::SWS_SENSOR_ENABLE_TX_MODE));
+	}
+	req = "$PARMW#007;UNP26=0\r";
+	dte_handler->handle_dte_message(req, resp);
+	STRCMP_EQUAL("$O;PARMW#000;\r", resp.c_str());
+	CHECK_EQUAL(0U, configuration_store->read_param<unsigned int>(ParamID::SWS_SENSOR_ENABLE_TX_MODE));
+}
+
 static std::string parmw(const std::string &payload) {
 	char hdr[16];
 	snprintf(hdr, sizeof(hdr), "$PARMW#%03X;", (unsigned int)payload.size());  // HEX length

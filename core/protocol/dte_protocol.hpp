@@ -1383,6 +1383,19 @@ private:
 
 	static size_t decode(const std::string &s, double &val) { return safe_sscanf(s, "%lf", val); }
 
+	/// @brief decode() that also requires the WHOLE value to be consumed.
+	/// sscanf stops at the first character it cannot use, so "2x" read as 2,
+	/// "1.9" as 1 and "60s" as 60 -- stored silently instead of refused (bench
+	/// 2026-10-10, EDG-D1b). Used by PARMW only.
+	template <typename T, typename... A> static size_t decode_whole(const std::string &s, T &val, A... args) {
+		const size_t used = decode(s, val, args...);
+		if (used != s.size()) {
+			DEBUG_ERROR("DTE_PROTOCOL_BAD_FORMAT in %s(%s)", __FUNCTION__, s.c_str());
+			throw DTE_PROTOCOL_BAD_FORMAT;
+		}
+		return used;
+	}
+
 	static size_t decode(const std::string &s, std::string &val) {
 		val = std::string(s.begin(), std::find(s.begin(), s.end(), ','));
 		if (!val.empty()) {
@@ -1514,7 +1527,7 @@ private:
 						switch (param_ref.encoding) {
 						case BaseEncoding::DECIMAL: {
 							int x;
-							decode(value, x);
+							decode_whole(value, x);
 							DTEEncoder::validate(param_ref, x);
 							key_value.value = x;
 							val.push_back(key_value);
@@ -1522,7 +1535,7 @@ private:
 						}
 						case BaseEncoding::HEXADECIMAL: {
 							unsigned int x;
-							decode(value, x, true);
+							decode_whole(value, x, true);
 							DTEEncoder::validate(param_ref, x);
 							key_value.value = x;
 							val.push_back(key_value);
@@ -1530,7 +1543,7 @@ private:
 						}
 						case BaseEncoding::UINT: {
 							unsigned int x;
-							decode(value, x);
+							decode_whole(value, x);
 							DTEEncoder::validate(param_ref, x);
 							key_value.value = x;
 							val.push_back(key_value);
@@ -1538,14 +1551,14 @@ private:
 						}
 						case BaseEncoding::BOOLEAN: {
 							bool x;
-							decode(value, x);
+							decode_whole(value, x);
 							key_value.value = x;
 							val.push_back(key_value);
 							break;
 						}
 						case BaseEncoding::FLOAT: {
 							double x;
-							decode(value, x);
+							decode_whole(value, x);
 							DTEEncoder::validate(param_ref, x);
 							key_value.value = x;
 							val.push_back(key_value);
