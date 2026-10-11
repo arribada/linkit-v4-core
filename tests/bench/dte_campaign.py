@@ -28,6 +28,17 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import bench_platform as P
 from kim_bench import Bench, RF_SIGNATURES
 
+# Fin d emission aboutie. "TX SUCCESS" n existe que sur KIM2 (argos_tx_service.cpp,
+# #if !ARGOS_SMD) ; sur SMD c est "[VAL-TX] type=" (builds --validation). Ne pas
+# confondre avec "[VAL-TX] SmdSatCmdAt::initiate_tx" qui n est que l ENVOI.
+# Banc 2026-10-11 : MOD-01/03/05, DEP-01 jugees "jamais emis" sur une carte SMD
+# qui emettait toutes les 30 s.
+RX_TX_OK = r'TX SUCCESS|\[VAL-TX\] type='
+
+
+def _tx_ok(l):
+    return 'TX SUCCESS' in l or '[VAL-TX] type=' in l
+
 OUT = os.environ.get('DTE_CAMPAIGN_OUT', os.path.join(P.temp_dir(), 'dte_campaign'))
 os.makedirs(OUT, exist_ok=True)
 RESULTS = os.path.join(OUT, 'campaign_results.jsonl')
@@ -4712,9 +4723,9 @@ def c_limiteur_fenetre_glissante(r, case):
     b._send('%GPS 43.6 3.9 5000 9\r')
 
     # 1. Une emission part, puis le quota (1 sur 120 s) doit bloquer la suivante.
-    vues = _attendre_trace(b, [r'TX SUCCESS', r'rate limit reached'], 150, depuis=mk,
+    vues = _attendre_trace(b, [RX_TX_OK, r'rate limit reached'], 150, depuis=mk,
                            exiger=[r'rate limit reached'])
-    emis = [l for l in vues if 'TX SUCCESS' in l]
+    emis = [l for l in vues if _tx_ok(l)]
     bloque = [l for l in vues if 'rate limit reached' in l]
     if not emis:
         try:
@@ -6364,13 +6375,13 @@ def c_ciel_emission_reelle(r, case):
     _, hacc, _ = _attend_fix_reel(b, 330, depuis=mk)
     if hacc is None:
         return r.record(case, 'ERROR', 'pas de position reelle — emission non evaluable')
-    vues = _attendre_trace(b, [r'TX SUCCESS', r'\+ERROR=', r'TX START'], 180, depuis=mk)
+    vues = _attendre_trace(b, [RX_TX_OK, r'\+ERROR=', r'TX START'], 180, depuis=mk)
     try:
         b.enter_config(); b.write_params({'ARGOS_MODE': 0}); b.exit_config()
     except Exception:
         pass
     trace = '\n'.join(vues[:8])
-    succes = [l for l in vues if 'TX SUCCESS' in l]
+    succes = [l for l in vues if _tx_ok(l)]
     erreurs = [l for l in vues if '+ERROR=' in l]
     if not vues:
         return r.record(case, 'FAIL',
@@ -6501,9 +6512,9 @@ def c_doppler_seul_continu(r, case):
         return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
     mk = b.mark()
     # 5 min: assez pour une dizaine de periodes a TR_NOM=30 s.
-    vues = _compter_trace(b, [r'TX SUCCESS', r'\+ERROR=', r'reset cause',
+    vues = _compter_trace(b, [RX_TX_OK, r'\+ERROR=', r'reset cause',
                               r'entry: BootState'], 300, depuis=mk)
-    emissions = [l for l in vues if 'TX SUCCESS' in l]
+    emissions = [l for l in vues if _tx_ok(l)]
     reboots = [l for l in vues if 'BootState' in l or 'reset cause' in l]
     try:
         b.enter_config(); b.write_params({'ARGOS_MODE': 0}); b.exit_config()
@@ -6558,13 +6569,13 @@ def c_duty_masque_valide(r, case):
     except Exception as e:
         return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
     mk = b.mark()
-    hors = _compter_trace(b, [r'TX SUCCESS'], 120, depuis=mk)
+    hors = _compter_trace(b, [RX_TX_OK], 120, depuis=mk)
     try:
         b.enter_config(); b.write_params({'DUTY_CYCLE': masque_courant}); b.exit_config()
     except Exception as e:
         return r.record(case, 'ERROR', f'reconfiguration impossible: {type(e).__name__}: {e}')
     mk2 = b.mark()
-    dedans = _compter_trace(b, [r'TX SUCCESS'], 150, depuis=mk2)
+    dedans = _compter_trace(b, [RX_TX_OK], 150, depuis=mk2)
     try:
         b.enter_config()
         b.write_params({'ARGOS_MODE': 0, 'DUTY_CYCLE': 16777215}); b.exit_config()
@@ -6662,9 +6673,9 @@ def c_batterie_transitoire_tx(r, case):
     except Exception as e:
         return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
     mk = b.mark()
-    vues = _compter_trace(b, [r'TX SUCCESS', r'BatteryMonitorEventVoltageCritical',
+    vues = _compter_trace(b, [RX_TX_OK, r'BatteryMonitorEventVoltageCritical',
                               r'LOW_BATTERY', r'critical'], 240, depuis=mk)
-    emissions = [l for l in vues if 'TX SUCCESS' in l]
+    emissions = [l for l in vues if _tx_ok(l)]
     alertes = [l for l in vues if 'ritical' in l or 'LOW_BATTERY' in l]
     try:
         b.enter_config(); b.write_params({'ARGOS_MODE': 0, 'LB_EN': 0}); b.exit_config()
@@ -6706,7 +6717,7 @@ def c_reveil_apres_refroidissement(r, case):
     except Exception as e:
         return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
     mk = b.mark()
-    avant = _attendre_trace(b, [r'TX SUCCESS'], 120, depuis=mk)
+    avant = _attendre_trace(b, [RX_TX_OK], 120, depuis=mk)
     if not avant:
         try:
             b.enter_config()
@@ -6720,7 +6731,7 @@ def c_reveil_apres_refroidissement(r, case):
     # Le refroidissement s arme sur la derniere emission (UNP30=3). On attend
     # sa fenetre PLUS une marge, et on exige une reprise.
     mk2 = b.mark()
-    apres = _attendre_trace(b, [r'TX SUCCESS'], 260, depuis=mk2)
+    apres = _attendre_trace(b, [RX_TX_OK], 260, depuis=mk2)
     try:
         b.enter_config()
         b.write_params({'ARGOS_MODE': 0, 'MIN_SURFACE_CYCLE_INTERVAL_S': 0,
@@ -6869,12 +6880,17 @@ def _config_mode(b, mode, **extra):
     b.enter_config(); b.write_params(cfg); b.exit_config()
 
 def _emissions(vues):
-    """Extrait (type, mode) de chaque TX SUCCESS."""
+    """Extrait (type, mode) de chaque emission aboutie. Sur SMD la ligne est
+    "[VAL-TX] type=..." sans modulation : mode=None (la lire dans ensure_modulation)."""
     out = []
     for l in vues:
         m = re.search(r'TX SUCCESS — type=(\S+) mode=(\d+)', l)
         if m:
             out.append((m.group(1), int(m.group(2))))
+            continue
+        m = re.search(r'\[VAL-TX\] type=(\S+) ', l)
+        if m:
+            out.append((m.group(1), None))
     return out
 
 def _paquets(vues):
@@ -6912,7 +6928,7 @@ def _mode_emet(r, case, mode, nom, position=True, secondes=180, **extra):
     mk = b.mark()
     if position:
         b._send('%GPS 43.6 3.9 5000 9\r')
-    vues = _compter_trace(b, [r'TX SUCCESS', r'build_\w+_packet', r'\+ERROR=',
+    vues = _compter_trace(b, [RX_TX_OK, r'build_\w+_packet', r'\+ERROR=',
                               r'periodique', r'SCHEDULE_DISABLED'], secondes, depuis=mk)
     try:
         b.enter_config(); b.write_params({'ARGOS_MODE': 0}); b.exit_config()
@@ -7249,7 +7265,7 @@ def c_mode_long_multi(r, case):
     for lat in (43.60, 43.61, 43.62):
         b._send(f'%GPS {lat} 3.9 5000 9\r')
         time.sleep(12)
-    vues = _compter_trace(b, [r'TX SUCCESS', r'build_gnss_packet'], 150, depuis=mk)
+    vues = _compter_trace(b, [RX_TX_OK, r'build_gnss_packet'], 150, depuis=mk)
     try:
         b.enter_config(); b.write_params({'ARGOS_MODE': 0}); b.exit_config()
     except Exception:
@@ -7301,7 +7317,7 @@ def c_charge_sans_fix(r, case):
     except Exception as e:
         return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
     mk = b.mark()
-    vues = _compter_trace(b, [r'TX SUCCESS', r'build_\w+_packet'], 150, depuis=mk)
+    vues = _compter_trace(b, [RX_TX_OK, r'build_\w+_packet'], 150, depuis=mk)
     try:
         b.enter_config(); b.write_params({'ARGOS_MODE': 0}); b.exit_config()
     except Exception:
@@ -7577,12 +7593,12 @@ def c_ciel_emission_reelle(r, case):
         except Exception:
             pass
         return r.record(case, 'ERROR', f'pas de position (issue={issue}) — emission non evaluable')
-    vues = _compter_trace(b, [r'TX SUCCESS', r'\+ERROR=', r'build_\w+_packet'], 150, depuis=mk)
+    vues = _compter_trace(b, [RX_TX_OK, r'\+ERROR=', r'build_\w+_packet'], 150, depuis=mk)
     try:
         _ciel(b)
     except Exception:
         pass
-    succes = [l for l in vues if 'TX SUCCESS' in l]
+    succes = [l for l in vues if _tx_ok(l)]
     erreurs = [l for l in vues if '+ERROR=' in l]
     trace = f'hAcc={hacc/1000:.1f} m, {numsv} sat\n' + '\n'.join(vues[:6])
     if erreurs and not succes:
@@ -7927,7 +7943,7 @@ def c_premier_message_apres_boot(r, case):
     mk = b.mark()
     if not b.wait_state('OPERATIONAL', timeout=90):
         return r.record(case, 'ERROR', 'la carte ne repasse pas en OPERATIONAL apres RSTBW')
-    vues = _compter_trace(b, [r'TX SUCCESS', r'\+ERROR=', r'realigning',
+    vues = _compter_trace(b, [RX_TX_OK, r'\+ERROR=', r'realigning',
                               r'resync_rconf_cache'], 180, depuis=mk)
     try:
         b.enter_config()
@@ -7939,7 +7955,7 @@ def c_premier_message_apres_boot(r, case):
 
     realign = [l for l in vues if 'realigning' in l]
     erreurs = [l for l in vues if '+ERROR=' in l]
-    succes = [l for l in vues if 'TX SUCCESS' in l]
+    succes = [l for l in vues if _tx_ok(l)]
     corrige = [l for l in vues if 'resync_rconf_cache: cache' in l]
     trace = (f'cache avant={cache_avant} ({_nom_cache(cache_avant)}) '
              f'apres={apres.get("SMP01", "?")} ({_nom_cache(apres.get("SMP01"))})\n'
@@ -7993,7 +8009,7 @@ def c_blind_charge_dans_le_module(r, case):
         return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
     mk = b.mark()
     vues = _compter_trace(b, [r'BLIND loaded', r'BLIND \(AT\+KMAC=2\) rejected',
-                              r'BLIND — TX window', r'TX SUCCESS'], 150, depuis=mk)
+                              r'BLIND — TX window', RX_TX_OK], 150, depuis=mk)
     try:
         b.enter_config(); b.write_params({'ARGOS_MODE': 0, 'ARGOS_BLIND_EN': 0}); b.exit_config()
     except Exception:
@@ -8039,7 +8055,7 @@ def c_blind_exclu_de_la_salve(r, case):
     except Exception as e:
         return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
     mk = b.mark()
-    vues = _compter_trace(b, [r'BLIND loaded', r'BLIND — TX window', r'TX SUCCESS'],
+    vues = _compter_trace(b, [r'BLIND loaded', r'BLIND — TX window', RX_TX_OK],
                           120, depuis=mk)
     try:
         b.enter_config(); b.write_params({'ARGOS_MODE': 0, 'ARGOS_BLIND_EN': 0}); b.exit_config()
@@ -8080,12 +8096,12 @@ def c_budget_session_ignore_sur_kim(r, case):
     except Exception as e:
         return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
     mk = b.mark()
-    vues = _compter_trace(b, [r'TX SUCCESS', r'session TX budget reached'], 210, depuis=mk)
+    vues = _compter_trace(b, [RX_TX_OK, r'session TX budget reached'], 210, depuis=mk)
     try:
         b.enter_config(); b.write_params({'ARGOS_MODE': 0, 'SHUTDOWN_NTIME_SAT': 0}); b.exit_config()
     except Exception:
         pass
-    emissions = [l for l in vues if 'TX SUCCESS' in l]
+    emissions = [l for l in vues if _tx_ok(l)]
     avert = [l for l in vues if 'session TX budget reached' in l]
     trace = f'{len(emissions)} emissions, {len(avert)} avertissement(s)\n' + '\n'.join(vues[:8])
     if len(emissions) <= budget:
