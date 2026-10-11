@@ -796,18 +796,21 @@ def analyse_burst(lines, cfg, res, ref=None, host_utc_at=None):
                 f"date {d.get('day')}/{d.get('hour')}h{d.get('minute', 0):02d} batt={d.get('batt_mv')} mV "
                 f"alt={d.get('alt')} ; ecart avec la precedente {gap if gap is None else round(gap, 1)} s", probs)
 
-    # B6 -- une seule trame GNSS par fix (NTRY=0) puis battement au TR_NOM
+    # B6 -- NTRY trames GNSS par fix (NTRY=0 en SURFACING_BURST = 1 credit) puis battement au TR_NOM.
+    # Templates tortue a NTRY=2 depuis 5224bde2 : 2 trames pour le meme fix.
+    ntry = int(cfg.get("ntry") or 0)
+    attendu = max(1, ntry)
     if t_fix is not None and gnss:
         probs = []
-        if len(gnss) != 1:
-            probs.append(f"{len(gnss)} trames type=gnss pour un fix (NTRY=0 en SURFACING_BURST = 1 credit)")
+        if len(gnss) != attendu:
+            probs.append(f"{len(gnss)} trames type=gnss pour un fix, attendu {attendu} (NTRY={ntry} en SURFACING_BURST)")
         if t_end is None:
             probs.append("pas de 'burst finished' apres la phase GNSS")
         sp = [round(b["t"] - a["t"], 1) for a, b in zip(hb, hb[1:])]
         bad = [s for s in sp if not (cfg["tr_nom"] - 6 <= s <= cfg["tr_nom"] + 15)]
         if bad:
             probs.append(f"battements espaces de {sp} s, attendu TR_NOM={cfg['tr_nom']} s +-5 s de gigue")
-        res.add(scen, "B6", "NTRY=0 : une trame GNSS par fix, puis battement de presence au TR_NOM",
+        res.add(scen, "B6", f"NTRY={ntry} : {attendu} trame(s) GNSS par fix, puis battement de presence au TR_NOM",
                 "FAIL" if probs else "PASS",
                 f"trames GNSS={len(gnss)} ; battements={len(hb)} types={[f['val']['type'] for f in hb if f['val']]} "
                 f"espacements={sp} s", probs)
@@ -1943,7 +1946,7 @@ def main():
     ap.add_argument("--ref-lon", type=float, help="burst: longitude connue du banc")
     ap.add_argument("--ref-tol-km", type=float, default=1.0)
     ap.add_argument("--runs", default="sb0,sbn,legn", help="pile: passes parmi sb0,sbn,legn,leg0")
-    ap.add_argument("--ntry", type=int, default=3, help="pile: NTRY des passes sbn/legn")
+    ap.add_argument("--ntry", type=int, default=2, help="pile: NTRY des passes sbn/legn (templates tortue: 2)")
     ap.add_argument("--frames", type=int, default=2, help="pile: trames GNSS par emersion avant plongee")
     ap.add_argument("--pile-dive-s", type=int, default=90,
                     help="pile: plongee entre emersions (garder > 60 s : un fix de moins de 60 s dans la pile "
