@@ -550,6 +550,12 @@ bool SmdSatCmdAt::initiate_tx(const KineisPacket &payload) {
 		m_tx_in_progress = false;
 		return false;
 	}
+#if defined(VALIDATION_LOG_ENABLE) && VALIDATION_LOG_ENABLE
+	// Validation builds only, AFTER the send so it does not delay the burst: the
+	// bench decodes the frame actually handed to the module (DX1 views), as it
+	// does from the KIM2 "AT+TX=" line.
+	DEBUG_INFO("[VAL-TX] SmdSatCmdAt::initiate_tx: AT+TX=%s)", hex.c_str());
+#endif
 	return true;
 }
 
