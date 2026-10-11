@@ -205,6 +205,7 @@ RX_OPENTRY = re.compile(_fw("entry: OperationalState"))
 RX_BOOTENTRY = re.compile(_fw("entry: BootState"))
 RX_PVTFIX = re.compile(_fw("first valid GPS fix this session"))
 RX_RTCSYNC = re.compile(_fw("M10QAsyncReceiver: GNSS time persisted"))
+RX_UWSURF = re.compile(_fw("UWDetectorService: state changed: state=0"))
 # Console de banc (bench_console.cpp) -- pas des logs firmware, motifs libres.
 RX_SURF = re.compile(r"%SURFACE OK surfaced uptime=(\d+)")
 RX_DIVE = re.compile(r"%DIVE OK underwater uptime=(\d+)")
@@ -1429,9 +1430,19 @@ def run_burst(rig, args, res, sink):
     for c in range(1, args.cycles + 1):
         rig.note(f"RUN burst cycle={c}")
         outages = rig.b.outages
+        i_d = rig.mark()
         rig.cmd("%DIVE", r"%DIVE OK", 8)
         print(f"  [burst c{c}] plongee {args.dive_s} s", flush=True)
         rig.sleep(args.dive_s)
+        # B0 -- la plongee simulee doit tenir : aucune emission ni retour en surface
+        # avant %SURFACE (sinon le PREWARM part sous l eau et B1/B7 sont faux).
+        dive = rig.b.since(i_d)
+        tx_dive = [l for _, l in dive if RX_ATTX.search(l)]
+        up_dive = [l for _, l in dive if RX_UWSURF.search(l)]
+        res.add(scen, "B0", "plongee simulee tenue (aucune emission, aucun retour en surface)",
+                "FAIL" if (tx_dive or up_dive) else "PASS",
+                f"{len(tx_dive)} AT+TX et {len(up_dive)} retour(s) en surface pendant {args.dive_s} s de %DIVE",
+                tx_dive + up_dive)
         i = rig.mark()
         rig.cmd("%SURFACE", r"%SURFACE OK", 8)
         print(f"  [burst c{c}] emersion, observation {args.observe_s} s", flush=True)
