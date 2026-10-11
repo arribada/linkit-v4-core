@@ -51,14 +51,15 @@ class Board:
             time.sleep(0.5)
         return None
 
-    def __init__(self, port=PORT_GLOB, baud=115200, rf_guard=True):
+    def __init__(self, port=PORT_GLOB, baud=115200, rf_guard=None):
         """rf_guard (défaut) : à la première ligne d'émission réelle (AT+TX, TX START,
         TX EMITTED OK, TX SUCCESS — kim_bench.RF_SIGNATURES) le lecteur envoie
         %AMODE 0 et note la ligne dans self.rf_seen. Un KIM2 qui répond émet sur
         sa RCONF LDK intégrée même sans credentials : cl_aging / gps_validate en
         AMODE 5 n'émettaient « pas » seulement parce que le module était muet."""
         self.baud = baud
-        self.rf_guard = rf_guard
+        # None = actif, sauf DTE_RF_AUTORISE=1 (antenne branchee, emission voulue).
+        self.rf_guard = (not os.environ.get("DTE_RF_AUTORISE")) if rf_guard is None else rf_guard
         self.rf_seen = None
         port = port or self.find_port()
         if not port:

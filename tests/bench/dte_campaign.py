@@ -96,8 +96,14 @@ class Runner:
 
     # ---- garde RF, branche sur le lecteur de chaque lien ----
     def _garde_rf(self, ligne):
-        """Appele par le thread lecteur pour CHAQUE ligne recue."""
+        """Appele par le thread lecteur pour CHAQUE ligne recue.
+
+        DTE_RF_AUTORISE=1 (antenne branchee, emission voulue par l operateur) :
+        les emissions sont comptees mais ne coupent plus rien."""
         if any(sig in ligne for sig in RF_SIGNATURES):
+            if os.environ.get('DTE_RF_AUTORISE'):
+                self.n_emissions = getattr(self, 'n_emissions', 0) + 1
+                return
             if self.rf_vu is None:
                 self.rf_vu = ligne
             if self.rf_courant is not None:
@@ -516,6 +522,8 @@ class Runner:
             self.say('--- a instruire ---')
             for i, v, d in rouges:
                 self.say(f'  {v:5s} {i}: {d[:150]}')
+        if getattr(self, 'n_emissions', 0):
+            self.say(f'emissions reelles autorisees (DTE_RF_AUTORISE): {self.n_emissions} ligne(s) TX vues')
         if self.rf_vu:
             self.say(f'!!! EMISSION REELLE OBSERVEE (cas {self.rf_cas}): {self.rf_vu.strip()[-120:]}')
         self.say(f'resultats JSONL: {RESULTS}  journal: {LOG}')
