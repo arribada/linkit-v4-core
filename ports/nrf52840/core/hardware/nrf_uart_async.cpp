@@ -170,14 +170,37 @@ bool NrfUartAsync::clear_stale_send_busy() {
 	return true;
 }
 
+/// @brief Let the previous transfer finish instead of refusing the next one.
+///
+/// A send issued while the previous command's DMA is still draining used to fail
+/// outright with "already busy". Seen on the SMD UART-AT path, bench 2026-10-11:
+/// the AT+TX right after the power-on TCXO write failed on 7 of 13 surfacings
+/// (pile + dx1 runs), each costing the first Doppler ping of the surfacing and a
+/// 60 s device-error backoff. A command is at most m_tx_buffer bytes, a few ms at
+/// our baud rates, so a short bounded wait always covers a transfer in flight.
+/// Same approach as UBXComms::wait_tx_idle() on the GNSS link.
+bool NrfUartAsync::wait_send_idle() {
+	static constexpr unsigned int TX_BUSY_WAIT_MS = 150;
+	if (!m_is_send_busy) return true;
+	unsigned int waited = 0;
+	while (m_is_send_busy && waited < TX_BUSY_WAIT_MS) {
+		PMU::delay_ms(1);
+		waited++;
+	}
+	if (!m_is_send_busy) {
+		DEBUG_INFO("NrfUartAsync: UART%u previous TX still draining, waited %u ms", m_uart_instance, waited);
+		return true;
+	}
+	return clear_stale_send_busy();
+}
+
 bool NrfUartAsync::send_raw(const uint8_t *data, size_t len) {
 	if (!m_is_init || len == 0) return false;
 
 	// DMA TX is async: the peripheral keeps reading from the buffer after this
 	// returns. The caller typically passes a stack buffer, so we copy into
 	// m_tx_buffer which is held until TX_DONE clears m_is_send_busy.
-	clear_stale_send_busy();
-	if (m_is_send_busy) {
+	if (!wait_send_idle()) {
 		DEBUG_ERROR("NrfUartAsync::send_raw: UART%u already busy", m_uart_instance);
 		return false;
 	}
@@ -213,8 +236,7 @@ bool NrfUartAsync::send_string(const std::string &str) {
 		return false;
 	}
 
-	clear_stale_send_busy();
-	if (m_is_send_busy) {
+	if (!wait_send_idle()) {
 		DEBUG_ERROR("NrfUartAsync: UART%u already busy", m_uart_instance);
 		return false;
 	}

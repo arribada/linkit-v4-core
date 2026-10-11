@@ -71,6 +71,9 @@ protected:
 	/// @brief Release m_is_send_busy when TX_DONE was lost. Returns true if it did.
 	bool clear_stale_send_busy();
 
+	/// @brief Wait (bounded) for the previous DMA transfer's TX_DONE. Returns true if idle.
+	bool wait_send_idle();
+
 	/// @brief Called for each complete line received (stripped of CR/LF).
 	/// Runs in main context (safe for heap/string operations).
 	virtual void on_rx_line(std::string &line) = 0;
@@ -81,7 +84,7 @@ protected:
 
 	unsigned int m_uart_instance;
 	bool m_is_rx_started;
-	bool m_is_send_busy;
+	volatile bool m_is_send_busy;  // cleared by the TX_DONE ISR, polled by wait_send_idle()
 	/// @brief When m_is_send_busy was raised, to recover a lost TX_DONE.
 	uint64_t m_tx_started_ms = 0;
 	std::string m_tx_buffer;

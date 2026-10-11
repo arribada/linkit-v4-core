@@ -171,6 +171,11 @@ void SmdSatCmdAt::parse_response(const std::string &line) {
 // ============================================================================
 
 bool SmdSatCmdAt::send_at(const std::string &cmd, uint16_t timeout_ms) {
+	// Parse what already arrived BEFORE clearing the flags: a late "+OK" left in
+	// the ISR buffer would otherwise end this wait at once, before the module has
+	// even seen the command, and leave this command's own DMA still draining for
+	// the next send (bench 2026-10-11, "UART1 already busy" on AT+TX).
+	NrfUartAsync::process_rx();
 	m_resp_ok = false;
 	m_resp_error = false;
 	m_resp_data_ready = false;
@@ -535,6 +540,7 @@ bool SmdSatCmdAt::initiate_tx(const KineisPacket &payload) {
 
 	std::string hex = Binascii::hexlify(payload);
 
+	NrfUartAsync::process_rx();  // a stale "+OK" must not read as this TX's acceptance (see send_at)
 	m_tx_complete = false;
 	m_tx_status = 0xFFFF;
 	m_resp_error = false;

@@ -75,7 +75,7 @@ void KIM2Comm::deinit() {
 // ============================================================================
 
 bool KIM2Comm::send(ATCmd cmd, const std::optional<std::string> &params) {
-	if (m_is_send_busy) {
+	if (!wait_send_idle()) {  // bounded wait for the previous DMA, see NrfUartAsync
 		DEBUG_ERROR("KIM2Comm: already busy");
 		return false;
 	}
