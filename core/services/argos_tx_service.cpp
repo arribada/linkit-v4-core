@@ -2898,6 +2898,17 @@ void ArgosTxService::process_doppler_burst() {
 			pick = &cached_fl;
 		}
 
+		// No position older than CACHED_POSITION_MAX_AGE_S. Without a limit a
+		// tag whose GNSS stopped fixing (WWF 2026: dead on day 2 on every unit)
+		// re-sent the same fix on every ping 2+ and heartbeat for the rest of
+		// its life, in place of the Doppler that carries the SWS health. An
+		// unknown age (unset RTC, future-dated entry) counts as too old.
+		if (pick && compute_gps_log_age_seconds(*pick, service_current_time()) > CACHED_POSITION_MAX_AGE_S) {
+			DEBUG_TRACE("ArgosTxService::process_doppler_burst: cached position older than %u s — Doppler",
+			            CACHED_POSITION_MAX_AGE_S);
+			pick = nullptr;
+		}
+
 		if (pick) {
 			GPSLogEntry entry = *pick;
 			entry.info.batt_voltage = service_get_voltage();  // freshen battery field

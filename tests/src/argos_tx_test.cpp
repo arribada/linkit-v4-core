@@ -4868,6 +4868,38 @@ TEST(ArgosTxService, CloudLocateMeas20OnLdkMasterFallsBackToCachedShort) {
 	mock().checkExpectations();
 }
 
+TEST(ArgosTxService, CachedPositionOlderThanMaxAgeIsNotResent) {
+	mock().ignoreOtherCalls();
+	configure_surfacing_burst();
+	fake_config_store->write_param(ParamID::ARGOS_ADAPTIVE_MODULATION, false);
+	mock_kineis->test_set_current_modulation(KineisModulation::LDK);
+
+	ArgosTxService serv(*mock_kineis);
+	std::time_t t = 1652105502000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+
+	// The last fix is 7 h old: beyond CACHED_POSITION_MAX_AGE_S (6 h), ping 2
+	// must be a plain Doppler, not that stale position again.
+	GPSLogEntry last = make_gps_location(true, 11.8768, -33.8232, (t / 1000) - 7 * 3600, true);
+	last.info.event_type = GPSEventType::FIX;
+	fake_config_store->notify_gps_location(last);
+
+	cl_surface_and_send_ping1(serv, mock_kineis, fake_rtc, fake_timer, t, KineisModulation::LDK);
+
+	mock()
+	    .expectOneCall("send")
+	    .onObject(mock_kineis)
+	    .withUnsignedIntParameter("mode", (unsigned int)KineisModulation::LDK)
+	    .withUnsignedIntParameter("size_bits", ArgosPacketBuilder::DOPPLER_PACKET_BITS);
+	t += serv.get_last_schedule();
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	system_scheduler->run();
+	CHECK_EQUAL(2U, mock_kineis->send_count);
+	mock().checkExpectations();
+}
+
 TEST(ArgosTxService, CloudLocateMeas20OnLda2MasterIsStillSent) {
 	mock().ignoreOtherCalls();
 	configure_surfacing_burst();

@@ -28,6 +28,8 @@ public:
 	// future relative to `now` — both indicate an entry the REUSE_LAST path must
 	// not trust. Pure / static so unit tests can exercise it without an instance.
 	static unsigned int compute_gps_log_age_seconds(const GPSLogEntry &entry, std::time_t now);
+	/// Oldest cached fix that Doppler pings 2+ / heartbeats may re-send (6 h).
+	static constexpr unsigned int CACHED_POSITION_MAX_AGE_S = 6U * 3600U;
 
 #ifdef BENCH_TEST
 	/// @brief Bench probe: depth-pile contents as "<type>:<burst_counter>" per slot.
