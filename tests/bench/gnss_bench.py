@@ -253,7 +253,7 @@ def reset_board():
 
     Borné (60 s, arbre de processus tué) et le code retour est rendu : un reset
     raté (sonde tenue par nRF Connect, rc -102) ne passe plus pour un reset."""
-    r = P.nrfjprog(["--reset"], timeout=60)
+    r = P.reset_target(timeout=60)  # --pinreset si APPROTECT refuse --reset
     if not r.ok:
         print(f"      [bench] nrfjprog --reset ÉCHEC ({r!r}) : {r.stdout.strip()[-200:]}", flush=True)
     return r.ok

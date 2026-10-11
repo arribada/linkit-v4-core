@@ -294,6 +294,19 @@ def run_text(cmd, timeout=30):
     return raw.decode("latin-1", errors="replace")
 
 
+def reset_target(timeout=60):
+    """Redemarre la cible. `--reset` passe par le port de debug et est REFUSE
+    des qu APPROTECT s est rearme apres le boot (rc 16, 'readback protected'),
+    ce qui arrive sur ces cartes : on retombe alors sur `--pinreset`, un vrai
+    reset broche qui ne demande pas l acces debug (banc 2026-10-11)."""
+    r = nrfjprog(["--reset"], timeout=timeout)
+    if r.ok:
+        return r
+    txt = (r.stdout or "").lower()
+    if r.returncode == 16 or "readback protect" in txt or "unlock" in txt or "access protection" in txt:
+        return nrfjprog(["--pinreset"], timeout=timeout)
+    return r
+
 def probe_holders():
     """Processes known to hold the J-Link (Windows only). Reported, never killed
     here: nRF Connect for Desktop belongs to the operator."""

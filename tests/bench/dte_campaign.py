@@ -52,7 +52,7 @@ def _nrfjprog(args, timeout=180, check=True):
     (sonde tenue par nRF Connect, rc -102) laissait PAR-05 passer au vert sans
     que la carte ait jamais redemarre.
     """
-    r = P.nrfjprog(args, timeout=timeout)
+    r = P.reset_target(timeout=timeout) if list(args) == ['--reset'] else P.nrfjprog(args, timeout=timeout)
     if check and not r.ok:
         raise RuntimeError(f'nrfjprog {" ".join(args)}: '
                            f'{"TIMEOUT" if r.timed_out else "rc=%d" % r.returncode} '
