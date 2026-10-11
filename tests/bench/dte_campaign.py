@@ -36,6 +36,13 @@ from kim_bench import Bench, RF_SIGNATURES
 RX_TX_OK = r'TX SUCCESS|\[VAL-TX\] type='
 
 
+# BLIND charge / refuse : KIM2 "BLIND loaded" / "BLIND (AT+KMAC=2) rejected" (kim2.cpp),
+# SMD "BLIND KMAC loaded" / "BLIND KMAC (profile 2) rejected" (smd_sat.cpp). Avec le seul
+# motif KIM2, BLIND-01 tombait en ERROR et BLIND-02 PASSAIT A VIDE sur SMD.
+RX_BLIND_LOADED = r'BLIND (KMAC )?loaded'
+RX_BLIND_REFUS = r'BLIND (\(AT\+KMAC=2\)|KMAC \(profile 2\)) rejected'
+
+
 def _tx_ok(l):
     return 'TX SUCCESS' in l or '[VAL-TX] type=' in l
 
@@ -8008,15 +8015,15 @@ def c_blind_charge_dans_le_module(r, case):
     except Exception as e:
         return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
     mk = b.mark()
-    vues = _compter_trace(b, [r'BLIND loaded', r'BLIND \(AT\+KMAC=2\) rejected',
+    vues = _compter_trace(b, [RX_BLIND_LOADED, RX_BLIND_REFUS,
                               r'BLIND — TX window', RX_TX_OK], 150, depuis=mk)
     try:
         b.enter_config(); b.write_params({'ARGOS_MODE': 0, 'ARGOS_BLIND_EN': 0}); b.exit_config()
     except Exception:
         pass
     trace = '\n'.join(vues[:6])
-    charge = [l for l in vues if 'BLIND loaded' in l]
-    refus = [l for l in vues if 'rejected' in l]
+    charge = [l for l in vues if re.search(RX_BLIND_LOADED, l)]
+    refus = [l for l in vues if re.search(RX_BLIND_REFUS, l)]
     if refus and not charge:
         return r.record(case, 'SKIP',
                         'le module refuse AT+KMAC=2 (BLIND non supporte par ce firmware '
@@ -8055,14 +8062,14 @@ def c_blind_exclu_de_la_salve(r, case):
     except Exception as e:
         return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
     mk = b.mark()
-    vues = _compter_trace(b, [r'BLIND loaded', r'BLIND — TX window', RX_TX_OK],
+    vues = _compter_trace(b, [RX_BLIND_LOADED, r'BLIND — TX window', RX_TX_OK],
                           120, depuis=mk)
     try:
         b.enter_config(); b.write_params({'ARGOS_MODE': 0, 'ARGOS_BLIND_EN': 0}); b.exit_config()
     except Exception:
         pass
     trace = '\n'.join(vues[:6])
-    if [l for l in vues if 'BLIND loaded' in l or 'BLIND — TX window' in l]:
+    if [l for l in vues if re.search(RX_BLIND_LOADED, l) or 'BLIND — TX window' in l]:
         return r.record(case, 'FAIL',
                         'BLIND est charge alors que le mode est SURFACING_BURST: chaque '
                         'message partirait deux fois', trace)
