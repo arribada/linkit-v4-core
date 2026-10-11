@@ -639,12 +639,13 @@ class Suite:
                 # was truncated, the pile and the persisted fix were lost -- and
                 # this suite reported PASS. Require the completion, and no reboot.
                 time.sleep(20.0)
-                done = b.expect(r"ArgosTxService: TX SUCCESS|KIM2Device::state_transmit: TX EMITTED OK",
+                done = b.expect(r"ArgosTxService: TX SUCCESS|KIM2Device::state_transmit: TX EMITTED OK|\[VAL-TX\] type=",
                                 1.0, from_idx=0)
                 reboot = b.expect(r"Firmware Version: ", 1.0, from_idx=self.guard.idx or 0)
                 self.check("TX completed without a reboot", done is not None and reboot is None,
                            ("REBOOT after TX start (supply collapse?): " + reboot.string.strip()[-80:]) if reboot
-                           else ("TX SUCCESS seen" if done else "no TX completion line within 20 s"))
+                           else ("TX completion seen (TX SUCCESS on KIM2, [VAL-TX] on validation builds)" if done
+                                  else "no TX completion line within 20 s (SMD needs a --validation build)"))
         else:
             self.check("no real RF in the session", self.guard.seen is None,
                        f"RF SEEN, %AMODE 0 sent: {self.guard.seen}" if self.guard.seen
