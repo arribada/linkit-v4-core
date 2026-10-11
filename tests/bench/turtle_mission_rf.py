@@ -170,7 +170,7 @@ import dx1_ref as DX1  # noqa: E402
 TEMPLATE = os.path.join(REPO, "template_conf", "turtle_gps.cfg")
 DTE_PARAMS = os.path.join(REPO, "core", "protocol", "dte_params.cpp")
 UINT_MAX = 0xFFFFFFFF
-INJECT_ACK_S = 5.0      # "GPS FIX stored" -> accuse "%GPS OK" (mesure : 1 a 2,1 s)
+INJECT_ACK_S = 5.0      # "GPS FIX stored" -> accuse "%GPS OK" (mesure : 1 a 2,3 s)
 
 
 def _fw(lit):
@@ -933,6 +933,11 @@ class PileReplay:
         if RX_REFUND.search(l):
             for mm in self.models.values():
                 mm.refund()
+            # Le retrieve qui precede n aura JAMAIS de trame (plongee pendant l emission) :
+            # le clore ici, sinon il prend l AT+TX suivant (le Doppler de l emersion d apres).
+            if self.rows and self.rows[-1]["build"] is not None and self.rows[-1]["observed"] is None:
+                self.rows[-1]["observed"] = []
+                self.rows[-1]["refunded"] = True
             return
         if RX_NOELIG.search(l):
             exp = {ph: mm.retrieve(self.depth) for ph, mm in self.models.items()}
@@ -989,7 +994,9 @@ def analyse_pile_run(lines, run, res, sink=None):
     for idx, (t, l) in enumerate(lines):
         rp.feed(idx, t, l, by_idx)
     t0 = lines[0][0] if lines else 0.0
-    pile_frames = [r for r in rp.rows if r["build"] is not None]
+    # Un retrieve rembourse (emission avortee) n a pas de trame a comparer ; le credit
+    # rendu est verifie par la trame suivante, qui doit reporter la position.
+    pile_frames = [r for r in rp.rows if r["build"] is not None and not r.get("refunded")]
     print(f"    {name}: {len(frames)} AT+TX dont {len(pile_frames)} issues de la pile ; phases restantes "
           f"{sorted(rp.alive)} sur {list(range(rp.max_index))}", flush=True)
     for r in rp.rows:
@@ -1548,7 +1555,8 @@ def _pile_cycles(rig, args, spec):
             if not got:
                 print(f"    cycle {k}: pas de ping 1 en 40 s", flush=True)
         j = rig.mark()
-        if not rig.cmd(f"%GPS {lat} {lon} 2500 9", r"%GPS OK", 8):
+        # L accuse part APRES le stockage en pile : 7,7 a 8,3 s mesures (run 20261011_184005).
+        if not rig.cmd(f"%GPS {lat} {lon} 2500 9", r"%GPS OK", 20):
             print(f"    cycle {k}: %GPS sans reponse", flush=True)
         if p == "dive-before":
             time.sleep(0.3)
