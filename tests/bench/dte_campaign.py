@@ -8878,7 +8878,9 @@ def c_edge_axl_selection(r, case):
                 defauts.append(f'{nom}: bit AXL {"present" if vu else "absent"}, attendu '
                                f'{"present" if attendu else "absent"}')
         b.write_params(dict(AXL_SENSOR_ENABLE=1))
-        i2c = _console(r, '%I2C', r'%I2C bus=', 10.0) or ''
+        # Le scan sonde 112 adresses avec 3 essais chacune : ~20-30 s, la console
+        # ne repond pas pendant ce temps (10 s ici laissait la suite ecrire dans le vide).
+        i2c = _console(r, '%I2C', r'%I2C bus=', 45.0) or ''
         trace.append(i2c.strip())
         if not re.search(r'addrs=.*\b(14|15)\b', i2c):
             defauts.append(f'BMA400 (0x14/0x15) absent du bus: {i2c.strip()[:80]}')
@@ -9003,7 +9005,17 @@ def c_edge_swstst_survit(r, case):
         except Exception:
             pass
         prm.restaurer()
-    trace = f'{len(pousses)} poussee(s) SWSST en Operational, arret={bool(arret)}'
+    # Une poussee deja en vol au moment du %OP (envoyee avant l arret) n est pas
+    # une survie du mode test : seules comptent celles APRES 'Test mode stopped'
+    # (1er passage 2026-10-11 : 1 poussee avant l arret, 0 apres).
+    if arret:
+        t_arret = arret[0][0]
+        en_vol = [p for p in pousses if p[0] <= t_arret]
+        pousses = [p for p in pousses if p[0] > t_arret]
+    else:
+        en_vol = []
+    trace = (f'{len(pousses)} poussee(s) SWSST en Operational apres l arret '
+             f'({len(en_vol)} en vol avant), arret={bool(arret)}')
     if pousses:
         return r.record(case, 'FAIL',
                         f'le mode test SURVIT a la sortie de configuration ({len(pousses)} poussees '
