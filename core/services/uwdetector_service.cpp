@@ -15,6 +15,10 @@
 #define UW_TIMING_LOG_ENABLE 0
 #endif
 
+#ifdef BENCH_TEST
+int8_t UWDetectorService::bench_forced_state = -1;
+#endif
+
 /// @brief Sample the detector, accumulate dry/wet counts, emit state change on terminal iteration.
 void UWDetectorService::service_initiate() {
 #if UW_TIMING_LOG_ENABLE
@@ -24,7 +28,12 @@ void UWDetectorService::service_initiate() {
 	DEBUG_TRACE("UWDetectorService: m_sample_iteration=%u dry=%u", m_sample_iteration, m_dry_count);
 
 	// Sample the switch
-	new_state = detector_state();
+#ifdef BENCH_TEST
+	if (bench_forced_state >= 0)
+		new_state = (bench_forced_state != 0);
+	else
+#endif
+		new_state = detector_state();
 #if UW_TIMING_LOG_ENABLE
 	uint32_t detector_ms = static_cast<uint32_t>(PMU::get_timestamp_ms() - uw_t0_ms);
 #endif

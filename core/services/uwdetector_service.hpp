@@ -16,6 +16,13 @@ public:
 	UWDetectorService(const char *name = "UWDetector") : Service(ServiceIdentifier::UW_SENSOR, name) {}
 	virtual ~UWDetectorService() {}
 
+#ifdef BENCH_TEST
+	/// Bench only: -1 = the real detector decides; 0 / 1 = %SURFACE / %DIVE hold
+	/// that state. Without it the real (dry) electrode re-reported "surfaced"
+	/// ~6 s after a %DIVE, and the board transmitted during the simulated dive.
+	static int8_t bench_forced_state;
+#endif
+
 protected:
 	double m_activation_threshold = 0.0;
 	unsigned int m_enable_sample_delay = 0;

@@ -333,6 +333,12 @@ class Runner:
         if self.b is None and not self.connect():
             return False
         b = self.b
+        # %DIVE/%SURFACE figent l etat sous-marin cote firmware : chaque cas repart
+        # avec le vrai detecteur (ancien firmware : '%ERR unknown-cmd', sans effet).
+        try:
+            b._send('%UWREAL\r\n')
+        except Exception:
+            pass
         for attempt in range(3):
             try:
                 b.enter_config()

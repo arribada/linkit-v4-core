@@ -7,6 +7,7 @@
 
 #ifdef BENCH_TEST
 
+#include "uwdetector_service.hpp"
 #include "bench_console.hpp"
 #include "usb_interface.hpp"
 #include "gentracker.hpp"
@@ -877,6 +878,10 @@ bool bench::handle_line(const std::string &raw) {
 		// Service::notify_peer_event routes it to notify_underwater_state(). %DIVE =
 		// wet (underwater=true), %SURFACE = dry (surfaced=false) — required to drive
 		// SURFACING_BURST's progressive Doppler cascade and underwater gating.
+		// Hold the simulated state in the detector too, until the next
+		// %DIVE / %SURFACE or %UWREAL: otherwise the real electrode (dry on the
+		// bench) reports "surfaced" on its next sample, ~6 s later.
+		UWDetectorService::bench_forced_state = (cmd == "%DIVE") ? 1 : 0;
 		ServiceEvent e;
 		e.event_source = ServiceIdentifier::UW_SENSOR;
 		e.event_type = ServiceEventType::SERVICE_LOG_UPDATED;
@@ -891,6 +896,10 @@ bool bench::handle_line(const std::string &raw) {
 			         (unsigned long long)PMU::get_timestamp_ms());
 			reply(b);
 		}
+	} else if (cmd == "%UWREAL") {
+		// Hand the underwater state back to the real detector.
+		UWDetectorService::bench_forced_state = -1;
+		reply("%UWREAL OK detector=real");
 	} else if (cmd == "%RST") {
 		// Boot forensics: decoded cause plus the raw registers behind it. The
 		// decisive datum for the storage work is bit 16 (OFF) of RESETREAS —

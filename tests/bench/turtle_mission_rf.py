@@ -1318,6 +1318,12 @@ class Rig:
 
     def safe_off(self, persist=True):
         try:
+            # Rend l etat sous-marin au vrai detecteur (%DIVE/%SURFACE le figent
+            # depuis le firmware du 2026-10-11 ; ancien firmware : %ERR, sans effet).
+            self.cmd("%UWREAL", r"%UWREAL OK|%ERR", 6)
+        except Exception:
+            pass
+        try:
             self.cmd("%AMODE 0", r"%AMODE mode=", 6)
             if persist:
                 self.enter_config()
