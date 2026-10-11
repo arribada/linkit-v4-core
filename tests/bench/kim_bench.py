@@ -133,11 +133,13 @@ class RFGuard:
     def __init__(self, bench):
         self.b = bench
         self.seen = None
+        self.idx = None  # history index of the first RF line (reboot checks start there)
         bench.line_hooks.append(self)
 
     def __call__(self, line):
         if self.seen is None and any(sig in line for sig in RF_SIGNATURES):
             self.seen = line
+            self.idx = max(0, len(self.b.history) - 1)
             try:
                 self.b._send("%AMODE 0\r\n")
             except Exception:
@@ -145,6 +147,7 @@ class RFGuard:
 
     def reset(self):
         self.seen = None
+        self.idx = None
 
 
 class Bench:
@@ -629,6 +632,19 @@ class Suite:
         if self.allow_rf:
             self.check("RF guard (--allow-rf: informative)", True,
                        f"RF seen: {self.guard.seen}" if self.guard.seen else "no RF seen")
+            if self.guard.seen:
+                # A TX start is not a transmission. On USB power alone the SMD PA
+                # spike collapsed the rail and the board power-on-reset in the
+                # middle of the burst (2026-10-11): TXSTART was seen, the frame
+                # was truncated, the pile and the persisted fix were lost -- and
+                # this suite reported PASS. Require the completion, and no reboot.
+                time.sleep(20.0)
+                done = b.expect(r"ArgosTxService: TX SUCCESS|KIM2Device::state_transmit: TX EMITTED OK",
+                                1.0, from_idx=0)
+                reboot = b.expect(r"Firmware Version: ", 1.0, from_idx=self.guard.idx or 0)
+                self.check("TX completed without a reboot", done is not None and reboot is None,
+                           ("REBOOT after TX start (supply collapse?): " + reboot.string.strip()[-80:]) if reboot
+                           else ("TX SUCCESS seen" if done else "no TX completion line within 20 s"))
         else:
             self.check("no real RF in the session", self.guard.seen is None,
                        f"RF SEEN, %AMODE 0 sent: {self.guard.seen}" if self.guard.seen
