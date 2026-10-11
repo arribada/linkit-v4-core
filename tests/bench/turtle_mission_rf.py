@@ -766,8 +766,10 @@ def analyse_burst(lines, cfg, res, ref=None, host_utc_at=None):
         prev = [f for f in frames if f["t"] < g["t"]]
         gap = g["t"] - prev[-1]["t"] if prev else None
         probs = []
-        if d["kind"] != "short" or d["nbytes"] != 12 or not d["ok"]:
-            probs.append(f"attendu SHORT 12 o valide, vu {d['kind']} {d['nbytes']} o ok={d.get('ok')}")
+        # SHORT (12 o) si la pile ne tient que ce fix ; LONG (24 o) si elle garde un
+        # fix precedent encore credite (pile 4, NTRY=2) : la plus recente en tete.
+        if d["kind"] not in ("short", "long") or d["nbytes"] not in (12, 24) or not d["ok"]:
+            probs.append(f"attendu SHORT 12 o ou LONG 24 o valide, vu {d['kind']} {d['nbytes']} o ok={d.get('ok')}")
         p = d["positions"][0] if d.get("positions") else None
         if p is None:
             probs.append("position NO_FIX dans la premiere trame GNSS")
@@ -791,7 +793,7 @@ def analyse_burst(lines, cfg, res, ref=None, host_utc_at=None):
         spread = max((_dist_km(p, q) for q in others), default=0.0) if p else 0.0
         if spread > 0.5:
             probs.append(f"les trames posterieures portent une autre position (ecart {spread:.2f} km)")
-        res.add(scen, "B5", "fix GNSS reel -> trame GNSS SHORT decodee", "FAIL" if probs else "PASS",
+        res.add(scen, "B5", "fix GNSS reel -> trame GNSS (SHORT/LONG) decodee", "FAIL" if probs else "PASS",
                 f"fix a +{t_fix - t_s:.1f} s ; trame +{g['t'] - t_s:.1f} s {g['hex']} -> {_fmt_pos(p)} "
                 f"date {d.get('day')}/{d.get('hour')}h{d.get('minute', 0):02d} batt={d.get('batt_mv')} mV "
                 f"alt={d.get('alt')} ; ecart avec la precedente {gap if gap is None else round(gap, 1)} s", probs)
