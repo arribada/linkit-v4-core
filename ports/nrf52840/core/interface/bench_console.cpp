@@ -806,6 +806,13 @@ bool bench::handle_line(const std::string &raw) {
 	} else if (cmd == "%CFG") {
 		if (GenTracker::is_in_state<ConfigurationState>()) {
 			reply("%CFG OK already-config");
+		} else if (GenTracker::is_in_state<BootState>() || GenTracker::is_in_state<PreOperationalState>()) {
+			// Accepted here, the gesture was consumed by boot, which then left
+			// configuration 0.3 s later on its own: every DTE command that
+			// followed landed in PreOp/Operational and was ignored (bench
+			// 2026-10-10/11, after a flash and after --pinreset). Refuse so the
+			// host retries once the board has settled.
+			reply("%CFG ERR booting (retry when OPERATIONAL)");
 		} else {
 			reply("%CFG OK entering-config");
 			synth_confirm_gesture();

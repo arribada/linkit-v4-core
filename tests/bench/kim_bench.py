@@ -357,10 +357,17 @@ class Bench:
         return False
 
     def enter_config(self, timeout=12.0):
-        mk = self.mark()
-        self._send("%CFG\r\n")
-        self.expect(r"%CFG OK", 3.0, from_idx=mk)
-        return self.wait_state("CONFIG", timeout)
+        # A board still booting answers "%CFG ERR booting" (firmware since
+        # 2026-10-11): retry until it has settled, within the same budget.
+        deadline = time.time() + max(timeout, 30.0)
+        while True:
+            mk = self.mark()
+            self._send("%CFG\r\n")
+            m = self.expect(r"%CFG (OK|ERR booting)", 3.0, from_idx=mk)
+            if m and m.group(1).startswith("ERR") and time.time() < deadline:
+                time.sleep(1.0)
+                continue
+            return self.wait_state("CONFIG", timeout)
 
     def exit_config(self, timeout=12.0):
         mk = self.mark()
