@@ -1497,7 +1497,7 @@ void ArgosTxService::notify_peer_event(ServiceEvent &e) {
 			m_kineis.set_tcxo_warmup_time(0);
 			// 2. Kill SMD and restore default idle timeout
 			m_kineis.set_idle_timeout(1000);
-			m_kineis.power_off_immediate();
+			m_kineis.park_for_dive();
 
 			// Activate cooldown on dive if armed during this surfacing session
 			if (m_cooldown_armed) {

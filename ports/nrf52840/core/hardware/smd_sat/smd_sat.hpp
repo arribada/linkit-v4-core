@@ -260,6 +260,9 @@ public:
 	void set_tcxo_warmup_time(unsigned int time) override;
 	void set_tx_power(unsigned int power) override;
 	void set_lpm_mode(uint8_t lpm_bitmap);
+#if defined(SMD_DIVE_STANDBY) && SMD_DIVE_STANDBY
+	void park_for_dive() override;
+#endif
 	void set_next_message_counter(uint16_t mc) override {
 		m_mc_override = mc;
 		m_mc_override_valid = true;

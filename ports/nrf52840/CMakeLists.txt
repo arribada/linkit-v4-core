@@ -62,6 +62,7 @@ set(BOOL_BUILD_FLAGS
     ARGOS_SMD LORA_RAK3172 LORA_DCS_ENABLE LORA_POWER_OFF_UNDERWATER LORA_MOTION_EXT LORA_LINKCHECK
     SMDSAT_USE_SAFE_TIMINGS SMDSAT_AUTOFALLBACK SMDSAT_TXTRACE DEBUG_NO_SYSTEMLOG
     BENCH_TEST BENCH_ALLOW_POWERDOWN BENCH_FORCE_LPM_NONE SMD_FLASH_HOLD SMD_UART KIM2_BLIND_WKUP_RELEASE
+    SMD_DIVE_STANDBY
     DX1_GROUND_DECODER_READY
     CAM_ENABLE BUZZER_ENABLE
     METRIC_LATENCY_LOG_ENABLE VALIDATION_LOG_ENABLE RSPB_VSENSORS_FLOOR)
@@ -843,6 +844,10 @@ target_compile_definitions(${TARGET_NAME} PRIVATE
     # TEST: power SMD at boot and park the nRF so the STM32WL can be flashed
     # without the board resetting. Enable with -DSMD_FLASH_HOLD=ON. See main.cpp.
     $<$<BOOL:${SMD_FLASH_HOLD}>:SMD_FLASH_HOLD=1>
+    # TEST (2026-10-12): keep the SMD powered in its LPM (ARP60) after each TX and
+    # through the dive instead of cutting its rail -- measures whether a STANDBY
+    # wake shortens the first surfacing message. -DSMD_DIVE_STANDBY=ON.
+    $<$<BOOL:${SMD_DIVE_STANDBY}>:SMD_DIVE_STANDBY=1>
     # KIM2 + BLIND: relâcher SAT_EXTWAKEUP pendant la salve pilotée par le module,
     # pour qu'il descende en basse consommation entre ses retransmissions au lieu
     # de rester éveillé toute la séquence. Défaut OFF = pin maintenue haute, le

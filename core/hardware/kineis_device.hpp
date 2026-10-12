@@ -68,6 +68,10 @@ public:
 	virtual void send(const KineisModulation mode, const KineisPacket &packet, const unsigned int size_bits) = 0;
 	virtual void stop_send() = 0;
 	virtual void power_off_immediate() {}  // Hard shutdown (default: no-op for backends without power control)
+	/// @brief The device is going underwater. Default: hard shutdown. A backend may
+	/// instead park the radio in a low-power mode it can be woken from (SmdSat with
+	/// SMD_DIVE_STANDBY).
+	virtual void park_for_dive() { power_off_immediate(); }
 	/// @brief Pre-boot the radio module without sending anything. Lets the
 	/// next send() dispatch immediately instead of paying the boot+configure
 	/// cost. Default no-op for backends where wake is already fast enough.

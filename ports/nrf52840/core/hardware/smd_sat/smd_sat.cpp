@@ -288,6 +288,13 @@ void SmdSat::power_on() {
 	if (m_state != SmdSat::stopped) {
 		m_stopping = false;
 		TXTRACE("power_on(): already running (state=%d) — TX rides existing session", static_cast<int>(m_state));
+		// A module left idle (kept powered between TX, or parked for a dive) only
+		// notices the new packet on its next idle tick: run that tick now.
+		if (SMD_STATE_EQUAL(idle)) {
+			system_scheduler->cancel_task(m_task);
+			m_task = system_scheduler->post_task_prio([this]() { state_machine(); }, "SmdReceiverStateMachine",
+			                                          SMD_SCHEDULER_PRIORITY, 0);
+		}
 		return;
 	}
 
@@ -1463,6 +1470,14 @@ void SmdSat::state_transmitting() {
 			DEBUG_TRACE("SmdSat::%s: notify KineisEventTxComplete", __func__);
 			notify(KineisEventTxComplete({}));
 		}
+#if defined(SMD_DIVE_STANDBY) && SMD_DIVE_STANDBY
+		// TEST: keep the module powered in its STANDBY/SHUTDOWN mode between
+		// transmissions instead of cutting its rail (state_idle_enter drops WKUP).
+		if (m_lpm_mode & 0x18) {
+			SMD_STATE_CHANGE(transmitting, idle);
+			return;
+		}
+#endif
 		SMD_STATE_CHANGE(transmitting, stopped);
 	} else {
 		if (!m_tx_buffer.size()) {
@@ -1638,6 +1653,30 @@ void SmdSat::set_lpm_mode(uint8_t lpm_bitmap) {
 	if (lpm_bitmap == 0) lpm_bitmap = 0x01;  // Fallback to NONE
 	m_lpm_mode = lpm_bitmap;
 }
+
+#if defined(SMD_DIVE_STANDBY) && SMD_DIVE_STANDBY
+/// @brief TEST: park the module in its LPM for the dive instead of cutting the
+/// rail, so the next surfacing wakes it (WKUP rising = STM32 reset, SRAM2 and the
+/// RTC backup domain retained) rather than cold-booting it. Only with a
+/// STANDBY/SHUTDOWN LPM configured (ARP60); otherwise the usual hard shutdown.
+void SmdSat::park_for_dive() {
+	if (!(m_lpm_mode & 0x18)) {
+		power_off_immediate();
+		return;
+	}
+	static constexpr unsigned int DIVE_IDLE_MS = 0x7FFFFFF0U;  // no idle timeout while parked
+	m_idle_timeout_ms = DIVE_IDLE_MS;
+	if (SMD_STATE_EQUAL(stopped)) {
+		DEBUG_INFO("SmdSat::%s: booting the module to park it in LPM 0x%02X for the dive", __func__, m_lpm_mode);
+		power_on();  // no packet: boot ends in idle, whose entry writes the LPM and drops WKUP
+	} else if (SMD_STATE_EQUAL(idle)) {
+		m_state_counter = DIVE_IDLE_MS / SMDSAT_DELAY_TICK_INTERRUPT_MS;
+		DEBUG_INFO("SmdSat::%s: module kept in LPM 0x%02X for the dive", __func__, m_lpm_mode);
+	}
+	// Any other state is mid-TX: it ends in idle (see state_transmitting) with the
+	// counter re-armed from m_idle_timeout_ms.
+}
+#endif
 
 void SmdSat::set_tx_power(unsigned int power) {
 	m_tx_power = power;
