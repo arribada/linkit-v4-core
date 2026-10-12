@@ -7,6 +7,16 @@
 
 #include "logger.hpp"
 
+/// @brief Least severe level that reaches the system log, numbered like
+/// DEBUG_LEVEL: 1 ERROR, 2 WARN, 3 INFO (default), 0 none. Each line written
+/// costs a LittleFS commit; 2 keeps INFO on the console only.
+#ifndef SYSTEMLOG_MIN_LEVEL
+#define SYSTEMLOG_MIN_LEVEL 3
+#endif
+#if (SYSTEMLOG_MIN_LEVEL < 0) || (SYSTEMLOG_MIN_LEVEL > 3)
+#error "SYSTEMLOG_MIN_LEVEL must be 0..3: TRACE never reaches the system log"
+#endif
+
 /// @brief Global debug logger singletons (set in main.cpp).
 /// Also owns the "hold" window. Every DEBUG_* line commits to system_log on
 /// LittleFS, and on a latency-critical path that is not free: measured on the
@@ -30,6 +40,19 @@ public:
 	/// release() reports -- a full buffer means the window was left open.
 	static void hold_line(char level, const char *fmt, ...);
 
+	/// @brief System-log half of DEBUG_ERROR/WARN/INFO (level 'E', 'W', 'I').
+	///
+	/// Never throws: a log call sits in catch handlers and in callbacks that
+	/// unwind through C frames, where an escaping exception is std::terminate.
+	/// A line is skipped from interrupt context and while LittleFS is already
+	/// working (a nested log, a flash driver error), as LittleFS is not
+	/// re-entrant; the console half still shows it.
+	static void syslog(char level, const char *fmt, ...);
+	/// @brief Lines not written because the context forbade it.
+	static unsigned int syslog_skipped() { return m_syslog_skipped; }
+	/// @brief Lines whose write failed (the exception was swallowed).
+	static unsigned int syslog_failed() { return m_syslog_failed; }
+
 private:
 	static constexpr unsigned int HOLD_MAX_LINES = 24;
 	static constexpr unsigned int HOLD_LINE_LEN = 120;
@@ -38,72 +61,60 @@ private:
 	static inline unsigned int m_hold_dropped = 0;
 	static inline char m_hold_level[HOLD_MAX_LINES] = { 0 };
 	static inline char m_hold_buf[HOLD_MAX_LINES][HOLD_LINE_LEN] = { { 0 } };
+
+	static inline bool m_writing = false;
+	static inline unsigned int m_syslog_skipped = 0;
+	static inline unsigned int m_syslog_failed = 0;
+
+	static void write_line(char level, const char *text);
 };
 
 #ifdef DEBUG_ENABLE
 
-#if (DEBUG_LEVEL >= 1)
-#ifdef DEBUG_TO_SYSTEMLOG
-#define DEBUG_ERROR(fmt, ...)                                                              \
-	do {                                                                                   \
-		if (DebugLogger::console_log) DebugLogger::console_log->error(fmt, ##__VA_ARGS__); \
-		if (DebugLogger::system_log && DebugLogger::system_log->is_ready()) {              \
-			if (DebugLogger::is_held())                                                    \
-				DebugLogger::hold_line('E', fmt, ##__VA_ARGS__);                           \
-			else                                                                           \
-				DebugLogger::system_log->error(fmt, ##__VA_ARGS__);                        \
-		}                                                                                  \
-	} while (0)
+// System-log half of each DEBUG_* line, compiled out for levels that do not
+// reach flash.
+#if defined(DEBUG_TO_SYSTEMLOG) && (SYSTEMLOG_MIN_LEVEL >= 1)
+#define DEBUG_SYSLOG_ERROR(fmt, ...) DebugLogger::syslog('E', fmt, ##__VA_ARGS__)
 #else
+#define DEBUG_SYSLOG_ERROR(fmt, ...) ((void)0)
+#endif
+#if defined(DEBUG_TO_SYSTEMLOG) && (SYSTEMLOG_MIN_LEVEL >= 2)
+#define DEBUG_SYSLOG_WARN(fmt, ...) DebugLogger::syslog('W', fmt, ##__VA_ARGS__)
+#else
+#define DEBUG_SYSLOG_WARN(fmt, ...) ((void)0)
+#endif
+#if defined(DEBUG_TO_SYSTEMLOG) && (SYSTEMLOG_MIN_LEVEL >= 3)
+#define DEBUG_SYSLOG_INFO(fmt, ...) DebugLogger::syslog('I', fmt, ##__VA_ARGS__)
+#else
+#define DEBUG_SYSLOG_INFO(fmt, ...) ((void)0)
+#endif
+
+#if (DEBUG_LEVEL >= 1)
 #define DEBUG_ERROR(fmt, ...)                                                              \
 	do {                                                                                   \
 		if (DebugLogger::console_log) DebugLogger::console_log->error(fmt, ##__VA_ARGS__); \
+		DEBUG_SYSLOG_ERROR(fmt, ##__VA_ARGS__);                                            \
 	} while (0)
-#endif
 #else
 #define DEBUG_ERROR(fmt, ...)
 #endif
 
 #if (DEBUG_LEVEL >= 2)
-#ifdef DEBUG_TO_SYSTEMLOG
 #define DEBUG_WARN(fmt, ...)                                                              \
 	do {                                                                                  \
 		if (DebugLogger::console_log) DebugLogger::console_log->warn(fmt, ##__VA_ARGS__); \
-		if (DebugLogger::system_log && DebugLogger::system_log->is_ready()) {             \
-			if (DebugLogger::is_held())                                                   \
-				DebugLogger::hold_line('W', fmt, ##__VA_ARGS__);                          \
-			else                                                                          \
-				DebugLogger::system_log->warn(fmt, ##__VA_ARGS__);                        \
-		}                                                                                 \
+		DEBUG_SYSLOG_WARN(fmt, ##__VA_ARGS__);                                            \
 	} while (0)
-#else
-#define DEBUG_WARN(fmt, ...)                                                              \
-	do {                                                                                  \
-		if (DebugLogger::console_log) DebugLogger::console_log->warn(fmt, ##__VA_ARGS__); \
-	} while (0)
-#endif
 #else
 #define DEBUG_WARN(fmt, ...)
 #endif
 
 #if (DEBUG_LEVEL >= 3)
-#ifdef DEBUG_TO_SYSTEMLOG
 #define DEBUG_INFO(fmt, ...)                                                              \
 	do {                                                                                  \
 		if (DebugLogger::console_log) DebugLogger::console_log->info(fmt, ##__VA_ARGS__); \
-		if (DebugLogger::system_log && DebugLogger::system_log->is_ready()) {             \
-			if (DebugLogger::is_held())                                                   \
-				DebugLogger::hold_line('I', fmt, ##__VA_ARGS__);                          \
-			else                                                                          \
-				DebugLogger::system_log->info(fmt, ##__VA_ARGS__);                        \
-		}                                                                                 \
+		DEBUG_SYSLOG_INFO(fmt, ##__VA_ARGS__);                                            \
 	} while (0)
-#else
-#define DEBUG_INFO(fmt, ...)                                                              \
-	do {                                                                                  \
-		if (DebugLogger::console_log) DebugLogger::console_log->info(fmt, ##__VA_ARGS__); \
-	} while (0)
-#endif
 #else
 #define DEBUG_INFO(fmt, ...)
 #endif

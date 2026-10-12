@@ -271,6 +271,7 @@ target_sources(${PROJECT_NAME} PRIVATE
     "src/previpass_test.cpp"
     "src/sws_analog_test.cpp"
     "src/logger_test.cpp"
+    "src/debug_logger_test.cpp"
     "src/nrf_switch_test.cpp"
     # "src/nrf_battery_test.cpp"  # Excluded: depends on NrfBatteryMonitor (needs Nordic SDK nrf_delay.h)
     "src/ph_sensor_test.cpp"

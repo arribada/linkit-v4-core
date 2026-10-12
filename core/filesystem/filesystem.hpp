@@ -62,21 +62,37 @@ private:
 	FlashInterface *m_flash_if;
 	bool m_is_mounted;
 
+	// Flash driver calls in progress, all instances. Marks a LittleFS
+	// operation underway, which nothing may re-enter.
+	static inline unsigned int s_flash_io_depth = 0;
+	struct FlashIo {
+		FlashIo() { s_flash_io_depth++; }
+		~FlashIo() { s_flash_io_depth--; }
+	};
+
 	static int lfs_read(const struct lfs_config *c, lfs_block_t block, lfs_off_t off, void *buffer, lfs_size_t size) {
+		FlashIo io;
 		return reinterpret_cast<LFSFileSystem *>(c->context)->m_flash_if->read(block, off, buffer, size);
 	}
 	static int lfs_prog(const struct lfs_config *c, lfs_block_t block, lfs_off_t off, const void *buffer,
 	                    lfs_size_t size) {
+		FlashIo io;
 		return reinterpret_cast<LFSFileSystem *>(c->context)->m_flash_if->prog(block, off, buffer, size);
 	}
 	static int lfs_erase(const struct lfs_config *c, lfs_block_t block) {
+		FlashIo io;
 		return reinterpret_cast<LFSFileSystem *>(c->context)->m_flash_if->erase(block);
 	}
 	static int lfs_sync(const struct lfs_config *c) {
+		FlashIo io;
 		return reinterpret_cast<LFSFileSystem *>(c->context)->m_flash_if->sync();
 	}
 
 public:
+	/// @brief True while called from inside a flash driver call, i.e. in the
+	/// middle of a LittleFS operation (a driver logging a QSPI error).
+	static bool in_flash_io() { return s_flash_io_depth != 0; }
+
 	/// @brief Construct LittleFS filesystem backed by a FlashInterface.
 	/// @param flash_if  Flash hardware (QSPI, RAM, etc.).
 	/// @param blocks    Number of blocks to use (0 = use all from flash_if).
