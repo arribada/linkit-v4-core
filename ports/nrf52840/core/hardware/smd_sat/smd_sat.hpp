@@ -163,6 +163,10 @@ private:
 	double m_tx_freq;
 	bool m_is_first_tx;
 	uint32_t m_tcxo_warmup_time;
+	// Last non-zero warmup the service asked for: the cold-die fallback when the
+	// service requests a skip (0) for the first TX after a dive.
+	uint32_t m_tcxo_configured_s = 5;
+	uint32_t effective_tcxo_warmup_s() const;
 	uint64_t m_tx_trace_start_ms = 0;
 #ifdef BENCH_TEST
 	/// @brief Latency marks, in ms since m_tx_trace_start_ms, dumped as ONE log

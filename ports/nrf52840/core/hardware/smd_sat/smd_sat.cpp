@@ -858,16 +858,11 @@ void SmdSat::state_load_kmac() {
 		DEBUG_TRACE("SmdSat::%s: MAC ready (mac=%u, explicit_load=%u)", __func__, mac_st, m_needs_explicit_kmac_load);
 
 		// Step 4: Write TCXO warmup — RAM register on STM32, lost on power cycle.
-		// Force 0 on first TX after power-on: TCXO was just powered, no warmup needed.
-		// Configured value is rewritten in state_transmitting_exit after the first TX.
-		// Safety: if die temperature is below TCXO_SKIP_TEMP_THRESHOLD_C, fall back to
-		// the configured warmup so a cold TCXO (deep dive → quick surface in cold
-		// water) doesn't TX off-frequency. Affects only the first TX of the burst;
-		// subsequent TXes already use the configured warmup.
+		// The value is the service's (0 for the first TX after a dive, the configured
+		// warmup otherwise), with the cold-die fallback: see effective_tcxo_warmup_s().
 		int die_temp_c = PMU::get_die_temperature_c();
-		bool tcxo_skip = m_is_first_tx && (die_temp_c >= TCXO_SKIP_TEMP_THRESHOLD_C);
-		uint32_t warmup_ms = tcxo_skip ? 0 : (m_tcxo_warmup_time * 1000);
-		if (m_is_first_tx && !tcxo_skip) {
+		uint32_t warmup_ms = effective_tcxo_warmup_s() * 1000;
+		if (m_tcxo_warmup_time == 0 && warmup_ms != 0) {
 			DEBUG_INFO("SmdSat::%s: cold die temp (%d °C < %d) — keeping TCXO warmup", __func__, die_temp_c,
 			           TCXO_SKIP_TEMP_THRESHOLD_C);
 		}
@@ -1188,8 +1183,7 @@ void SmdSat::state_transmit_pending_exit() {
 	// Cold die (deep cold dive then quick surface) keeps the configured warmup
 	// to avoid an off-frequency first TX. Must match the gate logic in
 	// state_load_kmac so the SMD's actual warmup matches our poll horizon.
-	bool tcxo_skip = m_is_first_tx && (PMU::get_die_temperature_c() >= TCXO_SKIP_TEMP_THRESHOLD_C);
-	unsigned int effective_warmup = tcxo_skip ? 0 : m_tcxo_warmup_time;
+	unsigned int effective_warmup = effective_tcxo_warmup_s();
 	unsigned int base_delay = (effective_warmup > 0) ? SMDSAT_DELAY_CMD_TX : smdsat_first_tx_base_delay_ms();
 	m_next_delay = base_delay + (effective_warmup * 1000);
 	TXTRACE("state_transmit_pending_exit: scheduling 1st TX poll in %u ms (first_tx=%u warmup=%u s)", m_next_delay,
@@ -1352,7 +1346,7 @@ void SmdSat::state_transmit_pending() {
 
 void SmdSat::state_transmitting_enter() {
 	DEBUG_TRACE("SmdSat::%s", __func__);
-	uint32_t total_timeout_ms = (m_tcxo_warmup_time * 1000) + 5000;
+	uint32_t total_timeout_ms = (effective_tcxo_warmup_s() * 1000) + 5000;
 	// BLIND: the module transmits retx_nb copies retx_period_s apart before it
 	// reports +TX — extend the poll window to cover the whole burst.
 	unsigned int rn = 0, period = 0;
@@ -1603,8 +1597,24 @@ void SmdSat::send(const KineisModulation mode, const KineisPacket &user_payload,
 	power_on();
 }
 
+/// @brief The TCXO warmup this TX really gets, in seconds.
+///
+/// The SERVICE decides: ArgosTxService asks for 0 on the first TX after a dive
+/// (the TCXO was just powered and the surface window is short) and restores the
+/// configured value after it. This used to be decided here instead, on "first TX
+/// since power-on" -- and since the rail is cut after EVERY transmission, every
+/// transmission was a first one: the whole burst, GNSS frame included, went out
+/// with no warmup at all whatever ARGOS_TCXO_WARMUP_TIME said (bench 2026-10-12).
+/// The cold-die guard stays: a skip requested on a die below
+/// TCXO_SKIP_TEMP_THRESHOLD_C falls back to the configured warmup.
+uint32_t SmdSat::effective_tcxo_warmup_s() const {
+	if (m_tcxo_warmup_time > 0) return m_tcxo_warmup_time;
+	return (PMU::get_die_temperature_c() >= TCXO_SKIP_TEMP_THRESHOLD_C) ? 0 : m_tcxo_configured_s;
+}
+
 void SmdSat::set_tcxo_warmup_time(unsigned int time_s) {
 	m_tcxo_warmup_time = time_s;
+	if (time_s > 0) m_tcxo_configured_s = time_s;
 }
 
 void SmdSat::set_lpm_mode(uint8_t lpm_bitmap) {
