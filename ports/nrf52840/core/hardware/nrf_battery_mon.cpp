@@ -131,14 +131,16 @@ static void nrfx_saadc_event_handler(nrfx_saadc_evt_t const *p_event) {
 	(void)p_event;
 }
 
-/// @brief Consecutive confirmations before the low / critical flags are raised.
+/// @brief Consecutive confirmations before the low flag is raised.
 ///
 /// Entering either band used to take a single sample. That was survivable on
 /// Li-ion, whose internal resistance is low enough that a TX burst barely moves
 /// the terminal voltage. An alkaline D pack sags far harder under the same
 /// ~1 A pulse, so one unlucky sample taken mid-burst would declare a healthy
 /// pack critical and shut the tag down. Leaving a band is still governed by the
-/// SOC hysteresis below — this only debounces the way IN.
+/// SOC hysteresis below — this only debounces the way IN. The critical band,
+/// which ends in System OFF, also needs its samples spread in time: see
+/// CriticalBandConfirm.
 static constexpr uint8_t BATT_CONFIRM_SAMPLES = 3;
 
 /// @brief Filtered battery state persisted in .noinit RAM to survive soft resets.
@@ -151,7 +153,7 @@ struct BatteryNoinit {
 	uint16_t voltage_mv;    ///< Last accepted reading
 	uint16_t filtered_soc;  ///< SOC after recovery hysteresis — what the flags are derived from
 	uint8_t low_confirm;    ///< Consecutive samples below m_low_level, saturating
-	uint8_t crit_confirm;   ///< Consecutive samples below m_critical_level, saturating
+	uint8_t crit_confirm;   ///< Spaced samples below m_critical_level (CriticalBandConfirm), saturating
 };
 
 static_assert(sizeof(BatteryNoinit) == 6, "BatteryNoinit must be padding-free — the CRC covers raw bytes");
@@ -224,18 +226,15 @@ float NrfBatteryMonitor::sample_adc() {
 	//
 	// This is a high-impedance divider -- the BSP calls it that -- and a single
 	// conversion is enough for a noise spike or a transient sag (a TX current
-	// pulse, a rail switching) to read tens of millivolts low. That matters here
-	// more than anywhere else in the firmware: the critical-battery path latches
-	// on one sample and ends in OffState, so a single bad conversion could take
-	// a healthy beacon out of service for good. The median rejects an outlier
-	// outright, where a mean would still be dragged by it.
+	// pulse, a rail switching) to read tens of millivolts low. The critical-battery
+	// path ends in OffState, so every sample it counts must be a real one. The
+	// median rejects an outlier outright, where a mean would still be dragged by
+	// it. A sag that lasts longer than one conversion window is
+	// CriticalBandConfirm's job, not this filter's.
 	//
 	// Sampling inside the same init/uninit window is nearly free: the costs here
 	// are the peripheral init and the BAT_ADC_SETTLE_MS delay, both already
-	// paid above. Filtering the conversion rather than requiring several
-	// consecutive updates also keeps the response immediate -- update() is
-	// driven by the services, so "wait for three more" could mean hours on a
-	// battery that is genuinely collapsing.
+	// paid above.
 	constexpr unsigned int ADC_MEDIAN_SAMPLES = 5;
 	nrf_saadc_value_t samples[ADC_MEDIAN_SAMPLES] = {};
 	for (unsigned int i = 0; i < ADC_MEDIAN_SAMPLES; i++) {
@@ -324,10 +323,12 @@ void NrfBatteryMonitor::internal_update() {
 	uint8_t crit_confirm = m_batt_noinit.crit_confirm;
 	uint8_t low_confirm = m_batt_noinit.low_confirm;
 
-	if (level < m_critical_level) {
-		if (crit_confirm < BATT_CONFIRM_SAMPLES) crit_confirm++;
-	} else {
-		crit_confirm = 0;
+	const bool crit_was_confirmed = m_crit_band_confirmed;
+	m_crit_band_confirmed = m_crit_band.update(crit_confirm, level < m_critical_level, PMU::get_timestamp_ms());
+	if (m_crit_band_confirmed && !crit_was_confirmed) {
+		DEBUG_INFO("NrfBatteryMonitor: critical band confirmed (%u mV, %u%%, %u samples >= %u min apart)", mv, level,
+		           static_cast<unsigned int>(CriticalBandConfirm::SAMPLES),
+		           static_cast<unsigned int>(CriticalBandConfirm::MIN_SPACING_MS / 60000ULL));
 	}
 	if (level < m_low_level) {
 		if (low_confirm < BATT_CONFIRM_SAMPLES) low_confirm++;
@@ -345,9 +346,9 @@ void NrfBatteryMonitor::internal_update() {
 	m_last_voltage_mv = mv;
 	m_last_level = level;
 
-	// Flags: the filtered SOC says we are in the band, the counter says we have
-	// seen it often enough to act on it.
-	m_is_critical_voltage = (m_batt_noinit.filtered_soc < m_critical_level) && (crit_confirm >= BATT_CONFIRM_SAMPLES);
+	// Flags: the filtered SOC says we are in the band, the confirmation says we
+	// have seen it often enough (and for critical, long enough) to act on it.
+	m_is_critical_voltage = (m_batt_noinit.filtered_soc < m_critical_level) && m_crit_band_confirmed;
 	m_is_low_level = (m_batt_noinit.filtered_soc < m_low_level) && (low_confirm >= BATT_CONFIRM_SAMPLES);
 
 	DEBUG_TRACE("NrfBatteryMonitor: %u mV, %u%% (filtered %u%%), low=%u critical=%u", m_last_voltage_mv, m_last_level,
