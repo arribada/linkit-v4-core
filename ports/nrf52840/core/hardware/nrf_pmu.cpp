@@ -780,3 +780,16 @@ void PMU::restore_power_rails() {
 #endif
 	// RSPB: SENSORS_PWR stays ON (never cut while nRF is running — see FIXME above)
 }
+
+void PMU::ensure_vsys_nominal() {
+#if defined(VSYS_SEL) && !defined(BOARD_RSPB)
+	// The OUT latch, not GPIOPins::value(): the pin's input buffer is
+	// disconnected in the BSP, so IN always reads 0.
+	if (nrf_gpio_pin_out_read(BSP::GPIO_Inits[VSYS_SEL].pin_number)) return;
+	// The POF threshold stays at 2.0 V until the main loop's
+	// restore_power_rails(): an sd_* call is not allowed at every interrupt
+	// priority, and the POF handler does not protect the flash.
+	GPIOPins::set(VSYS_SEL);
+	nrf_delay_ms(2);  // same settling as restore_power_rails()
+#endif
+}
