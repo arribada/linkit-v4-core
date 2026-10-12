@@ -60,6 +60,19 @@ void UWDetectorService::service_initiate() {
 		m_sample_iteration = 0;
 		m_dry_count = 0;
 
+#ifdef BENCH_TEST
+		// %DIVE / %SURFACE have already broadcast the forced state themselves:
+		// adopt it silently. Broadcasting it a second time made every peer see two
+		// surfacings ~100 ms apart -- ArgosTxService reset its burst counter and
+		// its Doppler MC after the PREWARM had already left (bench 2026-10-12).
+		if (bench_forced_state >= 0 && (m_pending_state != m_current_state || m_is_first_time)) {
+			m_is_first_time = false;
+			m_current_state = m_pending_state;
+			m_pending_state = false;
+			service_complete();
+			return;
+		}
+#endif
 		if (m_pending_state != m_current_state || m_is_first_time) {
 #if UW_TIMING_LOG_ENABLE
 			DEBUG_INFO("[UW-CHG t=%lu det=%u ms] state changed: state=%u (sample_iter=%u dry=%u max=%u min_dry=%u)",

@@ -1225,6 +1225,14 @@ void SmdSat::apply_message_counter_hold() {
 	if (m_mc_override_valid) {
 		m_mc_override_valid = false;
 		if (m_cmd.set_message_counter(m_mc_override)) {
+			if (m_mc_support != McSupport::YES) {
+				// Once per boot: prove the module really took it. Every later write is
+				// trusted, so the read-back is not paid on each TX.
+				uint16_t back = 0xFFFF;
+				const bool read_ok = m_cmd.read_message_counter(&back);
+				DEBUG_INFO("SmdSat::%s: module accepts AT+MC — set %u, read back %s%u", __func__, m_mc_override,
+				           read_ok ? "" : "FAILED ", read_ok ? (unsigned)back : 0U);
+			}
 			m_mc_support = McSupport::YES;
 			DEBUG_TRACE("SmdSat::%s: MC set to %u (host)", __func__, m_mc_override);
 		} else {

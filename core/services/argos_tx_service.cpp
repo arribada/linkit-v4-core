@@ -1543,8 +1543,10 @@ void ArgosTxService::notify_peer_event(ServiceEvent &e) {
 			// Device surfaced.
 			//
 			// A new surfacing is a new set of messages for the Argos MC: new Doppler
-			// counter, and last surfacing's frames are no longer repeats.
-			m_mc.on_surfaced();
+			// counter, and last surfacing's frames are no longer repeats. Only on a
+			// real underwater -> surface transition: a repeated "surfaced" must not
+			// split one surfacing's Doppler across two counters.
+			if (m_is_underwater) m_mc.on_surfaced();
 			//
 			// Hold the system log for the first surfacing transmission, and only
 			// for it. Every DEBUG_* line commits to LittleFS, which measured 0.6
