@@ -375,6 +375,14 @@ private:
 	void dump_navigation_database(unsigned int);
 	void save_dbd_to_flash();
 	bool load_dbd_from_flash();
+	// The DBD reaches flash a while AFTER the session, not inside it: the write is
+	// a synchronous LittleFS commit of up to 16 KB (1.1-6.7 s measured) that froze
+	// the scheduler right when the fix triggers the GNSS transmission.
+	static constexpr unsigned int DBD_SAVE_DEFER_MS = 15000;
+	bool m_dbd_save_pending = false;
+	Scheduler::TaskHandle m_dbd_save_task;
+	void defer_dbd_save();
+	void flush_deferred_dbd_save();
 
 	// Power management
 	void enter_shutdown();

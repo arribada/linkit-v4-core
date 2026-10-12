@@ -2621,6 +2621,34 @@ void M10QAsyncReceiver::state_stopreceive() {
 
 void M10QAsyncReceiver::state_stopreceive_exit() {}
 
+/// @brief Write the fetched DBD to flash later, off the fix -> GNSS TX path.
+///
+/// Bench 2026-10-11/12: the save sat at the end of state_fetchdatabase, i.e. a
+/// second or two after the fix -- exactly when ArgosTxService powers the SMD up
+/// for "GNSS TX #1 (immediate after fix)". The LittleFS commit blocks the
+/// cooperative scheduler for 1.1-6.7 s, so the satellite driver's ticks stalled
+/// and the position frame left 1.5-4.5 s late (mac step 1.6-4.5 s instead of
+/// 177 ms in every slow case). The RAM copy is what the next session replays
+/// anyway; flash is only the copy that survives a reset.
+///
+/// Trade-off: a reset inside the window loses this DBD and the previous file
+/// stays (age-capped at load). The buffer is shared with the ANO upload, so every
+/// path that is about to reuse it flushes a pending save first.
+void M10QAsyncReceiver::defer_dbd_save() {
+	m_dbd_save_pending = true;
+	system_scheduler->cancel_task(m_dbd_save_task);
+	m_dbd_save_task = system_scheduler->post_task_prio([this]() { flush_deferred_dbd_save(); }, "GnssDbdSave",
+	                                                   Scheduler::DEFAULT_PRIORITY, DBD_SAVE_DEFER_MS);
+}
+
+void M10QAsyncReceiver::flush_deferred_dbd_save() {
+	if (!m_dbd_save_pending) return;
+	m_dbd_save_pending = false;
+	system_scheduler->cancel_task(m_dbd_save_task);
+	VAL_GNSS("dbd_save_deferred bytes=%u", m_ana_database_len);
+	save_dbd_to_flash();
+}
+
 void M10QAsyncReceiver::save_dbd_to_flash() {
 	if (!main_filesystem || m_ana_database_len == 0) return;
 
@@ -2717,6 +2745,7 @@ bool M10QAsyncReceiver::load_dbd_from_flash() {
 }
 
 void M10QAsyncReceiver::state_fetchdatabase_enter() {
+	flush_deferred_dbd_save();  // the buffer is about to be refilled
 	m_step = 0;
 	m_retries = DEFAULT_RETRIES;
 	m_op_state = OpState::IDLE;
@@ -2812,8 +2841,9 @@ void M10QAsyncReceiver::state_fetchdatabase() {
 					// rewrite per session is ~5-6 MB/day through LittleFS on the 16 MB
 					// wear-levelled IS25 — ~0.4 erase-cycles per block per day against a
 					// 100K endurance. No throttle needed at any cadence this firmware runs.
+					// Deferred (2026-10-12): see defer_dbd_save().
 					if (m_fix_was_found) {
-						save_dbd_to_flash();
+						defer_dbd_save();
 					}
 				}
 				STATE_CHANGE(fetchdatabase, poweroff);
@@ -2841,6 +2871,7 @@ void M10QAsyncReceiver::state_fetchdatabase_exit() {
 }
 
 void M10QAsyncReceiver::state_senddatabase_enter() {
+	flush_deferred_dbd_save();  // persist before the buffer is reused
 	m_step = 0;
 	m_op_state = OpState::IDLE;
 	m_mga_ack_count = 0;
@@ -2936,6 +2967,7 @@ void M10QAsyncReceiver::state_senddatabase_exit() {
 }
 
 void M10QAsyncReceiver::state_sendofflinedatabase_enter() {
+	flush_deferred_dbd_save();  // the ANO upload overwrites the shared buffer
 	m_op_state = OpState::IDLE;
 	m_step = 0;
 	m_mga_ack_count = 0;
