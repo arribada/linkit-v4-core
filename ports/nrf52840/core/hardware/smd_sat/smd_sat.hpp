@@ -205,6 +205,8 @@ private:
 	// set, it is WRITTEN before AT+TX and replaces the repeat-decrement hold above.
 	bool m_mc_override_valid = false;
 	uint16_t m_mc_override = 0;
+	uint8_t m_mc_fail_count = 0;
+	static constexpr uint8_t MC_FAILS_BEFORE_UNSUPPORTED = 3;
 
 	void power_off();
 	void power_on();

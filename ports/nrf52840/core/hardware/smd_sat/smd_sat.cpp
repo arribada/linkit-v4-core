@@ -1226,6 +1226,7 @@ void SmdSat::apply_message_counter_hold() {
 	if (m_mc_override_valid) {
 		m_mc_override_valid = false;
 		if (m_cmd.set_message_counter(m_mc_override)) {
+			m_mc_fail_count = 0;
 			if (m_mc_support != McSupport::YES) {
 				// Once per boot: prove the module really took it. Every later write is
 				// trusted, so the read-back is not paid on each TX.
@@ -1236,8 +1237,10 @@ void SmdSat::apply_message_counter_hold() {
 			}
 			m_mc_support = McSupport::YES;
 			DEBUG_TRACE("SmdSat::%s: MC set to %u (host)", __func__, m_mc_override);
-		} else {
-			DEBUG_INFO("SmdSat::%s: set MC unsupported by this module firmware — MC left to the module", __func__);
+		} else if (++m_mc_fail_count >= MC_FAILS_BEFORE_UNSUPPORTED) {
+			// Only after several in a row: one AT timeout on a deployed tag must not
+			// give up host MC control for the rest of its life (audit 2026-10-12).
+			DEBUG_INFO("SmdSat::%s: set MC failed %u times — MC left to the module", __func__, m_mc_fail_count);
 			m_mc_support = McSupport::NO;
 		}
 		m_mc_last_payload = m_tx_buffer;

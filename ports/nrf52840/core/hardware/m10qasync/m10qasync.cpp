@@ -2637,8 +2637,19 @@ void M10QAsyncReceiver::state_stopreceive_exit() {}
 void M10QAsyncReceiver::defer_dbd_save() {
 	m_dbd_save_pending = true;
 	system_scheduler->cancel_task(m_dbd_save_task);
-	m_dbd_save_task = system_scheduler->post_task_prio([this]() { flush_deferred_dbd_save(); }, "GnssDbdSave",
-	                                                   Scheduler::DEFAULT_PRIORITY, DBD_SAVE_DEFER_MS);
+	m_dbd_save_task = system_scheduler->post_task_prio(
+	    [this]() {
+		    // Never commit in the middle of a session: a session that takes the
+		    // BBR fast path (configure -> startreceive) crosses none of the flush
+		    // points below, and a 1-7 s commit during receive outlasts the 5 s NAV
+		    // watchdog (audit 2026-10-12). Try again once the receiver is quiet.
+		    if (m_state != State::idle && m_state != State::backupidle && m_state != State::poweroff) {
+			    defer_dbd_save();
+			    return;
+		    }
+		    flush_deferred_dbd_save();
+	    },
+	    "GnssDbdSave", Scheduler::DEFAULT_PRIORITY, DBD_SAVE_DEFER_MS);
 }
 
 void M10QAsyncReceiver::flush_deferred_dbd_save() {
@@ -2745,7 +2756,11 @@ bool M10QAsyncReceiver::load_dbd_from_flash() {
 }
 
 void M10QAsyncReceiver::state_fetchdatabase_enter() {
-	flush_deferred_dbd_save();  // the buffer is about to be refilled
+	// A newer DBD is about to replace the pending one: drop it rather than commit
+	// it here, which would be right after the fix -- the very moment the deferral
+	// exists to avoid. The flash keeps the previous file if this fetch fails.
+	m_dbd_save_pending = false;
+	system_scheduler->cancel_task(m_dbd_save_task);
 	m_step = 0;
 	m_retries = DEFAULT_RETRIES;
 	m_op_state = OpState::IDLE;
