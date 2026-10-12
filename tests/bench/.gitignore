@@ -1,2 +1,6 @@
 logs/
 __pycache__/
+# Resultats de banc ecrits a cote des scripts (un fichier par run)
+turtle_mission_rf_*.csv
+turtle_mission_rf_*.jsonl
+cl_aging_results.csv
