@@ -160,8 +160,32 @@ TEST(Logger, ConcurrentWritingAndReading) {
 	}
 }
 
-TEST(Logger, CorruptedFileAttributeError) {
+// A damaged log is replaced by a fresh one. Throwing instead failed every boot
+// (LoggerManager::create() runs in BootState), and neither a reset nor a
+// factory reset touches the log files: a sealed tag ended in OffState.
+static void check_fresh_log_after_reboot(LFSFileSystem *fs, FsLog *&log) {
+	CHECK_EQUAL(0, log->num_entries());
+
+	LogEntry entry;
+	*((unsigned int *)entry.data) = 0xC0FFEE;
+	log->write(&entry);
+	CHECK_EQUAL(1, log->num_entries());
+
+	// Reboot: the repaired attribute is read back as valid.
+	const char *name = log->get_name();
+	delete log;
+	log = new FsLog(fs, name, (1024 * 1024));
+	log->create();
+	CHECK_EQUAL(1, log->num_entries());
+	*((unsigned int *)entry.data) = 0;
+	log->read(&entry, 0);
+	CHECK_EQUAL(0xC0FFEE, *((unsigned int *)entry.data));
+}
+
+TEST(Logger, CorruptedFileAttributeStartsAFreshLog) {
 	LoggerManager::create();
+	LogEntry dummy;
+	fs_sensor->write(&dummy);
 	delete fs_sensor;
 
 	// Corrupt the file attribute
@@ -169,20 +193,30 @@ TEST(Logger, CorruptedFileAttributeError) {
 	ram_filesystem->set_attr("sensor.log", attr);
 
 	fs_sensor = new FsLog(ram_filesystem, "sensor.log", (1024 * 1024));
-
-	// Should throw BAD_FILESYSTEM exception
-	CHECK_THROWS(ErrorCode, fs_sensor->create());
+	fs_sensor->create();
+	check_fresh_log_after_reboot(ram_filesystem, fs_sensor);
 }
 
-TEST(Logger, MissingLogChunkError) {
+TEST(Logger, MissingLogChunkStartsAFreshLog) {
 	LoggerManager::create();
+	LogEntry dummy;
+	fs_sensor->write(&dummy);
 	delete fs_sensor;
 
 	// Remove first log chunk
 	ram_filesystem->remove("sensor.log.0");
 
 	fs_sensor = new FsLog(ram_filesystem, "sensor.log", (1024 * 1024));
+	fs_sensor->create();
+	check_fresh_log_after_reboot(ram_filesystem, fs_sensor);
+}
 
-	// Should throw BAD_FILESYSTEM exception
-	CHECK_THROWS(ErrorCode, fs_sensor->create());
+// Power lost between creating the file and writing its attribute.
+TEST(Logger, MissingFileAttributeStartsAFreshLog) {
+	delete fs_sensor;
+	{ LFSFile f(ram_filesystem, "sensor.log", LFS_O_WRONLY | LFS_O_CREAT); }
+
+	fs_sensor = new FsLog(ram_filesystem, "sensor.log", (1024 * 1024));
+	fs_sensor->create();
+	check_fresh_log_after_reboot(ram_filesystem, fs_sensor);
 }

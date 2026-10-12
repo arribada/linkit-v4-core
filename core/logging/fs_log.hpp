@@ -78,8 +78,8 @@ public:
 			{ LFSFile f(m_filesystem, m_filename, LFS_O_RDONLY); }
 
 			// Get the current attribute from the file
-			unsigned int attr;
-			m_filesystem->get_attr(m_filename, attr);
+			unsigned int attr = 0;
+			if (m_filesystem->get_attr(m_filename, attr) < 0) throw ErrorCode::BAD_FILESYSTEM;
 			m_write_offset = attr & 0x7FFFFFFF;
 			m_has_wrapped = attr & 0x80000000;
 			//DEBUG_TRACE("FsLog::create: file=%s already exists with attr=%08x", m_filename, attr);
@@ -102,8 +102,11 @@ public:
 				}
 			}
 
-		} catch (int e) {
-			// Create a new log file if the file does not exist
+		} catch (...) {
+			// Missing or damaged: start a fresh log. A damaged log left to throw
+			// fails every boot, and no reset or factory reset ever repairs it.
+			m_write_offset = 0;
+			m_has_wrapped = 0;
 			{ LFSFile f(m_filesystem, m_filename, LFS_O_WRONLY | LFS_O_CREAT); }
 			unsigned int attr = m_write_offset | m_has_wrapped;
 			m_filesystem->set_attr(m_filename, attr);
