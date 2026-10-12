@@ -19,3 +19,8 @@ Logging primitives.
 - Use `DEBUG_ERROR` for failures that affect the user-visible behavior.
 
 Verbosity is set at build time via `-DDEBUG_LEVEL=N` (0=off, 4=trace).
+
+ERROR, WARN and INFO also go to `system.log` on LittleFS, up to
+`-DSYSTEMLOG_MIN_LEVEL=N` (1=ERROR, 2=WARN, 3=INFO, the default). That half never
+throws, and skips the line from interrupt context or while LittleFS is already
+busy; the console half always prints it.
