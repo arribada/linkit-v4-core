@@ -54,6 +54,8 @@ public:
 	void write_lpm(uint8_t *lpm_mode) override;
 
 	// TCXO
+	bool read_message_counter(uint16_t *mc) override;
+	bool set_message_counter(uint16_t mc) override;
 	void read_tcxo_warmup(uint32_t *time_ms) override;
 	void write_tcxo_warmup(uint32_t time_ms) override;
 	void set_tcxo_warmup_internal(uint32_t time_s) override;
@@ -64,6 +66,12 @@ public:
 	bool is_tx_finished() override;
 	bool is_tx_in_progress() override;
 	bool is_tx_successful() override { return m_tx_complete && m_tx_status == 0; }
+	bool last_tx_timing(uint32_t *ok_ms, uint32_t *done_ms) override {
+		if (!m_tx_sent_ms || !m_tx_done_ms) return false;
+		*ok_ms = m_tx_ok_ms ? static_cast<uint32_t>(m_tx_ok_ms - m_tx_sent_ms) : 0;
+		*done_ms = static_cast<uint32_t>(m_tx_done_ms - m_tx_sent_ms);
+		return true;
+	}
 
 	// Status
 	void get_status(uint8_t *status) override;
@@ -126,6 +134,11 @@ private:
 	volatile bool m_tx_complete;     // +TX= response received
 	volatile uint16_t m_tx_status;   // TX error code from +TX= response
 	volatile bool m_tx_in_progress;  // AT+TX fired, awaiting +OK/+ERROR/+TX= (async, non-blocking)
+	// Module-side TX timing (main context, so quantised by the TX poll period):
+	// AT+TX written, its +OK parsed, its +TX= parsed.
+	uint64_t m_tx_sent_ms = 0;
+	uint64_t m_tx_ok_ms = 0;
+	uint64_t m_tx_done_ms = 0;
 
 	// DFU state
 	bool m_dfu_mode;

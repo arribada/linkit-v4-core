@@ -96,6 +96,7 @@ void SmdSatCmdAt::parse_response(const std::string &line) {
 	// +OK
 	if (line == "+OK") {
 		m_resp_ok = true;
+		if (m_tx_in_progress && !m_tx_ok_ms) m_tx_ok_ms = PMU::get_timestamp_ms();
 		return;
 	}
 
@@ -141,6 +142,7 @@ void SmdSatCmdAt::parse_response(const std::string &line) {
 
 	// +TX=<status>,<data> (async TX completion)
 	if (line.compare(0, 4, "+TX=") == 0) {
+		m_tx_done_ms = PMU::get_timestamp_ms();
 		std::string tx_resp = line.substr(4);
 		size_t comma = tx_resp.find(',');
 		if (comma != std::string::npos) {
@@ -500,6 +502,28 @@ void SmdSatCmdAt::write_lpm(uint8_t *lpm_mode) {
 }
 
 // ============================================================================
+// Message counter (module firmware v2: AT+MC=? / AT+MC=<value>, 0-511)
+// ============================================================================
+
+bool SmdSatCmdAt::read_message_counter(uint16_t *mc) {
+	std::string data;
+	if (!send_at_with_data("AT+MC=?", data) || data.empty()) return false;
+	try {
+		const bool hex = data.size() > 2 && data[0] == '0' && (data[1] == 'x' || data[1] == 'X');
+		*mc = static_cast<uint16_t>(std::stoul(hex ? data.substr(2) : data, nullptr, hex ? 16 : 10) & 0x1FF);
+	} catch (...) {
+		return false;
+	}
+	return true;
+}
+
+bool SmdSatCmdAt::set_message_counter(uint16_t mc) {
+	// A module without the command (v1.0.0) answers +ERROR=: send_at returns false
+	// and SmdSat latches "unsupported" after this single attempt.
+	return send_at("AT+MC=" + std::to_string(mc & 0x1FF));
+}
+
+// ============================================================================
 // TCXO
 // ============================================================================
 
@@ -546,6 +570,9 @@ bool SmdSatCmdAt::initiate_tx(const KineisPacket &payload) {
 	m_resp_error = false;
 	m_resp_ok = false;
 	m_tx_in_progress = true;  // arm +ERROR / +TX= async surfacing
+	m_tx_ok_ms = 0;
+	m_tx_done_ms = 0;
+	m_tx_sent_ms = PMU::get_timestamp_ms();
 
 	// Fire AT+TX NON-BLOCKING (was a 5 s busy-wait via send_at, which froze the
 	// cooperative scheduler). The +OK (MAC acceptance) and the async

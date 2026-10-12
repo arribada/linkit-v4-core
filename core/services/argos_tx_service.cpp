@@ -109,6 +109,7 @@ ArgosTxService::ArgosTxService(KineisDevice &device)
 
 /// @brief Init: subscribe to KineisDevice events, load config, set TCXO/LPM.
 void ArgosTxService::service_init() {
+	m_mc.restore(service_is_time_known() ? static_cast<uint32_t>(service_current_time()) : 0U);
 	ArgosConfig argos_config;
 	configuration_store->get_argos_configuration(argos_config);
 
@@ -1541,6 +1542,10 @@ void ArgosTxService::notify_peer_event(ServiceEvent &e) {
 		} else {
 			// Device surfaced.
 			//
+			// A new surfacing is a new set of messages for the Argos MC: new Doppler
+			// counter, and last surfacing's frames are no longer repeats.
+			m_mc.on_surfaced();
+			//
 			// Hold the system log for the first surfacing transmission, and only
 			// for it. Every DEBUG_* line commits to LittleFS, which measured 0.6
 			// to 0.9 s of a 1.7 s surface-to-air path -- the one transmission
@@ -1865,7 +1870,7 @@ void ArgosTxService::process_certification_burst() {
 		return;
 	}
 	m_last_val_tx_type = "cert";
-	m_kineis.send(cert_mode, packet, size_bits);
+	send_with_mc(cert_mode, packet, size_bits);
 }
 
 /// @brief Send immediate time sync burst using most recent GPS fix.
@@ -1925,7 +1930,7 @@ void ArgosTxService::process_time_sync_burst() {
 		            Binascii::hexlify(packet).c_str(), size_bits);
 		m_last_tx_had_gps = true;
 		m_last_val_tx_type = "tsync";
-		m_kineis.send(m_scheduled_mode, packet, size_bits);
+		send_with_mc(m_scheduled_mode, packet, size_bits);
 	} else {
 		// No eligible entries for transmission in the depth pile, so send a doppler burst instead
 		DEBUG_WARN("ArgosTxService::process_time_sync_burst: no entries eligible in depth pile");
@@ -2019,7 +2024,7 @@ void ArgosTxService::process_sensor_burst() {
 			            Binascii::hexlify(packet).c_str());
 			m_last_tx_had_gps = true;
 			m_last_val_tx_type = "cloudloc";
-			m_kineis.send(m_scheduled_mode, packet, size_bits);
+			send_with_mc(m_scheduled_mode, packet, size_bits);
 			return;
 		}
 
@@ -2058,7 +2063,7 @@ void ArgosTxService::process_sensor_burst() {
 			            Binascii::hexlify(packet).c_str(), size_bits);
 			m_last_tx_had_gps = true;
 			m_last_val_tx_type = "fastloc";
-			m_kineis.send(m_scheduled_mode, packet, size_bits);
+			send_with_mc(m_scheduled_mode, packet, size_bits);
 			return;
 		}
 
@@ -2173,7 +2178,7 @@ void ArgosTxService::process_sensor_burst() {
 		            Binascii::hexlify(packet).c_str(), size_bits);
 		m_last_tx_had_gps = true;
 		m_last_val_tx_type = "sensor";
-		m_kineis.send(m_scheduled_mode, packet, size_bits);
+		send_with_mc(m_scheduled_mode, packet, size_bits);
 	} else {
 		DEBUG_WARN("ArgosTxService::process_sensor_burst: no entries eligible in depth pile");
 		if (m_is_surfacing_burst || m_has_gnss_fix_since_surfacing) {
@@ -2275,7 +2280,7 @@ void ArgosTxService::process_gnss_burst() {
 				            Binascii::hexlify(packet).c_str());
 				m_last_tx_had_gps = true;
 				m_last_val_tx_type = "cloudloc";
-				m_kineis.send(m_scheduled_mode, packet, size_bits);
+				send_with_mc(m_scheduled_mode, packet, size_bits);
 				return;
 			}
 			// 2026-10 — MEAS20 on an LDK master with adaptive OFF: this slot used
@@ -2385,7 +2390,7 @@ void ArgosTxService::process_gnss_burst() {
 #if defined(BENCH_TEST) && defined(BENCH_LAT_VERBOSE)
 		DEBUG_INFO("ArgosTxService: BUILT uptime=%llu", (unsigned long long)PMU::get_timestamp_ms());
 #endif
-		m_kineis.send(m_scheduled_mode, packet, size_bits);
+		send_with_mc(m_scheduled_mode, packet, size_bits);
 	} else {
 		DEBUG_WARN("ArgosTxService::process_gnss_burst: no entries eligible in depth pile");
 		if (m_is_surfacing_burst || m_has_gnss_fix_since_surfacing) {
@@ -2471,7 +2476,7 @@ void ArgosTxService::process_gnss_burst_from_cached() {
 	            size_bits);
 	m_last_tx_had_gps = true;
 	m_last_val_tx_type = "reuse_last";
-	m_kineis.send(m_scheduled_mode, packet, size_bits);
+	send_with_mc(m_scheduled_mode, packet, size_bits);
 }
 
 const ArgosPacketBuilder::DopplerExt *ArgosTxService::doppler_ext(bool enabled) {
@@ -2629,7 +2634,7 @@ void ArgosTxService::process_doppler_burst() {
 			m_prepared_doppler_is_dx1 = false;
 			m_prepared_at_ms = 0;
 			m_last_val_tx_type = "doppler-prewarm";
-			m_kineis.send(tx_mode, prepared, prepared_bits);
+			send_with_mc(tx_mode, prepared, prepared_bits);
 			return;
 		}
 	}
@@ -2774,7 +2779,7 @@ void ArgosTxService::process_doppler_burst() {
 			            argos_modulation_to_string((BaseArgosModulation)tx_mode));
 			m_last_tx_had_gps = true;
 			m_last_val_tx_type = "cloudloc-surf";
-			m_kineis.send(tx_mode, packet, size_bits);
+			send_with_mc(tx_mode, packet, size_bits);
 			return;
 		}
 	}
@@ -2861,7 +2866,7 @@ void ArgosTxService::process_doppler_burst() {
 		            argos_modulation_to_string((BaseArgosModulation)tx_mode), Binascii::hexlify(packet).c_str());
 		m_last_tx_had_gps = true;
 		m_last_val_tx_type = "fastloc-degr";
-		m_kineis.send(tx_mode, packet, size_bits);
+		send_with_mc(tx_mode, packet, size_bits);
 		return;
 	}
 
@@ -2957,7 +2962,7 @@ void ArgosTxService::process_doppler_burst() {
 				            Binascii::hexlify(cached_packet).c_str());
 				m_last_tx_had_gps = true;
 				m_last_val_tx_type = is_fastloc ? "fastloc-cached" : "short-cached";
-				m_kineis.send(cached_mode, cached_packet, cached_size_bits);
+				send_with_mc(cached_mode, cached_packet, cached_size_bits);
 				return;
 			}
 			// else fall through to standard Doppler below
@@ -3019,7 +3024,24 @@ void ArgosTxService::process_doppler_burst() {
 	            argos_modulation_to_string((BaseArgosModulation)tx_mode), Binascii::hexlify(packet).c_str(), size_bits);
 	m_last_tx_had_gps = false;
 	m_last_val_tx_type = "doppler";
-	m_kineis.send(tx_mode, packet, size_bits);
+	send_with_mc(tx_mode, packet, size_bits);
+}
+
+/// @brief Send through the backend with the host-owned MC (operator rule in
+/// argos_message_counter.hpp). The type tag set just before every send decides
+/// the class: Doppler frames of one surfacing share an MC, anything else keeps
+/// one MC per distinct payload.
+void ArgosTxService::send_with_mc(const KineisModulation mode, const KineisPacket &packet,
+                                  const unsigned int size_bits) {
+	const auto kind = ArgosMessageCounter::kind_of(m_last_val_tx_type);
+	if (kind != ArgosMessageCounter::Kind::NONE) {
+		const uint16_t mc = m_mc.assign(kind, packet, m_is_surfacing_burst);
+		m_kineis.set_next_message_counter(mc);
+#if VALIDATION_LOG_ENABLE
+		DEBUG_INFO("[VAL-MC] type=%s mc=%u", m_last_val_tx_type, (unsigned int)mc);
+#endif
+	}
+	m_kineis.send(mode, packet, size_bits);
 }
 
 /// @brief TX started event — notify service manager that TX is in progress.

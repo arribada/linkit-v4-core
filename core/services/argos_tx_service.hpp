@@ -15,6 +15,7 @@
 #include "depth_pile.hpp"
 #include "argos_packet_builder.hpp"
 #include "argos_tx_scheduler.hpp"
+#include "argos_message_counter.hpp"
 #include "messages.hpp"
 
 /// @brief Argos satellite TX service — builds and transmits packets via KineisDevice.
@@ -161,6 +162,12 @@ private:
 	unsigned int m_inflight_evictions = 0;
 
 	const char *m_last_val_tx_type = "none";
+
+	// Host-owned Argos MC (see argos_message_counter.hpp). Every m_kineis.send()
+	// goes through send_with_mc(), which picks the counter from the frame's
+	// m_last_val_tx_type and payload and hands it to the backend first.
+	ArgosMessageCounter m_mc;
+	void send_with_mc(const KineisModulation mode, const KineisPacket &packet, const unsigned int size_bits);
 	std::time_t m_last_val_tx_t = 0;
 
 	// Pre-warm of the first surfacing-burst Doppler packet. While underwater

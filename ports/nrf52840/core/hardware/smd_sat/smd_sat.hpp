@@ -197,6 +197,10 @@ private:
 	McSupport m_mc_support = McSupport::UNKNOWN;
 	KineisPacket m_mc_last_payload;     // payload of the previous TX (repeat detection)
 	void apply_message_counter_hold();  // called before initiate_tx in state_transmit_pending
+	// Host-decided MC for the next TX (ArgosTxService / ArgosMessageCounter). When
+	// set, it is WRITTEN before AT+TX and replaces the repeat-decrement hold above.
+	bool m_mc_override_valid = false;
+	uint16_t m_mc_override = 0;
 
 	void power_off();
 	void power_on();
@@ -252,6 +256,10 @@ public:
 	void set_tcxo_warmup_time(unsigned int time) override;
 	void set_tx_power(unsigned int power) override;
 	void set_lpm_mode(uint8_t lpm_bitmap);
+	void set_next_message_counter(uint16_t mc) override {
+		m_mc_override = mc;
+		m_mc_override_valid = true;
+	}
 
 	void set_credentials(unsigned int dec_id, unsigned int address, const std::string &seckey,
 	                     const std::string &radioconf) override;

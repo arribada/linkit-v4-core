@@ -91,6 +91,10 @@ public:
 	virtual void set_tcxo_warmup_time(unsigned int ms) = 0;
 	virtual void set_tx_power(unsigned int power) { (void)power; }
 	virtual void set_lpm_mode(uint8_t lpm_bitmap) { (void)lpm_bitmap; }
+	/// @brief The Argos MAC message counter (0-511) the NEXT send() must carry,
+	/// decided by the host (ArgosMessageCounter). Default no-op for backends that
+	/// cannot set it.
+	virtual void set_next_message_counter(uint16_t mc) { (void)mc; }
 	virtual void set_credentials(unsigned int dec_id, unsigned int address, const std::string &seckey,
 	                             const std::string &radioconf) {
 		(void)dec_id;

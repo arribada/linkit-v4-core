@@ -5040,3 +5040,89 @@ TEST(ArgosTxService, CloudLocateReadyOnLda2MasterStillFiresEarly) {
 	CHECK_EQUAL(2U, mock_kineis->send_count);
 	mock().checkExpectations();
 }
+
+// ============================================================================
+// Host-owned Argos message counter (operator rule 2026-10-12)
+// ============================================================================
+#include "argos_message_counter.hpp"
+
+TEST_GROUP(ArgosMessageCounter) {
+	ArgosMessageCounter mc;
+	void setup() {
+		ArgosMessageCounter::s_state = { 0, 0, 0 };
+		mc.restore(0);
+	}
+};
+
+TEST(ArgosMessageCounter, KindFollowsTheTypeTag) {
+	CHECK(ArgosMessageCounter::kind_of("doppler") == ArgosMessageCounter::Kind::DOPPLER);
+	CHECK(ArgosMessageCounter::kind_of("doppler-prewarm") == ArgosMessageCounter::Kind::DOPPLER);
+	CHECK(ArgosMessageCounter::kind_of("gnss") == ArgosMessageCounter::Kind::DATA);
+	CHECK(ArgosMessageCounter::kind_of("short-cached") == ArgosMessageCounter::Kind::DATA);
+	CHECK(ArgosMessageCounter::kind_of("cloudloc-surf") == ArgosMessageCounter::Kind::DATA);
+	CHECK(ArgosMessageCounter::kind_of("cert") == ArgosMessageCounter::Kind::NONE);
+	CHECK(ArgosMessageCounter::kind_of(nullptr) == ArgosMessageCounter::Kind::NONE);
+}
+
+TEST(ArgosMessageCounter, DopplerOfOneSurfacingSharesItsCounterEvenWhenTheBytesChange) {
+	mc.on_surfaced();
+	const uint16_t a = mc.assign(ArgosMessageCounter::Kind::DOPPLER, std::string("\x00\x8C\x00\x00", 4), true);
+	const uint16_t b = mc.assign(ArgosMessageCounter::Kind::DOPPLER, std::string("\x00\x8A\x00\x00", 4), true);
+	CHECK_EQUAL(a, b);
+}
+
+TEST(ArgosMessageCounter, GnssInformationTakesANewCounterAndARepeatKeepsIt) {
+	mc.on_surfaced();
+	const uint16_t d = mc.assign(ArgosMessageCounter::Kind::DOPPLER, "D1", true);
+	const uint16_t g1 = mc.assign(ArgosMessageCounter::Kind::DATA, "FIX-A", true);
+	const uint16_t g2 = mc.assign(ArgosMessageCounter::Kind::DATA, "FIX-B", true);
+	CHECK(g1 != d);
+	CHECK(g2 != g1);
+	// NTRY / pile rotation: the same bytes come back, interleaved with others
+	CHECK_EQUAL(g1, mc.assign(ArgosMessageCounter::Kind::DATA, "FIX-A", true));
+	CHECK_EQUAL(g2, mc.assign(ArgosMessageCounter::Kind::DATA, "FIX-B", true));
+	// and the Doppler of this surfacing still has its own
+	CHECK_EQUAL(d, mc.assign(ArgosMessageCounter::Kind::DOPPLER, "D2", true));
+}
+
+TEST(ArgosMessageCounter, ANewSurfacingIsANewSetOfMessages) {
+	mc.on_surfaced();
+	const uint16_t d1 = mc.assign(ArgosMessageCounter::Kind::DOPPLER, "D", true);
+	const uint16_t g1 = mc.assign(ArgosMessageCounter::Kind::DATA, "FIX-A", true);
+	mc.on_surfaced();
+	const uint16_t d2 = mc.assign(ArgosMessageCounter::Kind::DOPPLER, "D", true);
+	const uint16_t g2 = mc.assign(ArgosMessageCounter::Kind::DATA, "FIX-A", true);
+	CHECK(d2 != d1);
+	CHECK(g2 != g1);
+	CHECK(d2 != g2);
+}
+
+TEST(ArgosMessageCounter, OutsideABurstDopplerFallsBackToTheRepeatRule) {
+	const uint16_t a = mc.assign(ArgosMessageCounter::Kind::DOPPLER, "D-A", false);
+	const uint16_t b = mc.assign(ArgosMessageCounter::Kind::DOPPLER, "D-B", false);
+	CHECK(a != b);
+	CHECK_EQUAL(a, mc.assign(ArgosMessageCounter::Kind::DOPPLER, "D-A", false));
+}
+
+TEST(ArgosMessageCounter, CounterWrapsAtNineBits) {
+	ArgosMessageCounter::s_state.next = 511;
+	ArgosMessageCounter::s_state.crc = 0;  // restore() below must not reseed: keep the test state as is
+	const uint16_t a = mc.assign(ArgosMessageCounter::Kind::DATA, "X", false);
+	const uint16_t b = mc.assign(ArgosMessageCounter::Kind::DATA, "Y", false);
+	CHECK_EQUAL(511U, a);
+	CHECK_EQUAL(0U, b);
+}
+
+TEST(ArgosMessageCounter, AWarmResetKeepsTheRunningCounterAColdBootReseedsFromTheClock) {
+	mc.assign(ArgosMessageCounter::Kind::DATA, "X", false);
+	mc.assign(ArgosMessageCounter::Kind::DATA, "Y", false);
+	const uint16_t next = mc.peek_next();
+	ArgosMessageCounter warm;
+	warm.restore(123456U);
+	CHECK_EQUAL(next, warm.peek_next());
+
+	ArgosMessageCounter::s_state = { 0xDEADBEEF, 7, 0x1234 };  // what .noinit holds after a power-on
+	ArgosMessageCounter cold;
+	cold.restore(600U * 60U);  // 600 minutes -> 600 % 512 = 88
+	CHECK_EQUAL(88U, cold.peek_next());
+}

@@ -102,6 +102,14 @@ public:
 	/// AFTER_LAST_TX cooldown arming — without this distinction, a failed TX
 	/// erroneously arms cooldown the same as a successful one.
 	virtual bool is_tx_successful() = 0;
+	/// @brief Module-side timing of the last TX, in ms after the TX command was
+	/// sent: when the module acknowledged it (ok_ms) and when it reported the end
+	/// of the transmission (done_ms). False when the transport cannot tell.
+	virtual bool last_tx_timing(uint32_t *ok_ms, uint32_t *done_ms) {
+		(void)ok_ms;
+		(void)done_ms;
+		return false;
+	}
 
 	// ========================================================================
 	// Status

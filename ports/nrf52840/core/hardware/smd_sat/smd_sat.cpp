@@ -1211,7 +1211,29 @@ void SmdSat::state_transmit_pending_exit() {
 // write returns false, we latch "unsupported" and leave the SMD to auto-manage
 // its MC — nothing else changes.
 void SmdSat::apply_message_counter_hold() {
-	if (m_mc_support == McSupport::NO) return;  // module lacks the MC command — leave the SMD's MC auto-managed
+	if (m_mc_support == McSupport::NO) {
+		m_mc_override_valid = false;
+		return;  // module lacks the MC command — leave the SMD's MC auto-managed
+	}
+
+	// Host-owned MC (2026-10-12): ArgosTxService decides the counter and it is
+	// written before EVERY transmission. The module cannot keep it itself: this
+	// driver cuts its rail after each TX and the module keeps the counter in RTC
+	// backup registers, so the read-modify-decrement below starts from whatever
+	// the backup domain still holds. One AT/SPI write on the TX path (~20 ms over
+	// AT, the same cost as the TCXO write before it).
+	if (m_mc_override_valid) {
+		m_mc_override_valid = false;
+		if (m_cmd.set_message_counter(m_mc_override)) {
+			m_mc_support = McSupport::YES;
+			DEBUG_TRACE("SmdSat::%s: MC set to %u (host)", __func__, m_mc_override);
+		} else {
+			DEBUG_INFO("SmdSat::%s: set MC unsupported by this module firmware — MC left to the module", __func__);
+			m_mc_support = McSupport::NO;
+		}
+		m_mc_last_payload = m_tx_buffer;
+		return;
+	}
 
 	// BLIND owns its own repetitions, so the host must keep its hands off the
 	// counter. We hand the module ONE payload and it emits retx_nb + 1 copies on
@@ -1404,6 +1426,7 @@ void SmdSat::state_transmitting() {
 	if (m_cmd.is_tx_finished()) {
 		if (m_tx_buffer.size()) {
 			TXTRACE("state_transmitting: TX FINISHED — total elapsed");
+			[[maybe_unused]] const unsigned int tx_bytes = static_cast<unsigned int>(m_tx_buffer.size());
 			m_tx_buffer.clear();
 			// is_tx_finished() returns true for MAC_TX_DONE (real success),
 			// MAC_TX_TIMEOUT (no satellite reception), AND MAC_ERROR (hard
@@ -1418,6 +1441,18 @@ void SmdSat::state_transmitting() {
 				return;
 			}
 			m_error_count = 0;  // TX success — reset consecutive error counter
+#if defined(VALIDATION_LOG_ENABLE) && VALIDATION_LOG_ENABLE
+			// Module latency: ok = AT+TX acknowledged, done = +TX= reported, both
+			// from the moment AT+TX was written. Regressing done against the frame
+			// length separates the air time (slope = bit rate) from the module's own
+			// fixed delay (intercept). Quantised by the TX poll period.
+			{
+				uint32_t ok_ms = 0, done_ms = 0;
+				if (m_cmd.last_tx_timing(&ok_ms, &done_ms))
+					DEBUG_INFO("[VAL-TX] SmdSat timing: bytes=%u ok_ms=%u done_ms=%u first_tx=%u", tx_bytes,
+					           (unsigned)ok_ms, (unsigned)done_ms, (unsigned)m_is_first_tx);
+			}
+#endif
 #if SMDSAT_AUTOFALLBACK_ENABLED
 			// Autofallback: track successful TXes while in SAFE so the
 			// trust window can close and we retest FAST.
