@@ -7,16 +7,6 @@
 
 #include "logger.hpp"
 
-/// @brief Least severe level that reaches the system log, numbered like
-/// DEBUG_LEVEL: 1 ERROR, 2 WARN, 3 INFO (default), 0 none. Each line written
-/// costs a LittleFS commit; 2 keeps INFO on the console only.
-#ifndef SYSTEMLOG_MIN_LEVEL
-#define SYSTEMLOG_MIN_LEVEL 3
-#endif
-#if (SYSTEMLOG_MIN_LEVEL < 0) || (SYSTEMLOG_MIN_LEVEL > 3)
-#error "SYSTEMLOG_MIN_LEVEL must be 0..3: TRACE never reaches the system log"
-#endif
-
 /// @brief Global debug logger singletons (set in main.cpp).
 /// Also owns the "hold" window. Every DEBUG_* line commits to system_log on
 /// LittleFS, and on a latency-critical path that is not free: measured on the
@@ -71,29 +61,23 @@ private:
 
 #ifdef DEBUG_ENABLE
 
-// System-log half of each DEBUG_* line, compiled out for levels that do not
-// reach flash.
-#if defined(DEBUG_TO_SYSTEMLOG) && (SYSTEMLOG_MIN_LEVEL >= 1)
-#define DEBUG_SYSLOG_ERROR(fmt, ...) DebugLogger::syslog('E', fmt, ##__VA_ARGS__)
+// System-log half of each DEBUG_* line. Severity filtering is DEBUG_LEVEL's
+// job alone: each DEBUG_* below is already compiled out under its own level, so
+// the flash half disappears with it and needs no second threshold. The only
+// question left here is whether the flash sink exists at all, which is
+// -DDEBUG_NO_SYSTEMLOG=ON (it drops this half at every level while keeping the
+// console, so a latency path can be measured without flash commits).
+#ifdef DEBUG_TO_SYSTEMLOG
+#define DEBUG_SYSLOG(level, fmt, ...) DebugLogger::syslog(level, fmt, ##__VA_ARGS__)
 #else
-#define DEBUG_SYSLOG_ERROR(fmt, ...) ((void)0)
-#endif
-#if defined(DEBUG_TO_SYSTEMLOG) && (SYSTEMLOG_MIN_LEVEL >= 2)
-#define DEBUG_SYSLOG_WARN(fmt, ...) DebugLogger::syslog('W', fmt, ##__VA_ARGS__)
-#else
-#define DEBUG_SYSLOG_WARN(fmt, ...) ((void)0)
-#endif
-#if defined(DEBUG_TO_SYSTEMLOG) && (SYSTEMLOG_MIN_LEVEL >= 3)
-#define DEBUG_SYSLOG_INFO(fmt, ...) DebugLogger::syslog('I', fmt, ##__VA_ARGS__)
-#else
-#define DEBUG_SYSLOG_INFO(fmt, ...) ((void)0)
+#define DEBUG_SYSLOG(level, fmt, ...) ((void)0)
 #endif
 
 #if (DEBUG_LEVEL >= 1)
 #define DEBUG_ERROR(fmt, ...)                                                              \
 	do {                                                                                   \
 		if (DebugLogger::console_log) DebugLogger::console_log->error(fmt, ##__VA_ARGS__); \
-		DEBUG_SYSLOG_ERROR(fmt, ##__VA_ARGS__);                                            \
+		DEBUG_SYSLOG('E', fmt, ##__VA_ARGS__);                                             \
 	} while (0)
 #else
 #define DEBUG_ERROR(fmt, ...)
@@ -103,7 +87,7 @@ private:
 #define DEBUG_WARN(fmt, ...)                                                              \
 	do {                                                                                  \
 		if (DebugLogger::console_log) DebugLogger::console_log->warn(fmt, ##__VA_ARGS__); \
-		DEBUG_SYSLOG_WARN(fmt, ##__VA_ARGS__);                                            \
+		DEBUG_SYSLOG('W', fmt, ##__VA_ARGS__);                                            \
 	} while (0)
 #else
 #define DEBUG_WARN(fmt, ...)
@@ -113,7 +97,7 @@ private:
 #define DEBUG_INFO(fmt, ...)                                                              \
 	do {                                                                                  \
 		if (DebugLogger::console_log) DebugLogger::console_log->info(fmt, ##__VA_ARGS__); \
-		DEBUG_SYSLOG_INFO(fmt, ##__VA_ARGS__);                                            \
+		DEBUG_SYSLOG('I', fmt, ##__VA_ARGS__);                                            \
 	} while (0)
 #else
 #define DEBUG_INFO(fmt, ...)

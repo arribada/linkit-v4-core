@@ -52,7 +52,7 @@ endfunction()
 
 # Liste unique des flags booléens du projet. Tout flag consommé par `#if` ou par
 # un `if(... EQUAL 1)` DOIT figurer ici. Les flags numériques (DEBUG_LEVEL,
-# SYSTEMLOG_MIN_LEVEL, WAKEUP_PERIOD, LORA_TX_ERROR_SUSPEND_S) et les chaînes (BOARD,
+# WAKEUP_PERIOD, LORA_TX_ERROR_SUSPEND_S) et les chaînes (BOARD,
 # BATTERY_CHEMISTRY, BATTERY_MONITOR_TYPE, EXT_GPIO5_DEVICE) n'y sont pas.
 set(BOOL_BUILD_FLAGS
     ENABLE_CAM_SENSOR ENABLE_BUZZER ENABLE_PH_SENSOR ENABLE_SEA_TEMP_SENSOR
@@ -404,17 +404,6 @@ endif()
 if(NOT DEFINED DEBUG_LEVEL)
     set(DEBUG_LEVEL 3)
 endif()
-
-# Least severe level written to the system log (LittleFS), numbered like
-# DEBUG_LEVEL: 1 ERROR, 2 WARN, 3 INFO. 2 keeps INFO on the console only and
-# saves its flash commits. See core/logging/debug.hpp.
-if(NOT DEFINED SYSTEMLOG_MIN_LEVEL)
-    set(SYSTEMLOG_MIN_LEVEL 3)
-endif()
-if(NOT SYSTEMLOG_MIN_LEVEL MATCHES "^[0-3]$")
-    message(FATAL_ERROR "SYSTEMLOG_MIN_LEVEL='${SYSTEMLOG_MIN_LEVEL}' must be 0, 1, 2 or 3")
-endif()
-
 
 execute_process(
         COMMAND git describe --tags --dirty --long
@@ -899,7 +888,6 @@ target_compile_definitions(${TARGET_NAME} PRIVATE
     #SCHEDULER_DEBUG
     DEBUG_ENABLE=1
     DEBUG_LEVEL=${DEBUG_LEVEL}
-    SYSTEMLOG_MIN_LEVEL=${SYSTEMLOG_MIN_LEVEL}
     DEBUG_USING_RTC
     $<$<STREQUAL:${CMAKE_BUILD_TYPE},Debug>:DEBUG_NO_WATCHDOG>
     $<$<STREQUAL:${BOARD},RSPB>:BOARD_RSPB_V1>

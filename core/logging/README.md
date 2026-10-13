@@ -20,7 +20,12 @@ Logging primitives.
 
 Verbosity is set at build time via `-DDEBUG_LEVEL=N` (0=off, 4=trace).
 
-ERROR, WARN and INFO also go to `system.log` on LittleFS, up to
-`-DSYSTEMLOG_MIN_LEVEL=N` (1=ERROR, 2=WARN, 3=INFO, the default). That half never
-throws, and skips the line from interrupt context or while LittleFS is already
-busy; the console half always prints it.
+ERROR, WARN and INFO also go to `system.log` on LittleFS — whichever of them
+`DEBUG_LEVEL` leaves compiled in, since the flash half lives inside the same
+macro. That half never throws, and skips the line from interrupt context or
+while LittleFS is already busy; the console half always prints it.
+
+`-DDEBUG_NO_SYSTEMLOG=ON` drops the flash half at every level while keeping the
+console, which is how a latency-critical path is measured without paying for its
+own logs. On a path worth keeping the lines for, `DebugLogger::hold()` buffers
+them in RAM and `release()` replays them afterwards instead.
