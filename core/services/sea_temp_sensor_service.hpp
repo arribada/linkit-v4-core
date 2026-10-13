@@ -6,6 +6,7 @@
 #pragma once
 
 #include "sensor_service.hpp"
+#include "scalar_sensor_log.hpp"
 #include "logger.hpp"
 #include "messages.hpp"
 #include "timeutils.hpp"
@@ -21,21 +22,10 @@ struct __attribute__((packed)) SeaTempLogEntry {
 
 class SeaTempLogFormatter : public LogFormatter {
 public:
-	const std::string header() override { return "log_datetime,sea_temp\r\n"; }
+	const std::string header() override { return scalar_sensor_csv_header("sea_temp"); }
 	const std::string log_entry(const LogEntry &e) override {
-		char entry[512], d1[128];
 		const auto *log = reinterpret_cast<const SeaTempLogEntry *>(&e);
-		std::time_t t;
-		std::tm *tm;
-
-		t = convert_epochtime(log->header.year, log->header.month, log->header.day, log->header.hours,
-		                      log->header.minutes, log->header.seconds);
-		tm = std::gmtime(&t);
-		std::strftime(d1, sizeof(d1), "%d/%m/%Y %H:%M:%S", tm);
-
-		// Convert to CSV
-		snprintf(entry, sizeof(entry), "%s,%f\r\n", d1, log->sea_temp);
-		return std::string(entry);
+		return scalar_sensor_csv_line(log->header, log->sea_temp);
 	}
 };
 

@@ -8,6 +8,7 @@
 #include "logger.hpp"
 #include "messages.hpp"
 #include "sensor_service.hpp"
+#include "scalar_sensor_log.hpp"
 #include "timeutils.hpp"
 
 /// @brief Log entry for ALS sensor (lux value).
@@ -22,20 +23,10 @@ struct __attribute__((packed)) ALSLogEntry {
 /// @brief CSV log formatter for ALS entries (used by DUMPD command).
 class ALSLogFormatter : public LogFormatter {
 public:
-	const std::string header() override { return "log_datetime,lumens\r\n"; }
+	const std::string header() override { return scalar_sensor_csv_header("lumens"); }
 	const std::string log_entry(const LogEntry &e) override {
-		char entry[512], d1[128];
 		const auto *log = reinterpret_cast<const ALSLogEntry *>(&e);
-		std::time_t t;
-		std::tm *tm;
-
-		t = convert_epochtime(log->header.year, log->header.month, log->header.day, log->header.hours,
-		                      log->header.minutes, log->header.seconds);
-		tm = std::gmtime(&t);
-		std::strftime(d1, sizeof(d1), "%d/%m/%Y %H:%M:%S", tm);
-
-		snprintf(entry, sizeof(entry), "%s,%f\r\n", d1, log->lumens);
-		return std::string(entry);
+		return scalar_sensor_csv_line(log->header, log->lumens);
 	}
 };
 

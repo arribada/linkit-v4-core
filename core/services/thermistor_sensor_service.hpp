@@ -6,6 +6,7 @@
 #pragma once
 
 #include "sensor_service.hpp"
+#include "scalar_sensor_log.hpp"
 #include "logger.hpp"
 #include "messages.hpp"
 #include "timeutils.hpp"
@@ -21,21 +22,10 @@ struct __attribute__((packed)) ThermistorLogEntry {
 
 class ThermistorLogFormatter : public LogFormatter {
 public:
-	const std::string header() override { return "log_datetime,temp\r\n"; }
+	const std::string header() override { return scalar_sensor_csv_header("temp"); }
 	const std::string log_entry(const LogEntry &e) override {
-		char entry[128], d1[25];
 		const auto *log = reinterpret_cast<const ThermistorLogEntry *>(&e);
-		std::time_t t;
-		std::tm *tm;
-
-		t = convert_epochtime(log->header.year, log->header.month, log->header.day, log->header.hours,
-		                      log->header.minutes, log->header.seconds);
-		tm = std::gmtime(&t);
-		std::strftime(d1, sizeof(d1), "%d/%m/%Y %H:%M:%S", tm);
-
-		// Convert to CSV
-		snprintf(entry, sizeof(entry), "%s,%f\r\n", d1, log->temp);
-		return std::string(entry);
+		return scalar_sensor_csv_line(log->header, log->temp);
 	}
 };
 
