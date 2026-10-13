@@ -35,6 +35,11 @@ public:
 	Logger *get_logger();
 	void set_logger(Logger *logger);
 	void start(std::function<void(ServiceEvent &)> data_notification_callback = nullptr);
+	/// @brief start() that never throws. A failed start is logged, undone with
+	/// stop(), and retried after a growing delay until it succeeds or stop()
+	/// is called.
+	/// @return true if the service started now.
+	bool start_or_retry(std::function<void(ServiceEvent &)> data_notification_callback = nullptr);
 	void stop();
 	virtual void notify_peer_event(ServiceEvent &event);
 	bool is_started();
@@ -87,6 +92,14 @@ private:
 	/// throw becomes a slow trickle in the log rather than a storm, short
 	/// enough that a transient one costs one skipped cycle.
 	static constexpr unsigned int EXCEPTION_RETRY_MS = 5000;
+
+	/// @brief Pending retry of a start() that threw. See start_or_retry.
+	Scheduler::TaskHandle m_start_retry_task;
+	/// @brief Failed start attempts in a row; sets the next retry delay.
+	uint8_t m_start_failures = 0;
+	static constexpr unsigned int START_RETRY_BASE_MS = 5000;
+	static constexpr unsigned int START_RETRY_CAP_MS = 60 * 60 * 1000;
+
 	std::function<void(ServiceEvent &)> m_data_notification_callback;
 	ServiceIdentifier m_service_id = ServiceIdentifier::UNKNOWN;
 	unsigned int m_unique_id = 0;
@@ -99,6 +112,8 @@ private:
 #endif
 
 	void reschedule(bool immediate = false);
+	bool attempt_start(std::function<void(ServiceEvent &)> data_notification_callback);
+	void cancel_start_retry();
 	/// @brief Cancel pending tasks.
 	/// @param cancel_timeout  false to keep the safety-net timeout armed. Only
 	///        reschedule() passes false, and only when a session of ours is
@@ -327,4 +342,5 @@ public:
 
 private:
 	static inline Scheduler::TaskHandle m_cooldown_wake_task;
+	static void notify_classifiers(ServiceEvent &event);
 };
