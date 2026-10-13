@@ -27,6 +27,12 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # The one place allowed to write it: the helper itself.
 ALLOWED = {os.path.join('core', 'configuration', 'config_store.hpp'): 1}
 
+# Matched against each folder's path RELATIVE to ROOT, never the absolute one:
+# a git worktree of this repo lives under .claude/worktrees/<id>/, so an
+# absolute match on '/.claude/' excluded every file in it. The scan then found
+# nothing, including inside the helper, and the check failed with "expected
+# exactly 1 write, found 0" on a tree where nothing was wrong -- loudly here,
+# but the same bug in a check that counts offenders would have passed vacuously.
 EXCLUDED = ('/build/', '/drivers/', '/nRF5_SDK', '/external/', '/libraries/', '/.claude/')
 PATTERN = re.compile(r'write_param\s*(<[^>]*>)?\s*\(\s*ParamID::ARGOS_CACHED_MODULATION\b')
 
@@ -35,7 +41,8 @@ def files():
     for base in ('core', 'ports/nrf52840', 'tests/src', 'tests/mocks', 'tests/fakes'):
         top = os.path.join(ROOT, base)
         for folder, _, names in os.walk(top):
-            if any(x in folder.replace(os.sep, '/') + '/' for x in EXCLUDED):
+            rel_folder = '/' + os.path.relpath(folder, ROOT).replace(os.sep, '/') + '/'
+            if any(x in rel_folder for x in EXCLUDED):
                 continue
             for n in names:
                 if n.endswith(('.cpp', '.hpp', '.c', '.h')):
