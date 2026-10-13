@@ -13,3 +13,8 @@
 
 # Style: run clang-format over the first-party tree
 fe242cd0e3d2ca72303c2585d5c3ae6d9b7fa9f0
+
+# clang-format over the M10Q driver: 17 violations predating the commit that
+# touched it. Proof: .text/.data/.bss and all 5113 symbol names and sizes
+# identical before and after.
+a3dea2e074656a564d5e23c9be8a9ad55ea0bffc
