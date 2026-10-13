@@ -283,10 +283,10 @@ void M10QAsyncReceiver::power_on(const GPSNavSettings &nav_settings) {
 			// GPSService scheduler retry or a peer event).
 			uint64_t now_ms = PMU::get_timestamp_ms();
 			[[maybe_unused]] uint64_t slept_ms = (m_backupidle_entered_ms > 0 && now_ms >= m_backupidle_entered_ms)
-			                        ? (now_ms - m_backupidle_entered_ms)
-			                        : 0;
+			                                         ? (now_ms - m_backupidle_entered_ms)
+			                                         : 0;
 			DEBUG_TRACE("M10QAsyncReceiver::power_on: wake from deep-idle via EXTINT (fail_count=%u, slept_ms=%llu)",
-			           m_consecutive_wake_failures, (unsigned long long)slept_ms);
+			            m_consecutive_wake_failures, (unsigned long long)slept_ms);
 			// M10Q wakes on EXTINT rising edge. Re-init UART driver (was
 			// deinit'd in state_enterbackup step 3 to save the UART block
 			// power during deep-idle). Then pulse EXTINT and let the
@@ -963,15 +963,14 @@ void M10QAsyncReceiver::react(const UBXCommsEventSatReport &s) {
 			    // logged after a few epochs so the NAV-SAT flags have stabilised.
 			    if (!m_start_class_logged && m_num_sat_samples >= 3) {
 				    m_start_class_logged = true;
-				    [[maybe_unused]] const char *cls = !m_bbr_retained      ? "S0_cold"
-				                      : (e.n_eph >= 4)      ? "S1_hot"
-				                      : (e.n_aop >= 4)      ? "S2_warm_ana"
-				                      : (e.n_ano >= 4)      ? "S3_warm_ano"
-				                      : (e.n_good >= 5)     ? "S4_stale_clready"
-				                                            : "S5_weak";
-				    VAL_GNSS("start_class=%s bbr=%u n_eph=%u n_aop=%u n_ano=%u n_alm=%u n_good=%u numSvs=%u",
-				             cls, (unsigned)m_bbr_retained, e.n_eph, e.n_aop, e.n_ano, e.n_alm, e.n_good,
-				             e.numSvs);
+				    [[maybe_unused]] const char *cls = !m_bbr_retained   ? "S0_cold"
+					                                   : (e.n_eph >= 4)  ? "S1_hot"
+					                                   : (e.n_aop >= 4)  ? "S2_warm_ana"
+					                                   : (e.n_ano >= 4)  ? "S3_warm_ano"
+					                                   : (e.n_good >= 5) ? "S4_stale_clready"
+					                                                     : "S5_weak";
+				    VAL_GNSS("start_class=%s bbr=%u n_eph=%u n_aop=%u n_ano=%u n_alm=%u n_good=%u numSvs=%u", cls,
+					         (unsigned)m_bbr_retained, e.n_eph, e.n_aop, e.n_ano, e.n_alm, e.n_good, e.numSvs);
 			    }
 
 			    // Early abort: if after EARLY_ABORT_SAT_REPORTS sat reports no satellite
@@ -2031,7 +2030,7 @@ void M10QAsyncReceiver::state_backupidle_enter() {
 	// on the bench — see the wake log in `power_on()` below.
 	m_backupidle_entered_ms = PMU::get_timestamp_ms();
 	DEBUG_TRACE("M10QAsyncReceiver::state_backupidle_enter: rail ON, M10 sleeping (deep-idle started, t0=%llu ms)",
-	           (unsigned long long)m_backupidle_entered_ms);
+	            (unsigned long long)m_backupidle_entered_ms);
 	// Nothing to do — rail is powered, UART deinit'd, M10 in backup mode.
 	// The state remains until exit_backup_charge_mode() is called.
 }
