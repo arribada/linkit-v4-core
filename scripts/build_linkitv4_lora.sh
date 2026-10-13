@@ -224,7 +224,7 @@ echo "  LORA_LINKCHECK=${LORA_LINKCHECK}   (ON = positions spent only once a gat
 echo ""
 
 cmake -DCMAKE_TOOLCHAIN_FILE=../../toolchain_arm_gcc_nrf52.cmake \
-      -DDEBUG_LEVEL=3 \
+      -DDEBUG_LEVEL=${DEBUG_LEVEL:-3} \
       -DBOARD=LINKIT \
       -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
       -DLORA_RAK3172=ON \

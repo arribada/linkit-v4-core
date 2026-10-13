@@ -59,6 +59,34 @@ private:
 	static void write_line(char level, const char *text);
 };
 
+/// @brief What a compiled-out DEBUG_* expands to.
+///
+/// NOT empty. An empty expansion breaks the build at any reduced DEBUG_LEVEL,
+/// because the arguments are usually computed for the trace and nothing else:
+/// -Werror=unused-variable (and -Werror=unused-but-set-variable) fire on them,
+/// and `if (cond) DEBUG_INFO(...);` collapses to `if (cond) ;` which trips
+/// -Werror=empty-body. Measured on this tree: -DDEBUG_LEVEL=2 failed with 10
+/// such errors across gps_service, service_cooldown, argos_tx_service and
+/// kim2 -- i.e. the configuration a deployment would ask for did not compile,
+/// and would only have been discovered at deployment time.
+///
+/// `if (false)` keeps the arguments type-checked and marks them used, while
+/// generating no code and never evaluating them, so a compiled-out level still
+/// costs nothing at runtime. The do/while gives the macro a statement body so
+/// it can follow a bare `if` safely.
+/// Arguments are taken BY VALUE, not by reference: several call sites pass
+/// fields of packed structs (GPSLogEntry::info.lat and friends), and a
+/// reference cannot bind to a packed field -- by-reference parameters turned
+/// the unused-variable errors into "cannot bind packed field to double&".
+/// Nothing is actually copied: the call is never evaluated.
+namespace debug_detail {
+template <typename... Args> inline void swallow(Args...) {}
+}  // namespace debug_detail
+#define DEBUG_NOOP(fmt, ...)                                    \
+	do {                                                        \
+		if (false) ::debug_detail::swallow(fmt, ##__VA_ARGS__); \
+	} while (0)
+
 #ifdef DEBUG_ENABLE
 
 // System-log half of each DEBUG_* line. Severity filtering is DEBUG_LEVEL's
@@ -80,7 +108,7 @@ private:
 		DEBUG_SYSLOG('E', fmt, ##__VA_ARGS__);                                             \
 	} while (0)
 #else
-#define DEBUG_ERROR(fmt, ...)
+#define DEBUG_ERROR(fmt, ...) DEBUG_NOOP(fmt, ##__VA_ARGS__)
 #endif
 
 #if (DEBUG_LEVEL >= 2)
@@ -90,7 +118,7 @@ private:
 		DEBUG_SYSLOG('W', fmt, ##__VA_ARGS__);                                            \
 	} while (0)
 #else
-#define DEBUG_WARN(fmt, ...)
+#define DEBUG_WARN(fmt, ...) DEBUG_NOOP(fmt, ##__VA_ARGS__)
 #endif
 
 #if (DEBUG_LEVEL >= 3)
@@ -100,7 +128,7 @@ private:
 		DEBUG_SYSLOG('I', fmt, ##__VA_ARGS__);                                            \
 	} while (0)
 #else
-#define DEBUG_INFO(fmt, ...)
+#define DEBUG_INFO(fmt, ...) DEBUG_NOOP(fmt, ##__VA_ARGS__)
 #endif
 
 // NOTE: Do not log TRACE level to system log as it can impact timing of some
@@ -111,15 +139,15 @@ private:
 		if (DebugLogger::console_log) DebugLogger::console_log->trace(fmt, ##__VA_ARGS__); \
 	} while (0)
 #else
-#define DEBUG_TRACE(fmt, ...)
+#define DEBUG_TRACE(fmt, ...) DEBUG_NOOP(fmt, ##__VA_ARGS__)
 #endif
 
 
 #else
 
-#define DEBUG_ERROR(fmt, ...)
-#define DEBUG_WARN(fmt, ...)
-#define DEBUG_INFO(fmt, ...)
-#define DEBUG_TRACE(fmt, ...)
+#define DEBUG_ERROR(fmt, ...) DEBUG_NOOP(fmt, ##__VA_ARGS__)
+#define DEBUG_WARN(fmt, ...)  DEBUG_NOOP(fmt, ##__VA_ARGS__)
+#define DEBUG_INFO(fmt, ...)  DEBUG_NOOP(fmt, ##__VA_ARGS__)
+#define DEBUG_TRACE(fmt, ...) DEBUG_NOOP(fmt, ##__VA_ARGS__)
 
 #endif
