@@ -184,7 +184,21 @@ Buzzer *buzzer_ctl;  ///< Optional piezo buzzer (board-dependent)
 ///        traffic underwater or in storage mode, no current drawn by the debug
 ///        peripheral, and no risk of a host enumerating the CDC port when the
 ///        epoxied tag is plugged into anything.
-///        Can still be overridden at runtime via DTE if needed for debugging.
+///
+///        DTE does NOT give the console back on a release build, despite what
+///        this comment used to claim. `DebugLogger::console_log` is latched once
+///        from the value below (see init, `= (g_debug_mode == NONE) ? nullptr :
+///        &console_log`) and nothing reassigns it; the DEBUG_OUTPUT_MODE handler
+///        in GenTracker only runs for BLE_NUS and only moves `g_debug_mode`,
+///        which from then on steers `_write()` and not the DEBUG_* macros. So on
+///        a sealed unit the console half of every DEBUG_* line is gone for the
+///        life of the boot, and DBP01 cannot bring it back.
+///
+///        What survives in release is the FLASH half: system_log is attached
+///        unconditionally, so DEBUG_ERROR / WARN / INFO still land in
+///        system.log. That is the post-mortem on a returned tag, and the reason
+///        release stays at DEBUG_LEVEL=3 — lowering it would silence the file,
+///        not the device, which is already silent.
 #ifdef NDEBUG
 BaseDebugMode g_debug_mode = BaseDebugMode::NONE;
 #elif defined(BOARD_RSPB)
