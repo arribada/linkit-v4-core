@@ -72,15 +72,15 @@ namespace {
 // Physical model of the RC discrimination circuit (wiki 13 §B.1)
 // ---------------------------------------------------------------------------
 struct Physics {
-	double vdd_v = 3.0;                 // GPIO drive
-	double counts_per_v = 16383.0 / 3.6; // gain 1/6, 0.6 V reference, 14 bits
-	double r_pd_ohm = 1.0e6;            // pull-down on the ADC node
-	double c_f = 100e-9;                // 100 nF
+	double vdd_v = 3.0;                   // GPIO drive
+	double counts_per_v = 16383.0 / 3.6;  // gain 1/6, 0.6 V reference, 14 bits
+	double r_pd_ohm = 1.0e6;              // pull-down on the ADC node
+	double c_f = 100e-9;                  // 100 nF
 	// Medium resistance (Ω): clean and fully fouled values.
-	double r_water_clean = 45.0e3;      // ~3000 counts at 1 ms (board observations)
-	double r_water_fouled = 60.0e3;     // fouled contact: slightly more resistive
-	double r_air_clean = 700.0e3;       // ~200 counts at 1 ms (humid salt residue)
-	double r_air_fouled = 150.0e3;      // damp biofilm in air
+	double r_water_clean = 45.0e3;   // ~3000 counts at 1 ms (board observations)
+	double r_water_fouled = 60.0e3;  // fouled contact: slightly more resistive
+	double r_air_clean = 700.0e3;    // ~200 counts at 1 ms (humid salt residue)
+	double r_air_fouled = 150.0e3;   // damp biofilm in air
 	// Water film left on the electrodes after a surfacing: R relaxes from
 	// r_water to r_air with this time constant (s).
 	double film_tau_clean_s = 2.0;
@@ -99,8 +99,12 @@ struct Physics {
 	}
 };
 
-static double sim_mix(double a, double b, double f) { return a + (b - a) * f; }
-static double sim_mix_log(double a, double b, double f) { return std::exp(sim_mix(std::log(a), std::log(b), f)); }
+static double sim_mix(double a, double b, double f) {
+	return a + (b - a) * f;
+}
+static double sim_mix_log(double a, double b, double f) {
+	return std::exp(sim_mix(std::log(a), std::log(b), f));
+}
 
 // ---------------------------------------------------------------------------
 // Scenario definition
@@ -382,16 +386,17 @@ TEST_GROUP(SWSLongRun) {
 			std::string path = std::string(out_dir) + "/" + sc.name + ".csv";
 			csv = std::fopen(path.c_str(), "w");
 			if (csv)
-				std::fprintf(csv,
-				             "day,fouling,true_surfacings,detected_transitions,covered_segments,false_surfacings,"
-				             "surface_episodes,short_episodes,true_dry_s,believed_surface_s,overlap_s,"
-				             "median_latency_s,dive_timeouts,force_surfaces,air,water,threshold,delay_us,"
-				             "contrast_x10,uw_at_end\n");
+				std::fprintf(csv, "day,fouling,true_surfacings,detected_transitions,covered_segments,false_surfacings,"
+				                  "surface_episodes,short_episodes,true_dry_s,believed_surface_s,overlap_s,"
+				                  "median_latency_s,dive_timeouts,force_surfaces,air,water,threshold,delay_us,"
+				                  "contrast_x10,uw_at_end\n");
 		}
-		std::printf("\n=== SWSLongRun %s (%zu days) | water %.0f k / air %.0f k clean, 1 ms -> water %.0f / air %.0f counts ===\n",
+		std::printf("\n=== SWSLongRun %s (%zu days) | water %.0f k / air %.0f k clean, 1 ms -> water %.0f / air %.0f "
+		            "counts ===\n",
 		            sc.name, r.days.size(), sc.phys.r_water_clean / 1e3, sc.phys.r_air_clean / 1e3,
 		            sc.phys.counts(sc.phys.r_water_clean, 1000.0), sc.phys.counts(sc.phys.r_air_clean, 1000.0));
-		std::printf("day foul  surf  det  cov  false  epis short  dry_s  belief_s  ovl_s  lat_s  dto fsf   air  water   thr  delay  ctr\n");
+		std::printf("day foul  surf  det  cov  false  epis short  dry_s  belief_s  ovl_s  lat_s  dto fsf   air  water  "
+		            " thr  delay  ctr\n");
 		for (const auto &d : r.days) {
 			double lat = median(d.latencies_s);
 			if (csv)
@@ -400,7 +405,8 @@ TEST_GROUP(SWSLongRun) {
 				             d.false_surfacings, d.surface_episodes, d.short_episodes, d.true_dry_s,
 				             d.believed_surface_s, d.overlap_s, lat, d.dive_timeouts, d.force_surfaces,
 				             d.status_end.threshold_air, d.status_end.threshold_water, d.status_end.threshold_current,
-				             d.status_end.sample_delay_us, d.status_end.contrast_x10, d.status_end.is_underwater ? 1 : 0);
+				             d.status_end.sample_delay_us, d.status_end.contrast_x10,
+				             d.status_end.is_underwater ? 1 : 0);
 			if (d.day % 10 == 0 || d.day + 1 == r.days.size())
 				std::printf("%3u %.2f %5u %4u %4u %6u %5u %5u %6.0f %9.0f %6.0f %6.1f %4u %3u %5u %6u %5u %6u %4u\n",
 				            d.day, d.fouling, d.true_surfacings, d.detected_transitions, d.covered_segments,
@@ -448,49 +454,212 @@ TEST_GROUP(SWSLongRun) {
 // 200-5000 µs, max dive time 7200 s. Biofouling reaches the fouled values
 // around day 60-75 (warm tropical water); conductance, film retention and
 // contact noise all follow it.
-static const Scenario kFoulingH45{
-    "h45_deployed_fouling", TEST_GROUP_CppUTestGroupSWSLongRun::physics_h45(), 55.0, 8.0, 1.0, true, true, true, 200U, 1000U, 7200U};
-static const Scenario kFoulingH10{
-    "h10_deployed_fouling", TEST_GROUP_CppUTestGroupSWSLongRun::physics_h10(), 55.0, 8.0, 1.0, true, true, true, 200U, 1000U, 7200U};
+static const Scenario kFoulingH45{ "h45_deployed_fouling",
+                                   TEST_GROUP_CppUTestGroupSWSLongRun::physics_h45(),
+                                   55.0,
+                                   8.0,
+                                   1.0,
+                                   true,
+                                   true,
+                                   true,
+                                   200U,
+                                   1000U,
+                                   7200U };
+static const Scenario kFoulingH10{ "h10_deployed_fouling",
+                                   TEST_GROUP_CppUTestGroupSWSLongRun::physics_h10(),
+                                   55.0,
+                                   8.0,
+                                   1.0,
+                                   true,
+                                   true,
+                                   true,
+                                   200U,
+                                   1000U,
+                                   7200U };
 
 // Clean electrodes for the whole deployment, adaptive delay as deployed.
-static const Scenario kCleanH45{
-    "h45_deployed_clean", TEST_GROUP_CppUTestGroupSWSLongRun::physics_h45(), 55.0, 8.0, 0.0, false, false, false, 200U, 1000U, 7200U};
-static const Scenario kCleanH10{
-    "h10_deployed_clean", TEST_GROUP_CppUTestGroupSWSLongRun::physics_h10(), 55.0, 8.0, 0.0, false, false, false, 200U, 1000U, 7200U};
+static const Scenario kCleanH45{ "h45_deployed_clean",
+                                 TEST_GROUP_CppUTestGroupSWSLongRun::physics_h45(),
+                                 55.0,
+                                 8.0,
+                                 0.0,
+                                 false,
+                                 false,
+                                 false,
+                                 200U,
+                                 1000U,
+                                 7200U };
+static const Scenario kCleanH10{ "h10_deployed_clean",
+                                 TEST_GROUP_CppUTestGroupSWSLongRun::physics_h10(),
+                                 55.0,
+                                 8.0,
+                                 0.0,
+                                 false,
+                                 false,
+                                 false,
+                                 200U,
+                                 1000U,
+                                 7200U };
+
+// SHIPPED configuration, taken from the firmware defaults rather than guessed:
+// config_store.hpp has SWS_DELAY_MIN_US = 200 and SWS_DELAY_MAX_US = 10000, and none
+// of the three turtle templates overrides either. Every "deployed" scenario above uses
+// a 200-1000 ceiling, so none of them is the configuration actually in the water --
+// the real ceiling is ten times higher. These two close that gap.
+static const Scenario kShippedCleanH45{ "h45_shipped_clean",
+                                        TEST_GROUP_CppUTestGroupSWSLongRun::physics_h45(),
+                                        55.0,
+                                        8.0,
+                                        0.0,
+                                        false,
+                                        false,
+                                        false,
+                                        200U,
+                                        10000U,
+                                        7200U };
+static const Scenario kShippedFoulingH45{ "h45_shipped_fouling",
+                                          TEST_GROUP_CppUTestGroupSWSLongRun::physics_h45(),
+                                          55.0,
+                                          8.0,
+                                          1.0,
+                                          true,
+                                          true,
+                                          true,
+                                          200U,
+                                          10000U,
+                                          7200U };
 
 // Charge delay pinned at 1 ms (no adaptation): isolates the adaptive-delay ratchet (R-T2).
-static const Scenario kFixedCleanH45{
-    "h45_fixed_delay_clean", TEST_GROUP_CppUTestGroupSWSLongRun::physics_h45(), 55.0, 8.0, 0.0, false, false, false, 500U, 500U, 7200U};
-static const Scenario kFixedFoulingH45{
-    "h45_fixed_delay_fouling", TEST_GROUP_CppUTestGroupSWSLongRun::physics_h45(), 55.0, 8.0, 1.0, true, true, true, 500U, 500U, 7200U};
-static const Scenario kFixedFoulingH10{
-    "h10_fixed_delay_fouling", TEST_GROUP_CppUTestGroupSWSLongRun::physics_h10(), 55.0, 8.0, 1.0, true, true, true, 500U, 500U, 7200U};
+static const Scenario kFixedCleanH45{ "h45_fixed_delay_clean",
+                                      TEST_GROUP_CppUTestGroupSWSLongRun::physics_h45(),
+                                      55.0,
+                                      8.0,
+                                      0.0,
+                                      false,
+                                      false,
+                                      false,
+                                      500U,
+                                      500U,
+                                      7200U };
+static const Scenario kFixedFoulingH45{ "h45_fixed_delay_fouling",
+                                        TEST_GROUP_CppUTestGroupSWSLongRun::physics_h45(),
+                                        55.0,
+                                        8.0,
+                                        1.0,
+                                        true,
+                                        true,
+                                        true,
+                                        500U,
+                                        500U,
+                                        7200U };
+static const Scenario kFixedFoulingH10{ "h10_fixed_delay_fouling",
+                                        TEST_GROUP_CppUTestGroupSWSLongRun::physics_h10(),
+                                        55.0,
+                                        8.0,
+                                        1.0,
+                                        true,
+                                        true,
+                                        true,
+                                        500U,
+                                        500U,
+                                        7200U };
 
 // Conductance drift + film only, noise stays at the clean level (fixed delay).
-static const Scenario kQuietFoulingH45{
-    "h45_fixed_delay_fouling_quiet", TEST_GROUP_CppUTestGroupSWSLongRun::physics_h45(), 55.0, 8.0, 1.0, true, true, false, 500U, 500U, 7200U};
+static const Scenario kQuietFoulingH45{ "h45_fixed_delay_fouling_quiet",
+                                        TEST_GROUP_CppUTestGroupSWSLongRun::physics_h45(),
+                                        55.0,
+                                        8.0,
+                                        1.0,
+                                        true,
+                                        true,
+                                        false,
+                                        500U,
+                                        500U,
+                                        7200U };
 
 // Noise growth only: electrodes keep their clean conductance and drainage (fixed delay).
-static const Scenario kNoiseOnlyH45{
-    "h45_fixed_delay_noise_only", TEST_GROUP_CppUTestGroupSWSLongRun::physics_h45(), 55.0, 8.0, 1.0, false, false, true, 500U, 500U, 7200U};
+static const Scenario kNoiseOnlyH45{ "h45_fixed_delay_noise_only",
+                                     TEST_GROUP_CppUTestGroupSWSLongRun::physics_h45(),
+                                     55.0,
+                                     8.0,
+                                     1.0,
+                                     false,
+                                     false,
+                                     true,
+                                     500U,
+                                     500U,
+                                     7200U };
 
 // Low-noise variants: if real sample-to-sample noise at the 2 s cadence is
 // well below 1 %, false L1 overrides are rare and the adaptive-delay trap
 // (air inflated by false surfacings -> contrast < 5x -> delay to the floor ->
 // baselines inconsistent) should develop over weeks instead of hours.
-static const Scenario kCleanH45_n05{
-    "h45_deployed_clean_noise0.5", TEST_GROUP_CppUTestGroupSWSLongRun::physics_h45(0.005, 0.02), 55.0, 8.0, 0.0, false, false, false, 200U, 1000U, 7200U};
-static const Scenario kFoulingH45_n05{
-    "h45_deployed_fouling_noise0.5", TEST_GROUP_CppUTestGroupSWSLongRun::physics_h45(0.005, 0.02), 55.0, 8.0, 1.0, true, true, true, 200U, 1000U, 7200U};
-static const Scenario kFixedFoulingH45_n05{
-    "h45_fixed_delay_fouling_noise0.5", TEST_GROUP_CppUTestGroupSWSLongRun::physics_h45(0.005, 0.02), 55.0, 8.0, 1.0, true, true, true, 500U, 500U, 7200U};
-static const Scenario kCleanH45_n03{
-    "h45_deployed_clean_noise0.3", TEST_GROUP_CppUTestGroupSWSLongRun::physics_h45(0.003, 0.012), 55.0, 8.0, 0.0, false, false, false, 200U, 1000U, 7200U};
-static const Scenario kFoulingH45_n03{
-    "h45_deployed_fouling_noise0.3", TEST_GROUP_CppUTestGroupSWSLongRun::physics_h45(0.003, 0.012), 55.0, 8.0, 1.0, true, true, true, 200U, 1000U, 7200U};
-static const Scenario kFixedFoulingH45_n03{
-    "h45_fixed_delay_fouling_noise0.3", TEST_GROUP_CppUTestGroupSWSLongRun::physics_h45(0.003, 0.012), 55.0, 8.0, 1.0, true, true, true, 500U, 500U, 7200U};
+static const Scenario kCleanH45_n05{ "h45_deployed_clean_noise0.5",
+                                     TEST_GROUP_CppUTestGroupSWSLongRun::physics_h45(0.005, 0.02),
+                                     55.0,
+                                     8.0,
+                                     0.0,
+                                     false,
+                                     false,
+                                     false,
+                                     200U,
+                                     1000U,
+                                     7200U };
+static const Scenario kFoulingH45_n05{ "h45_deployed_fouling_noise0.5",
+                                       TEST_GROUP_CppUTestGroupSWSLongRun::physics_h45(0.005, 0.02),
+                                       55.0,
+                                       8.0,
+                                       1.0,
+                                       true,
+                                       true,
+                                       true,
+                                       200U,
+                                       1000U,
+                                       7200U };
+static const Scenario kFixedFoulingH45_n05{ "h45_fixed_delay_fouling_noise0.5",
+                                            TEST_GROUP_CppUTestGroupSWSLongRun::physics_h45(0.005, 0.02),
+                                            55.0,
+                                            8.0,
+                                            1.0,
+                                            true,
+                                            true,
+                                            true,
+                                            500U,
+                                            500U,
+                                            7200U };
+static const Scenario kCleanH45_n03{ "h45_deployed_clean_noise0.3",
+                                     TEST_GROUP_CppUTestGroupSWSLongRun::physics_h45(0.003, 0.012),
+                                     55.0,
+                                     8.0,
+                                     0.0,
+                                     false,
+                                     false,
+                                     false,
+                                     200U,
+                                     1000U,
+                                     7200U };
+static const Scenario kFoulingH45_n03{ "h45_deployed_fouling_noise0.3",
+                                       TEST_GROUP_CppUTestGroupSWSLongRun::physics_h45(0.003, 0.012),
+                                       55.0,
+                                       8.0,
+                                       1.0,
+                                       true,
+                                       true,
+                                       true,
+                                       200U,
+                                       1000U,
+                                       7200U };
+static const Scenario kFixedFoulingH45_n03{ "h45_fixed_delay_fouling_noise0.3",
+                                            TEST_GROUP_CppUTestGroupSWSLongRun::physics_h45(0.003, 0.012),
+                                            55.0,
+                                            8.0,
+                                            1.0,
+                                            true,
+                                            true,
+                                            true,
+                                            500U,
+                                            500U,
+                                            7200U };
 
 TEST(SWSLongRun, H45_DeployedCleanNoise05_Documentary) {
 	SimResult r = run_scenario(kCleanH45_n05);
@@ -577,4 +746,15 @@ TEST(SWSLongRun, H45_FixedDelayNoiseOnly_Documentary) {
 	SimResult r = run_scenario(kNoiseOnlyH45);
 	report(kNoiseOnlyH45, r);
 	summary(kNoiseOnlyH45.name, r);
+}
+
+TEST(SWSLongRun, H45_ShippedClean_Documentary) {
+	SimResult r = run_scenario(kShippedCleanH45);
+	report(kShippedCleanH45, r);
+	summary(kShippedCleanH45.name, r);
+}
+TEST(SWSLongRun, H45_ShippedFouling_Documentary) {
+	SimResult r = run_scenario(kShippedFoulingH45);
+	report(kShippedFoulingH45, r);
+	summary(kShippedFoulingH45.name, r);
 }
