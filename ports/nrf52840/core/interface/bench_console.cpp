@@ -463,16 +463,21 @@ static void bench_led(const std::string &line) {
 	reply(buf);
 }
 
-bool bench::handle_line(const std::string &raw) {
-	// Trim trailing CR/LF/space.
-	std::string line = raw;
-	while (!line.empty() && (line.back() == '\r' || line.back() == '\n' || line.back() == ' '))
-		line.pop_back();
+/// @name handle_line, split by command family
+/// One chain of 35 `cmd ==` comparisons used to live in handle_line: 484 lines
+/// and a cyclomatic complexity of 118, the second worst in the repository. The
+/// branches are unchanged and still in their original order -- each function
+/// below holds a contiguous run of them, moved verbatim. The split is by family
+/// so that a reader looking for one command reads ~70 lines instead of 484.
+///
+/// Each returns true if it handled `cmd`, false to let the next family try, and
+/// handle_line keeps the single "unknown-cmd" answer so there is still exactly
+/// one place that decides a command does not exist. They take `line` as well as
+/// `cmd` because several branches parse their arguments out of it.
+/// @{
 
-	if (line.empty() || line[0] != '%') return false;
-
-	const std::string cmd = line.substr(0, line.find(' '));
-
+/// @brief liveness, FSM state, boot forensics, BLE and IS25 flash
+static bool handle_state_cmd(const std::string &cmd, const std::string &line) {
 	if (cmd == "%PING") {
 		reply(std::string("%BENCH OK state=") + state_name());
 	} else if (cmd == "%STATE") {
@@ -530,7 +535,15 @@ bool bench::handle_line(const std::string &raw) {
 			         status, (status & 0x40) ? 1 : 0, (status & 0x01) ? 1 : 0);
 			reply(buf);
 		}
-	} else if (cmd == "%TXPAR") {
+	} else {
+		return false;
+	}
+	return true;
+}
+
+/// @brief Argos/TX configuration, depth pile, LED and scheduler queues
+static bool handle_argos_cmd(const std::string &cmd, const std::string &line) {
+	if (cmd == "%TXPAR") {
 		// %TXPAR <N> [retx_nb] [period_s] — the BLIND parallel-message question,
 		// settled on real silicon instead of guessed. Loads the KMAC BLIND context
 		// with nb_parallel=N (production pins it to 1) and fires N payloads back to
@@ -713,7 +726,15 @@ bool bench::handle_line(const std::string &raw) {
 		// %I2C        -> scan du bus interne
 		// %I2C EXT    -> scan du bus externe
 		bench_i2c_scan(line);
-	} else if (cmd == "%OTA") {
+	} else {
+		return false;
+	}
+	return true;
+}
+
+/// @brief OTA, satellite log, battery, scheduling, moored and hauled modes
+static bool handle_services_cmd(const std::string &cmd, const std::string &line) {
+	if (cmd == "%OTA") {
 		bench_ota(line);
 	} else if (cmd == "%SATLOG") {
 		cmd_satlog(line);
@@ -804,7 +825,15 @@ bool bench::handle_line(const std::string &raw) {
 		char buf[112];
 		snprintf(buf, sizeof(buf), "%%BOOTFAIL failures=%u factory_attempted=%u", echecs, usine);
 		reply(buf);
-	} else if (cmd == "%CFG") {
+	} else {
+		return false;
+	}
+	return true;
+}
+
+/// @brief configuration mode, synthetic GPS fixes and GNSS power requests
+static bool handle_gps_cmd(const std::string &cmd, const std::string &line) {
+	if (cmd == "%CFG") {
 		if (GenTracker::is_in_state<ConfigurationState>()) {
 			reply("%CFG OK already-config");
 		} else if (GenTracker::is_in_state<BootState>() || GenTracker::is_in_state<PreOperationalState>()) {
@@ -872,7 +901,15 @@ bool bench::handle_line(const std::string &raw) {
 			gps_service->bench_inject_nofix();
 			reply("%NOFIX OK");
 		}
-	} else if (cmd == "%DIVE" || cmd == "%SURFACE") {
+	} else {
+		return false;
+	}
+	return true;
+}
+
+/// @brief dive/surface events, reset cause, reed, SENSE pins and storage entry
+static bool handle_sensors_cmd(const std::string &cmd, const std::string &line) {
+	if (cmd == "%DIVE" || cmd == "%SURFACE") {
 		// Simulate the saltwater switch: broadcast the same UW_SENSOR event the SWS
 		// service emits (source=UW_SENSOR, type=SERVICE_LOG_UPDATED, data=bool). Each
 		// Service::notify_peer_event routes it to notify_underwater_state(). %DIVE =
@@ -943,8 +980,29 @@ bool bench::handle_line(const std::string &raw) {
 		reply("%STORE ERR rebuild with -DBENCH_ALLOW_POWERDOWN=ON");
 #endif
 	} else {
-		reply(std::string("%ERR unknown-cmd ") + cmd);
+		return false;
 	}
+	return true;
+}
+/// @}
+
+bool bench::handle_line(const std::string &raw) {
+	// Trim trailing CR/LF/space.
+	std::string line = raw;
+	while (!line.empty() && (line.back() == '\r' || line.back() == '\n' || line.back() == ' '))
+		line.pop_back();
+
+	if (line.empty() || line[0] != '%') return false;
+
+	const std::string cmd = line.substr(0, line.find(' '));
+
+	if (handle_state_cmd(cmd, line)) return true;
+	if (handle_argos_cmd(cmd, line)) return true;
+	if (handle_services_cmd(cmd, line)) return true;
+	if (handle_gps_cmd(cmd, line)) return true;
+	if (handle_sensors_cmd(cmd, line)) return true;
+
+	reply(std::string("%ERR unknown-cmd ") + cmd);
 	return true;
 }
 

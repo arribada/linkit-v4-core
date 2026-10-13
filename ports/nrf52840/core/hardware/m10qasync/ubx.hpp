@@ -787,13 +787,19 @@ static const UBXParameter *const PARAMETERS[] = {
 /// here from the module's own VALGET reply bytes, not from the declarations, so a
 /// key the firmware never declared is reachable and the caller needs to be told.
 ///
-/// NOTE on a tempting shortcut: the u-blox key encodes its own storage size in
-/// bits 28-30, and that holds for all 113 declarations here with no exception
-/// (measured, not assumed). Deriving the size from the key would make this
-/// function three lines -- but it would also answer for keys this firmware has
-/// never heard of, which is precisely the signal the caller uses to stop. The
-/// table keeps that answer. It is also not confirmed against the M10 interface
-/// manual, which is not in this repository.
+/// NOTE on a tempting shortcut: the key encodes its own storage size. This is
+/// specified, not inferred -- u-blox M10 SPG 5.10 Interface description
+/// UBX-21035062 R03, section 4.2: "Bits 30...28: Three bits that indicate the
+/// storage size of a Configuration Value (range 0x01-0x05)", where 0x01 is one
+/// bit (stored in a byte), 0x02 one byte, 0x03 two bytes, 0x04 four bytes and
+/// 0x05 eight bytes. It also holds for all 113 declarations here with no
+/// exception, which the test suite asserts.
+///
+/// Deriving the size from the key would make this function three lines, and it
+/// is still the wrong trade: it would answer for keys this firmware has never
+/// heard of, and that 0 is precisely the signal the caller uses to stop reading
+/// a reply it cannot interpret. The table keeps that answer. The spec decides
+/// the size of a key; only this table decides which keys we claim to know.
 static uint8_t getParameterSize(uint32_t key) {
 	for (const UBXParameter *p : PARAMETERS) {
 		if (p->key == key) return p->size;
