@@ -1689,6 +1689,23 @@ void M10QAsyncReceiver::send_pmreq_backup() {
 // state that cannot wake the receiver by accident. The rail-cut paths still
 // release to high-Z — driving a pin into an unpowered chip is a different
 // problem, and that one is real.
+//
+// OPEN QUESTION, and the paragraph above does not answer it. "Driving a CMOS
+// input LOW sinks no meaningful current" is true of a plain high-impedance
+// input, which is not the case under scrutiny: if the M10 enables an internal
+// pull-up on EXTINT while in standby, our LOW drive sits across that pull-up
+// and burns V_IO/R_pullup for the whole deep-idle. The estimate is 75-375 µA.
+// It has NEVER BEEN MEASURED, and it is not in the M10 interface description
+// (UBX-21035062) either — it would be an electrical characteristic of the data
+// sheet (UBX-22013293). So treat it as an open hypothesis, not a known leak.
+//
+// Do not "fix" it from first principles. Driving HIGH instead (line = pull-up =
+// V_IO, no current, no edge, wake by a LOW pulse) is the obvious candidate and
+// it is also the same category of change that caused the measured ~2 mA
+// "backup refused" regression this comment exists to prevent — 5 to 27 times
+// worse than the leak it would avoid. Settle it on the bench first: PPK on
+// V_IO through a full deep-idle, EXTINT driven LOW versus driven HIGH, and
+// confirm in the same session that no spurious wake appears.
 void M10QAsyncReceiver::pulse_extint_wake() {
 	DEBUG_TRACE("M10QAsyncReceiver::pulse_extint_wake");
 	VAL_GNSS("extint_pulse_wake from_state=%d", (int)m_state);
