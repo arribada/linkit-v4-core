@@ -643,135 +643,161 @@ inline UBXParameter ORBMAXERR = { 0x30230002, 2, {} };  // Maximum acceptable mo
 enum USE_ANA_VALUES { ANA_DISABLED = 0, ANA_ENABLED = 1 };
 }  // namespace ANA
 
+/// @brief Every CFG parameter this firmware knows, as pointers to the single
+/// declaration of each. Pointers, not copied {key, size} pairs: an entry cannot
+/// disagree with the parameter it names, so the table cannot drift from the
+/// declarations above it, and adding a parameter is one line here.
+///
+/// This replaced a chain of 111 `if (key == X.key) return X.size;`. That chain
+/// had already drifted: RXM_MEASC12_UART1, RXM_MEAS20_UART1 and RXM_MEAS50_UART1
+/// were declared and are actively written by the CloudLocate configuration
+/// (m10qasync_config.cpp:722/735/748) but were missing from it, so
+/// getParameterSize() returned 0 for them and the VALGET parser treated the
+/// whole rest of the response as unreadable and stopped. Nobody adds a line to a
+/// 111-line if-chain reliably; a table is read as data, and a missing entry is
+/// visible next to its neighbours.
+static const UBXParameter *const PARAMETERS[] = {
+	// UART1
+	&UART1::BAUDRATE,
+	&UART1::STOPBITS,
+	&UART1::DATABITS,
+	&UART1::PARITY,
+	&UART1::ENABLED,
+	&UART1::INPROT_UBX,
+	&UART1::INPROT_NMEA,
+	&UART1::OUTPROT_UBX,
+	&UART1::OUTPROT_NMEA,
+	&UART1::TXREADY_ENABLED,
+	&UART1::TXREADY_POLARITY,
+	&UART1::TXREADY_PIN,
+	&UART1::TXREADY_THRESHOLD,
+	&UART1::TXREADY_INTERFACE,
+	// MSG
+	&MSG::MSG_CLASS,
+	&MSG::MSG_ID,
+	&MSG::RATE,
+	// MSGOUT
+	&MSGOUT::NAV_PVT_UART1,
+	&MSGOUT::NAV_DOP_UART1,
+	&MSGOUT::NAV_STATUS_UART1,
+	&MSGOUT::NAV_SAT_UART1,
+	&MSGOUT::RXM_MEASC12_UART1,
+	&MSGOUT::RXM_MEAS20_UART1,
+	&MSGOUT::RXM_MEAS50_UART1,
+	// SIGNAL
+	&SIGNAL::GPS_ENA,
+	&SIGNAL::GPS_L1CA_ENA,
+	&SIGNAL::SBAS_ENA,
+	&SIGNAL::SBAS_L1CA_ENA,
+	&SIGNAL::GAL_ENA,
+	&SIGNAL::GAL_E1_ENA,
+	&SIGNAL::BDS_ENA,
+	&SIGNAL::BDS_B1_ENA,
+	&SIGNAL::BDS_B1C_ENA,
+	&SIGNAL::QZSS_ENA,
+	&SIGNAL::QZSS_L1CA_ENA,
+	&SIGNAL::QZSS_L1S_ENA,
+	&SIGNAL::GLO_ENA,
+	&SIGNAL::GLO_L1_ENA,
+	// ODO
+	&ODO::USE_ODO,
+	&ODO::USE_COG,
+	&ODO::OUTLPVEL,
+	&ODO::OUTLPCOG,
+	&ODO::PROFILE,
+	&ODO::COG_MAXSPEED,
+	&ODO::COG_MAXPOSACC,
+	&ODO::VEL_LPGAIN,
+	&ODO::COG_LPGAIN,
+	// TP
+	&TP::PULSE_DEF,
+	&TP::PULSE_LENGTH_DEF,
+	&TP::ANT_CABLEDELAY,
+	&TP::PERIOD_TP1,
+	&TP::PERIOD_LOCK_TP1,
+	&TP::FREQ_TP1,
+	&TP::FREQ_LOCK_TP1,
+	&TP::LEN_TP1,
+	&TP::LEN_LOCK_TP1,
+	&TP::DUTY_TP1,
+	&TP::DUTY_LOCK_TP1,
+	&TP::USER_DELAY_TP1,
+	&TP::TP1_ENA,
+	&TP::SYNC_GNSS_TP1,
+	&TP::USE_LOCKED_TP1,
+	&TP::ALIGN_TO_TOW_TP1,
+	&TP::POL_TP1,
+	&TP::TIMEGRID_TP1,
+	// PM
+	&PM::OPERATEMODE,
+	&PM::POSUPDATEPERIOD,
+	&PM::ACQPERIOD,
+	&PM::GRIDOFFSET,
+	&PM::ONTIME,
+	&PM::MINACQTIME,
+	&PM::MAXACQTIME,
+	&PM::DONOTENTEROFF,
+	&PM::WAITTIMEFIX,
+	&PM::UPDATEEPH,
+	&PM::EXTINTWAKE,
+	&PM::EXTINTBACKUP,
+	&PM::EXTINTINACTIVE,
+	&PM::EXTINTINACTIVITY,
+	&PM::LIMITPEAKCURR,
+	// NAVSPG
+	&NAVSPG::FIXMODE,
+	&NAVSPG::INIFIX3D,
+	&NAVSPG::WKNROLLOVER,
+	&NAVSPG::UTCSTANDARD,
+	&NAVSPG::DYNMODEL,
+	&NAVSPG::ACKAIDING,
+	&NAVSPG::USE_USRDAT,
+	&NAVSPG::USRDAT_MAJA,
+	&NAVSPG::USRDAT_FLAT,
+	&NAVSPG::USRDAT_DX,
+	&NAVSPG::USRDAT_DY,
+	&NAVSPG::USRDAT_DZ,
+	&NAVSPG::USRDAT_ROTX,
+	&NAVSPG::USRDAT_ROTY,
+	&NAVSPG::USRDAT_ROTZ,
+	&NAVSPG::USRDAT_SCALE,
+	&NAVSPG::INFIL_MINSVS,
+	&NAVSPG::INFIL_MAXSVS,
+	&NAVSPG::INFIL_MINCNO,
+	&NAVSPG::INFIL_MINELEV,
+	&NAVSPG::INFIL_NCNOTHRS,
+	&NAVSPG::INFIL_CNOTHRS,
+	&NAVSPG::OUTFIL_PDOP,
+	&NAVSPG::OUTFIL_TDOP,
+	&NAVSPG::OUTFIL_PACC,
+	&NAVSPG::OUTFIL_TACC,
+	&NAVSPG::OUTFIL_FACC,
+	&NAVSPG::CONSTR_ALT,
+	&NAVSPG::CONSTR_ALTVAR,
+	&NAVSPG::CONSTR_DGNSSTO,
+	&NAVSPG::SIGATTCOMP,
+	// ANA
+	&ANA::USE_ANA,
+	&ANA::ORBMAXERR,
+};
+
+/// @brief Storage size of a CFG key, or 0 if this firmware does not know the key.
+///
+/// Returning 0 for an unknown key is deliberate and unchanged: the keys reach
+/// here from the module's own VALGET reply bytes, not from the declarations, so a
+/// key the firmware never declared is reachable and the caller needs to be told.
+///
+/// NOTE on a tempting shortcut: the u-blox key encodes its own storage size in
+/// bits 28-30, and that holds for all 113 declarations here with no exception
+/// (measured, not assumed). Deriving the size from the key would make this
+/// function three lines -- but it would also answer for keys this firmware has
+/// never heard of, which is precisely the signal the caller uses to stop. The
+/// table keeps that answer. It is also not confirmed against the M10 interface
+/// manual, which is not in this repository.
 static uint8_t getParameterSize(uint32_t key) {
-	// UART1 Parameters
-	if (key == UART1::BAUDRATE.key) return UART1::BAUDRATE.size;
-	if (key == UART1::STOPBITS.key) return UART1::STOPBITS.size;
-	if (key == UART1::DATABITS.key) return UART1::DATABITS.size;
-	if (key == UART1::PARITY.key) return UART1::PARITY.size;
-	if (key == UART1::ENABLED.key) return UART1::ENABLED.size;
-	if (key == UART1::INPROT_UBX.key) return UART1::INPROT_UBX.size;
-	if (key == UART1::INPROT_NMEA.key) return UART1::INPROT_NMEA.size;
-	if (key == UART1::OUTPROT_UBX.key) return UART1::OUTPROT_UBX.size;
-	if (key == UART1::OUTPROT_NMEA.key) return UART1::OUTPROT_NMEA.size;
-	if (key == UART1::TXREADY_ENABLED.key) return UART1::TXREADY_ENABLED.size;
-	if (key == UART1::TXREADY_POLARITY.key) return UART1::TXREADY_POLARITY.size;
-	if (key == UART1::TXREADY_PIN.key) return UART1::TXREADY_PIN.size;
-	if (key == UART1::TXREADY_THRESHOLD.key) return UART1::TXREADY_THRESHOLD.size;
-	if (key == UART1::TXREADY_INTERFACE.key) return UART1::TXREADY_INTERFACE.size;
-
-	// MSG Parameters
-	if (key == MSG::MSG_CLASS.key) return MSG::MSG_CLASS.size;
-	if (key == MSG::MSG_ID.key) return MSG::MSG_ID.size;
-	if (key == MSG::RATE.key) return MSG::RATE.size;
-
-	// MSGOUT Parameters
-	if (key == MSGOUT::NAV_PVT_UART1.key) return MSGOUT::NAV_PVT_UART1.size;
-	if (key == MSGOUT::NAV_DOP_UART1.key) return MSGOUT::NAV_DOP_UART1.size;
-	if (key == MSGOUT::NAV_STATUS_UART1.key) return MSGOUT::NAV_STATUS_UART1.size;
-	if (key == MSGOUT::NAV_SAT_UART1.key) return MSGOUT::NAV_SAT_UART1.size;
-
-	// SIGNAL Parameters
-	if (key == SIGNAL::GPS_ENA.key) return SIGNAL::GPS_ENA.size;
-	if (key == SIGNAL::GPS_L1CA_ENA.key) return SIGNAL::GPS_L1CA_ENA.size;
-	if (key == SIGNAL::SBAS_ENA.key) return SIGNAL::SBAS_ENA.size;
-	if (key == SIGNAL::SBAS_L1CA_ENA.key) return SIGNAL::SBAS_L1CA_ENA.size;
-	if (key == SIGNAL::GAL_ENA.key) return SIGNAL::GAL_ENA.size;
-	if (key == SIGNAL::GAL_E1_ENA.key) return SIGNAL::GAL_E1_ENA.size;
-	if (key == SIGNAL::BDS_ENA.key) return SIGNAL::BDS_ENA.size;
-	if (key == SIGNAL::BDS_B1_ENA.key) return SIGNAL::BDS_B1_ENA.size;
-	if (key == SIGNAL::BDS_B1C_ENA.key) return SIGNAL::BDS_B1C_ENA.size;
-	if (key == SIGNAL::QZSS_ENA.key) return SIGNAL::QZSS_ENA.size;
-	if (key == SIGNAL::QZSS_L1CA_ENA.key) return SIGNAL::QZSS_L1CA_ENA.size;
-	if (key == SIGNAL::QZSS_L1S_ENA.key) return SIGNAL::QZSS_L1S_ENA.size;
-	if (key == SIGNAL::GLO_ENA.key) return SIGNAL::GLO_ENA.size;
-	if (key == SIGNAL::GLO_L1_ENA.key) return SIGNAL::GLO_L1_ENA.size;
-
-	// ODO Parameters
-	if (key == ODO::USE_ODO.key) return ODO::USE_ODO.size;
-	if (key == ODO::USE_COG.key) return ODO::USE_COG.size;
-	if (key == ODO::OUTLPVEL.key) return ODO::OUTLPVEL.size;
-	if (key == ODO::OUTLPCOG.key) return ODO::OUTLPCOG.size;
-	if (key == ODO::PROFILE.key) return ODO::PROFILE.size;
-	if (key == ODO::COG_MAXSPEED.key) return ODO::COG_MAXSPEED.size;
-	if (key == ODO::COG_MAXPOSACC.key) return ODO::COG_MAXPOSACC.size;
-	if (key == ODO::VEL_LPGAIN.key) return ODO::VEL_LPGAIN.size;
-	if (key == ODO::COG_LPGAIN.key) return ODO::COG_LPGAIN.size;
-
-	// TP Parameters
-	if (key == TP::PULSE_DEF.key) return TP::PULSE_DEF.size;
-	if (key == TP::PULSE_LENGTH_DEF.key) return TP::PULSE_LENGTH_DEF.size;
-	if (key == TP::ANT_CABLEDELAY.key) return TP::ANT_CABLEDELAY.size;
-	if (key == TP::PERIOD_TP1.key) return TP::PERIOD_TP1.size;
-	if (key == TP::PERIOD_LOCK_TP1.key) return TP::PERIOD_LOCK_TP1.size;
-	if (key == TP::FREQ_TP1.key) return TP::FREQ_TP1.size;
-	if (key == TP::FREQ_LOCK_TP1.key) return TP::FREQ_LOCK_TP1.size;
-	if (key == TP::LEN_TP1.key) return TP::LEN_TP1.size;
-	if (key == TP::LEN_LOCK_TP1.key) return TP::LEN_LOCK_TP1.size;
-	if (key == TP::DUTY_TP1.key) return TP::DUTY_TP1.size;
-	if (key == TP::DUTY_LOCK_TP1.key) return TP::DUTY_LOCK_TP1.size;
-	if (key == TP::USER_DELAY_TP1.key) return TP::USER_DELAY_TP1.size;
-	if (key == TP::TP1_ENA.key) return TP::TP1_ENA.size;
-	if (key == TP::SYNC_GNSS_TP1.key) return TP::SYNC_GNSS_TP1.size;
-	if (key == TP::USE_LOCKED_TP1.key) return TP::USE_LOCKED_TP1.size;
-	if (key == TP::ALIGN_TO_TOW_TP1.key) return TP::ALIGN_TO_TOW_TP1.size;
-	if (key == TP::POL_TP1.key) return TP::POL_TP1.size;
-	if (key == TP::TIMEGRID_TP1.key) return TP::TIMEGRID_TP1.size;
-
-	// ANA Parameters
-	if (key == ANA::USE_ANA.key) return ANA::USE_ANA.size;
-	if (key == ANA::ORBMAXERR.key) return ANA::ORBMAXERR.size;
-
-	// NAVSPG Parameters
-	if (key == NAVSPG::FIXMODE.key) return NAVSPG::FIXMODE.size;
-	if (key == NAVSPG::INIFIX3D.key) return NAVSPG::INIFIX3D.size;
-	if (key == NAVSPG::WKNROLLOVER.key) return NAVSPG::WKNROLLOVER.size;
-	if (key == NAVSPG::UTCSTANDARD.key) return NAVSPG::UTCSTANDARD.size;
-	if (key == NAVSPG::DYNMODEL.key) return NAVSPG::DYNMODEL.size;
-	if (key == NAVSPG::ACKAIDING.key) return NAVSPG::ACKAIDING.size;
-	if (key == NAVSPG::USE_USRDAT.key) return NAVSPG::USE_USRDAT.size;
-	if (key == NAVSPG::USRDAT_MAJA.key) return NAVSPG::USRDAT_MAJA.size;
-	if (key == NAVSPG::USRDAT_FLAT.key) return NAVSPG::USRDAT_FLAT.size;
-	if (key == NAVSPG::USRDAT_DX.key) return NAVSPG::USRDAT_DX.size;
-	if (key == NAVSPG::USRDAT_DY.key) return NAVSPG::USRDAT_DY.size;
-	if (key == NAVSPG::USRDAT_DZ.key) return NAVSPG::USRDAT_DZ.size;
-	if (key == NAVSPG::USRDAT_ROTX.key) return NAVSPG::USRDAT_ROTX.size;
-	if (key == NAVSPG::USRDAT_ROTY.key) return NAVSPG::USRDAT_ROTY.size;
-	if (key == NAVSPG::USRDAT_ROTZ.key) return NAVSPG::USRDAT_ROTZ.size;
-	if (key == NAVSPG::USRDAT_SCALE.key) return NAVSPG::USRDAT_SCALE.size;
-	if (key == NAVSPG::INFIL_MINSVS.key) return NAVSPG::INFIL_MINSVS.size;
-	if (key == NAVSPG::INFIL_MAXSVS.key) return NAVSPG::INFIL_MAXSVS.size;
-	if (key == NAVSPG::INFIL_MINCNO.key) return NAVSPG::INFIL_MINCNO.size;
-	if (key == NAVSPG::INFIL_MINELEV.key) return NAVSPG::INFIL_MINELEV.size;
-	if (key == NAVSPG::INFIL_NCNOTHRS.key) return NAVSPG::INFIL_NCNOTHRS.size;
-	if (key == NAVSPG::INFIL_CNOTHRS.key) return NAVSPG::INFIL_CNOTHRS.size;
-	if (key == NAVSPG::OUTFIL_PDOP.key) return NAVSPG::OUTFIL_PDOP.size;
-	if (key == NAVSPG::OUTFIL_TDOP.key) return NAVSPG::OUTFIL_TDOP.size;
-	if (key == NAVSPG::OUTFIL_PACC.key) return NAVSPG::OUTFIL_PACC.size;
-	if (key == NAVSPG::OUTFIL_TACC.key) return NAVSPG::OUTFIL_TACC.size;
-	if (key == NAVSPG::OUTFIL_FACC.key) return NAVSPG::OUTFIL_FACC.size;
-	if (key == NAVSPG::CONSTR_ALT.key) return NAVSPG::CONSTR_ALT.size;
-	if (key == NAVSPG::CONSTR_ALTVAR.key) return NAVSPG::CONSTR_ALTVAR.size;
-	if (key == NAVSPG::CONSTR_DGNSSTO.key) return NAVSPG::CONSTR_DGNSSTO.size;
-	if (key == NAVSPG::SIGATTCOMP.key) return NAVSPG::SIGATTCOMP.size;
-
-	// PM Parameters
-	if (key == PM::OPERATEMODE.key) return PM::OPERATEMODE.size;
-	if (key == PM::POSUPDATEPERIOD.key) return PM::POSUPDATEPERIOD.size;
-	if (key == PM::ACQPERIOD.key) return PM::ACQPERIOD.size;
-	if (key == PM::GRIDOFFSET.key) return PM::GRIDOFFSET.size;
-	if (key == PM::ONTIME.key) return PM::ONTIME.size;
-	if (key == PM::MINACQTIME.key) return PM::MINACQTIME.size;
-	if (key == PM::MAXACQTIME.key) return PM::MAXACQTIME.size;
-	if (key == PM::DONOTENTEROFF.key) return PM::DONOTENTEROFF.size;
-	if (key == PM::WAITTIMEFIX.key) return PM::WAITTIMEFIX.size;
-	if (key == PM::UPDATEEPH.key) return PM::UPDATEEPH.size;
-	if (key == PM::EXTINTWAKE.key) return PM::EXTINTWAKE.size;
-	if (key == PM::EXTINTBACKUP.key) return PM::EXTINTBACKUP.size;
-	if (key == PM::EXTINTINACTIVE.key) return PM::EXTINTINACTIVE.size;
-	if (key == PM::EXTINTINACTIVITY.key) return PM::EXTINTINACTIVITY.size;
-	if (key == PM::LIMITPEAKCURR.key) return PM::LIMITPEAKCURR.size;
-
+	for (const UBXParameter *p : PARAMETERS) {
+		if (p->key == key) return p->size;
+	}
 	return 0;  // Return 0 for unknown keys
 }
 

@@ -295,6 +295,7 @@ target_sources(${PROJECT_NAME} PRIVATE
     "src/service_start_test.cpp"
     "src/dive_mode_test.cpp"
     "src/m8_test.cpp"
+    "src/ubx_param_table_test.cpp"
     "src/binascii_test.cpp"
     "src/bitpack_test.cpp"
     "src/timeutils_test.cpp"
