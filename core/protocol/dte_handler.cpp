@@ -2073,6 +2073,34 @@ std::string DTEHandler::RTCW_REQ(int error_code, std::vector<BaseType> &arg_list
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wswitch-enum"
 
+/// @brief Protocol error the host is told about, for a decoder exception.
+///
+/// A straight code table, which is what the switch it replaces was. It lives
+/// outside handle_dte_message because that function had two switches in it --
+/// this one and the 36-case dispatch -- and together they made it the fourth
+/// most complex function in the repository for what is one lookup and one
+/// dispatch.
+///
+/// An ErrorCode that is not a DTE protocol error reaching here is a bug, not a
+/// protocol event: it is logged and reported as BAD_FORMAT, exactly as before.
+static unsigned int dte_error_for(ErrorCode e) {
+	static const std::pair<ErrorCode, DTEError> table[] = {
+		{ ErrorCode::DTE_PROTOCOL_MESSAGE_TOO_LARGE, DTEError::MESSAGE_TOO_LARGE },
+		{ ErrorCode::DTE_PROTOCOL_PARAM_KEY_UNRECOGNISED, DTEError::PARAM_KEY_UNRECOGNISED },
+		{ ErrorCode::DTE_PROTOCOL_UNEXPECTED_ARG, DTEError::UNEXPECTED_ARGUMENT },
+		{ ErrorCode::DTE_PROTOCOL_VALUE_OUT_OF_RANGE, DTEError::VALUE_OUT_OF_RANGE },
+		{ ErrorCode::DTE_PROTOCOL_MISSING_ARG, DTEError::MISSING_ARGUMENT },
+		{ ErrorCode::DTE_PROTOCOL_BAD_FORMAT, DTEError::BAD_FORMAT },
+		{ ErrorCode::DTE_PROTOCOL_PAYLOAD_LENGTH_MISMATCH, DTEError::DATA_LENGTH_MISMATCH },
+		{ ErrorCode::DTE_PROTOCOL_UNKNOWN_COMMAND, DTEError::INCORRECT_COMMAND },
+	};
+	for (const auto &entry : table) {
+		if (entry.first == e) return (unsigned int)entry.second;
+	}
+	DEBUG_ERROR("DTEHandler: unhandled ErrorCode %u from decoder", (unsigned int)e);
+	return (unsigned int)DTEError::BAD_FORMAT;
+}
+
 DTEAction DTEHandler::handle_dte_message(const std::string &req, std::string &resp) {
 	// MANDATORY sentinel. This variable was uninitialised, and the decoder
 	// raises DTE_PROTOCOL_UNKNOWN_COMMAND *before* assigning it: the switch
@@ -2098,24 +2126,7 @@ DTEAction DTEHandler::handle_dte_message(const std::string &req, std::string &re
 	try {
 		if (!DTEDecoder::decode(req, command, error_code, arg_list, params, param_values, rejected_keys)) return action;
 	} catch (ErrorCode e) {
-		switch (e) {
-		case ErrorCode::DTE_PROTOCOL_MESSAGE_TOO_LARGE: error_code = (unsigned int)DTEError::MESSAGE_TOO_LARGE; break;
-		case ErrorCode::DTE_PROTOCOL_PARAM_KEY_UNRECOGNISED:
-			error_code = (unsigned int)DTEError::PARAM_KEY_UNRECOGNISED;
-			break;
-		case ErrorCode::DTE_PROTOCOL_UNEXPECTED_ARG: error_code = (unsigned int)DTEError::UNEXPECTED_ARGUMENT; break;
-		case ErrorCode::DTE_PROTOCOL_VALUE_OUT_OF_RANGE: error_code = (unsigned int)DTEError::VALUE_OUT_OF_RANGE; break;
-		case ErrorCode::DTE_PROTOCOL_MISSING_ARG: error_code = (unsigned int)DTEError::MISSING_ARGUMENT; break;
-		case ErrorCode::DTE_PROTOCOL_BAD_FORMAT: error_code = (unsigned int)DTEError::BAD_FORMAT; break;
-		case ErrorCode::DTE_PROTOCOL_PAYLOAD_LENGTH_MISMATCH:
-			error_code = (unsigned int)DTEError::DATA_LENGTH_MISMATCH;
-			break;
-		case ErrorCode::DTE_PROTOCOL_UNKNOWN_COMMAND: error_code = (unsigned int)DTEError::INCORRECT_COMMAND; break;
-		default:
-			DEBUG_ERROR("DTEHandler: unhandled ErrorCode %u from decoder", (unsigned int)e);
-			error_code = (unsigned int)DTEError::BAD_FORMAT;
-			break;
-		}
+		error_code = dte_error_for(e);
 	}
 
 	// Command never identified: we cannot name the response, and above all we
