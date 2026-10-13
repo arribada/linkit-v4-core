@@ -893,7 +893,33 @@ static LFSFileSystem &init_storage(NrfSwitch &nrf_reed_switch, Is25Flash &is25_f
 	DEBUG_TRACE("Configuration store...");
 	static LFSConfigurationStore store(lfs_file_system);
 	configuration_store = &store;
-	configuration_store->init();
+	// init() throws CONFIG_STORE_CORRUPTED out of its WRITE paths -- serialize_config(),
+	// serialize_pass_predict(), serialize_protected_config() -- and the commonest way in
+	// is the ordinary one: no config file yet, so init() writes the defaults, and the
+	// write fails. Uncaught here the exception left main(), which is std::terminate: no
+	// log, no LED, no bounded policy, just a dead tag the 15-minute watchdog reboots into
+	// the same terminate forever.
+	//
+	// storage_unusable() is the policy this file already applies to a failed mount: a few
+	// announced reboots with a red blink, then defer to the watchdog, which keeps
+	// retrying every 15 min. A write that failed once may well succeed on the next boot.
+	//
+	// Deliberately NOT a factory_reset: on a sealed unit that wipes the Argos/LoRa
+	// credentials, which is a worse brick than the one being handled -- the tag would
+	// come up but never be able to transmit, and there is no downlink to re-provision it.
+	//
+	// The two `catch (int e)` inside init() are NOT part of this: every ErrorCode throw
+	// lives in a serialize_* path, outside those try blocks, and the deserialize paths
+	// throw only LittleFS ints, which is exactly what those catches are for.
+	try {
+		configuration_store->init();
+	} catch (ErrorCode e) {
+		storage_unusable("configuration store init");
+	} catch (int e) {
+		storage_unusable("configuration store init (lfs)");
+	} catch (...) {
+		storage_unusable("configuration store init (unknown)");
+	}
 
 	// Restore last known RTC from flash (enables MGA-ANO assistance and faster GNSS TTFF)
 	{
