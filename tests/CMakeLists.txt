@@ -274,6 +274,7 @@ target_sources(${PROJECT_NAME} PRIVATE
     "src/debug_logger_test.cpp"
     "src/nrf_switch_test.cpp"
     # "src/nrf_battery_test.cpp"  # Excluded: depends on NrfBatteryMonitor (needs Nordic SDK nrf_delay.h)
+    "src/battery_critical_confirm_test.cpp"
     "src/ph_sensor_test.cpp"
     "src/als_sensor_test.cpp"
     "src/sea_temp_sensor_test.cpp"

@@ -12,6 +12,7 @@
 #include "interrupt_lock.hpp"
 #include "is25_flash.hpp"
 #include "nrf_delay.h"
+#include "pmu.hpp"
 
 
 namespace {
@@ -29,6 +30,14 @@ namespace {
 /// permanent red blink loop.  Field occurrence 2026-08-25.  2 s leaves margin
 /// for a hot die and for the 64 KB block erase path.
 constexpr uint32_t WIP_BOOT_TIMEOUT_US = 2000000;
+
+/// @brief _sync() budget in interrupt context: the 4 KB sector-erase maximum.
+///
+/// A BLE OTA write reaches _sync() from the SoftDevice event interrupt
+/// (NRF_SDH_DISPATCH_MODEL = INTERRUPT), where a longer busy-wait would put the
+/// link at risk. A timeout there surfaces as LFS_ERR_IO, which the caller
+/// handles. Thread context gets WIP_BOOT_TIMEOUT_US.
+constexpr uint32_t WIP_ISR_TIMEOUT_US = 300000;
 
 /// @brief WRSR (status register write) is quick — 15 ms typical worst case.
 constexpr uint32_t WRSR_TIMEOUT_US = 50000;
@@ -397,24 +406,18 @@ int Is25Flash::_erase(lfs_block_t block) {
 
 /**
  * @brief Wait for any in-progress write/erase to complete.
- * @return LFS_ERR_OK on success, LFS_ERR_IO on timeout (300 ms).
+ * @return LFS_ERR_OK on success, LFS_ERR_IO on timeout (2 s, or 300 ms in
+ *         interrupt context).
  */
 int Is25Flash::_sync() {
 	nrfx_err_t ret;
 
-	// Deliberately left at 300 ms — the IS25LP128F maximum for a 4 KB sector
-	// erase — even though that leaves no margin. This wait is REACHABLE FROM
-	// SOFTDEVICE INTERRUPT CONTEXT: a BLE OTA write lands in
-	// stm_ota_event_handler (NRF_SDH_DISPATCH_MODEL = INTERRUPT) and runs
-	// ota_updater->write_file_data() straight through to LittleFS. Raising the
-	// budget would extend a busy-wait inside the radio's own IRQ and put the
-	// BLE link at risk. A rare timeout here surfaces as LFS_ERR_IO, which the
-	// caller handles; a one-second stall in the SoftDevice IRQ does not.
-	// The bring-up path has its own, much longer budget — see WIP_BOOT_TIMEOUT_US.
+	// 300 ms is exactly the datasheet sector-erase maximum, no margin for a hot
+	// or ageing die: only an interrupt has a reason to give up that early.
+	const uint32_t timeout_us = (__get_IPSR() != 0) ? WIP_ISR_TIMEOUT_US : WIP_BOOT_TIMEOUT_US;
 	constexpr uint32_t WAIT_TIME_US = 10;
-	constexpr uint32_t WAIT_ATTEMPTS = 30000;
 
-	uint32_t remaining_attempts = WAIT_ATTEMPTS;
+	uint32_t remaining_attempts = timeout_us / WAIT_TIME_US;
 	do {
 		ret = nrfx_qspi_mem_busy_check();
 		if (ret == NRFX_SUCCESS) break;
@@ -505,10 +508,10 @@ void Is25Flash::_power_up_hw() {
 void Is25Flash::_power_down_hw() {
 	// Wait for any write/erase to finish before sleeping the die.
 	//
-	// NOT _sync(): its 300 ms budget is capped by the SoftDevice IRQ path (a BLE
-	// OTA write reaches it from the radio's own interrupt -- see _sync), and a
-	// 4 KB sector erase already spends all of it. This path only ever runs from
-	// the main loop, so it can afford the same 2 s the bring-up path uses.
+	// NOT _sync(): in interrupt context its budget is capped at 300 ms (see
+	// WIP_ISR_TIMEOUT_US), and this wait must outlast an erase in every context.
+	// On the BLE OTA interrupt path _prog() has already waited for WIP and an
+	// erase lasts at most 300 ms, so the 2 s here is a bound, not a cost.
 	//
 	// It matters because of what happens next: the caller releases the flash
 	// interlock, and PMU::reduce_power_rails() then takes VSYS down to 2.3 V --
@@ -575,6 +578,11 @@ void Is25Flash::power_up() {
 		m_power_ref_count = prev + 1;
 		bring_up = (prev == 0);
 	}
+	// The interlock above only stops the rail going DOWN. It may already be at
+	// 2.3 V: a task posted from an interrupt after the main loop decided not to
+	// restore the rail, or a write from interrupt context. Raised after the
+	// interlock, so reduce_power_rails() cannot undo it before we are done.
+	PMU::ensure_vsys_nominal();
 	if (bring_up) _power_up_hw();
 }
 

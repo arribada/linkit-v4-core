@@ -98,6 +98,16 @@ public:
 	/// @brief Restore peripheral power rails before next scheduled task.
 	static void restore_power_rails();
 
+	/// @brief Raise VSYS to its nominal 3.3 V if the idle logic left it at 2.3 V.
+	///
+	/// For a component that must not run on the idle rail and cannot rely on the
+	/// main loop having restored it (a task posted from an interrupt between the
+	/// loop's check and the scheduler run, or interrupt context itself). One
+	/// register read when the rail is already nominal; interrupt-safe. Never
+	/// lowers the rail: the main loop does that through reduce_power_rails().
+	/// No-op on boards without VSYS_SEL and on RSPB.
+	static void ensure_vsys_nominal();
+
 	/// @brief Storage-mode wake filter (LinkIt V4 only).
 	///
 	/// Called at the very beginning of `main()` BEFORE `initialise()` and

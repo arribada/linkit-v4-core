@@ -26,11 +26,71 @@ enum BatteryChemistry {
 	BATT_CHEM_ALKALINE_3S2P        ///< 6× Energizer EN95 (LR20 / D) in 3S2P (alkaline, 2.7-4.7 V)
 };
 
+/// @brief Confirmation of the critical band, spread in time.
+///
+/// The critical verdict ends in System OFF, which a sealed tag never leaves.
+/// A reading is taken before every transmission, so consecutive samples can
+/// all come from one TX burst, under load, from a pack whose voltage recovers
+/// at rest. Here a below-threshold sample only counts when it comes at least
+/// MIN_SPACING_MS after the previous counted one, and any sample at or above
+/// the threshold restarts the run: SAMPLES counted samples span at least
+/// (SAMPLES - 1) * MIN_SPACING_MS with no healthy reading in between.
+///
+/// The count is the caller's (it survives a soft reset in .noinit). The
+/// timestamp is uptime and does not, so a run carried over a reset is not
+/// extended by the first low sample after it, which only re-anchors the
+/// spacing, and it needs at least one more spaced sample to confirm, even if
+/// it was confirmed before the reset. A reboot loop can never confirm.
+class CriticalBandConfirm {
+public:
+	static constexpr uint8_t SAMPLES = 3;
+	static constexpr uint64_t MIN_SPACING_MS = 30ULL * 60ULL * 1000ULL;
+	static_assert(SAMPLES >= 2, "a single sample is exactly what this class exists to refuse");
+
+	/// @param count   Counted samples, updated in place (saturates at SAMPLES).
+	/// @param below   This sample is below the critical threshold.
+	/// @param now_ms  Monotonic uptime of this sample.
+	/// @return true once SAMPLES spaced samples have been counted.
+	bool update(uint8_t &count, bool below, uint64_t now_ms) {
+		if (!below) {
+			count = 0;
+			m_anchored = false;
+			return false;
+		}
+		if (!m_anchored) {
+			// First low sample of a run, or of this boot.
+			if (count == 0) {
+				count = 1;
+			} else if (count >= SAMPLES) {
+				count = SAMPLES - 1;
+			}
+			anchor(now_ms);
+			return false;
+		}
+		if (count >= SAMPLES) return true;
+		if (now_ms < m_last_ms || now_ms - m_last_ms < MIN_SPACING_MS) return false;
+		count = static_cast<uint8_t>(count + 1);
+		anchor(now_ms);
+		return count >= SAMPLES;
+	}
+
+private:
+	void anchor(uint64_t now_ms) {
+		m_last_ms = now_ms;
+		m_anchored = true;
+	}
+
+	uint64_t m_last_ms = 0;   ///< Uptime of the last counted or re-anchoring sample
+	bool m_anchored = false;  ///< m_last_ms belongs to the current run and boot
+};
+
 class NrfBatteryMonitor : public BatteryMonitor {
 private:
 	BatteryChemistry m_chem;
 	uint8_t m_adc_channel;
 	bool m_is_init;
+	CriticalBandConfirm m_crit_band;
+	bool m_crit_band_confirmed = false;  ///< Last verdict of m_crit_band, to log its rising edge once
 
 	/// @brief Sample the SAADC and return raw voltage in mV (before divider correction).
 	float sample_adc();
