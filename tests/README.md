@@ -18,8 +18,22 @@ Host (x86 Linux) unit test suite using [CppUTest](http://cpputest.github.io/).
 ```bash
 cd tests && mkdir -p build && cd build
 cmake .. && make -j$(nproc)
-cd .. && ln -sf data build/ && ./build/TrackerTests -v
+cd .. && ln -sf data build/ && ./build/TrackerTests -xg SWSLongRun -v
 ```
+
+**Run from `tests/`, and keep the `-xg SWSLongRun`.** Two traps, both measured:
+
+- From the repository root instead, five PASPW tests fail because they read
+  `tests/data/*.json` by relative path. They are false failures and they send you
+  hunting a defect that does not exist.
+- A bare `./build/TrackerTests` runs `TEST_GROUP(SWSLongRun)`, fifteen scenarios
+  each simulating 75 days of deployment: **over 40 minutes**, against 24 s for the
+  other 942 tests. A suite that takes three quarters of an hour stops being run.
+
+To run the simulation deliberately: `./build/TrackerTests -g SWSLongRun`. It is a
+research instrument -- it reports detection rates per scenario and asserts one
+invariant (clean electrodes with a fixed delay must catch ≥ 90 % of surfacings),
+so read its output rather than just its exit code.
 
 Or via the script:
 ```bash

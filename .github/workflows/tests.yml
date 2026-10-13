@@ -182,7 +182,7 @@ jobs:
     name: SWS tests
     needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 75
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -204,6 +204,12 @@ jobs:
           # Run SWSAnalog and SWSAnalogFlash groups; -p isolates each test
           ./build/TrackerTests -ojunit -p -g SWSAnalog -k sws-analog
           ./build/TrackerTests -ojunit -p -g SWSAnalogFlash -k sws-analog-flash
+          # SWSLongRun was reaching no CI job at all: the unit job excludes it via
+          # -xg SWS, and the two lines above name their groups explicitly. Its one
+          # invariant (clean electrodes, fixed delay, >= 90 % of surfacings seen)
+          # therefore guarded nothing. It is 15 scenarios of 75 simulated days,
+          # ~40 min, hence this job's raised timeout rather than the unit suite.
+          ./build/TrackerTests -ojunit -p -g SWSLongRun -k sws-longrun
           mv cpputest_*.xml reports/sws/ 2>/dev/null || true
 
       - name: Upload JUnit reports
