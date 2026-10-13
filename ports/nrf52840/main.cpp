@@ -379,6 +379,14 @@ static constexpr uint32_t FLASHFAIL_MAGIC = 0x15250FA1;
 /// @brief Explicit reboots attempted before handing the board to the watchdog.
 static constexpr uint32_t FLASH_INIT_MAX_RESETS = 5;
 
+/// @brief Non-destructive mount retries before format() is allowed to erase.
+/// Small and cheap: a transient IS25 read failure clears in milliseconds, while
+/// a filesystem that is really corrupt will not mount on the fourth try either.
+/// The watchdog is already running here (15 min), so the total added delay is
+/// negligible against it.
+static constexpr unsigned int LFS_MOUNT_RETRIES = 3;
+static constexpr unsigned int LFS_MOUNT_RETRY_DELAY_MS = 50;
+
 /// @brief The filesystem flash would not come up — recover instead of trapping.
 ///
 /// This used to be `fault_blink_loop(RED, 100)`: an infinite blink that fed the
@@ -883,9 +891,28 @@ static LFSFileSystem &init_storage(NrfSwitch &nrf_reed_switch, Is25Flash &is25_f
 	}
 #else
 	if (main_filesystem->mount() < 0) {
-		DEBUG_TRACE("Format LFS filesystem...");
-		if (main_filesystem->format() < 0 || main_filesystem->mount() < 0) {
-			storage_unusable("LFS mount+format");
+		// Retry before reaching for format(). format() ERASES the configuration and
+		// with it the Argos/LoRa credentials, and a sealed tag has no downlink to be
+		// re-provisioned through: it would come up and never transmit again. Spending
+		// one bad mount on that is far too cheap a trigger, because a mount can fail
+		// for reasons that have nothing to do with the filesystem -- the IS25 sitting
+		// on the 2.3 V idle rail has its own history of transient read failures.
+		//
+		// These retries are free and non-destructive. The format is kept as the last
+		// resort it should have been all along: a genuinely corrupt filesystem still
+		// gets repaired, it just no longer happens on the first stumble.
+		bool mounted = false;
+		for (unsigned int attempt = 1; attempt <= LFS_MOUNT_RETRIES && !mounted; attempt++) {
+			nrf_delay_ms(LFS_MOUNT_RETRY_DELAY_MS);
+			mounted = (main_filesystem->mount() >= 0);
+			DEBUG_WARN("LFS mount retry %u/%u: %s", attempt, LFS_MOUNT_RETRIES, mounted ? "mounted" : "failed");
+		}
+
+		if (!mounted) {
+			DEBUG_ERROR("LFS mount failed %u times — formatting (configuration will be lost)", LFS_MOUNT_RETRIES + 1);
+			if (main_filesystem->format() < 0 || main_filesystem->mount() < 0) {
+				storage_unusable("LFS mount+format");
+			}
 		}
 	}
 #endif
