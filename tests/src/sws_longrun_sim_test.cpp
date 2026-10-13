@@ -799,10 +799,20 @@ TEST(SWSLongRun, H45_ShippedFouling_Documentary) {
 // with a detection rate of 0.00 over 75 days on CLEAN electrodes.
 //
 // A hill-climbing control law (step, wait for the baselines, reverse if the
-// contrast got worse) was written and measured against this: detection 0.99 /
-// 1.00 / 0.81, false detections 0 -> 18 -> 55 per day against ~830 for a delay
-// pinned at 500 us, and the delay settling near 1500 us, which is the contrast
-// peak. It was NOT committed, for three reasons:
+// contrast got worse) was written and measured across all 18 scenarios. DO NOT
+// retry it as written: it is excellent on clean electrodes and WORSE THAN THE
+// CURRENT CODE on the case adaptation exists for.
+//
+//   clean, 75 days   : 1.00 / 0.99 / 1.00   (current code: 0.00)
+//   fouling, 75 days : 1.00 / 0.15 / 0.00   (delay pinned at 500 us: 0.95/0.83/0.76)
+//
+// False detections were its one clear win -- 0 -> 18 -> 55 per day against ~830
+// for a pinned delay -- and the delay did settle near 1500 us, the contrast peak.
+// But the climb collapses once fouling sets in, most likely because the contrast
+// it steers on gets too noisy to judge a step, so the reversal fires at random.
+// Judging a step needs a quieter objective than the ratio of two EMA baselines.
+//
+// It was NOT committed, for three reasons:
 //   - the evidence is this simulation, whose physics model is a hypothesis
 //     ("reproduces the ~3000 counts at 1 ms seen on boards"), not a measurement;
 //   - it is incomplete: by day 74 the delay is back on the floor with the
