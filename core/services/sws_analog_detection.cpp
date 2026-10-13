@@ -56,6 +56,68 @@ bool SWSAnalogService::check_safety_timeouts(bool current_state) {
 //  MAIN DETECTION: 5-LEVEL SURFACE DETECTION
 // ═══════════════════════════════════════════════════════
 
+/// @brief Level 3 of the surface ladder: consecutive decreases of the 3-sample
+/// moving average mean the electrodes are drying. Moved verbatim out of
+/// detector_state() section 4 -- the body below is the section, unchanged.
+///
+/// The trend buffer and m_prev_ma3 are updated on EVERY call, whatever the
+/// verdict: the moving average has to keep moving, or the next comparison is
+/// against a stale value. Only the verdict is conditional, which is why this
+/// returns a level rather than taking surface_level by reference -- a caller
+/// cannot then skip the update by guarding the call, which is the one way this
+/// extraction could have changed behaviour.
+///
+/// @param current_level  level the ladder has already decided, 0 if none yet
+/// @return 3 if this level fires, 0 otherwise
+unsigned int SWSAnalogService::update_level3_trend(uint16_t filtered_value, unsigned int current_level,
+                                                   bool proximity_ok) {
+	unsigned int level = 0;
+
+	m_trend_buffer[m_trend_buffer_idx] = filtered_value;
+	m_trend_buffer_idx = (m_trend_buffer_idx + 1) % TREND_MA_SIZE;
+	if (m_trend_buffer_count < TREND_MA_SIZE) m_trend_buffer_count++;
+
+	uint16_t current_ma3 = filtered_value;
+	if (m_trend_buffer_count >= TREND_MA_SIZE) {
+		uint32_t ma_sum = 0;
+		for (int i = 0; i < TREND_MA_SIZE; i++)
+			ma_sum += m_trend_buffer[i];
+		current_ma3 = (uint16_t)(ma_sum / TREND_MA_SIZE);
+	}
+
+	if (current_level == 0 && m_current_state && m_prev_ma3 > 0 && m_trend_buffer_count >= TREND_MA_SIZE &&
+#if OVERRIDE_MIN_TIME_SEC > 0
+	    m_time_in_current_state >= OVERRIDE_MIN_TIME_SEC &&
+#endif
+	    proximity_ok) {
+
+		if (current_ma3 < m_prev_ma3) {
+			// MA3 decreased
+			if (m_ma3_trend_count == 0) {
+				m_ma3_trend_start = m_prev_ma3;  // record start of trend
+			}
+			m_ma3_trend_count++;
+		} else {
+			// Allow 1 flat/increase without full reset (noise tolerance)
+			if (m_ma3_trend_count > 0) m_ma3_trend_count--;
+		}
+
+		if (m_ma3_trend_count >= L3_MIN_CONSECUTIVE && m_ma3_trend_start > 0) {
+			uint16_t ma3_drop = (uint16_t)((uint32_t)(m_ma3_trend_start - current_ma3) * 100 / m_ma3_trend_start);
+			if (ma3_drop >= L3_DROP_PERCENT) {
+				level = 3;
+			}
+		}
+	} else if (!m_current_state) {
+		m_ma3_trend_count = 0;
+		m_ma3_trend_start = 0;
+	}
+
+	m_prev_ma3 = current_ma3;
+
+	return level;
+}
+
 /// @brief Main detection logic — read ADC, filter, 5-level surface detection, calibrate, log.
 /// @return true if underwater, false if at surface.
 bool SWSAnalogService::detector_state() {
@@ -302,47 +364,7 @@ bool SWSAnalogService::detector_state() {
 	}
 
 	// === 4. LEVEL 3: TREND MA3 (consecutive MA3 decreases → electrode drying) ===
-	m_trend_buffer[m_trend_buffer_idx] = filtered_value;
-	m_trend_buffer_idx = (m_trend_buffer_idx + 1) % TREND_MA_SIZE;
-	if (m_trend_buffer_count < TREND_MA_SIZE) m_trend_buffer_count++;
-
-	uint16_t current_ma3 = filtered_value;
-	if (m_trend_buffer_count >= TREND_MA_SIZE) {
-		uint32_t ma_sum = 0;
-		for (int i = 0; i < TREND_MA_SIZE; i++)
-			ma_sum += m_trend_buffer[i];
-		current_ma3 = (uint16_t)(ma_sum / TREND_MA_SIZE);
-	}
-
-	if (surface_level == 0 && m_current_state && m_prev_ma3 > 0 && m_trend_buffer_count >= TREND_MA_SIZE &&
-#if OVERRIDE_MIN_TIME_SEC > 0
-	    m_time_in_current_state >= OVERRIDE_MIN_TIME_SEC &&
-#endif
-	    proximity_ok) {
-
-		if (current_ma3 < m_prev_ma3) {
-			// MA3 decreased
-			if (m_ma3_trend_count == 0) {
-				m_ma3_trend_start = m_prev_ma3;  // record start of trend
-			}
-			m_ma3_trend_count++;
-		} else {
-			// Allow 1 flat/increase without full reset (noise tolerance)
-			if (m_ma3_trend_count > 0) m_ma3_trend_count--;
-		}
-
-		if (m_ma3_trend_count >= L3_MIN_CONSECUTIVE && m_ma3_trend_start > 0) {
-			uint16_t ma3_drop = (uint16_t)((uint32_t)(m_ma3_trend_start - current_ma3) * 100 / m_ma3_trend_start);
-			if (ma3_drop >= L3_DROP_PERCENT) {
-				surface_level = 3;
-			}
-		}
-	} else if (!m_current_state) {
-		m_ma3_trend_count = 0;
-		m_ma3_trend_start = 0;
-	}
-
-	m_prev_ma3 = current_ma3;
+	if (unsigned int l3 = update_level3_trend(filtered_value, surface_level, proximity_ok)) surface_level = l3;
 
 	// === 5. LEVEL 4 & 5: RELATIVE AND CUMULATIVE DROP ===
 	if (m_current_state) {
@@ -696,8 +718,12 @@ bool SWSAnalogService::detector_state() {
 		// lockout is not strictly necessary for stability. Default config is 5s.
 		m_surface_lockout_remaining = m_min_surface_time_sec;
 
+		// m_prev_ma3, not a local: update_level3_trend() ends by storing the MA3 it
+		// just computed there, and the only other writers are resets that run after
+		// this point or on service start. So this prints the same value the inline
+		// `current_ma3` used to, and the member is the one that still holds it.
 		DEBUG_TRACE("SWSAnalog: SURFACE L%u | raw=%u filt=%u ma3=%u air=%u water=%u lockout=%us", surface_level,
-		            raw_value, filtered_value, current_ma3, m_calib.threshold_air, m_calib.threshold_water,
+		            raw_value, filtered_value, m_prev_ma3, m_calib.threshold_air, m_calib.threshold_water,
 		            m_surface_lockout_remaining);
 	}
 
