@@ -812,10 +812,31 @@ TEST(SWSLongRun, H45_ShippedFouling_Documentary) {
 //     the descent never starts: clean electrodes give a contrast of 14.9, well
 //     above the 5.0 that triggers it.
 //
-// What would settle it: the SWS flash log carries a sample_delay_us column. Dump
-// it from a recovered tag. If it reads 200, the ratchet happened at sea and the
-// diagnosis holds on real hardware. The Argos CSVs in .claude/wwf-yanariba/data
-// cannot answer this -- they are received messages, not the on-device log.
+// SETTLED, AND AGAINST THIS SIMULATION. The Argos telemetry carries a
+// surface_dry_pct sensor -- the same quantity the belief_s column reports here --
+// and .claude/wwf-yanariba/data has 19032 of them across ten tags over four
+// months. They read 3.7% to 16.1%, drifting gently up from ~4% to ~8-9%. This
+// simulation predicts the detector latching at 100% dry with the shipped
+// configuration. It does not happen: the tags told wet from dry for four months
+// at sea.
+//
+// So the 0.00 detection measured below is a SIMULATION ARTEFACT, not the field
+// behaviour, and the physics model is the first thing to distrust -- most likely
+// it understates the water/air separation at short delays. It also means this
+// mechanism is NOT the cause of the YanaRiba message decay; that was attributed
+// to GPS death and RF steps, and nothing here displaces that.
+//
+// What survives, because it is provable from the code and needs no model: if the
+// delay ever reaches the floor, nothing brings it back. Climbing needs contrast
+// above 10.0, which cannot occur from down there; m_sample_delay_us has three
+// writers, all in adjust_sample_delay; should_recalibrate() does not touch it;
+// and the value is persisted to .noinit with a CRC, so a reboot does not reopen
+// it. That is a latent fragility worth removing one day. It is not an outage, and
+// the field data says so.
+//
+// Dumping sample_delay_us from the SWS flash log of a recovered tag would still
+// be worth doing: it says whether the delay is sitting on the floor while the
+// detector keeps working, which would date the fragility without dramatising it.
 IGNORE_TEST(SWSLongRun, ShippedConfig_AdaptiveDelayIsNotAOneWayDoor) {
 	SimResult r = run_scenario(kShippedCleanH45);
 	report(kShippedCleanH45, r);
