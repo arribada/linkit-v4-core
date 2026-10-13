@@ -393,6 +393,14 @@ static constexpr uint32_t FLASHFAIL_MAGIC = 0x15250FA1;
 /// @brief Explicit reboots attempted before handing the board to the watchdog.
 static constexpr uint32_t FLASH_INIT_MAX_RESETS = 5;
 
+/// @brief Non-destructive mount retries before format() is allowed to erase.
+/// Small and cheap: a transient IS25 read failure clears in milliseconds, while
+/// a filesystem that is really corrupt will not mount on the fourth try either.
+/// The watchdog is already running here (15 min), so the total added delay is
+/// negligible against it.
+static constexpr unsigned int LFS_MOUNT_RETRIES = 3;
+static constexpr unsigned int LFS_MOUNT_RETRY_DELAY_MS = 50;
+
 /// @brief The filesystem flash would not come up — recover instead of trapping.
 ///
 /// This used to be `fault_blink_loop(RED, 100)`: an infinite blink that fed the
@@ -897,9 +905,28 @@ static LFSFileSystem &init_storage(NrfSwitch &nrf_reed_switch, Is25Flash &is25_f
 	}
 #else
 	if (main_filesystem->mount() < 0) {
-		DEBUG_TRACE("Format LFS filesystem...");
-		if (main_filesystem->format() < 0 || main_filesystem->mount() < 0) {
-			storage_unusable("LFS mount+format");
+		// Retry before reaching for format(). format() ERASES the configuration and
+		// with it the Argos/LoRa credentials, and a sealed tag has no downlink to be
+		// re-provisioned through: it would come up and never transmit again. Spending
+		// one bad mount on that is far too cheap a trigger, because a mount can fail
+		// for reasons that have nothing to do with the filesystem -- the IS25 sitting
+		// on the 2.3 V idle rail has its own history of transient read failures.
+		//
+		// These retries are free and non-destructive. The format is kept as the last
+		// resort it should have been all along: a genuinely corrupt filesystem still
+		// gets repaired, it just no longer happens on the first stumble.
+		bool mounted = false;
+		for (unsigned int attempt = 1; attempt <= LFS_MOUNT_RETRIES && !mounted; attempt++) {
+			nrf_delay_ms(LFS_MOUNT_RETRY_DELAY_MS);
+			mounted = (main_filesystem->mount() >= 0);
+			DEBUG_WARN("LFS mount retry %u/%u: %s", attempt, LFS_MOUNT_RETRIES, mounted ? "mounted" : "failed");
+		}
+
+		if (!mounted) {
+			DEBUG_ERROR("LFS mount failed %u times — formatting (configuration will be lost)", LFS_MOUNT_RETRIES + 1);
+			if (main_filesystem->format() < 0 || main_filesystem->mount() < 0) {
+				storage_unusable("LFS mount+format");
+			}
 		}
 	}
 #endif
@@ -907,7 +934,33 @@ static LFSFileSystem &init_storage(NrfSwitch &nrf_reed_switch, Is25Flash &is25_f
 	DEBUG_TRACE("Configuration store...");
 	static LFSConfigurationStore store(lfs_file_system);
 	configuration_store = &store;
-	configuration_store->init();
+	// init() throws CONFIG_STORE_CORRUPTED out of its WRITE paths -- serialize_config(),
+	// serialize_pass_predict(), serialize_protected_config() -- and the commonest way in
+	// is the ordinary one: no config file yet, so init() writes the defaults, and the
+	// write fails. Uncaught here the exception left main(), which is std::terminate: no
+	// log, no LED, no bounded policy, just a dead tag the 15-minute watchdog reboots into
+	// the same terminate forever.
+	//
+	// storage_unusable() is the policy this file already applies to a failed mount: a few
+	// announced reboots with a red blink, then defer to the watchdog, which keeps
+	// retrying every 15 min. A write that failed once may well succeed on the next boot.
+	//
+	// Deliberately NOT a factory_reset: on a sealed unit that wipes the Argos/LoRa
+	// credentials, which is a worse brick than the one being handled -- the tag would
+	// come up but never be able to transmit, and there is no downlink to re-provision it.
+	//
+	// The two `catch (int e)` inside init() are NOT part of this: every ErrorCode throw
+	// lives in a serialize_* path, outside those try blocks, and the deserialize paths
+	// throw only LittleFS ints, which is exactly what those catches are for.
+	try {
+		configuration_store->init();
+	} catch (ErrorCode e) {
+		storage_unusable("configuration store init");
+	} catch (int e) {
+		storage_unusable("configuration store init (lfs)");
+	} catch (...) {
+		storage_unusable("configuration store init (unknown)");
+	}
 
 	// Restore last known RTC from flash (enables MGA-ANO assistance and faster GNSS TTFF)
 	{

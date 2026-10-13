@@ -9,81 +9,7 @@
 #include "logger.hpp"
 #include "config_store.hpp"
 #include "service_scheduler.hpp"
-#include "scheduler.hpp"
-#include "service.hpp"
-#include "dte_handler.hpp"
-#include "filesystem.hpp"
-#include "config_store.hpp"
-#include "error.hpp"
-#include "timer.hpp"
-#include "debug.hpp"
-#include "switch.hpp"
-#include "reed.hpp"
-#include "ledsm.hpp"
-#include "buzzm.hpp"
-#include "battery.hpp"
-#include "rgb_led.hpp"
-#include "rtc.hpp"
-
-extern RTC *rtc;
-#include "led.hpp"
-#include "gps.hpp"
-#include "gps_service.hpp"
-#include "ble_service.hpp"
-#include "sws_analog_service.hpp"
-// CRC16-CCITT: nRF SDK header in firmware build, inline stub in CppUTest build.
-// Mirrors the conditional in sws_analog_constants.hpp so tests can build this
-// file (the SDK header is not on the test include path).
-#ifndef CPPUTEST
-#include "crc16.h"
-#else
-#include <cstdint>
-static inline uint16_t crc16_compute(const uint8_t *data, uint16_t length, const uint16_t *) {
-	uint16_t crc = 0xFFFF;
-	for (uint16_t i = 0; i < length; i++) {
-		crc ^= static_cast<uint16_t>(data[i]) << 8;
-		for (uint8_t j = 0; j < 8; j++)
-			crc = (crc & 0x8000) ? (crc << 1) ^ 0x1021 : crc << 1;
-	}
-	return crc;
-}
-#endif
-#include "gentracker.hpp"
-
-// USB DTE interface (platform-specific)
-#ifdef USB_DTE_ENABLED
-#include "usb_interface.hpp"
-#endif
-#ifdef BENCH_TEST
-#include "bench_console.hpp"
-#endif
-
-// LoRa device instance (for bridge mode in process_usb_data)
-#if defined(LORA_RAK3172) && (LORA_RAK3172 == 1)
-#include "lora_rak3172.hpp"
-extern LoRaDevice *lora_device_instance;
-#endif
-
-// KIM2 device instance (for bridge mode in process_usb_data)
-#if !(defined(LORA_RAK3172) && (LORA_RAK3172 == 1)) && !(defined(ARGOS_SMD) && (ARGOS_SMD == 1))
-#include "kim2.hpp"
-extern KIM2Device *kim2_device_instance;
-#endif
-
-// LED hardware access for forced LED off before powerdown
-extern RGBLed *status_led;
-
-// These contexts must be created before the FSM is initialised
-extern FileSystem *main_filesystem;
-extern Scheduler *system_scheduler;
-extern Timer *system_timer;
-extern ConfigurationStore *configuration_store;
-extern BLEService *ble_service;
-extern OTAFileUpdater *ota_updater;
-extern DTEHandler *dte_handler;
-extern ReedSwitch *reed_switch;
-extern BatteryMonitor *battery_monitor;
-extern BaseDebugMode g_debug_mode;
+#include "gentracker_common.hpp"
 
 // FSM initial state -> LEDOff
 FSM_INITIAL_STATE(LEDState, LEDOff);
@@ -211,6 +137,11 @@ void GenTracker::react(ReedSwitchEvent const &event) {
 /// @param event  Error code that caused the failure.
 void GenTracker::react(ErrorEvent const &event) {
 	DEBUG_ERROR("GenTracker::react: ErrorEvent: error_code=%u", event.error_code);
+#ifndef EXTERNAL_WAKEUP
+	// Re-entering would restart the wait, and errors arriving faster than the
+	// backoff would then postpone the retry reset for ever.
+	if (is_in_state<ErrorState>()) return;
+#endif
 	cancel_confirmation();
 	transit<ErrorState>();
 }
@@ -221,37 +152,39 @@ void GenTracker::exit(void) {};
 // =====================================================================
 // Boot-fail counter — sealed-device recovery infrastructure.
 //
-// On a sealed turtle (no physical reed access for the operator) the
-// device cannot escape OffState — it's a permanent brick. Any path that
-// transitions Boot → ErrorState → OffState (e.g. BAD_FILESYSTEM,
-// CONFIG_STORE_CORRUPTED, persistent uncaught exception in main loop)
-// would otherwise kill the deployment on the first occurrence.
+// A boot that never reaches OperationalState or ConfigurationState counts as
+// failed. Both states prove the same things: the flash mounted, the config
+// store parsed, the scheduler runs and the DTE answers. Clearing in
+// configuration too keeps an operator's back-to-back USB sessions from
+// walking the tag into a factory reset it never earned. The record lives in
+// .noinit RAM under a CRC: it survives a reset, and a cold power-up starts
+// it from zero.
 //
-// Mitigation: track consecutive boots that fail to reach Operational in
-// .noinit RAM. Each boot increments the counter; OperationalState entry
-// resets it. When the counter is positive, ErrorState performs a soft
-// reset instead of going to OffState — letting the watchdog/reboot
-// cycle exercise recovery instead of going dark. At BOOT_RETRY_BEFORE_FACTORY
-// we factory-reset the config store on next boot and reset again. Only if the
-// factory_reset retry also fails do we fall through to true OffState (real HW
-// fault). What the factory_reset preserves is PROTECTED_PARAMS in
-// config_store_fs.hpp: identifiers, calibration AND the provisioning secrets
-// (ARGOS_SECKEY, the RADIOCONFs, the six LoRaWAN keys). What it loses is the
-// mission config — modes, periods, thresholds — which is what the recovery is
-// for.
+// LinkIt: OffState is System OFF, which only the magnet wakes — the end of
+// a glued tag. Boot failures therefore never lead there. ErrorState sleeps
+// for a delay that grows with the count (BOOT_BACKOFF_S), then resets to
+// retry, for ever. The one factory_reset waits for a failure that is still
+// there after FACTORY_RESET_MIN_BACKOFF_S of those delays, so a transient
+// fault (cold flash, brown-outs) cannot cost the mission configuration. A
+// boot that follows an unplanned reset (crash, watchdog, brown-out) is
+// spaced out the same way, so a crash loop neither drains the battery nor
+// skips the delays.
 //
-// Reaching CONFIGURATION also clears the counter, not just OPERATIONAL. Both
-// states prove the same things: the flash mounted, the config store parsed,
-// the scheduler runs and the DTE answers. Counting a healthy config-mode boot
-// as a failure is how an operator doing three USB sessions in a row — without
-// ever letting the tag reach Operational in between — would walk it into a
-// factory reset it never earned.
+// RSPB (EXTERNAL_WAKEUP): OffState is a TPL5111 power cut and the timer
+// powers the board up again, so the original policy stands: a few quick
+// retries, one factory_reset, then OffState.
+//
+// factory_reset keeps PROTECTED_PARAMS (config_store_fs.hpp): identifiers,
+// calibration and the provisioning secrets (ARGOS_SECKEY, the RADIOCONFs,
+// the LoRaWAN keys). It loses the mission config — modes, periods,
+// thresholds — which is what the recovery is for.
 // =====================================================================
 
 struct BootFailNoinit {
 	uint16_t consecutive_failures;
 	uint8_t factory_reset_attempted;
-	uint8_t _pad;
+	uint8_t reset_planned;      ///< 1: the previous boot ended in ErrorState's own retry reset
+	uint32_t backoff_waited_s;  ///< ErrorState waits completed since the last good boot
 	uint16_t crc;
 };
 
@@ -261,14 +194,27 @@ static __attribute__((section(".noinit"))) volatile BootFailNoinit s_bootfail_no
 static BootFailNoinit s_bootfail_noinit;
 #endif
 
+#ifdef EXTERNAL_WAKEUP
 static constexpr uint8_t BOOT_RETRY_MAX = 5;             ///< Total reset retries before OffState
 static constexpr uint8_t BOOT_RETRY_BEFORE_FACTORY = 5;  ///< Retries before attempting factory_reset
+#else
+/// ErrorState wait before the retry reset, by failure count. The last one repeats for ever.
+static constexpr uint32_t BOOT_BACKOFF_S[] = { 5, 30, 2 * 60, 10 * 60, 60 * 60 };
+/// factory_reset needs both: enough failed boots, and enough time spent failing.
+static constexpr uint16_t FACTORY_RESET_MIN_FAILURES = 5;
+static constexpr uint32_t FACTORY_RESET_MIN_BACKOFF_S = 30 * 60;
+/// A boot after an unplanned reset waits first from this count on. Lower, an
+/// operator's double reset, or a magnet still held across a power-off, would
+/// cost a wait.
+static constexpr uint16_t UNPLANNED_RESET_BACKOFF_FAILURES = 3;
+#endif
 
 static uint16_t bootfail_compute_crc() {
 	BootFailNoinit snapshot;
 	snapshot.consecutive_failures = s_bootfail_noinit.consecutive_failures;
 	snapshot.factory_reset_attempted = s_bootfail_noinit.factory_reset_attempted;
-	snapshot._pad = s_bootfail_noinit._pad;
+	snapshot.reset_planned = s_bootfail_noinit.reset_planned;
+	snapshot.backoff_waited_s = s_bootfail_noinit.backoff_waited_s;
 	return crc16_compute(reinterpret_cast<const uint8_t *>(&snapshot), offsetof(BootFailNoinit, crc), nullptr);
 }
 
@@ -276,16 +222,19 @@ static void bootfail_save() {
 	s_bootfail_noinit.crc = bootfail_compute_crc();
 }
 
+static void bootfail_clear() {
+	s_bootfail_noinit.consecutive_failures = 0;
+	s_bootfail_noinit.factory_reset_attempted = 0;
+	s_bootfail_noinit.reset_planned = 0;
+	s_bootfail_noinit.backoff_waited_s = 0;
+	bootfail_save();
+}
+
 /// @brief Load the boot-fail counter from .noinit RAM. On cold POR (battery
 /// insert) the RAM is uninitialised and the CRC will not validate — we
 /// reset to zero in that case.
 static void bootfail_load() {
-	if (s_bootfail_noinit.crc != bootfail_compute_crc()) {
-		s_bootfail_noinit.consecutive_failures = 0;
-		s_bootfail_noinit.factory_reset_attempted = 0;
-		s_bootfail_noinit._pad = 0;
-		bootfail_save();
-	}
+	if (s_bootfail_noinit.crc != bootfail_compute_crc()) bootfail_clear();
 }
 
 /// @brief Increment the consecutive-failures counter — called at every boot.
@@ -304,15 +253,36 @@ static void bootfail_increment() {
 #ifdef BENCH_TEST
 /// @brief Read the boot-fail state for the bench console.
 ///
-/// Exposed because this counter is on the path to the worst failure a sealed
-/// tag has: BOOT_RETRY_BEFORE_FACTORY consecutive failed boots trigger a
-/// factory reset, and that wipes the Argos credentials. If the counter ever
-/// stopped clearing on a healthy boot, three reboots would brick the device --
-/// and nothing outside .noinit RAM would show it coming.
+/// Exposed because this counter is on the path to a factory reset, which
+/// discards the mission configuration. If it ever stopped clearing on a
+/// healthy boot, ordinary reboots would add up towards one -- and nothing
+/// outside .noinit RAM would show it coming.
 void bench_bootfail_read(unsigned int &failures, unsigned int &factory_attempted) {
 	bootfail_load();
 	failures = s_bootfail_noinit.consecutive_failures;
 	factory_attempted = s_bootfail_noinit.factory_reset_attempted;
+}
+#endif
+
+#ifdef CPPUTEST
+static bool s_bootfail_test_keep = false;
+
+void gentracker_test_bootfail_keep(bool keep) {
+	s_bootfail_test_keep = keep;
+}
+
+void gentracker_test_bootfail_set(const BootFailTestState &state) {
+	s_bootfail_noinit.consecutive_failures = static_cast<uint16_t>(state.failures);
+	s_bootfail_noinit.factory_reset_attempted = state.factory_reset_attempted ? 1 : 0;
+	s_bootfail_noinit.reset_planned = state.reset_planned ? 1 : 0;
+	s_bootfail_noinit.backoff_waited_s = state.backoff_waited_s;
+	bootfail_save();
+}
+
+BootFailTestState gentracker_test_bootfail_get() {
+	bootfail_load();
+	return { s_bootfail_noinit.consecutive_failures, s_bootfail_noinit.factory_reset_attempted != 0,
+	         s_bootfail_noinit.backoff_waited_s, s_bootfail_noinit.reset_planned != 0 };
 }
 #endif
 
@@ -324,10 +294,73 @@ static void bootfail_reset() {
 		DEBUG_INFO("BootFail: clearing (was %u failures, factory_reset=%u)", s_bootfail_noinit.consecutive_failures,
 		           s_bootfail_noinit.factory_reset_attempted);
 	}
+	bootfail_clear();
+}
+
+/// @brief True when this boot should make the one factory_reset attempt.
+static bool bootfail_factory_reset_due() {
+	if (s_bootfail_noinit.factory_reset_attempted) return false;
+#ifdef EXTERNAL_WAKEUP
+	return s_bootfail_noinit.consecutive_failures >= BOOT_RETRY_BEFORE_FACTORY;
+#else
+	return s_bootfail_noinit.consecutive_failures >= FACTORY_RESET_MIN_FAILURES
+	       && s_bootfail_noinit.backoff_waited_s >= FACTORY_RESET_MIN_BACKOFF_S;
+#endif
+}
+
+/// @brief The one factory_reset attempt, then a reset to boot on it.
+static void bootfail_factory_reset_and_reboot() {
+	DEBUG_ERROR("BootFail: %u failed boots — attempting factory_reset, once, before retrying",
+	            s_bootfail_noinit.consecutive_failures);
+	s_bootfail_noinit.factory_reset_attempted = 1;
+	// The retries after it start from the shortest delay again (and, on RSPB,
+	// with a full budget before OffState). The flag alone keeps the
+	// factory_reset itself from repeating.
 	s_bootfail_noinit.consecutive_failures = 0;
-	s_bootfail_noinit.factory_reset_attempted = 0;
+	s_bootfail_noinit.backoff_waited_s = 0;
+	bootfail_save();
+	// factory_reset() writes the full default param block + RTC to LFS.
+	// On a degraded flash that's the slowest operation here; kick the WDT
+	// first so its whole budget is available, otherwise a flash erase retry
+	// chain could exhaust it mid-reset, on the very path meant to recover.
+	PMU::kick_watchdog();
+	try {
+		if (configuration_store) configuration_store->factory_reset();
+	} catch (...) {
+		DEBUG_ERROR("BootFail: factory_reset itself threw — proceeding to reboot anyway");
+	}
+	PMU::kick_watchdog();
+	PMU::delay_ms(100);  // Let logs flush
+	PMU::reset(false);
+}
+
+#ifndef EXTERNAL_WAKEUP
+/// @brief ErrorState wait for this failure count. 0 means the error came after
+/// a good boot, and gets the shortest wait.
+static uint32_t bootfail_backoff_s(uint16_t failures) {
+	constexpr size_t steps = sizeof(BOOT_BACKOFF_S) / sizeof(BOOT_BACKOFF_S[0]);
+	const size_t i = (failures == 0) ? 0 : failures - 1u;
+	return BOOT_BACKOFF_S[(i < steps) ? i : steps - 1];
+}
+
+/// @brief Read, and clear, the mark ErrorState leaves before its retry reset.
+static bool bootfail_take_retry_reset_mark() {
+	bootfail_load();
+	const bool planned = s_bootfail_noinit.reset_planned != 0;
+	s_bootfail_noinit.reset_planned = 0;
+	bootfail_save();
+	return planned;
+}
+
+/// @brief Record a completed ErrorState wait, right before its retry reset.
+static void bootfail_note_retry_reset(uint32_t waited_s) {
+	bootfail_load();
+	const uint32_t total = s_bootfail_noinit.backoff_waited_s + waited_s;
+	s_bootfail_noinit.backoff_waited_s = (total < waited_s) ? UINT32_MAX : total;
+	s_bootfail_noinit.reset_planned = 1;
 	bootfail_save();
 }
+#endif
 
 /// @brief Clear the boot-fail counter from another translation unit.
 ///
@@ -408,54 +441,22 @@ void BootState::entry() {
 	DEBUG_INFO("entry: BootState");
 
 #ifdef CPPUTEST
-	// In firmware builds, s_bootfail_noinit lives in the .noinit RAM section
-	// and is wiped only by physical power-loss (battery insert). In CPPUTEST
-	// builds the same struct is a plain static — so it persists across
-	// fsm_handle::start() calls within the same test binary, leaking
-	// counter state between tests. Every BootState::entry in test mode
-	// then bumps the counter, and after 3 starts the factory_reset branch
-	// fires unexpectedly (the legacy Sm tests don't mock factory_reset).
-	// Reset between test entries so each test sees a clean boot.
-	s_bootfail_noinit.consecutive_failures = 0;
-	s_bootfail_noinit.factory_reset_attempted = 0;
-	bootfail_save();
+	// A plain static here, not .noinit RAM: without this every test would
+	// inherit the previous one's count. Tests that simulate resets keep it.
+	if (!s_bootfail_test_keep) bootfail_clear();
 #endif
 
-	// Sealed-device recovery: increment the boot-fail counter at every boot.
-	// Will be cleared on successful entry into OperationalState. If we never
-	// reach Operational, ErrorState consults this counter to decide between
-	// soft-reset retry, factory_reset attempt, or final OffState.
+	// Counted as failed until OperationalState or ConfigurationState clears it.
+#ifndef EXTERNAL_WAKEUP
+	const bool after_retry_reset = bootfail_take_retry_reset_mark();
+#endif
 	bootfail_increment();
-	if (s_bootfail_noinit.consecutive_failures >= BOOT_RETRY_BEFORE_FACTORY
-	    && !s_bootfail_noinit.factory_reset_attempted) {
-		// Last-ditch recovery before giving up to OffState: wipe the config
-		// store and retry. factory_reset preserves DECID/HEXID/calibration.
-		DEBUG_ERROR("BootState: %u failed boots — attempting factory_reset before final retry",
-		            s_bootfail_noinit.consecutive_failures);
-		s_bootfail_noinit.factory_reset_attempted = 1;
-		// Reset the consecutive-failure counter after factory_reset so the next
-		// boot starts fresh — otherwise the counter keeps climbing past
-		// BOOT_RETRY_MAX and we fall through to OffState anyway, bricking the
-		// sealed device even though factory_reset gave us a clean slate to try.
-		// factory_reset_attempted stays at 1 so we don't loop the factory_reset
-		// itself; only the soft-reset retry budget is replenished.
-		s_bootfail_noinit.consecutive_failures = 0;
-		bootfail_save();
-		// factory_reset() writes the full default param block + RTC to LFS.
-		// On a degraded flash that's the slowest operation in BootState; kick
-		// the WDT first so the 15-min budget restarts cleanly, otherwise a
-		// flash erase retry chain could exhaust it mid-reset and brick the
-		// sealed device on the very recovery path that's supposed to save it.
-		PMU::kick_watchdog();
-		try {
-			if (configuration_store) configuration_store->factory_reset();
-		} catch (...) {
-			DEBUG_ERROR("BootState: factory_reset itself threw — proceeding to reboot anyway");
-		}
-		PMU::kick_watchdog();
-		PMU::delay_ms(100);  // Let logs flush
-		PMU::reset(false);
+#ifdef EXTERNAL_WAKEUP
+	if (bootfail_factory_reset_due()) {
+		bootfail_factory_reset_and_reboot();
+		return;  // unreachable on target; the host-test mock does return
 	}
+#endif
 
 	// Ensure the system timer is started to allow scheduling to work
 	system_timer->start();
@@ -464,6 +465,18 @@ void BootState::entry() {
 	led_handle::start();
 	led_handle::dispatch<SetLEDBoot>({});
 	buzz_handle::start();
+
+#ifndef EXTERNAL_WAKEUP
+	// The previous failed boot died (crash, watchdog, brown-out) instead of
+	// ending in ErrorState's retry: wait as ErrorState would before touching
+	// the flash again, or a crash loop would run flat out and never back off.
+	if (!after_retry_reset && s_bootfail_noinit.consecutive_failures >= UNPLANNED_RESET_BACKOFF_FAILURES) {
+		DEBUG_WARN("BootState: %u failed boots, the last one without a retry reset — backing off first",
+		           s_bootfail_noinit.consecutive_failures);
+		system_scheduler->post_task_prio([this]() { transit<ErrorState>(); }, "GenTrackerBootStateBackoff");
+		return;
+	}
+#endif
 
 	// WDT kick before LFS mount/format. On a sealed deployment, a marginal
 	// flash block (wear, ECC retry) can stretch mount() into multiple seconds;
@@ -670,10 +683,6 @@ void PreOperationalState::exit() {
 void OperationalState::entry() {
 	DEBUG_INFO("entry: OperationalState");
 
-	// Successful boot reached — clear the boot-fail counter. The sealed-device
-	// recovery infrastructure considers reaching this state proof of a good boot.
-	bootfail_reset();
-
 	// Start periodic config flush (counters → flash every 30 min)
 	m_config_flush_active = true;
 	periodic_config_flush();
@@ -684,12 +693,22 @@ void OperationalState::entry() {
 
 	ServiceManager::startall([this](ServiceEvent &e) { service_event_handler(e); });
 
-	BaseDebugMode debug_mode = configuration_store->read_param<BaseDebugMode>(ParamID::DEBUG_OUTPUT_MODE);
-	if (debug_mode == BaseDebugMode::BLE_NUS) {
-		set_ble_device_name();
-		ble_service->start([](BLEServiceEvent &) { return 0; });
-		g_debug_mode = debug_mode;
+	try {
+		BaseDebugMode debug_mode = configuration_store->read_param<BaseDebugMode>(ParamID::DEBUG_OUTPUT_MODE);
+		if (debug_mode == BaseDebugMode::BLE_NUS) {
+			set_ble_device_name();
+			ble_service->start([](BLEServiceEvent &) { return 0; });
+			g_debug_mode = debug_mode;
+		}
+	} catch (...) {
+		// Optional debug output: not worth a reboot.
+		DEBUG_ERROR("OperationalState::entry: BLE debug output not started");
 	}
+
+	// Proof of a good boot, so cleared last: a throw above leaves the count
+	// running, and a deterministic fault escalates through ErrorState instead
+	// of looping on the shortest retry for ever.
+	bootfail_reset();
 }
 
 /// @brief Battery critical event — stop services, transition to BatteryCriticalState.
@@ -892,14 +911,26 @@ void ErrorState::entry() {
 	led_handle::dispatch<SetLEDError>({});
 	buzz_handle::dispatch<SetBuzzOff>({});
 
-	// Sealed-device recovery: while the boot-fail counter is below MAX_BOOT_RETRIES,
-	// do a soft reset instead of transiting to OffState (which would require a
-	// reed magnet to wake — unrecoverable on a potted turtle). The reset
-	// causes a fresh boot, BootState increments the counter, and if the same
-	// fault recurs eventually we either factory_reset (at BOOT_RETRY_BEFORE_FACTORY)
-	// or, only if everything else has failed, fall through to OffState as a
-	// last resort.
 	bootfail_load();
+#ifndef EXTERNAL_WAKEUP
+	// Decided here, not in BootState: only now has the fault shown it outlived
+	// the waits behind it. Deciding at boot would discard the configuration
+	// without first checking whether the last wait had cured it.
+	if (bootfail_factory_reset_due()) {
+		bootfail_factory_reset_and_reboot();
+		return;  // unreachable on target; the host-test mock does return
+	}
+	// Never OffState: on LinkIt only the magnet wakes it, and a glued tag has
+	// none. Sleep through a delay that grows with the failures, then reset and
+	// boot again. See the boot-fail counter above.
+	m_backoff_s = bootfail_backoff_s(s_bootfail_noinit.consecutive_failures);
+	m_backoff_left_ms = m_backoff_s * 1000;
+	DEBUG_WARN("ErrorState: boot-fail counter %u — scheduling soft reset retry in %u s",
+	           s_bootfail_noinit.consecutive_failures, m_backoff_s);
+	backoff_wait(ERROR_LED_MS);
+#else
+	// RSPB: a few soft-reset retries, then OffState, which the TPL5111 powers
+	// up again at its next period.
 #ifdef CPPUTEST
 	// Test mode: the sealed-recovery soft-reset path requires real hardware
 	// (PMU::reset actually rebooting + the .noinit RAM surviving). In CPPUTEST
@@ -923,7 +954,34 @@ void ErrorState::entry() {
 		    system_scheduler->post_task_prio([this]() { transit<OffState>(); }, "GenTrackerErrorStateTransitOffState",
 			                                 Scheduler::DEFAULT_PRIORITY, 5000);
 	}
+#endif
 }
+
+#ifndef EXTERNAL_WAKEUP
+/// @brief Wait the next slice of the backoff, at most max_step_ms long.
+void ErrorState::backoff_wait(unsigned int max_step_ms) {
+	const unsigned int step_ms = (m_backoff_left_ms < max_step_ms) ? m_backoff_left_ms : max_step_ms;
+	m_backoff_left_ms -= step_ms;
+	m_shutdown_task = system_scheduler->post_task_prio([this]() { backoff_tick(); }, "GenTrackerErrorStateBackoff",
+	                                                   Scheduler::DEFAULT_PRIORITY, step_ms);
+}
+
+/// @brief End of a slice: feed the watchdog, then wait on or reset to retry.
+void ErrorState::backoff_tick() {
+	PMU::kick_watchdog();
+	if (m_backoff_left_ms == 0) {
+		DEBUG_INFO("ErrorState: waited %u s — rebooting to retry", m_backoff_s);
+		bootfail_note_retry_reset(m_backoff_s);
+		PMU::reset(false);
+		return;
+	}
+	// Nobody sees the LED of a glued tag: dark for the rest of the wait.
+	led_handle::dispatch<SetLEDOff>({});
+	// Slices well inside the watchdog period, so the wait feeds it by itself
+	// (nothing else may be scheduled when the boot failed early).
+	backoff_wait(BSP::WDT_Inits[BSP::WDT].config.reload_value / 2);
+}
+#endif
 
 void ErrorState::exit() {
 	DEBUG_INFO("exit: ErrorState");

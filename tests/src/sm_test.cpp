@@ -116,7 +116,51 @@ TEST_GROUP(Sm) {
 		delete fake_timer;
 		delete sensor_log;
 		delete system_log;
+		gentracker_test_bootfail_keep(false);
 	}
+
+	/// Advance the clock in 1 s steps, running the scheduler at each one, so a
+	/// task posted by a task fires on time.
+	void run_until(uint64_t t_ms) {
+		while (fake_timer->get_counter() < t_ms) {
+			const uint64_t next = fake_timer->get_counter() + 1000;
+			fake_timer->set_counter(next < t_ms ? next : t_ms);
+			system_scheduler->run();
+		}
+	}
+
+	/// A reset as the firmware sees it: every pending task gone, then a boot.
+	/// With gentracker_test_bootfail_keep(true) the boot-fail record survives,
+	/// as .noinit RAM does.
+	void reboot() {
+		system_scheduler->clear_all();
+		fsm_handle::start();
+	}
+
+	/// Boot, and let it fail in PreOperationalState (config made invalid).
+	void boot_into_error() {
+		mock_config_store->set_is_valid(false);
+		reboot();
+		run_until(fake_timer->get_counter() + 6000);  // BootState 1 s, PreOperationalState 5 s
+		CHECK_TRUE(fsm_handle::is_in_state<ErrorState>());
+	}
+};
+
+/// A service whose start always throws.
+class BrokenStartService : public Service {
+public:
+	BrokenStartService() : Service(ServiceIdentifier::UNKNOWN, "BROKEN") {}
+	unsigned int init_calls = 0;
+
+private:
+	void service_init() override {
+		init_calls++;
+		throw ErrorCode::RESOURCE_NOT_AVAILABLE;
+	}
+	void service_term() override {}
+	bool service_is_enabled() override { return false; }
+	unsigned int service_next_schedule_in_ms() override { return SCHEDULE_DISABLED; }
+	void service_initiate() override {}
 };
 
 TEST(Sm, CheckBootFileSystemMountOk) {
@@ -255,12 +299,171 @@ TEST(Sm, CheckTransitionToErrorConfigInvalid) {
 	CHECK_TRUE(status_led->is_flashing());
 	CHECK_EQUAL((int)RGBLedColor::RED, (int)status_led->get_state());
 
-	// Red LED should go off after 5 seconds and then transition to off state with white LED flashing
+	// After 5 seconds the boot is retried by a reset. Never OffState: on a
+	// LinkIt only the magnet would wake it again.
+	mock().expectOneCall("reset").withParameter("dfu_mode", false);
 	fake_timer->set_counter(11000);
 	system_scheduler->run();
-	CHECK_TRUE(fsm_handle::is_in_state<OffState>());
-	CHECK_TRUE(status_led->is_flashing());
-	CHECK_EQUAL((int)RGBLedColor::WHITE, (int)status_led->get_state());
+	CHECK_TRUE(fsm_handle::is_in_state<ErrorState>());
+}
+
+TEST(Sm, RepeatedBootFailuresBackOffForEverAndNeverPowerOff) {
+	gentracker_test_bootfail_keep(true);
+	gentracker_test_bootfail_set({ 0, false, 0, false });
+	mock().ignoreOtherCalls();
+	mock().expectNoCall("powerdown");
+	mock().expectOneCall("factory_reset").onObject(configuration_store);
+
+	// ErrorState wait of each failed boot, 0 for the one that goes into the
+	// factory reset instead: the sixth, whose failure outlived 72 min of
+	// waits. The schedule then restarts and settles on one retry an hour.
+	const unsigned int expected_wait_s[] = { 5, 30, 120, 600, 3600, 0, 5, 30, 120, 600, 3600, 3600, 3600 };
+	for (unsigned int i = 0; i < sizeof(expected_wait_s) / sizeof(expected_wait_s[0]); i++) {
+		boot_into_error();
+		const BootFailTestState st = gentracker_test_bootfail_get();
+		CHECK_EQUAL(i >= 5, st.factory_reset_attempted);
+		if (expected_wait_s[i] == 0) {
+			CHECK_EQUAL(0u, st.failures);
+			continue;
+		}
+		const uint64_t t_error = fake_timer->get_counter();
+		run_until(t_error + expected_wait_s[i] * 1000 - 1000);
+		CHECK_FALSE(gentracker_test_bootfail_get().reset_planned);
+		run_until(t_error + expected_wait_s[i] * 1000);
+		CHECK_TRUE(gentracker_test_bootfail_get().reset_planned);
+		CHECK_TRUE(fsm_handle::is_in_state<ErrorState>());
+	}
+}
+
+TEST(Sm, CrashLoopIsSpacedOutWithoutFactoryReset) {
+	gentracker_test_bootfail_keep(true);
+	// Seven boots in a row died (crash, watchdog) without reaching ErrorState:
+	// quick ones, with no time spent waiting.
+	gentracker_test_bootfail_set({ 7, false, 0, false });
+	mock().expectNoCall("factory_reset");
+	mock().expectNoCall("is_mounted");  // waits before touching the flash
+	mock().expectNoCall("mount");
+	mock().ignoreOtherCalls();
+
+	reboot();
+	system_scheduler->run();
+	CHECK_TRUE(fsm_handle::is_in_state<ErrorState>());
+	CHECK_EQUAL(8u, gentracker_test_bootfail_get().failures);
+
+	run_until(3600 * 1000 - 1000);
+	CHECK_FALSE(gentracker_test_bootfail_get().reset_planned);
+	run_until(3600 * 1000);
+	const BootFailTestState after_wait = gentracker_test_bootfail_get();
+	CHECK_TRUE(after_wait.reset_planned);
+	CHECK_EQUAL(3600u, after_wait.backoff_waited_s);
+	CHECK_FALSE(after_wait.factory_reset_attempted);
+	mock().checkExpectations();
+	mock().clear();
+
+	// The boot after the wait is a real attempt. Healthy, it reaches
+	// Operational, which clears the record.
+	mock().disable();
+	reboot();
+	run_until(fake_timer->get_counter() + 6000);
+	mock().enable();
+	CHECK_TRUE(fsm_handle::is_in_state<OperationalState>());
+	CHECK_EQUAL(0u, gentracker_test_bootfail_get().failures);
+	CHECK_EQUAL(0u, gentracker_test_bootfail_get().backoff_waited_s);
+}
+
+TEST(Sm, CrashLoopThatOutlivesTheWaitsGetsTheFactoryReset) {
+	gentracker_test_bootfail_keep(true);
+	// An hour of waits behind it, and the last attempt crashed again.
+	gentracker_test_bootfail_set({ 9, false, 3600, false });
+	mock().ignoreOtherCalls();
+	mock().expectOneCall("factory_reset").onObject(configuration_store);
+	mock().expectOneCall("reset").withParameter("dfu_mode", false);
+	mock().expectNoCall("powerdown");
+
+	reboot();
+	system_scheduler->run();
+	CHECK_TRUE(gentracker_test_bootfail_get().factory_reset_attempted);
+	CHECK_EQUAL(0u, gentracker_test_bootfail_get().failures);
+}
+
+TEST(Sm, FactoryResetNeedsFailuresAndTimeSpentFailing) {
+	gentracker_test_bootfail_keep(true);
+	mock().ignoreOtherCalls();
+	mock().expectNoCall("factory_reset");
+
+	// Many quick failures, 1 s short of 30 min of waits.
+	gentracker_test_bootfail_set({ 20, false, 30 * 60 - 1, true });
+	boot_into_error();
+	CHECK_FALSE(gentracker_test_bootfail_get().factory_reset_attempted);
+
+	// Long enough, but this is only the fourth failed boot.
+	gentracker_test_bootfail_set({ 3, false, 4 * 3600, true });
+	boot_into_error();
+	CHECK_FALSE(gentracker_test_bootfail_get().factory_reset_attempted);
+	mock().checkExpectations();
+	mock().clear();
+
+	// Fifth failed boot after 30 min of waits: the factory reset, then a reset.
+	mock().ignoreOtherCalls();
+	mock().expectOneCall("factory_reset").onObject(configuration_store);
+	mock().expectOneCall("reset").withParameter("dfu_mode", false);
+	gentracker_test_bootfail_set({ 4, false, 30 * 60, true });
+	boot_into_error();
+	const BootFailTestState after = gentracker_test_bootfail_get();
+	CHECK_TRUE(after.factory_reset_attempted);
+	CHECK_EQUAL(0u, after.failures);
+	CHECK_EQUAL(0u, after.backoff_waited_s);
+	mock().checkExpectations();
+	mock().clear();
+
+	// Only once until a good boot clears the record.
+	mock().ignoreOtherCalls();
+	mock().expectNoCall("factory_reset");
+	gentracker_test_bootfail_set({ 10, true, 10 * 3600, true });
+	boot_into_error();
+	CHECK_TRUE(gentracker_test_bootfail_get().factory_reset_attempted);
+}
+
+TEST(Sm, ErrorDuringBackoffDoesNotPostponeTheRetry) {
+	mock().disable();
+	mock_config_store->set_is_valid(false);
+	fsm_handle::start();
+	run_until(6000);
+	CHECK_TRUE(fsm_handle::is_in_state<ErrorState>());
+
+	mock().enable();
+	mock().ignoreOtherCalls();
+	mock().expectOneCall("reset").withParameter("dfu_mode", false);
+	run_until(9000);
+	ErrorEvent e;
+	e.error_code = ErrorCode::RESOURCE_NOT_AVAILABLE;
+	fsm_handle::dispatch(e);
+	CHECK_TRUE(fsm_handle::is_in_state<ErrorState>());
+	run_until(11000);  // still the deadline set on entry, at 6 s
+	mock().checkExpectations();
+}
+
+TEST(Sm, ServiceThatFailsToStartDoesNotBlockOperational) {
+	BrokenStartService broken;
+	gentracker_test_bootfail_keep(true);
+	gentracker_test_bootfail_set({ 2, false, 35, true });
+
+	mock().disable();
+	fsm_handle::start();
+	run_until(6000);
+	CHECK_TRUE(fsm_handle::is_in_state<OperationalState>());
+	CHECK_TRUE(location_scheduler->is_started());
+	CHECK_TRUE(comms_scheduler->is_started());
+	CHECK_FALSE(broken.is_started());
+	CHECK_EQUAL(1u, broken.init_calls);
+	// Operational reached: a good boot, whatever one service did.
+	CHECK_EQUAL(0u, gentracker_test_bootfail_get().failures);
+
+	// The failed start is retried in place, without a reboot.
+	run_until(6000 + 5000);
+	CHECK_EQUAL(2u, broken.init_calls);
+	CHECK_TRUE(fsm_handle::is_in_state<OperationalState>());
+	mock().enable();
 }
 
 TEST(Sm, CheckTransitionToConfigurationState) {

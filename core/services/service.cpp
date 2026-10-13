@@ -17,6 +17,7 @@
 #include "hauled_mode_service.hpp"
 #include "moored_mode_service.hpp"
 #include "dive_behaviour_tracker.hpp"
+#include "exponential_backoff.hpp"
 #if DX1_DOPPLER_EXT_BUILD
 #include "sws_analog_service.hpp"
 #endif
@@ -96,22 +97,50 @@ void ServiceManager::reset() {
 }
 
 
+/// @brief Log the exception being handled. Call only from inside a catch block.
+/// @param where  context, e.g. "ServiceManager::startall"
+/// @param who    what threw (service or step name)
+static void log_caught_exception(const char *where, const char *who) {
+	try {
+		throw;
+	} catch (ErrorCode e) {
+		DEBUG_ERROR("%s: %s threw ErrorCode=%d — continuing", where, who, (int)e);
+	} catch (const std::exception &e) {
+		DEBUG_ERROR("%s: %s threw std::exception: %s — continuing", where, who, e.what());
+	} catch (...) {
+		DEBUG_ERROR("%s: %s threw unknown — continuing", where, who);
+	}
+}
+
+/// @brief Run one state-restore step of startall(). A throw costs that state,
+/// not the start of every service.
+static void restore_step(void (*step)(), const char *name) {
+	try {
+		step();
+	} catch (...) {
+		log_caught_exception("ServiceManager::startall", name);
+	}
+}
+
 /// @brief Start all registered services (called on FSM transition to Operational).
+///
+/// Each start is behind its own barrier, as in stopall(): a service whose
+/// start throws is logged and retried later, and every other one still starts.
 /// @param data_notification_callback  Global event callback for FSM.
 void ServiceManager::startall(std::function<void(ServiceEvent &)> data_notification_callback) {
 	m_data_notification_callback = data_notification_callback;
-	restore_cooldown_state();
-	RateLimiter::restore_state();
-	HauledModeService::restore_state();
-	MooredModeService::restore_state();
+	restore_step(restore_cooldown_state, "restore_cooldown_state");
+	restore_step(RateLimiter::restore_state, "RateLimiter::restore_state");
+	restore_step(HauledModeService::restore_state, "HauledModeService::restore_state");
+	restore_step(MooredModeService::restore_state, "MooredModeService::restore_state");
 #if DX1_DOPPLER_EXT_BUILD
 	// Behaviour history restarts with every entry into Operational: SWSTST
 	// edges seen in configuration mode must not count as dives.
-	DiveBehaviourTracker::reset();
+	restore_step(DiveBehaviourTracker::reset, "DiveBehaviourTracker::reset");
 #endif
 	for (auto const &p : m_map) {
 		DEBUG_TRACE("ServiceManager::startall: starting %s id=%u", p.second.get_name(), p.first);
-		p.second.start(data_notification_callback);
+		p.second.start_or_retry(data_notification_callback);
 	}
 }
 
@@ -157,8 +186,30 @@ void ServiceManager::stopall() {
 }
 
 /// @brief Broadcast a peer event to all services except the originator.
+///
+/// One throwing receiver must not stop the broadcast: the others would miss a
+/// dive or a fix, and the throw would reach the main loop and reboot the tag.
 /// @param event  Service event to broadcast.
 void ServiceManager::notify_peer_event(ServiceEvent &event) {
+	try {
+		notify_classifiers(event);
+	} catch (...) {
+		log_caught_exception("ServiceManager::notify_peer_event", "classifier");
+	}
+
+	for (auto const &p : m_map) {
+		if (p.first == event.event_originator_unique_id) continue;
+		try {
+			p.second.notify_peer_event(event);
+		} catch (...) {
+			log_caught_exception("ServiceManager::notify_peer_event", p.second.get_name());
+		}
+	}
+}
+
+/// @brief Feed the mode classifiers that listen on the peer bus.
+/// @param event  Service event being broadcast.
+void ServiceManager::notify_classifiers(ServiceEvent &event) {
 	// HauledModeService funnel — feeds every UW transition (dive/surface) into
 	// the hauled classifier. Hooked here rather than in a Service subclass so
 	// there's a single ground-truth dispatch site (Plan 1 step 3).
@@ -219,10 +270,6 @@ void ServiceManager::notify_peer_event(ServiceEvent &event) {
 		}
 	}
 #endif
-
-	for (auto const &p : m_map) {
-		if (p.first != event.event_originator_unique_id) p.second.notify_peer_event(event);
-	}
 }
 
 unsigned int ServiceManager::get_unique_id(const char *name) {
@@ -299,9 +346,58 @@ void Service::start(std::function<void(ServiceEvent &)> data_notification_callba
 	reschedule();
 }
 
+/// @brief start() that never throws; a failed start is retried until it works.
+/// @param data_notification_callback  Global event callback.
+/// @return true if the service started now.
+bool Service::start_or_retry(std::function<void(ServiceEvent &)> data_notification_callback) {
+	m_start_failures = 0;
+	return attempt_start(data_notification_callback);
+}
+
+/// @brief One start attempt. On failure, undo it and arm the next one.
+bool Service::attempt_start(std::function<void(ServiceEvent &)> data_notification_callback) {
+	cancel_start_retry();
+	try {
+		start(data_notification_callback);
+		if (m_start_failures)
+			DEBUG_INFO("Service::start: service %s started after %u failure(s)", m_name, m_start_failures);
+		m_start_failures = 0;
+		return true;
+	} catch (...) {
+		log_caught_exception("Service::start", m_name);
+	}
+
+	// Undo the half-done start as stopall() would: stop() releases whatever
+	// service_init() acquired and cancels anything reschedule() posted.
+	try {
+		stop();
+	} catch (...) {
+		log_caught_exception("Service::stop", m_name);
+	}
+
+	// Never give up: a fault that clears (sensor brown-out, bus wedge) must
+	// get the service back. The delay grows so a permanent one costs little.
+	if (m_start_failures < UINT8_MAX) m_start_failures++;
+	const unsigned int delay_ms = Backoff::doubling_capped(START_RETRY_BASE_MS, START_RETRY_CAP_MS, m_start_failures);
+	DEBUG_WARN("Service::start: service %s failed to start (%u in a row) — retrying in %u s", m_name, m_start_failures,
+	           delay_ms / 1000);
+	// The callback passed in is in m_data_notification_callback by now: start() stores it first.
+	m_start_retry_task = system_scheduler->post_task_prio([this]() { attempt_start(m_data_notification_callback); },
+	                                                      "ServiceStartRetry", Scheduler::DEFAULT_PRIORITY, delay_ms);
+	return false;
+}
+
+/// @brief Drop a pending start retry, if any.
+void Service::cancel_start_retry() {
+	if (system_scheduler) system_scheduler->cancel_task(m_start_retry_task);
+}
+
 /// @brief Stop the service — cancel active task, notify inactive, terminate.
 void Service::stop() {
 	DEBUG_TRACE("Service::stop: service %s stopped (is_started=%u)", m_name, (unsigned int)m_is_started);
+	// Before the started test: a service whose start failed is not started,
+	// and its retry must not bring it back once the FSM has stopped everything.
+	cancel_start_retry();
 	if (m_is_started) {
 		m_is_started = false;
 		deschedule();

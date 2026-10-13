@@ -33,6 +33,21 @@ struct ErrorEvent : tinyfsm::Event {
 /// good boot just as reaching Operational does.
 void gentracker_bootfail_reset();
 
+#ifdef CPPUTEST
+/// @brief Host-test view of the boot-fail record kept in .noinit RAM.
+struct BootFailTestState {
+	unsigned int failures;
+	bool factory_reset_attempted;
+	unsigned int backoff_waited_s;
+	bool reset_planned;
+};
+/// @brief Keep the record across fsm starts, as .noinit RAM survives a reset.
+/// Off by default, so every test boots with a clean record.
+void gentracker_test_bootfail_keep(bool keep);
+void gentracker_test_bootfail_set(const BootFailTestState &state);
+BootFailTestState gentracker_test_bootfail_get();
+#endif
+
 /// @brief Main FSM base class — handles reed switch, watchdog, config flush.
 class GenTracker : public tinyfsm::Fsm<GenTracker> {
 public:
@@ -185,10 +200,20 @@ public:
 	void exit() override;
 };
 
-/// @brief Error state — RED LED, 30s delay before powerdown.
+/// @brief Error state — red LED, then a reset retry after a delay that grows
+/// with the consecutive boot failures. LinkIt never powers off from here; RSPB
+/// falls back to OffState, which its TPL5111 timer powers up again.
 class ErrorState : public GenTracker {
 private:
 	Scheduler::TaskHandle m_shutdown_task;
+#ifndef EXTERNAL_WAKEUP
+	static constexpr unsigned int ERROR_LED_MS = 5000;  ///< red LED time, then dark for the rest of the wait
+	unsigned int m_backoff_s = 0;                       ///< length of this visit's wait
+	unsigned int m_backoff_left_ms = 0;                 ///< part of it not yet waited
+
+	void backoff_wait(unsigned int max_step_ms);
+	void backoff_tick();
+#endif
 
 public:
 	void entry();
