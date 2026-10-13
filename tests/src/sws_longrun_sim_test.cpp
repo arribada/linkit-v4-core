@@ -427,6 +427,19 @@ TEST_GROUP(SWSLongRun) {
 		return surf ? static_cast<double>(det) / surf : 0.0;
 	}
 
+	/// @brief Days on which the adaptive delay sat exactly on its configured floor.
+	static unsigned days_pinned_at_floor(const SimResult &r, unsigned floor_us) {
+		unsigned n = 0;
+		for (const auto &d : r.days)
+			if (d.status_end.sample_delay_us == floor_us) n++;
+		return n;
+	}
+
+	/// @brief Detection rate over the whole run.
+	static double detection_rate_all(const SimResult &r) {
+		return detection_rate(r, 0, static_cast<unsigned>(r.days.size()));
+	}
+
 	void summary(const char *name, const SimResult &r) {
 		unsigned n = static_cast<unsigned>(r.days.size());
 		unsigned a = n / 3, b = 2 * n / 3;
@@ -757,4 +770,69 @@ TEST(SWSLongRun, H45_ShippedFouling_Documentary) {
 	SimResult r = run_scenario(kShippedFoulingH45);
 	report(kShippedFoulingH45, r);
 	summary(kShippedFoulingH45.name, r);
+}
+
+// ---------------------------------------------------------------------------
+// The adaptive delay must not be a one-way door.
+//
+// These two assertions are the contract, not documentation: conditions change
+// in the water -- biofouling, but also temperature and salinity move the
+// electrode resistance -- so a delay that walked to one end must be able to
+// walk back. The current law cannot: climbing needs contrast > 10.0, and from
+// the floor the contrast is far below that, so the condition is unreachable.
+// The converged value is also persisted to .noinit with a CRC, deliberately,
+// so a reboot does not reopen the door either.
+//
+// Why here and not in sws_analog_test.cpp: that suite injects ADC readings
+// directly through SAADC::set_adc_value, so a reading does not depend on the
+// charge delay and the feedback loop this guards simply does not exist there.
+// The same blindness applies to a bench in a bucket with clean electrodes,
+// where the contrast never drops below the 5.0 that starts the descent --
+// which is why bench runs pass while the mechanism is live. Only this
+// simulation computes counts FROM the delay, so only here can the loop close.
+// ---------------------------------------------------------------------------
+// IGNORED ON PURPOSE: it FAILS on the code as it stands, and the fix is not
+// validated on hardware. It is committed ignored rather than left out, because
+// what it measures is worth keeping: run it with `-g SWSLongRun` after removing
+// the IGNORE_ and it reports
+//     "adaptive delay pinned at the 200 us floor on 75 of 75 days -- no path back"
+// with a detection rate of 0.00 over 75 days on CLEAN electrodes.
+//
+// A hill-climbing control law (step, wait for the baselines, reverse if the
+// contrast got worse) was written and measured against this: detection 0.99 /
+// 1.00 / 0.81, false detections 0 -> 18 -> 55 per day against ~830 for a delay
+// pinned at 500 us, and the delay settling near 1500 us, which is the contrast
+// peak. It was NOT committed, for three reasons:
+//   - the evidence is this simulation, whose physics model is a hypothesis
+//     ("reproduces the ~3000 counts at 1 ms seen on boards"), not a measurement;
+//   - it is incomplete: by day 74 the delay is back on the floor with the
+//     detector believing "surface" for all 86400 s, so a second defect -- a
+//     state latch that starves its own correction -- is still there;
+//   - bench and functional runs pass on the current code, in the regime where
+//     the descent never starts: clean electrodes give a contrast of 14.9, well
+//     above the 5.0 that triggers it.
+//
+// What would settle it: the SWS flash log carries a sample_delay_us column. Dump
+// it from a recovered tag. If it reads 200, the ratchet happened at sea and the
+// diagnosis holds on real hardware. The Argos CSVs in .claude/wwf-yanariba/data
+// cannot answer this -- they are received messages, not the on-device log.
+IGNORE_TEST(SWSLongRun, ShippedConfig_AdaptiveDelayIsNotAOneWayDoor) {
+	SimResult r = run_scenario(kShippedCleanH45);
+	report(kShippedCleanH45, r);
+	summary(kShippedCleanH45.name, r);
+
+	unsigned pinned = days_pinned_at_floor(r, kShippedCleanH45.delay_min_us);
+	unsigned total = static_cast<unsigned>(r.days.size());
+	char msg[192];
+
+	// Mechanism: the delay may touch the floor, it must not live there.
+	snprintf(msg, sizeof(msg), "adaptive delay pinned at the %u us floor on %u of %u days -- no path back",
+	         kShippedCleanH45.delay_min_us, pinned, total);
+	CHECK_TEXT(pinned < total, msg);
+
+	// Outcome, with clean electrodes and no fouling: a detector that cannot see
+	// half the surfacings transmits nothing in SURFACING_BURST mode.
+	double rate = detection_rate_all(r);
+	snprintf(msg, sizeof(msg), "detection rate %.2f over %u days with CLEAN electrodes", rate, total);
+	CHECK_TEXT(rate >= 0.50, msg);
 }
