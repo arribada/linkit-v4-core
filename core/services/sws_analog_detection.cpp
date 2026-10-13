@@ -56,6 +56,60 @@ bool SWSAnalogService::check_safety_timeouts(bool current_state) {
 //  MAIN DETECTION: 5-LEVEL SURFACE DETECTION
 // ═══════════════════════════════════════════════════════
 
+/// @brief Warn when the detector has not changed state for an unusually long
+/// time. Moved verbatim out of detector_state() section 2b.
+///
+/// Pure observability, by design: no automatic action, because a turtle can
+/// legitimately stay submerged or at the surface for many hours. It goes to the
+/// persistent system log so a returned unit can be read back.
+///
+/// Reads and writes members only, so it takes nothing and returns nothing. The
+/// section was already wrapped in its own scope with no local escaping it, which
+/// is what makes this extraction free of any interface to get wrong.
+void SWSAnalogService::warn_on_heartbeat_stall() {
+	// Log a WARNING when no state change has occurred for an unusually long
+	// time. Pure observability — no automatic action because a turtle can
+	// legitimately stay submerged or at the surface for many hours.
+	// Uses persistent system.log (DEBUG_WARN) for post-deployment forensics.
+	{
+		uint32_t threshold = m_current_state ? m_heartbeat_warn_uw_sec : m_heartbeat_warn_surf_sec;
+		if (threshold > 0 && m_time_in_current_state >= threshold) {
+			uint64_t now_sec = PMU::get_timestamp_ms() / 1000;
+			if (m_last_heartbeat_warn_time == 0
+			    || (now_sec - m_last_heartbeat_warn_time) >= HEARTBEAT_WARN_REPEAT_SEC) {
+				DEBUG_WARN("SWSAnalog: heartbeat — no state change for %llus (state=%s)",
+				           (unsigned long long)m_time_in_current_state, m_current_state ? "UW" : "SURF");
+				m_last_heartbeat_warn_time = now_sec;
+			}
+		}
+	}
+}
+
+/// @brief Battery-drain safety net for SWSTST test mode. Moved verbatim out of
+/// detector_state() section 12b.
+///
+/// Members only, like warn_on_heartbeat_stall(): nothing in, nothing out. The
+/// call stays unconditional in detector_state(), which is what keeps the
+/// timeout honest.
+void SWSAnalogService::stop_test_mode_on_timeout() {
+	// Battery-drain safety net: SWSTST,1 without a follow-up SWSTST,0 would
+	// otherwise sample + push LED indefinitely. Skip while guided calibration
+	// is running (it manages its own 5-min timeout and clears m_test_mode at
+	// completion). Setting m_test_mode=false is sufficient — the next
+	// scheduler cycle re-evaluates service_is_enabled() (= UNDERWATER_EN).
+	// We do not call stop_test_mode() here because Service::stop() would
+	// deschedule us mid service_initiate().
+	if (m_test_mode && m_test_timeout_ms > 0 && m_calib_phase == CalibPhase::IDLE) {
+		uint64_t elapsed = PMU::get_timestamp_ms() - m_test_mode_start_time;
+		if (elapsed >= m_test_timeout_ms) {
+			DEBUG_WARN("SWSAnalog: Test mode auto-stop after %llu ms (timeout %llu ms)", (unsigned long long)elapsed,
+			           (unsigned long long)m_test_timeout_ms);
+			m_test_mode = false;
+			if (m_on_test_stop) m_on_test_stop();
+		}
+	}
+}
+
 /// @brief Level 3 of the surface ladder: consecutive decreases of the 3-sample
 /// moving average mean the electrodes are drying. Moved verbatim out of
 /// detector_state() section 4 -- the body below is the section, unchanged.
@@ -292,22 +346,7 @@ bool SWSAnalogService::detector_state() {
 	bool timeout_override = check_safety_timeouts(m_current_state);
 
 	// === 2b. HEARTBEAT WARN (audit 2026-05 R-CODE-04) ===
-	// Log a WARNING when no state change has occurred for an unusually long
-	// time. Pure observability — no automatic action because a turtle can
-	// legitimately stay submerged or at the surface for many hours.
-	// Uses persistent system.log (DEBUG_WARN) for post-deployment forensics.
-	{
-		uint32_t threshold = m_current_state ? m_heartbeat_warn_uw_sec : m_heartbeat_warn_surf_sec;
-		if (threshold > 0 && m_time_in_current_state >= threshold) {
-			uint64_t now_sec = PMU::get_timestamp_ms() / 1000;
-			if (m_last_heartbeat_warn_time == 0
-			    || (now_sec - m_last_heartbeat_warn_time) >= HEARTBEAT_WARN_REPEAT_SEC) {
-				DEBUG_WARN("SWSAnalog: heartbeat — no state change for %llus (state=%s)",
-				           (unsigned long long)m_time_in_current_state, m_current_state ? "UW" : "SURF");
-				m_last_heartbeat_warn_time = now_sec;
-			}
-		}
-	}
+	warn_on_heartbeat_stall();
 
 	// === 3. LEVEL 1 & 2: FAST RAW DROP (uses raw, not filtered, for speed) ===
 	uint8_t surface_level = 0;
@@ -894,22 +933,7 @@ bool SWSAnalogService::detector_state() {
 #endif
 
 	// === 12b. TEST MODE AUTO-STOP ===
-	// Battery-drain safety net: SWSTST,1 without a follow-up SWSTST,0 would
-	// otherwise sample + push LED indefinitely. Skip while guided calibration
-	// is running (it manages its own 5-min timeout and clears m_test_mode at
-	// completion). Setting m_test_mode=false is sufficient — the next
-	// scheduler cycle re-evaluates service_is_enabled() (= UNDERWATER_EN).
-	// We do not call stop_test_mode() here because Service::stop() would
-	// deschedule us mid service_initiate().
-	if (m_test_mode && m_test_timeout_ms > 0 && m_calib_phase == CalibPhase::IDLE) {
-		uint64_t elapsed = PMU::get_timestamp_ms() - m_test_mode_start_time;
-		if (elapsed >= m_test_timeout_ms) {
-			DEBUG_WARN("SWSAnalog: Test mode auto-stop after %llu ms (timeout %llu ms)", (unsigned long long)elapsed,
-			           (unsigned long long)m_test_timeout_ms);
-			m_test_mode = false;
-			if (m_on_test_stop) m_on_test_stop();
-		}
-	}
+	stop_test_mode_on_timeout();
 
 	// The guided-calibration state machine lives in sws_analog_calibration.cpp
 	// with the rest of the calibration code. It is driven from here because it

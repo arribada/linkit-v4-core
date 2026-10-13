@@ -590,6 +590,8 @@ private:
      * @brief Adjust sample delay based on current contrast ratio.
      * Reduces delay when biofouling degrades contrast, increases when clean.
      */
+	void warn_on_heartbeat_stall();
+	void stop_test_mode_on_timeout();
 	unsigned int update_level3_trend(uint16_t filtered_value, unsigned int current_level, bool proximity_ok);
 	void adjust_sample_delay();
 
