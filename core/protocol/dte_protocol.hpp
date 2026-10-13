@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include <utility>
+
 #include <ctime>
 #include <cstdarg>
 #include <algorithm>
@@ -1078,70 +1080,50 @@ private:
 		return x;
 	}
 
-	static BaseArgosPower decode_power(const std::string &s) {
-		if (s == "1") {
-			return BaseArgosPower::POWER_3_MW;
-		} else if (s == "2") {
-			return BaseArgosPower::POWER_40_MW;
-		} else if (s == "3") {
-			return BaseArgosPower::POWER_200_MW;
-		} else if (s == "4") {
-			return BaseArgosPower::POWER_500_MW;
-		} else if (s == "5") {
-			return BaseArgosPower::POWER_5_MW;
-		} else if (s == "6") {
-			return BaseArgosPower::POWER_50_MW;
-		} else if (s == "7") {
-			return BaseArgosPower::POWER_350_MW;
-		} else if (s == "8") {
-			return BaseArgosPower::POWER_750_MW;
-		} else if (s == "9") {
-			return BaseArgosPower::POWER_1000_MW;
-		} else if (s == "10") {
-			return BaseArgosPower::POWER_1500_MW;
-		} else {
-			DEBUG_ERROR("DTE_PROTOCOL_VALUE_OUT_OF_RANGE in %s(%s)", __FUNCTION__, s.c_str());
-			throw DTE_PROTOCOL_VALUE_OUT_OF_RANGE;
+	/// @brief Shared shape of every code-table decoder below.
+	///
+	/// The DTE sends a decimal code as text; the table says what it means; an
+	/// unrecognised code is a protocol error. These were five separate chains of
+	/// `else if (s == "n")` -- 132 lines and 66 of cyclomatic complexity between
+	/// them -- for what is one lookup repeated five times.
+	///
+	/// A table is not just shorter here, it is the correct shape. The code is NOT
+	/// the value: decode_gnss_dyn_model has no code "1", and decode_depth_pile
+	/// skips 5/6/7 and then maps "9" to DEPTH_PILE_12, "10" to 16, "11" to 20,
+	/// "12" to 24. Anything that indexed by the code would be wrong, and a reader
+	/// of the old chain had to notice the gap to know that.
+	///
+	/// @param fn  the CALLER's name, so the error message keeps naming the decoder
+	///            that rejected the value rather than this helper.
+	template <typename T, size_t N>
+	static T decode_from_code_table(const std::string &s, const std::pair<const char *, T> (&table)[N],
+	                                const char *fn) {
+		for (const auto &entry : table) {
+			if (s == entry.first) return entry.second;
 		}
+		DEBUG_ERROR("DTE_PROTOCOL_VALUE_OUT_OF_RANGE in %s(%s)", fn, s.c_str());
+		throw DTE_PROTOCOL_VALUE_OUT_OF_RANGE;
+	}
+
+	static BaseArgosPower decode_power(const std::string &s) {
+		static const std::pair<const char *, BaseArgosPower> table[] = {
+			{ "1", BaseArgosPower::POWER_3_MW },    { "2", BaseArgosPower::POWER_40_MW },
+			{ "3", BaseArgosPower::POWER_200_MW },  { "4", BaseArgosPower::POWER_500_MW },
+			{ "5", BaseArgosPower::POWER_5_MW },    { "6", BaseArgosPower::POWER_50_MW },
+			{ "7", BaseArgosPower::POWER_350_MW },  { "8", BaseArgosPower::POWER_750_MW },
+			{ "9", BaseArgosPower::POWER_1000_MW }, { "10", BaseArgosPower::POWER_1500_MW }
+		};
+		return decode_from_code_table(s, table, __FUNCTION__);
 	}
 
 	static unsigned int decode_acquisition_period(const std::string &s) {
-		if (s == "0")
-			return 0;
-		else if (s == "1")
-			return 10 * 60;  // 10 min
-		else if (s == "2")
-			return 15 * 60;  // 15 min
-		else if (s == "3")
-			return 30 * 60;  // 30 min
-		else if (s == "4")
-			return 60 * 60;  // 1 hour
-		else if (s == "5")
-			return 120 * 60;  // 2 hours
-		else if (s == "6")
-			return 180 * 60;  // 3 hours
-		else if (s == "7")
-			return 240 * 60;  // 4 hours
-		else if (s == "8")
-			return 360 * 60;  // 6 hours
-		else if (s == "9")
-			return 720 * 60;  // 12 hours
-		else if (s == "10")
-			return 1440 * 60;  // 24 hours
-		else if (s == "11")
-			return 1 * 60;  // 1 min
-		else if (s == "12")
-			return 2 * 60;  // 2 min
-		else if (s == "13")
-			return 5 * 60;  // 5 min
-		else if (s == "14")
-			return 20 * 60;  // 20 min
-		else if (s == "15")
-			return 45 * 60;  // 45 min
-		else {
-			DEBUG_ERROR("DTE_PROTOCOL_VALUE_OUT_OF_RANGE in %s(%s)", __FUNCTION__, s.c_str());
-			throw DTE_PROTOCOL_VALUE_OUT_OF_RANGE;
-		}
+		static const std::pair<const char *, unsigned int> table[] = {
+			{ "0", 0 },        { "1", 10 * 60 },  { "2", 15 * 60 },    { "3", 30 * 60 },
+			{ "4", 60 * 60 },  { "5", 120 * 60 }, { "6", 180 * 60 },   { "7", 240 * 60 },
+			{ "8", 360 * 60 }, { "9", 720 * 60 }, { "10", 1440 * 60 }, { "11", 1 * 60 },
+			{ "12", 2 * 60 },  { "13", 5 * 60 },  { "14", 20 * 60 },   { "15", 45 * 60 }
+		};
+		return decode_from_code_table(s, table, __FUNCTION__);
 	}
 
 	static BaseGNSSFixMode decode_gnss_fix_mode(const std::string &s) {
@@ -1245,30 +1227,17 @@ private:
 	}
 
 	static BaseGNSSDynModel decode_gnss_dyn_model(const std::string &s) {
-		if (s == "0") {
-			return BaseGNSSDynModel::PORTABLE;
-		} else if (s == "2") {
-			return BaseGNSSDynModel::STATIONARY;
-		} else if (s == "3") {
-			return BaseGNSSDynModel::PEDESTRIAN;
-		} else if (s == "4") {
-			return BaseGNSSDynModel::AUTOMOTIVE;
-		} else if (s == "5") {
-			return BaseGNSSDynModel::SEA;
-		} else if (s == "6") {
-			return BaseGNSSDynModel::AIRBORNE_1G;
-		} else if (s == "7") {
-			return BaseGNSSDynModel::AIRBORNE_2G;
-		} else if (s == "8") {
-			return BaseGNSSDynModel::AIRBORNE_4G;
-		} else if (s == "9") {
-			return BaseGNSSDynModel::WRIST_WORN_WATCH;
-		} else if (s == "10") {
-			return BaseGNSSDynModel::BIKE;
-		} else {
-			DEBUG_ERROR("DTE_PROTOCOL_VALUE_OUT_OF_RANGE in %s(%s)", __FUNCTION__, s.c_str());
-			throw DTE_PROTOCOL_VALUE_OUT_OF_RANGE;
-		}
+		static const std::pair<const char *, BaseGNSSDynModel> table[] = { { "0", BaseGNSSDynModel::PORTABLE },
+		                                                                   { "2", BaseGNSSDynModel::STATIONARY },
+		                                                                   { "3", BaseGNSSDynModel::PEDESTRIAN },
+		                                                                   { "4", BaseGNSSDynModel::AUTOMOTIVE },
+		                                                                   { "5", BaseGNSSDynModel::SEA },
+		                                                                   { "6", BaseGNSSDynModel::AIRBORNE_1G },
+		                                                                   { "7", BaseGNSSDynModel::AIRBORNE_2G },
+		                                                                   { "8", BaseGNSSDynModel::AIRBORNE_4G },
+		                                                                   { "9", BaseGNSSDynModel::WRIST_WORN_WATCH },
+		                                                                   { "10", BaseGNSSDynModel::BIKE } };
+		return decode_from_code_table(s, table, __FUNCTION__);
 	}
 
 	static std::time_t decode_datestring(const std::string &s) {
@@ -1294,22 +1263,12 @@ private:
 	}
 
 	static BaseArgosMode decode_mode(const std::string &s) {
-		if (s == "0") {
-			return BaseArgosMode::OFF;
-		} else if (s == "1") {
-			return BaseArgosMode::PASS_PREDICTION;
-		} else if (s == "2") {
-			return BaseArgosMode::LEGACY;
-		} else if (s == "3") {
-			return BaseArgosMode::DUTY_CYCLE;
-		} else if (s == "4") {
-			return BaseArgosMode::DOPPLER;
-		} else if (s == "5") {
-			return BaseArgosMode::SURFACING_BURST;
-		} else {
-			DEBUG_ERROR("DTE_PROTOCOL_VALUE_OUT_OF_RANGE in %s(%s)", __FUNCTION__, s.c_str());
-			throw DTE_PROTOCOL_VALUE_OUT_OF_RANGE;
-		}
+		static const std::pair<const char *, BaseArgosMode> table[] = {
+			{ "0", BaseArgosMode::OFF },     { "1", BaseArgosMode::PASS_PREDICTION },
+			{ "2", BaseArgosMode::LEGACY },  { "3", BaseArgosMode::DUTY_CYCLE },
+			{ "4", BaseArgosMode::DOPPLER }, { "5", BaseArgosMode::SURFACING_BURST }
+		};
+		return decode_from_code_table(s, table, __FUNCTION__);
 	}
 
 	static BaseUnderwaterDetectSource decode_underwater_detect_source(const std::string &s) {
@@ -1323,28 +1282,14 @@ private:
 	}
 
 	static BaseDepthPile decode_depth_pile(const std::string &s) {
-		if (s == "1") {
-			return BaseDepthPile::DEPTH_PILE_1;
-		} else if (s == "2") {
-			return BaseDepthPile::DEPTH_PILE_2;
-		} else if (s == "3") {
-			return BaseDepthPile::DEPTH_PILE_3;
-		} else if (s == "4") {
-			return BaseDepthPile::DEPTH_PILE_4;
-		} else if (s == "8") {
-			return BaseDepthPile::DEPTH_PILE_8;
-		} else if (s == "9") {
-			return BaseDepthPile::DEPTH_PILE_12;
-		} else if (s == "10") {
-			return BaseDepthPile::DEPTH_PILE_16;
-		} else if (s == "11") {
-			return BaseDepthPile::DEPTH_PILE_20;
-		} else if (s == "12") {
-			return BaseDepthPile::DEPTH_PILE_24;
-		} else {
-			DEBUG_ERROR("DTE_PROTOCOL_VALUE_OUT_OF_RANGE in %s(%s)", __FUNCTION__, s.c_str());
-			throw DTE_PROTOCOL_VALUE_OUT_OF_RANGE;
-		}
+		static const std::pair<const char *, BaseDepthPile> table[] = {
+			{ "1", BaseDepthPile::DEPTH_PILE_1 },   { "2", BaseDepthPile::DEPTH_PILE_2 },
+			{ "3", BaseDepthPile::DEPTH_PILE_3 },   { "4", BaseDepthPile::DEPTH_PILE_4 },
+			{ "8", BaseDepthPile::DEPTH_PILE_8 },   { "9", BaseDepthPile::DEPTH_PILE_12 },
+			{ "10", BaseDepthPile::DEPTH_PILE_16 }, { "11", BaseDepthPile::DEPTH_PILE_20 },
+			{ "12", BaseDepthPile::DEPTH_PILE_24 }
+		};
+		return decode_from_code_table(s, table, __FUNCTION__);
 	}
 
 	template <typename T> static inline size_t safe_sscanf(const std::string &s, const char *fmt, T &val) {
