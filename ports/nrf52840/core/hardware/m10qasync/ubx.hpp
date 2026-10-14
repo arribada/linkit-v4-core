@@ -652,10 +652,17 @@ enum USE_ANA_VALUES { ANA_DISABLED = 0, ANA_ENABLED = 1 };
 /// had already drifted: RXM_MEASC12_UART1, RXM_MEAS20_UART1 and RXM_MEAS50_UART1
 /// were declared and are actively written by the CloudLocate configuration
 /// (m10qasync_config.cpp:722/735/748) but were missing from it, so
-/// getParameterSize() returned 0 for them and the VALGET parser treated the
-/// whole rest of the response as unreadable and stopped. Nobody adds a line to a
-/// 111-line if-chain reliably; a table is read as data, and a missing entry is
-/// visible next to its neighbours.
+/// getParameterSize() returned 0 for them and the VALGET parser stopped at the
+/// first one. Nobody adds a line to a 111-line if-chain reliably; a table is read
+/// as data, and a missing entry is visible next to its neighbours.
+///
+/// SCOPE, corrected after the 2026-10-14 bench run said this was invisible on a
+/// board and was right: the only consumer of a decoded value is the DEBUG_TRACE
+/// at m10qasync.cpp:898, and m_op_state becomes SUCCESS whether or not the loop
+/// broke early. So the three missing keys cost three lines of diagnostics, not a
+/// configuration read-back — and those lines are compiled out below DEBUG_LEVEL
+/// 4 anyway. The table is still the right shape and the keys still belong in it;
+/// the severity was mine to overstate.
 static const UBXParameter *const PARAMETERS[] = {
 	// UART1
 	&UART1::BAUDRATE,

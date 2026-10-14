@@ -47,31 +47,61 @@ SKIP = {"%STORE"}
 
 
 def commands_from_source():
-    """The commands the firmware actually dispatches, in source order."""
+    """The commands the firmware dispatches, in source order.
+
+    Returns (name, conditional) pairs. `conditional` means the command sits
+    inside a build-variant #if, so a board built without that option answers
+    "unknown-cmd" and is RIGHT to: %AXLFAIL lives under LORA_MOTION_EXT, off on
+    a KIM build. Reported absent on the first bench run before this was handled.
+    """
     if not CONSOLE_SRC.exists():
         sys.exit(f"cannot read {CONSOLE_SRC}")
     text = CONSOLE_SRC.read_text(encoding="utf-8", errors="replace")
+
+    # Track preprocessor depth, ignoring the file-level `#ifdef BENCH_TEST` that
+    # wraps everything (depth 1 is the whole file, not a variant).
+    depth = 0
     seen, out = set(), []
-    for name in re.findall(r'cmd == "(%[A-Z]+)"', text):
-        if name not in seen:
-            seen.add(name)
-            out.append(name)
+    for line in text.splitlines():
+        st = line.strip()
+        if re.match(r"#\s*(if|ifdef|ifndef)\b", st):
+            depth += 1
+        elif re.match(r"#\s*endif\b", st):
+            depth = max(0, depth - 1)
+        for name in re.findall(r'cmd == "(%[A-Z]+)"', line):
+            if name not in seen:
+                seen.add(name)
+                out.append((name, depth > 1))
     return out
 
 
+NORDIC_VID = 0x1915  # Nordic Semiconductor, the nRF52840 USB CDC
+
+
 def find_port():
-    """First CDC port that opens. Windows-native bench uses COM*, WSL /dev/ttyACM*."""
+    """The board's CDC port. Windows-native bench uses COM*, WSL /dev/ttyACM*.
+
+    Ordered by VID, not by port number: on Windows the first port that merely
+    OPENS is COM1, a motherboard serial port with nothing behind it, and the
+    first bench run talked to it for a while before giving up. A port whose USB
+    VID is Nordic's is the board; everything else is a fallback.
+    """
     import glob
 
-    candidates = sorted(glob.glob("/dev/ttyACM*"))
-    if not candidates:
-        try:
-            from serial.tools import list_ports
+    ranked = []
+    try:
+        from serial.tools import list_ports
 
-            candidates = [p.device for p in list_ports.comports()]
-        except Exception:
-            candidates = []
-    for dev in candidates:
+        for p in list_ports.comports():
+            nordic = (p.vid == NORDIC_VID)
+            legacy = p.device.upper() in ("COM1", "COM2")  # on-board UARTs, never the tag
+            ranked.append((0 if nordic else (2 if legacy else 1), p.device))
+    except Exception:
+        pass
+    for dev in sorted(glob.glob("/dev/ttyACM*")):
+        ranked.append((1, dev))
+
+    for _, dev in sorted(ranked):
         try:
             serial.Serial(dev, 115200, timeout=0.1, write_timeout=5).close()
             return dev
@@ -100,12 +130,31 @@ class Board:
                 line, buf = buf.split(b"\n", 1)
                 self._rx.append(line.decode("utf-8", "replace").strip())
 
-    def send(self, text, settle=1.2):
-        """Send one command and return the lines it produced."""
+    def send(self, text, settle=1.2, quiet_for=0.4, cap=None):
+        """Send one command and return the lines it produced.
+
+        Waits for the reply to go QUIET instead of sleeping a fixed time. A fixed
+        delay has to be either too short for %I2C and %SCHED, which answer over
+        seconds and many lines, or wasteful for the 30 commands that answer in
+        milliseconds — the first bench run hit the short end and read truncated
+        replies. This returns once nothing new has arrived for `quiet_for`, with
+        `settle` as the floor and `cap` as the ceiling.
+        """
+        cap = cap if cap is not None else max(settle * 6, 8.0)
         with self._lock:
             self._rx.clear()
             self.ser.write((text + "\r\n").encode())
-        time.sleep(settle)
+        t0 = time.time()
+        last_len, last_change = 0, t0
+        while True:
+            time.sleep(0.1)
+            now = time.time()
+            if len(self._rx) != last_len:
+                last_len, last_change = len(self._rx), now
+            if now - t0 >= cap:
+                break
+            if now - t0 >= settle and now - last_change >= quiet_for and last_len:
+                break
         return list(self._rx)
 
     def close(self):
@@ -135,24 +184,30 @@ def main():
             sys.exit(f"no %PING answer — not a --bench build? got: {handshake}")
         print("handshake OK\n")
 
-        failures, skipped = [], []
-        for cmd in commands:
+        failures, skipped, absent = [], [], []
+        for cmd, conditional in commands:
             if cmd in SKIP:
                 skipped.append(cmd)
                 print(f"  {cmd:<12} SKIPPED (would power the board down)")
                 continue
-            # %I2C scans the bus and takes about 30 s.
-            lines = board.send(cmd, settle=32.0 if cmd == "%I2C" else 1.2)
+            # %I2C scans both buses and answers over tens of seconds.
+            lines = board.send(cmd, settle=2.0, cap=40.0 if cmd == "%I2C" else 10.0)
             unknown = any("unknown-cmd" in l for l in lines)
-            answered = bool(lines)
-            if unknown or not answered:
+            if unknown and conditional:
+                # Correct behaviour: the command is compiled out on this variant.
+                absent.append(cmd)
+                print(f"  {cmd:<12} n/a   not built into this variant")
+            elif unknown or not lines:
                 failures.append((cmd, "unknown-cmd" if unknown else "no reply"))
                 print(f"  {cmd:<12} FAIL  {'unknown-cmd' if unknown else 'no reply'}")
             else:
                 print(f"  {cmd:<12} ok    {lines[0][:72]}")
 
         print()
-        print(f"{len(commands) - len(failures) - len(skipped)}/{len(commands) - len(skipped)} routed", end="")
+        testable = len(commands) - len(skipped) - len(absent)
+        print(f"{testable - len(failures)}/{testable} routed", end="")
+        if absent:
+            print(f", {len(absent)} not in this variant", end="")
         print(f", {len(skipped)} skipped" if skipped else "")
         if failures:
             print("\nNOT ROUTED — the dispatch chain lost these:")
