@@ -10,7 +10,8 @@
 # compiled on LinkIt at all (a missing error.hpp include), and DEBUG_LEVEL=2 --
 # a value used in deployment -- did not compile.
 #
-# HOW THE LIST IS CHOSEN. Every board/comm variant appears once, and the
+# HOW THE LIST IS CHOSEN. Every board/comm combination that COMPILES appears
+# once -- see the note on RSPB+KIM at the bottom, which never has -- and the
 # DEBUG_LEVEL values are spread across them so all five are compiled without
 # paying for a cross product: level 0 compiles every DEBUG_* macro out (which
 # is what catches an argument only evaluated at higher levels), level 4 keeps
@@ -48,7 +49,28 @@ linkit-cyprus|-DBOARD=LINKIT -DDEBUG_LEVEL=3 -DLORA_RAK3172=ON -DLORA_MOTION_EXT
 # default ever changes.
 rspb-smd-spi|-DBOARD=RSPB -DDEBUG_LEVEL=1 -DARGOS_SMD=ON -DBATTERY_MONITOR_TYPE=STC3117 -DENABLE_AXL_SENSOR=1 -DENABLE_MORTALITY_SENSOR=1 -DENABLE_PRESSURE_SENSOR=1 -DENABLE_THERMISTOR_SENSOR=1 -DGNSS_HAS_BACKUP_BATTERY=1
 
+# RSPB over the AT/UART path. build.yml offers it, it compiles, and nothing was
+# building it: added after a reviewer pointed out the list did not cover every
+# combination its own header claimed.
+rspb-smd-uart|-DBOARD=RSPB -DDEBUG_LEVEL=3 -DARGOS_SMD=ON -DSMD_UART=ON -DBATTERY_MONITOR_TYPE=STC3117 -DENABLE_AXL_SENSOR=1 -DENABLE_MORTALITY_SENSOR=1 -DENABLE_PRESSURE_SENSOR=1 -DENABLE_THERMISTOR_SENSOR=1 -DGNSS_HAS_BACKUP_BATTERY=1
+
 # The bench build. bench_console.cpp has no host test at all -- it is
 # BENCH_TEST-only firmware -- so compiling it here is the only automated check
 # it gets. tests/bench/console_sweep.py covers its dispatch on a real board.
 linkit-kim-bench|-DBOARD=LINKIT -DDEBUG_LEVEL=3 -DBENCH_TEST=ON -DENABLE_AXL_SENSOR=ON
+
+# ---------------------------------------------------------------------------
+# RSPB + KIM IS MISSING ON PURPOSE: IT HAS NEVER COMPILED.
+#
+# build.yml offers board=RSPB with comm=KIM in its dropdown, so it is pickable,
+# but it fails at
+#     core/protocol/dte_handler.cpp:1654  'SAT_EXTWAKEUP' was not declared
+#     ports/nrf52840/core/hardware/kim2/kim2.cpp:196  same
+# SAT_EXTWAKEUP is a LinkIt BSP pin the RSPB BSP does not define, reached from a
+# KIM-only path. Verified identical at 609aa21b, and neither file is touched by
+# the work that created this list, so this is not a regression -- it is a
+# combination the menu offers and the tree cannot build. RSPB ships over SMD.
+#
+# Listing it would make this gate permanently red on something nobody deploys,
+# so it stays out, named here rather than silently absent.
+# ---------------------------------------------------------------------------

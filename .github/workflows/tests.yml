@@ -148,6 +148,13 @@ jobs:
       - name: Documentation links resolve
         run: python3 scripts/check_doc_links.py
 
+      # The one code path that powers a sealed tag down. It existed in two
+      # copies that had already diverged in the field; there is one now, and no
+      # host test can see whether the services still call it -- is_lb hangs off
+      # a cached flag the test double never refreshes.
+      - name: Every TX service calls the battery guard
+        run: python3 tools/check_battery_guard_callers.py
+
       # A ratchet on the CCN of each function, not on the number of warnings:
       # splitting handle_line() took its worst function from 118 to 12 and the
       # file from 4 warnings to 8, so a warning-count gate would have rejected

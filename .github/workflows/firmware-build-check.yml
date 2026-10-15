@@ -7,7 +7,8 @@ name: Firmware compile check
 # week therefore reached a board: SMD_UART had never been compiled on LinkIt at
 # all, and DEBUG_LEVEL=2, a value used in deployment, had stopped compiling.
 #
-# It compiles and links every configuration in scripts/firmware_variants.txt.
+# It compiles and links every configuration in scripts/firmware_variants.txt
+# (eight today). That file names the one combination deliberately left out.
 # It does not merge a bootloader, sign, or flash -- that is build.yml's job.
 
 # Deliberately every branch, not just main and pull requests: the clang-format

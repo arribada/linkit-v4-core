@@ -66,6 +66,19 @@ if git diff --cached --name-only | grep -qE '^(core/|ports/nrf52840/|tests/)'; t
     fi
 fi
 
+# La garde de batterie critique est le seul chemin qui appelle PMU::powerdown()
+# sur une balise scellee. Elle a existe en deux copies qui ont diverge jusqu au
+# terrain; il n y en a plus qu une, et aucun test hote ne peut verifier que les
+# services l APPELLENT encore (is_lb depend d un drapeau que le faux magasin de
+# configuration ne rafraichit jamais).
+if git diff --cached --name-only | grep -qE '^core/services/(service|.*_tx_service)\.cpp$'; then
+    echo "=== Pre-commit: Checking every TX service calls the battery guard ==="
+    if ! python3 "$REPO_ROOT/tools/check_battery_guard_callers.py"; then
+        echo "ERROR: the critical-battery guard is not wired as expected. Commit aborted."
+        exit 1
+    fi
+fi
+
 # Cliquet de complexite: aucune fonction ne devient plus complexe qu elle n est
 # deja. La garde naive -- moins d avertissements lizard qu avant -- est pire que
 # rien: decouper handle_line() a fait tomber sa pire fonction de CCN 118 a 12 et

@@ -141,7 +141,7 @@ TEST_GROUP(LoRaTxService) {
 	}
 
 	/// Drive `count` failed transmissions. Expectations must already be set.
-	void fail_n_transmissions(LoRaTxService & serv, std::time_t & t, unsigned int count) {
+	void fail_n_transmissions(LoRaTxService & serv, std::time_t &t, unsigned int count) {
 		for (unsigned int i = 0; i < count; i++) {
 			t += serv.get_last_schedule();
 			fake_rtc->settime(t / 1000);
@@ -510,3 +510,33 @@ TEST(LoRaTxService, FixDrivenTxIsImmediateOnceTheBackoffHasElapsed) {
 	system_scheduler->run();
 	mock().checkExpectations();
 }
+
+
+// ===========================================================================
+// WHY THERE IS NO CALLER-SIDE TEST FOR THE CRITICAL-BATTERY POWERDOWN.
+//
+// The guard itself is pinned in battery_critical_guard_test.cpp. What that file
+// cannot see is whether the SERVICES still call it -- which is the defect class
+// the deduplication exists to prevent, because before it Argos and LoRa each
+// carried a copy and the copies diverged: the hardening that made the check
+// require a CONFIRMED verdict went into ArgosTxService and was forgotten here,
+// so LoRa tags went on powering down on a transmit-current transient.
+//
+// A runtime test of that cannot be written against this harness today, and the
+// reason is worth writing down because it also explains why neither copy ever
+// had one. The guard sits behind `if (argos_config.is_lb)`, and is_lb is
+// `LB_EN && m_is_battery_level_low` (config_store.hpp:1230) -- a CACHED flag,
+// not a reading. The only place that refreshes it is
+// ConfigStoreLFS::update_battery_level (config_store_fs.hpp:455), and
+// FakeConfigurationStore overrides update_battery_level() with an EMPTY body.
+// So m_is_battery_level_low is permanently false in every host test, is_lb is
+// permanently false with it, and the low-battery branch of both TX services --
+// not just the powerdown, the whole regime -- is unreachable from here.
+//
+// Measured, not assumed: giving the fake the real four-line body makes 10
+// existing tests in the default suite fail, because they rely on that branch
+// never being taken. Fixing it properly means auditing those ten, which is not
+// a thing to do days before a deployment. tools/check_battery_guard_callers.py
+// pins the one property a source check can pin in the meantime -- that every TX
+// service still calls the guard.
+// ===========================================================================

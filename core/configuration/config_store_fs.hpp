@@ -328,6 +328,13 @@ protected:
 					DEBUG_WARN("deserialize_config: failed to recover %s", param_map[(unsigned int)id].name.c_str());
 				}
 			}
+			// Console only, despite the general rule that a DEBUG_WARN also lands
+			// in the flash system log. This runs from configuration_store->init()
+			// at main.cpp:956 and DebugLogger::system_log is not attached until
+			// main.cpp:1143, 185 lines later -- so on a sealed tag, the one event
+			// you would most want a record of leaves no trace a recovered device
+			// can be asked about. Moving it would need the counts carried out to
+			// main; not done here.
 			DEBUG_WARN("deserialize_config: version mismatch — %u protected param(s) recovered, %u lost", recovered,
 			           lost);
 

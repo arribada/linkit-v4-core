@@ -294,11 +294,16 @@ protected:
 	/// applied to one caller only.
 	///
 	/// @param in_low_battery_mode  Both callers pass argos_config.is_lb, which is
-	///        `LB_EN && SOC < LB_THRESHOLD` -- NOT just "the monitor is enabled".
-	///        The guard therefore only ever runs once the low-battery band has
-	///        been entered, which is why it is silent on a default config
-	///        (LB_EN defaults to false). See
-	///        ConfigurationStore::check_battery_thresholds.
+	///        `LB_EN && m_is_battery_level_low` (config_store.hpp:1230) -- a
+	///        CACHED flag, not a reading, and NOT simply "the monitor is
+	///        enabled". The only place that refreshes it is
+	///        ConfigStoreLFS::update_battery_level (config_store_fs.hpp:455).
+	///        Two consequences worth knowing: the guard is silent on a default
+	///        config, because LB_EN defaults to false; and it is unreachable
+	///        from every host test, because FakeConfigurationStore overrides
+	///        update_battery_level() with an empty body, so the flag is
+	///        permanently false there. tools/check_battery_guard_callers.py
+	///        pins what a source check can pin in the meantime.
 	/// @return The decision to return straight out of service_next_schedule(),
 	///         or nullopt to carry on scheduling. Note that on the shutdown
 	///         path PMU::powerdown() has already been called by the time this

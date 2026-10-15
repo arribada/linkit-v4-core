@@ -57,7 +57,14 @@ failed=0
 
 while IFS='|' read -r name flags; do
 	case "$name" in ''|'#'*) continue ;; esac
-	[ -n "${flags:-}" ] || continue
+	# A line with a name but no flags is a MALFORMED variant, not a comment.
+	# Skipping it quietly meant the run still printed "all N variants compile"
+	# and exited 0 with that variant never built -- a typo in the list would
+	# have silently removed a board from the gate.
+	if [ -z "${flags:-}" ]; then
+		echo "ERROR: $VARIANT_FILE: variant '$name' has no cmake flags (missing '|'?)"
+		exit 1
+	fi
 	[ -z "$WANTED" ] || [ "$WANTED" = "$name" ] || continue
 
 	dir="$BUILD_ROOT/$name"
