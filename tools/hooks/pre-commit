@@ -66,4 +66,19 @@ if git diff --cached --name-only | grep -qE '^(core/|ports/nrf52840/|tests/)'; t
     fi
 fi
 
+# Cliquet de complexite: aucune fonction ne devient plus complexe qu elle n est
+# deja. La garde naive -- moins d avertissements lizard qu avant -- est pire que
+# rien: decouper handle_line() a fait tomber sa pire fonction de CCN 118 a 12 et
+# monter le fichier de 4 a 8 avertissements. Ici c est le CCN de chaque fonction
+# qui est epingle. lizard est optionnel en local; la CI reste la vraie barriere.
+if git diff --cached --name-only | grep -qE '^(core/|ports/nrf52840/(core/|main\.cpp))'; then
+    if command -v lizard >/dev/null 2>&1; then
+        echo "=== Pre-commit: Checking no function got more complex ==="
+        if ! python3 "$REPO_ROOT/tools/check_complexity_ratchet.py"; then
+            echo "ERROR: a function got more complex. Commit aborted."
+            exit 1
+        fi
+    fi
+fi
+
 echo "=== Pre-commit: Build OK ==="
