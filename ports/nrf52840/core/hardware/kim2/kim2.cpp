@@ -975,7 +975,12 @@ void KIM2Device::state_machine(void) {
 		// int: raising the quiet delay past 65535 would silently truncate here.
 		static_assert(StateMachineBarrier::QUIET_DELAY_MS <= UINT16_MAX,
 		              "KIM2 re-arm delay must fit in run_state_machine's uint16_t");
-		run_state_machine((uint16_t)m_sm_barrier.on_exception(static_cast<int>(m_state)));
+		auto delay = m_sm_barrier.on_exception(static_cast<int>(m_state));
+		// nullopt: hand it to main.cpp's catch and the ErrorState ladder rather
+		// than absorb a fault that is clearly not transient. No re-arm here on
+		// purpose -- ErrorState resets the device.
+		if (!delay) throw;
+		run_state_machine((uint16_t)*delay);
 	}
 }
 

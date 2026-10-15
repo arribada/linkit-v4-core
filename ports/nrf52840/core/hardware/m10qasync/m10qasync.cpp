@@ -800,7 +800,12 @@ void M10QAsyncReceiver::state_machine() {
 		}
 		m_sm_barrier.on_tick_completed();
 	} catch (...) {
-		run_state_machine(m_sm_barrier.on_exception(static_cast<int>(m_state)));
+		auto delay = m_sm_barrier.on_exception(static_cast<int>(m_state));
+		// nullopt: hand it to main.cpp's catch and the ErrorState ladder rather
+		// than absorb a fault that is clearly not transient. No re-arm here on
+		// purpose -- ErrorState resets the device.
+		if (!delay) throw;
+		run_state_machine(*delay);
 	}
 }
 

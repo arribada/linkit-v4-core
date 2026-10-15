@@ -364,8 +364,13 @@ void SmdSat::state_machine(bool use_scheduler) {
 		}
 		m_sm_barrier.on_tick_completed();
 	} catch (...) {
+		auto delay = m_sm_barrier.on_exception(static_cast<int>(m_state));
+		// nullopt: the run is long enough that absorbing it is the wrong answer.
+		// Rethrow so main.cpp's catch turns it into an ErrorEvent. Nothing is
+		// re-armed on this path on purpose -- ErrorState resets the device.
+		if (!delay) throw;
 		// Whatever the handler had set is not to be trusted now.
-		m_next_delay = m_sm_barrier.on_exception(static_cast<int>(m_state));
+		m_next_delay = *delay;
 	}
 
 	if (use_scheduler && !SMD_STATE_EQUAL(stopped)) {

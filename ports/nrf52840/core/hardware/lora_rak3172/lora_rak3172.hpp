@@ -6,6 +6,7 @@
 #pragma once
 
 #include "lora_rak3172_comm.hpp"
+#include "state_machine_barrier.hpp"
 #include "kineis_device.hpp"
 #include "scheduler.hpp"
 #include <string>
@@ -29,6 +30,8 @@
 class LoRaDevice : public LoRaCommEventListener, public KineisDevice {
 private:
 	LoRaComm m_lora_comm;
+	/// Catches a throw out of a state handler and says when to tick again.
+	StateMachineBarrier m_sm_barrier{ "LoRaDevice" };
 
 public:
 	LoRaDevice();
@@ -209,12 +212,12 @@ private:
 	static constexpr unsigned int LINKCHECK_WAIT_MS = 3000;
 	static constexpr uint8_t LINKCHECK_MAX_FAILURES = 3;   ///< AT+LINKCHECK failures in a row before pausing
 	static constexpr uint8_t LINKCHECK_PAUSE_FRAMES = 24;  ///< Frames sent without asking, then ask again
-	bool m_linkcheck_fits = false;     ///< send(): the payload leaves room for the FOpts byte
-	uint8_t m_linkcheck_failures = 0;  ///< Consecutive failed AT+LINKCHECK=1
-	uint8_t m_linkcheck_pause = 0;     ///< Frames left before asking again
-	bool m_linkcheck_armed = false;    ///< AT+SEND accepted with a LinkCheckReq pending
-	bool m_linkcheck_waiting = false;  ///< TX_DONE seen, still listening for the answer
-	int8_t m_linkcheck_result = -1;    ///< -1 none yet, 0 heard, 1 no answer
+	bool m_linkcheck_fits = false;                         ///< send(): the payload leaves room for the FOpts byte
+	uint8_t m_linkcheck_failures = 0;                      ///< Consecutive failed AT+LINKCHECK=1
+	uint8_t m_linkcheck_pause = 0;                         ///< Frames left before asking again
+	bool m_linkcheck_armed = false;                        ///< AT+SEND accepted with a LinkCheckReq pending
+	bool m_linkcheck_waiting = false;                      ///< TX_DONE seen, still listening for the answer
+	int8_t m_linkcheck_result = -1;                        ///< -1 none yet, 0 heard, 1 no answer
 	uint64_t m_linkcheck_deadline_ms = 0;
 #endif
 

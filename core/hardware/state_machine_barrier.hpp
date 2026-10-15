@@ -1,48 +1,64 @@
 /**
  * @file state_machine_barrier.hpp
- * @brief Keeps a device state machine alive when one of its state handlers
- *        throws, instead of letting the exception kill the firmware.
+ * @brief Absorbs a transient throw out of a device state handler, and escalates
+ *        a persistent one to the firmware's own recovery ladder.
  *
- * WHAT THIS PROTECTS. The satellite and GNSS drivers all tick the same way: a
+ * WHAT THIS PROTECTS. The radio and GNSS drivers all tick the same way: a
  * `state_machine()` dispatch posted as a scheduler task, re-armed either at the
  * end of the dispatch (SmdSat) or by the handler itself through
- * `run_state_machine()` (KIM2, M10Q). An exception out of a state handler
- * therefore does two things, both bad:
+ * `run_state_machine()` (KIM2, M10Q, LoRa). An exception out of a state handler
+ * skips that re-arm, so the driver never ticks again: the module goes inert
+ * with the rest of the firmware running normally around it. That is what this
+ * fixes.
  *
- *   1. it escapes the scheduler task runner and reaches std::terminate ->
- *      __verbose_terminate_handler -> abort(), which on this platform hangs in
- *      fputc until the watchdog resets the device 15 minutes later;
- *   2. it skips the re-arm, so even if something did catch it further out, the
- *      driver would never tick again -- the module goes inert with the rest of
- *      the firmware running normally around it.
+ * WHAT IT DOES *NOT* FIX, CONTRARY TO WHAT THIS COMMENT FIRST CLAIMED. The
+ * exception did not reach std::terminate. ports/nrf52840/main.cpp:1621 wraps the
+ * whole loop, `system_scheduler->run()` at :1647 included, in
+ * catch(ErrorCode) / catch(const std::exception &) / catch(...), and that catch
+ * has been there all along -- its own comment describes the std::terminate ->
+ * abort() -> fputc -> 15-minute-watchdog path as the thing it exists to
+ * prevent. An escaping driver exception therefore became an ErrorEvent, and
+ * ErrorState handled it. Swallowing it here REMOVED that escalation, which is
+ * why this barrier now hands a persistent fault back.
  *
- * This is not a hypothetical path. The BMA400 reboot loop was exactly this:
- * callbacks threw C++ exceptions through a C library, hit std::terminate and
- * bypassed the try/catch that looked like it covered them. Service code already
- * has its barrier (Service::run_scheduled_task / handle_task_exception); the
- * drivers below it had none.
+ * TRANSIENT VERSUS PERSISTENT. Up to ESCALATE_AFTER consecutive exceptions are
+ * absorbed: the state is kept, the tick is re-armed, and a clean dispatch
+ * resets the count. That is the case worth absorbing -- a single throw used to
+ * cost the whole session for nothing. Past that the driver is not having bad
+ * luck, it is broken, and on_exception() returns nullopt so the caller
+ * rethrows. The fault then reaches main.cpp's catch, becomes an ErrorEvent, and
+ * walks the ladder that core/sm/gentracker.cpp:155-210 already defines.
  *
- * WHAT IT DOES NOT DO. It does not force a state transition. The state-change
- * macros run `_exit()` then `_enter()` handlers, either of which is as able to
- * throw as the handler that just did, so driving a transition from inside a
- * catch block would widen the failure rather than contain it. The machine stays
- * in its state and is simply ticked again, more slowly.
+ * WHY ESCALATING IS SAFE ON A SEALED TAG. Checked in that policy block before
+ * writing this, because a tag that disables itself is lost. On LinkIt, "boot
+ * failures therefore never lead there [OffState]": ErrorState waits
+ * BOOT_BACKOFF_S (5 s, 30 s, 2 min, 10 min, then 60 min repeating), resets, and
+ * retries for ever. On RSPB, OffState is a TPL5111 power cut that its own timer
+ * undoes. Neither board can be walked into a permanent stop by this path. The
+ * single factory_reset on the way needs five failures AND 30 minutes of
+ * accumulated backoff, and it keeps PROTECTED_PARAMS -- identifiers,
+ * calibration and the provisioning secrets.
  *
- * WHY IT KEEPS RETRYING FOREVER. These tags are sealed and have no downlink: a
- * driver that gives up takes the satellite link or the fix with it for the rest
- * of the deployment. A handler that throws deterministically becomes a slow,
- * quiet retry loop rather than a dead module. The log is what gets rationed,
- * not the retries -- a DEBUG_ERROR line also goes to the flash system log at
- * roughly 170 ms a line, so a loop that logged every tick would cost seconds
- * per minute and fill the log with one repeated message.
+ * And a reset is the stronger remedy anyway: it re-initialises a wedged
+ * peripheral, which ticking the same state machine again cannot, and the ladder
+ * spaces the attempts out instead of making 120 of them an hour.
  *
- * Header-only and hardware-free, so the host tests compile it as-is (the three
+ * WHAT IT STILL DOES NOT DO. It does not force a state transition. The
+ * state-change macros run `_exit()` then `_enter()` handlers, either of which is
+ * as able to throw as the handler that just did, so driving a transition from
+ * inside a catch block would widen the failure rather than contain it.
+ *
+ * The log is rationed, not the retries: a DEBUG_ERROR line also goes to the
+ * flash system log at roughly 170 ms a line.
+ *
+ * Header-only and hardware-free, so the host tests compile it as-is (the four
  * drivers that use it are nRF-port-only). See tests/src/state_machine_barrier_test.cpp.
  */
 
 #pragma once
 
 #include <exception>
+#include <optional>
 #include <stdexcept>
 #include <variant>
 
@@ -59,6 +75,11 @@ public:
 	static constexpr unsigned int RETRY_DELAY_MS = 1000;
 	/// Re-arm delay once the throw looks deterministic.
 	static constexpr unsigned int QUIET_DELAY_MS = 30000;
+	/// Consecutive exceptions after which the fault stops being absorbed and is
+	/// handed to the firmware's recovery ladder. Reaching it takes about 33 s
+	/// (three fast retries, then one slow one), so a burst of transients does
+	/// not cost a reset while a broken driver does not sit there for hours.
+	static constexpr unsigned int ESCALATE_AFTER = 5;
 
 	/// @param driver  Name used in the log lines, e.g. "SmdSat".
 	explicit StateMachineBarrier(const char *driver) : m_driver(driver), m_consecutive(0) {}
@@ -72,13 +93,16 @@ public:
 		return (consecutive > LOGGED_OCCURRENCES) ? QUIET_DELAY_MS : RETRY_DELAY_MS;
 	}
 
+	/// @brief Whether this run has gone on long enough to stop absorbing it.
+	static bool shall_escalate(unsigned int consecutive) { return consecutive >= ESCALATE_AFTER; }
+
 	/// @brief Whether this occurrence still gets a line of its own.
 	static bool shall_log(unsigned int consecutive) { return consecutive <= LOGGED_OCCURRENCES; }
 
 	/// @brief Whether this occurrence is the one that announces the log going quiet.
 	static bool shall_announce_quiet(unsigned int consecutive) { return consecutive == LOGGED_OCCURRENCES + 1; }
 
-	/// @brief Report the exception being handled and say when to tick again.
+	/// @brief Report the exception being handled and say what to do with it.
 	///
 	/// MUST be called from inside a `catch (...)` block: it re-throws to match
 	/// the live exception against the types the firmware actually throws, which
@@ -86,9 +110,21 @@ public:
 	/// Service::handle_task_exception.
 	///
 	/// @param state  The state value the dispatch was in, for the log line.
-	/// @return Delay in ms to re-arm the state machine tick with.
-	unsigned int on_exception(int state) {
+	/// @return Delay in ms to re-arm the tick with, or nullopt when the caller
+	///         must `throw;` so the fault reaches main.cpp's catch and the
+	///         ErrorState ladder. A caller that ignores the nullopt turns a
+	///         broken driver back into a silent infinite retry.
+	std::optional<unsigned int> on_exception(int state) {
 		m_consecutive++;
+
+		if (shall_escalate(m_consecutive)) {
+			// Deliberately an ERROR even though the quiet rule would suppress it:
+			// this is the last line the driver writes before the reset, and it is
+			// the only thing that will explain the reset afterwards.
+			DEBUG_ERROR("%s::state_machine: %s in state %d, %u in a row — escalating, no longer absorbed", m_driver,
+			            describe_current_exception(), state, m_consecutive);
+			return std::nullopt;
+		}
 
 		if (shall_log(m_consecutive)) {
 			DEBUG_ERROR("%s::state_machine: %s in state %d (%u) — state kept, retry in %u ms", m_driver,

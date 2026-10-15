@@ -11,6 +11,8 @@
 
 #include "state_machine_barrier.hpp"
 
+#include <optional>
+
 #include "CppUTest/TestHarness.h"
 
 TEST_GROUP(StateMachineBarrier){};
@@ -43,32 +45,92 @@ TEST(StateMachineBarrier, a_persistent_throw_backs_off_and_stops_logging) {
 	CHECK_FALSE(StateMachineBarrier::shall_log(first_quiet + 1));
 	CHECK_EQUAL(StateMachineBarrier::QUIET_DELAY_MS, StateMachineBarrier::retry_delay_ms(first_quiet + 1));
 
-	// And it never gives up: there is no downlink to a sealed tag, so a driver
-	// that stopped retrying would take the link with it for the deployment.
-	CHECK_EQUAL(StateMachineBarrier::QUIET_DELAY_MS, StateMachineBarrier::retry_delay_ms(10000));
+	// Past ESCALATE_AFTER the delay stops being the question -- the caller is
+	// told to rethrow instead. See the escalation tests below.
+	CHECK_TRUE(StateMachineBarrier::shall_escalate(StateMachineBarrier::ESCALATE_AFTER));
+	CHECK_FALSE(StateMachineBarrier::shall_escalate(StateMachineBarrier::ESCALATE_AFTER - 1));
+}
+
+/// THE behaviour this barrier exists to get right, and the one the first version
+/// got wrong. A run that keeps throwing is not absorbed for ever: on_exception
+/// returns nullopt, the caller rethrows, and the fault reaches main.cpp's catch
+/// -> ErrorEvent -> the ErrorState ladder (gentracker.cpp:155-210), which resets
+/// and retries with a growing backoff. Swallowing it instead removed the only
+/// escalation a wedged driver had, and a reset is the stronger remedy: it
+/// re-initialises the peripheral, which ticking the same state again cannot.
+TEST(StateMachineBarrier, a_persistent_fault_is_handed_back_not_absorbed) {
+	StateMachineBarrier b("Test");
+	std::optional<unsigned int> delay;
+
+	// Everything up to the threshold is absorbed, so a transient costs nothing.
+	for (unsigned int n = 1; n < StateMachineBarrier::ESCALATE_AFTER; n++) {
+		try {
+			throw ErrorCode::SPI_COMMS_ERROR;
+		} catch (...) {
+			delay = b.on_exception(2);
+		}
+		CHECK_TRUE(delay.has_value());
+	}
+
+	// The one that tips it over asks the caller to rethrow.
+	try {
+		throw ErrorCode::SPI_COMMS_ERROR;
+	} catch (...) {
+		delay = b.on_exception(2);
+	}
+	CHECK_FALSE(delay.has_value());
+	CHECK_EQUAL(StateMachineBarrier::ESCALATE_AFTER, b.consecutive());
+}
+
+/// Escalation is latching only while the run continues: a dispatch that
+/// completes clears it, so an intermittent fault that recovers is never
+/// escalated however many bursts it has had.
+TEST(StateMachineBarrier, a_clean_tick_cancels_a_pending_escalation) {
+	StateMachineBarrier b("Test");
+
+	for (unsigned int n = 1; n < StateMachineBarrier::ESCALATE_AFTER; n++) {
+		try {
+			throw ErrorCode::SPI_COMMS_ERROR;
+		} catch (...) {
+			b.on_exception(2);
+		}
+	}
+	b.on_tick_completed();
+
+	// Back to square one: this throw is absorbed, not escalated.
+	std::optional<unsigned int> delay;
+	try {
+		throw ErrorCode::SPI_COMMS_ERROR;
+	} catch (...) {
+		delay = b.on_exception(2);
+	}
+	CHECK_TRUE(delay.has_value());
+	CHECK_EQUAL(StateMachineBarrier::RETRY_DELAY_MS, *delay);
 }
 
 TEST(StateMachineBarrier, the_run_counts_up_and_the_delay_follows) {
 	StateMachineBarrier b("Test");
 
 	for (unsigned int n = 1; n <= StateMachineBarrier::LOGGED_OCCURRENCES; n++) {
-		unsigned int delay = 0;
+		std::optional<unsigned int> delay;
 		try {
 			throw ErrorCode::SPI_COMMS_ERROR;
 		} catch (...) {
 			delay = b.on_exception(4);
 		}
 		CHECK_EQUAL(n, b.consecutive());
-		CHECK_EQUAL(StateMachineBarrier::RETRY_DELAY_MS, delay);
+		CHECK_TRUE(delay.has_value());
+		CHECK_EQUAL(StateMachineBarrier::RETRY_DELAY_MS, *delay);
 	}
 
-	unsigned int delay = 0;
+	std::optional<unsigned int> delay;
 	try {
 		throw ErrorCode::SPI_COMMS_ERROR;
 	} catch (...) {
 		delay = b.on_exception(4);
 	}
-	CHECK_EQUAL(StateMachineBarrier::QUIET_DELAY_MS, delay);
+	CHECK_TRUE(delay.has_value());
+	CHECK_EQUAL(StateMachineBarrier::QUIET_DELAY_MS, *delay);
 }
 
 /// A tick that completes ends the run, so an intermittent fault keeps getting
@@ -89,14 +151,15 @@ TEST(StateMachineBarrier, a_clean_tick_ends_the_run) {
 	b.on_tick_completed();
 	CHECK_EQUAL(0u, b.consecutive());
 
-	unsigned int delay = 0;
+	std::optional<unsigned int> delay;
 	try {
 		throw ErrorCode::RESOURCE_NOT_AVAILABLE;
 	} catch (...) {
 		delay = b.on_exception(1);
 	}
 	CHECK_EQUAL(1u, b.consecutive());
-	CHECK_EQUAL(StateMachineBarrier::RETRY_DELAY_MS, delay);
+	CHECK_TRUE(delay.has_value());
+	CHECK_EQUAL(StateMachineBarrier::RETRY_DELAY_MS, *delay);
 }
 
 /// Every type the firmware actually throws is named, and the last-resort catch

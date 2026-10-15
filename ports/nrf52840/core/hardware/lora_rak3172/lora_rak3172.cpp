@@ -412,16 +412,36 @@ bool LoRaDevice::send_AT(ATCmd cmd, const std::optional<std::string> &params, ui
 }
 
 void LoRaDevice::state_machine(void) {
-	switch (m_state) {
-	case State::power_off: LORA_STATE_CALL(power_off); break;
-	case State::power_on: LORA_STATE_CALL(power_on); break;
-	case State::configure: LORA_STATE_CALL(configure); break;
-	case State::joining: LORA_STATE_CALL(joining); break;
-	case State::idle: LORA_STATE_CALL(idle); break;
-	case State::standby: LORA_STATE_CALL(standby); break;
-	case State::transmit: LORA_STATE_CALL(transmit); break;
-	case State::error: LORA_STATE_CALL(error); break;
-	default: break;
+	// The fourth dispatcher of this shape, and the one the first pass of the
+	// barrier missed. It matters more than the name suggests: ports/nrf52840/
+	// CMakeLists.txt:686 drops kim2.cpp when LORA_RAK3172 is on and :768 only
+	// adds smd_sat.cpp under ARGOS_SMD, so on the linkit-lora and linkit-cyprus
+	// binaries this is the ONLY radio dispatcher compiled -- verified from the
+	// object files those two builds actually produce, not from the conditionals.
+	// Same contract as KIM2: the handlers re-arm through run_state_machine(), so
+	// a throw lost both the tick and the session.
+	try {
+		switch (m_state) {
+		case State::power_off: LORA_STATE_CALL(power_off); break;
+		case State::power_on: LORA_STATE_CALL(power_on); break;
+		case State::configure: LORA_STATE_CALL(configure); break;
+		case State::joining: LORA_STATE_CALL(joining); break;
+		case State::idle: LORA_STATE_CALL(idle); break;
+		case State::standby: LORA_STATE_CALL(standby); break;
+		case State::transmit: LORA_STATE_CALL(transmit); break;
+		case State::error: LORA_STATE_CALL(error); break;
+		default: break;
+		}
+		m_sm_barrier.on_tick_completed();
+	} catch (...) {
+		static_assert(StateMachineBarrier::QUIET_DELAY_MS <= UINT16_MAX,
+		              "LoRa re-arm delay must fit in run_state_machine's uint16_t");
+		auto delay = m_sm_barrier.on_exception(static_cast<int>(m_state));
+		// nullopt: hand it to main.cpp's catch and the ErrorState ladder rather
+		// than absorb a fault that is clearly not transient. No re-arm here on
+		// purpose -- ErrorState resets the device.
+		if (!delay) throw;
+		run_state_machine((uint16_t)*delay);
 	}
 }
 
