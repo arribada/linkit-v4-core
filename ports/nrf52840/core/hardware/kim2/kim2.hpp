@@ -21,7 +21,8 @@
 class KIM2Device : public KIM2CommEventListener, public KineisDevice {
 private:
 	KIM2Comm m_kim2_comm;  ///< UART AT command layer
-	/// Catches a throw out of a state handler and says when to tick again.
+	/// Names the driver, the state and the exception type when a state handler
+	/// throws. It does not swallow it: the dispatch rethrows.
 	StateMachineBarrier m_sm_barrier{ "KIM2Device" };
 
 public:

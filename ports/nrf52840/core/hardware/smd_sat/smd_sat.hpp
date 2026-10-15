@@ -51,7 +51,8 @@ private:
 	SmdSatState m_state;
 	unsigned int m_state_counter;
 	unsigned int m_next_delay;
-	/// Catches a throw out of a state handler and says when to tick again.
+	/// Names the driver, the state and the exception type when a state handler
+	/// throws. It does not swallow it: the dispatch rethrows.
 	StateMachineBarrier m_sm_barrier{ "SmdSat" };
 	bool m_stopping;
 	bool is_kmac_profil_loaded = false;  ///< Routes idle_pending → load_kmac for boot config (TCXO, LPM)

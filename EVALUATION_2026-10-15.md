@@ -1,5 +1,20 @@
 # Évaluation multi-agents — firmware LinkIt V4 Core (2026-10-15)
 
+> **PÉRIMÉE — lire comme un instantané daté, pas comme l'état du dépôt.**
+>
+> Ce document a été écrit au premier commit d'une série qui en compte
+> maintenant plus de vingt-cinq, et ces commits ont falsifié une partie de ce
+> qui est écrit ici au présent — y compris des `grep` cités comme preuve. Les
+> plafonds nommés dans le tableau des notes ont pour la plupart été traités
+> depuis : le chemin de désaccord de version du magasin de configuration, les
+> trois répartiteurs de pilote sans barrière, les trois garde-fous de CI qui
+> passaient à vide, l'absence de toute mesure de complexité.
+>
+> Ce qui reste valable et vaut d'être lu : la section 5 (ce que la vérification
+> a écarté) et ses quatre règles pour l'audit suivant, la section 6 (ce qui
+> reste hors de portée), et la méthode. Les notes, elles, se lisent dans
+> l'évaluation suivante.
+
 *7 dimensions, 48 constats soumis, 3 vérificateurs adverses chacun. 5 constats ont survécu à la majorité.*
 
 ---

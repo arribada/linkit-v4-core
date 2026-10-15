@@ -30,6 +30,7 @@ Run:  python3 tools/check_battery_guard_callers.py
 """
 
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -83,10 +84,30 @@ def main():
     problems = []
 
     # 1. One definition, and it is the shared one.
+    #
+    # git ls-files, NOT rglob. This repo keeps its git worktrees INSIDE itself
+    # at .claude/worktrees/, and a second full clone under .claude/ as well --
+    # 2179 .cpp files of other trees. rglob walked all of them, so the moment a
+    # worktree was made from a branch that has this function the check saw two
+    # definitions and hard-failed, blocking every commit to the TX services.
+    # Verified by creating exactly that worktree and watching it happen. This
+    # repo has already had a guard disable itself in a worktree
+    # (.claude/CLAUDE.md); the opposite failure is no better.
+    tracked = subprocess.run(
+        ["git", "-C", str(REPO), "ls-files", "-z", "--", "*.cpp"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if tracked.returncode != 0:
+        print(f"ERROR: git ls-files failed: {tracked.stderr.strip()[:200]}")
+        return 1
     definers = []
-    for path in REPO.rglob("*.cpp"):
-        rel = path.relative_to(REPO).as_posix()
-        if rel.startswith(("libraries/", "ports/nrf52840/drivers/", "tests/")):
+    for rel in tracked.stdout.split("\0"):
+        if not rel or rel.startswith(("libraries/", "ports/nrf52840/drivers/", "tests/")):
+            continue
+        path = REPO / rel
+        if not path.exists():
             continue
         text = strip_comments(path.read_text(encoding="utf-8", errors="replace"))
         if re.search(rf"\b\w+::{GUARD}\s*\(", text):

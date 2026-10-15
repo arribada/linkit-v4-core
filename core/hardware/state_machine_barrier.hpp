@@ -47,6 +47,18 @@
  * called it, inside Service::run_scheduled_task's own barrier, which logs and
  * reschedules the service. Both were already true before this file existed.
  *
+ * ONE COST, PAID ON PURPOSE. On that synchronous path
+ * Service::handle_task_exception writes its own DEBUG_ERROR, so one exception
+ * now costs TWO flash system-log lines instead of one, at roughly 170 ms each.
+ * That is strictly worse than before this file existed, and it is the trade:
+ * the service's line says a service threw, this one says WHICH DRIVER and in
+ * WHICH STATE, which is the information whose absence made the original
+ * investigation hard. On the scheduler-posted path the device resets, so the
+ * count is bounded by the reset; on the synchronous one it is not, and a
+ * driver throwing on every power_on attempt pays 340 ms a time. If that ever
+ * matters more than the diagnosis, the line to drop is this one, not the
+ * service's.
+ *
  * Header-only and hardware-free, so the host tests compile it as-is (the four
  * drivers that use it are nRF-port-only). See tests/src/state_machine_barrier_test.cpp.
  */

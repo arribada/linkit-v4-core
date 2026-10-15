@@ -30,7 +30,8 @@
 class LoRaDevice : public LoRaCommEventListener, public KineisDevice {
 private:
 	LoRaComm m_lora_comm;
-	/// Catches a throw out of a state handler and says when to tick again.
+	/// Names the driver, the state and the exception type when a state handler
+	/// throws. It does not swallow it: the dispatch rethrows.
 	StateMachineBarrier m_sm_barrier{ "LoRaDevice" };
 
 public:

@@ -38,9 +38,20 @@
 #     The remaining reports in tests/src/logger_test.cpp are the test writing an
 #     unsigned int into a packed buffer, also test-only.
 #
-# WHAT A PASS LOOKS LIKE. Zero `ERROR: AddressSanitizer` (memory errors), and
-# the CppUTest verdict OK. Measured on this tree: 898 tests, 96276 checks, zero
-# memory errors, ~58 s.
+# WHAT A PASS LOOKS LIKE, AND WHAT IT DOES NOT COVER. Zero
+# `ERROR: AddressSanitizer` and the CppUTest verdict OK. Measured on this tree:
+# 898 tests, 96276 checks, zero memory errors, ~58 s.
+#
+# Two narrowings, stated because "zero memory errors" would otherwise claim more
+# than it checks:
+#   - LeakSanitizer is OFF (detect_leaks=0). Leaks are NOT checked. It is off
+#     because CppUTest's own allocation bookkeeping and the fakes produce a
+#     steady stream of reports that drown the run; turning it on is a separate
+#     exercise with its own triage.
+#   - the default argument list has no `-p`, where CI runs with it. That is
+#     deliberate -- one process means ASan sees the whole run and a report is
+#     not attributed to a forked child -- but it also means this is NOT the CI
+#     configuration. Pass -p explicitly to match CI.
 #
 #   ./scripts/run_sanitizers.sh            # the default suite
 #   ./scripts/run_sanitizers.sh -sg Sm     # any TrackerTests argument
