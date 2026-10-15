@@ -346,9 +346,10 @@ void SmdSat::power_off_immediate() {
 void SmdSat::state_machine(bool use_scheduler) {
 	m_next_delay = 0;
 
-	// The dispatch is guarded, the re-arm below deliberately is not: a state
-	// handler that throws must still leave the machine ticking. See
-	// core/hardware/state_machine_barrier.hpp.
+	// Guarded only to name the driver and the state in the log; report() does
+	// not swallow anything. The rethrow leaves m_next_delay and the re-arm below
+	// untouched because it never reaches them -- which is the point: an absorbed
+	// throw used to re-tick a state whose _enter() had not run.
 	try {
 		switch (m_state) {
 		case SmdSat::starting: SMD_STATE_CALL(starting); break;
@@ -362,15 +363,9 @@ void SmdSat::state_machine(bool use_scheduler) {
 		case SmdSat::stopped: SMD_STATE_CALL(stopped); break;
 		default: break;
 		}
-		m_sm_barrier.on_tick_completed();
 	} catch (...) {
-		auto delay = m_sm_barrier.on_exception(static_cast<int>(m_state));
-		// nullopt: the run is long enough that absorbing it is the wrong answer.
-		// Rethrow so main.cpp's catch turns it into an ErrorEvent. Nothing is
-		// re-armed on this path on purpose -- ErrorState resets the device.
-		if (!delay) throw;
-		// Whatever the handler had set is not to be trusted now.
-		m_next_delay = *delay;
+		m_sm_barrier.report(static_cast<int>(m_state));
+		throw;
 	}
 
 	if (use_scheduler && !SMD_STATE_EQUAL(stopped)) {

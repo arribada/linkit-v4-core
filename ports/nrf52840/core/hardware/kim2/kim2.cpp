@@ -954,10 +954,9 @@ void KIM2Device::power_off_immediate(void) {
 
 /// @brief Dispatch to the current state handler.
 void KIM2Device::state_machine(void) {
-	// Unlike SmdSat, this dispatch does not re-arm itself -- the handlers do,
-	// through run_state_machine(). A throw therefore skipped the re-arm and the
-	// module went inert, on top of reaching std::terminate. See
-	// core/hardware/state_machine_barrier.hpp.
+	// Guarded only to name the driver and the state in the log; report() does
+	// not swallow anything, so the exception still reaches main.cpp's catch and
+	// ErrorState exactly as it did before this barrier existed.
 	try {
 		switch (m_state) {
 		case KIM2ManagerState::power_off: KIM2_STATE_CALL(power_off); break;
@@ -969,18 +968,9 @@ void KIM2Device::state_machine(void) {
 		case KIM2ManagerState::error: KIM2_STATE_CALL(error); break;
 		default: break;
 		}
-		m_sm_barrier.on_tick_completed();
 	} catch (...) {
-		// run_state_machine takes a uint16_t, the barrier returns ms as unsigned
-		// int: raising the quiet delay past 65535 would silently truncate here.
-		static_assert(StateMachineBarrier::QUIET_DELAY_MS <= UINT16_MAX,
-		              "KIM2 re-arm delay must fit in run_state_machine's uint16_t");
-		auto delay = m_sm_barrier.on_exception(static_cast<int>(m_state));
-		// nullopt: hand it to main.cpp's catch and the ErrorState ladder rather
-		// than absorb a fault that is clearly not transient. No re-arm here on
-		// purpose -- ErrorState resets the device.
-		if (!delay) throw;
-		run_state_machine((uint16_t)*delay);
+		m_sm_barrier.report(static_cast<int>(m_state));
+		throw;
 	}
 }
 

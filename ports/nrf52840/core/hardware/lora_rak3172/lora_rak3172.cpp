@@ -418,8 +418,9 @@ void LoRaDevice::state_machine(void) {
 	// adds smd_sat.cpp under ARGOS_SMD, so on the linkit-lora and linkit-cyprus
 	// binaries this is the ONLY radio dispatcher compiled -- verified from the
 	// object files those two builds actually produce, not from the conditionals.
-	// Same contract as KIM2: the handlers re-arm through run_state_machine(), so
-	// a throw lost both the tick and the session.
+	//
+	// Guarded only to name the driver and the state in the log; report() does
+	// not swallow anything.
 	try {
 		switch (m_state) {
 		case State::power_off: LORA_STATE_CALL(power_off); break;
@@ -432,16 +433,9 @@ void LoRaDevice::state_machine(void) {
 		case State::error: LORA_STATE_CALL(error); break;
 		default: break;
 		}
-		m_sm_barrier.on_tick_completed();
 	} catch (...) {
-		static_assert(StateMachineBarrier::QUIET_DELAY_MS <= UINT16_MAX,
-		              "LoRa re-arm delay must fit in run_state_machine's uint16_t");
-		auto delay = m_sm_barrier.on_exception(static_cast<int>(m_state));
-		// nullopt: hand it to main.cpp's catch and the ErrorState ladder rather
-		// than absorb a fault that is clearly not transient. No re-arm here on
-		// purpose -- ErrorState resets the device.
-		if (!delay) throw;
-		run_state_machine((uint16_t)*delay);
+		m_sm_barrier.report(static_cast<int>(m_state));
+		throw;
 	}
 }
 

@@ -778,10 +778,9 @@ void M10QAsyncReceiver::exit_shutdown() {
 }
 
 void M10QAsyncReceiver::state_machine() {
-	// Same contract as KIM2: the handlers re-arm through run_state_machine(), so
-	// a throw lost both the tick and the firmware. GPSService's own task timeout
-	// would eventually cancel the session, but only after it had already hung in
-	// std::terminate. See core/hardware/state_machine_barrier.hpp.
+	// Guarded only to name the driver and the state in the log; report() does
+	// not swallow anything. GPSService's own task timeout and main.cpp's catch
+	// keep the behaviour they had before this barrier existed.
 	try {
 		switch (m_state) {
 		case State::poweron: STATE_CALL(poweron); break;
@@ -798,14 +797,9 @@ void M10QAsyncReceiver::state_machine() {
 		default:
 		case State::idle: break;
 		}
-		m_sm_barrier.on_tick_completed();
 	} catch (...) {
-		auto delay = m_sm_barrier.on_exception(static_cast<int>(m_state));
-		// nullopt: hand it to main.cpp's catch and the ErrorState ladder rather
-		// than absorb a fault that is clearly not transient. No re-arm here on
-		// purpose -- ErrorState resets the device.
-		if (!delay) throw;
-		run_state_machine(*delay);
+		m_sm_barrier.report(static_cast<int>(m_state));
+		throw;
 	}
 }
 
