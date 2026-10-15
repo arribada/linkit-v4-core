@@ -274,15 +274,62 @@ protected:
 			DEBUG_WARN(
 			    "deserialize_config: configuration version mismatch; try to recover protected & reset all others");
 
-			// Try to recover the protected fields
-			if (!deserialize_config_entry(f, (unsigned int)ParamID::ARGOS_DECID))
-				DEBUG_WARN("deserialize_config: failed to recover ARGOS_DECID");
-			else
-				DEBUG_TRACE("deserialize_config: recovered ARGOS_DECID");
-			if (!deserialize_config_entry(f, (unsigned int)ParamID::ARGOS_HEXID))
-				DEBUG_WARN("deserialize_config: failed to recover ARGOS_HEXID");
-			else
-				DEBUG_TRACE("deserialize_config: recovered ARGOS_HEXID");
+			// Recover every protected field, identified by its KEY and not by its
+			// position in the file.
+			//
+			// This used to read POSITIONALLY: two calls straight after the version
+			// field, which land on records 0 and 1. That recovered exactly
+			// ARGOS_DECID and ARGOS_HEXID, because those two happen to sit first in
+			// param_map, and silently lost the thirteen entries of
+			// PROTECTED_PARAMS, which are scattered. Those thirteen are ALL the
+			// credentials -- the Argos secret key, the four RADIOCONF and the eight
+			// LoRaWAN keys -- and config_store.hpp:159-195 already states what
+			// losing them costs: "would leave every provisioned LoRa unit unable to
+			// rejoin its network, with nothing in the logs to say why". The
+			// protection was declared and simply never wired to the path that needs
+			// it.
+			//
+			// Reading by key also makes the recovery correct for the very situation
+			// a version mismatch implies: records may have been added, removed or
+			// reordered, so no position can be trusted. deserialize_config_entry()
+			// consumes one record and accepts it only when its key matches the index
+			// asked for, so rewinding and walking forward finds a param wherever it
+			// now sits. A few hundred fixed-size records per param, on a path that
+			// runs once per firmware version change.
+			const ParamID recover[] = {
+				ParamID::ARGOS_DECID,
+				ParamID::ARGOS_HEXID,
+			};
+			unsigned int recovered = 0, lost = 0;
+
+			auto recover_by_key = [&](ParamID id) {
+				const lfs_soff_t first_record = (lfs_soff_t)sizeof(config_version_code);
+				if (f.seek(first_record) != first_record) return false;
+				for (unsigned int record = 0; record < MAX_CONFIG_ITEMS; record++) {
+					if (deserialize_config_entry(f, (unsigned int)id)) return true;
+				}
+				return false;
+			};
+
+			for (ParamID id : recover) {
+				if (recover_by_key(id))
+					recovered++;
+				else {
+					lost++;
+					DEBUG_WARN("deserialize_config: failed to recover %s", param_map[(unsigned int)id].name.c_str());
+				}
+			}
+			for (ParamID id : PROTECTED_PARAMS) {
+				if (!param_map[(unsigned int)id].is_implemented) continue;
+				if (recover_by_key(id))
+					recovered++;
+				else {
+					lost++;
+					DEBUG_WARN("deserialize_config: failed to recover %s", param_map[(unsigned int)id].name.c_str());
+				}
+			}
+			DEBUG_WARN("deserialize_config: version mismatch — %u protected param(s) recovered, %u lost", recovered,
+			           lost);
 
 			m_requires_serialization = true;
 			return;
@@ -432,24 +479,24 @@ private:
 	/// builds that own the corresponding radio.
 	static constexpr ParamID PROTECTED_PARAMS[] = {
 #if defined(ARGOS_SMD) && (ARGOS_SMD == 1)
-	    ParamID::ARGOS_SECKEY,
+		ParamID::ARGOS_SECKEY,
 #endif
-	    ParamID::ARGOS_RADIOCONF,
-	    ParamID::ARGOS_RADIOCONF_LDK,
-	    ParamID::ARGOS_RADIOCONF_LDA2,
-	    ParamID::ARGOS_RADIOCONF_VLDA4,
+		ParamID::ARGOS_RADIOCONF,
+		ParamID::ARGOS_RADIOCONF_LDK,
+		ParamID::ARGOS_RADIOCONF_LDA2,
+		ParamID::ARGOS_RADIOCONF_VLDA4,
 #if defined(LORA_RAK3172) && (LORA_RAK3172 == 1)
-	    ParamID::LORA_DEVEUI,
-	    ParamID::LORA_APPEUI,
-	    ParamID::LORA_APPKEY,
-	    ParamID::LORA_DEVADDR,
-	    ParamID::LORA_APPSKEY,
-	    ParamID::LORA_NWKSKEY,
-	    // Join mode and band are provisioning, not mission settings: a tag
-	    // deployed in ABP, or on a band other than the build default, would keep
-	    // its keys through the recovery and still be unable to reach its network.
-	    ParamID::LORA_NJM,
-	    ParamID::LORA_BAND,
+		ParamID::LORA_DEVEUI,
+		ParamID::LORA_APPEUI,
+		ParamID::LORA_APPKEY,
+		ParamID::LORA_DEVADDR,
+		ParamID::LORA_APPSKEY,
+		ParamID::LORA_NWKSKEY,
+		// Join mode and band are provisioning, not mission settings: a tag
+		// deployed in ABP, or on a band other than the build default, would keep
+		// its keys through the recovery and still be unable to reach its network.
+		ParamID::LORA_NJM,
+		ParamID::LORA_BAND,
 #endif
 	};
 

@@ -106,6 +106,81 @@ TEST(ConfigStore, CheckConfigStorePersistence) {
 	CHECK_EQUAL(model, store->read_param<std::string>(ParamID::PROFILE_NAME));
 }
 
+// A configuration version bump must not destroy the credentials.
+//
+// config_store_fs.hpp declares PROTECTED_PARAMS, thirteen entries that are ALL
+// the credentials: the Argos secret key, the four RADIOCONF, and the eight
+// LoRaWAN keys. config_store.hpp:159-195 spells out what losing them costs --
+// "would leave every provisioned LoRa unit unable to rejoin its network, with
+// nothing in the logs to say why" -- and that is why the version code is
+// deliberately not bumped.
+//
+// This pins the recovery itself. The version-mismatch path reads records
+// POSITIONALLY, so it recovered exactly the two that happen to sit first in
+// param_map (ARGOS_DECID index 0, ARGOS_HEXID index 1) and lost the other
+// eleven, which are scattered. ARGOS_SECKEY is skipped here because it is
+// is_implemented only when ARGOS_SMD == 1, which the host build does not set.
+TEST(ConfigStore, VersionMismatchKeepsEveryProtectedParam) {
+	store = new LFSConfigurationStore(*main_filesystem);
+	store->init();
+
+	const std::string radioconf = "RADIOCONF-MASTER";
+	const std::string ldk = "RADIOCONF-LDK";
+	const std::string lda2 = "RADIOCONF-LDA2";
+	const std::string vlda4 = "RADIOCONF-VLDA4";
+	const std::string deveui = "70B3D57ED0001234";
+	const std::string appeui = "0000000000000001";
+	const std::string appkey = "0123456789ABCDEF0123456789ABCDEF";
+	const std::string devaddr = "26011BDA";
+	const std::string appskey = "FEDCBA9876543210FEDCBA9876543210";
+	const std::string nwkskey = "11223344556677889900AABBCCDDEEFF";
+	const unsigned int decid = 4321U;
+
+	store->write_param(ParamID::ARGOS_RADIOCONF, radioconf);
+	store->write_param(ParamID::ARGOS_RADIOCONF_LDK, ldk);
+	store->write_param(ParamID::ARGOS_RADIOCONF_LDA2, lda2);
+	store->write_param(ParamID::ARGOS_RADIOCONF_VLDA4, vlda4);
+	store->write_param(ParamID::LORA_DEVEUI, deveui);
+	store->write_param(ParamID::LORA_APPEUI, appeui);
+	store->write_param(ParamID::LORA_APPKEY, appkey);
+	store->write_param(ParamID::LORA_DEVADDR, devaddr);
+	store->write_param(ParamID::LORA_APPSKEY, appskey);
+	store->write_param(ParamID::LORA_NWKSKEY, nwkskey);
+	store->write_param(ParamID::ARGOS_DECID, decid);
+	store->save_params();
+
+	delete store;
+	store = nullptr;
+
+	// Simulate the bump: overwrite only the version field at the head of the
+	// file, leaving every record intact. This is exactly what a device sees
+	// after a firmware update that changed the version code.
+	{
+		LFSFile f(main_filesystem, "config.dat", LFS_O_WRONLY);
+		unsigned int foreign_version = 0xDEADBEEFU;
+		CHECK_EQUAL((lfs_ssize_t)sizeof(foreign_version), f.write(&foreign_version, sizeof(foreign_version)));
+	}
+
+	store = new LFSConfigurationStore(*main_filesystem);
+	store->init();
+
+	// ARGOS_DECID already survived before this test existed — it is record 0,
+	// which the positional recovery happened to reach. It is asserted so a
+	// regression there cannot hide behind the eleven below.
+	CHECK_EQUAL(decid, store->read_param<unsigned int>(ParamID::ARGOS_DECID));
+
+	CHECK_EQUAL(radioconf, store->read_param<std::string>(ParamID::ARGOS_RADIOCONF));
+	CHECK_EQUAL(ldk, store->read_param<std::string>(ParamID::ARGOS_RADIOCONF_LDK));
+	CHECK_EQUAL(lda2, store->read_param<std::string>(ParamID::ARGOS_RADIOCONF_LDA2));
+	CHECK_EQUAL(vlda4, store->read_param<std::string>(ParamID::ARGOS_RADIOCONF_VLDA4));
+	CHECK_EQUAL(deveui, store->read_param<std::string>(ParamID::LORA_DEVEUI));
+	CHECK_EQUAL(appeui, store->read_param<std::string>(ParamID::LORA_APPEUI));
+	CHECK_EQUAL(appkey, store->read_param<std::string>(ParamID::LORA_APPKEY));
+	CHECK_EQUAL(devaddr, store->read_param<std::string>(ParamID::LORA_DEVADDR));
+	CHECK_EQUAL(appskey, store->read_param<std::string>(ParamID::LORA_APPSKEY));
+	CHECK_EQUAL(nwkskey, store->read_param<std::string>(ParamID::LORA_NWKSKEY));
+}
+
 TEST(ConfigStore, CheckConfigStoreResetsBadVariantType) {
 	store = new LFSConfigurationStore(*main_filesystem);
 
