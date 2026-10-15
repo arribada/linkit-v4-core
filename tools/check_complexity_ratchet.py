@@ -28,8 +28,14 @@ all 2782 -- a file that would churn on every rename. NEW_CEILING=25 is roughly
 the top 2%: a new function may not join it.
 
     python3 tools/check_complexity_ratchet.py            # check
-    python3 tools/check_complexity_ratchet.py --update    # take a new baseline
+    python3 tools/check_complexity_ratchet.py --update    # re-pin the WHOLE tree (see below)
     python3 tools/check_complexity_ratchet.py --tighten   # pin improvements only
+
+--update is a reset, not a remedy: it re-pins every function from the current
+tree, so running it to silence one complaint silently accepts every other
+regression present at the same time. --tighten is the one that is safe to run
+habitually -- it only ever lowers a limit, and it refuses outright while any
+regression is outstanding.
 """
 
 import argparse
@@ -185,7 +191,14 @@ def main():
             print(f"  {key}: CCN {was} -> {now}  (+{now - was})")
     if newcomers:
         ok = False
-        print(f"NEW FUNCTION OVER THE CEILING ({NEW_CEILING}) — split it, or pin it with --update:")
+        # Deliberately NOT advertising --update here. It rewrites the whole
+        # baseline from the tree, so it would absorb every other regression
+        # along with this one -- the escape hatch would be a ratchet reset.
+        # Splitting the function, or a reviewed hand-edit of the one line in
+        # tools/complexity_baseline.json, are the two honest answers.
+        print(f"NEW FUNCTION OVER THE CEILING ({NEW_CEILING}) — split it, or pin just this")
+        print("line by hand in tools/complexity_baseline.json (do NOT run --update: it")
+        print("re-pins the whole tree and would swallow any other regression):")
         for key, ccn in sorted(newcomers, key=lambda r: -r[1]):
             print(f"  {key}: CCN {ccn}")
 
