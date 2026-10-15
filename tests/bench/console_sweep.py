@@ -50,9 +50,15 @@ CONSOLE_SRC = REPO / "ports/nrf52840/core/interface/bench_console.cpp"
 # ARGOS_MODE=0 -- the RF guard this script sets does not cover it. Fired by the
 # first SMD run of this sweep on 2026-10-14: both frames ACCEPTED, MAC 1->10
 # (handle_argos_cmd; %PILE, %LED still cover the family).
+#
+# %OTA starts a firmware transfer. The OTA/DFU chain is explicitly out of scope
+# for the current work -- the owner ruled it so -- and a sweep has no business
+# opening a transfer on a board that is about to be deployed. Its family is
+# covered by %FLASH and %BOOTFAIL.
 SKIP = {
     "%STORE": "would power the board down",
     "%TXPAR": "would transmit, bypassing the RF guard",
+    "%OTA": "would start a firmware transfer; OTA/DFU is out of scope",
 }
 
 
