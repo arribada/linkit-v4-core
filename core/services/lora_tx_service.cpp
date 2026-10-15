@@ -124,29 +124,11 @@ ScheduleDecision LoRaTxService::service_next_schedule() {
 
 	DEBUG_TRACE("LoRaTxService::service_next_schedule_in_ms");
 
-	// Critical battery check: immediate powerdown, no transmission.
-	//
-	// Meme garde que ArgosTxService : on consulte le verdict CONFIRME du
-	// moniteur, pas un relevé brut. m_is_critical_voltage n'est pose qu'apres
-	// BATT_CONFIRM_SAMPLES = 3 echantillons consecutifs sous le seuil, ce qui est
-	// ce qui rend l'action sure : un echantillon isole, pris pendant une pointe de
-	// courant d'emission ou juste apres un demarrage a froid, lit tres au-dessous
-	// de l'etat reel. Cette branche appelle PMU::powerdown(), et sur une balise
-	// scellee c'est la fin de la mission -- le reed est sous la colle.
-	// Ce chemin avait ete oublie lors du durcissement d'ArgosTxService : une
-	// balise LoRa s'eteignait encore sur un transitoire.
-	if (argos_config.is_lb) {
-		service_update_battery();
-		unsigned int critical_level = configuration_store->read_param<unsigned int>(ParamID::LB_CRITICAL_THRESH);
-		unsigned int current_soc = service_get_level();
-		if (current_soc < critical_level && service_is_battery_critical()) {
-			DEBUG_INFO("LoRaTxService: CRITICAL battery SOC %u%% < %u%% (confirmed) - shutdown", current_soc,
-			           critical_level);
-			configuration_store->save_params();
-			PMU::powerdown();
-			return ScheduleDecision::off("critical battery — powering down");
-		}
-	}
+	// Critical battery check: immediate powerdown, no transmission. This is the
+	// path that was forgotten when ArgosTxService was hardened, so a LoRa tag
+	// went on shutting down on a transmit-current transient. It is now literally
+	// the same code as the Argos one: Service::shutdown_if_battery_critical.
+	if (auto shutdown = shutdown_if_battery_critical(argos_config.is_lb)) return *shutdown;
 
 	if (argos_config.mode == BaseArgosMode::OFF) {
 		return ScheduleDecision::off("ARGOS_MODE=OFF");
@@ -1148,7 +1130,8 @@ void LoRaTxService::react([[maybe_unused]] KineisEventTxComplete const &e) {
 	motion_delivered = (e.link_check != 1);
 #endif
 	// The wake-ups that frame reported are delivered; keep any counted since it was built.
-	if (motion_delivered) m_motion_wakeups = (uint8_t)(m_motion_wakeups - std::min(m_motion_wakeups, m_motion_in_flight));
+	if (motion_delivered)
+		m_motion_wakeups = (uint8_t)(m_motion_wakeups - std::min(m_motion_wakeups, m_motion_in_flight));
 	m_motion_in_flight = 0;
 #endif
 

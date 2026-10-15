@@ -7,6 +7,7 @@
 
 #include <functional>
 #include <variant>
+#include <optional>
 #include <ctime>
 #ifdef BENCH_TEST
 #include <string>
@@ -283,6 +284,26 @@ protected:
 	/// readings. Use this, never a single service_get_level(), before any action
 	/// that cannot be undone on a sealed device.
 	bool service_is_battery_critical();
+	/// @brief Power the tag down if the battery is confirmed critical.
+	///
+	/// Both TX services carried their own copy of this block, and the copies
+	/// had already diverged once with consequences: the hardening that made
+	/// the check require a CONFIRMED verdict was applied to ArgosTxService and
+	/// forgotten in LoRaTxService, so LoRa tags went on shutting down on a
+	/// transmit-current transient. One copy, so the next hardening cannot be
+	/// applied to one caller only.
+	///
+	/// @param in_low_battery_mode  Both callers pass argos_config.is_lb, which is
+	///        `LB_EN && SOC < LB_THRESHOLD` -- NOT just "the monitor is enabled".
+	///        The guard therefore only ever runs once the low-battery band has
+	///        been entered, which is why it is silent on a default config
+	///        (LB_EN defaults to false). See
+	///        ConfigurationStore::check_battery_thresholds.
+	/// @return The decision to return straight out of service_next_schedule(),
+	///         or nullopt to carry on scheduling. Note that on the shutdown
+	///         path PMU::powerdown() has already been called by the time this
+	///         returns -- on a sealed tag that is the end of the mission.
+	std::optional<ScheduleDecision> shutdown_if_battery_critical(bool in_low_battery_mode);
 	/// @brief Get current hardware timer counter (ms).
 	uint64_t service_current_timer();
 	template <typename T> T &service_read_param(ParamID param_id) {

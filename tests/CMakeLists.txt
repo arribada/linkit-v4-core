@@ -300,6 +300,7 @@ target_sources(${PROJECT_NAME} PRIVATE
     "src/m8_test.cpp"
     "src/scalar_sensor_log_test.cpp"
     "src/state_machine_barrier_test.cpp"
+    "src/battery_critical_guard_test.cpp"
     "src/ubx_param_table_test.cpp"
     "src/binascii_test.cpp"
     "src/bitpack_test.cpp"

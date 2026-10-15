@@ -568,6 +568,26 @@ bool Service::service_is_battery_critical() {
 	return battery_monitor->is_battery_critical();
 }
 
+std::optional<ScheduleDecision> Service::shutdown_if_battery_critical(bool in_low_battery_mode) {
+	if (!in_low_battery_mode) return std::nullopt;
+
+	service_update_battery();
+	unsigned int critical_level = configuration_store->read_param<unsigned int>(ParamID::LB_CRITICAL_THRESH);
+	unsigned int current_soc = service_get_level();
+
+	// BOTH conditions, and the confirmed verdict is the one that makes this
+	// safe to act on: a single sample taken during a transmit current spike or
+	// just after a cold start reads far below the true state of charge. This
+	// calls PMU::powerdown(), and on a sealed tag the reed is under the glue --
+	// there is no restarting it. It must not fire on a transient.
+	if (current_soc >= critical_level || !service_is_battery_critical()) return std::nullopt;
+
+	DEBUG_INFO("%s: CRITICAL battery SOC %u%% < %u%% (confirmed) - shutdown", m_name, current_soc, critical_level);
+	configuration_store->save_params();
+	PMU::powerdown();
+	return ScheduleDecision::off("battery critical — powering down");
+}
+
 #ifdef BENCH_TEST
 /// Record the scheduling decision for the bench console. Deliberately placed on
 /// EVERY branch of reschedule(), including those that plan nothing: a test that
