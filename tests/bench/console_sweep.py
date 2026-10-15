@@ -39,11 +39,21 @@ except ImportError:
 REPO = Path(__file__).resolve().parents[2]
 CONSOLE_SRC = REPO / "ports/nrf52840/core/interface/bench_console.cpp"
 
-# %STORE is the one command a sweep must not fire: it runs PMU::powerdown() for
-# real on a --bench-storage build, and the USB link goes with it. It is reachable
-# only through handle_sensors_cmd, which every other command in that family also
-# exercises, so skipping it costs no coverage of the dispatch.
-SKIP = {"%STORE"}
+# Commands a sweep must not fire, each reachable through a family that the other
+# commands in it still exercise, so skipping them costs no coverage of the dispatch.
+#
+# %STORE runs PMU::powerdown() for real on a --bench-storage build, and the USB
+# link goes with it (handle_sensors_cmd).
+#
+# %TXPAR TRANSMITS. A bare invocation defaults to nb_parallel=2, loads a BLIND
+# context and pushes two frames straight to the SMD, bypassing both %AMODE 0 and
+# ARGOS_MODE=0 -- the RF guard this script sets does not cover it. Fired by the
+# first SMD run of this sweep on 2026-10-14: both frames ACCEPTED, MAC 1->10
+# (handle_argos_cmd; %PILE, %LED still cover the family).
+SKIP = {
+    "%STORE": "would power the board down",
+    "%TXPAR": "would transmit, bypassing the RF guard",
+}
 
 
 def commands_from_source():
@@ -188,7 +198,7 @@ def main():
         for cmd, conditional in commands:
             if cmd in SKIP:
                 skipped.append(cmd)
-                print(f"  {cmd:<12} SKIPPED (would power the board down)")
+                print(f"  {cmd:<12} SKIPPED ({SKIP[cmd]})")
                 continue
             # %I2C scans both buses and answers over tens of seconds.
             lines = board.send(cmd, settle=2.0, cap=40.0 if cmd == "%I2C" else 10.0)
