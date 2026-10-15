@@ -97,6 +97,15 @@ TEST(Scheduler, SchedulerIsScheduledApiCall) {
 TEST(Scheduler, SchedulerPriorityOrdering) {
 	static int order = 0;
 	static int fired[7] = { -1 };
+	// Reset explicitly: a function-local `static` initialises ONCE, so under
+	// `-r N` the second repetition starts from where the first left off and the
+	// ordering assertions fail with values 7, then 14, then 21. The statics
+	// themselves have to stay -- the lambdas below capture nothing and reach
+	// these by name -- so idempotence is the caller's job. Without this, -r is
+	// unusable on this file, which is the one flag that finds a flaky test.
+	order = 0;
+	for (int &f : fired)
+		f = -1;
 	scheduler->post_task_prio([]() { fired[0] = order++; }, "SchedulerPriorityOrdering7", 7, 5);
 	scheduler->post_task_prio([]() { fired[1] = order++; }, "SchedulerPriorityOrdering6", 6, 5);
 	scheduler->post_task_prio([]() { fired[2] = order++; }, "SchedulerPriorityOrdering5", 5, 5);
@@ -118,6 +127,15 @@ TEST(Scheduler, SchedulerPriorityOrdering) {
 TEST(Scheduler, SchedulerSamePriorityOrdering) {
 	static int order = 0;
 	static int fired[7] = { -1 };
+	// Reset explicitly: a function-local `static` initialises ONCE, so under
+	// `-r N` the second repetition starts from where the first left off and the
+	// ordering assertions fail with values 7, then 14, then 21. The statics
+	// themselves have to stay -- the lambdas below capture nothing and reach
+	// these by name -- so idempotence is the caller's job. Without this, -r is
+	// unusable on this file, which is the one flag that finds a flaky test.
+	order = 0;
+	for (int &f : fired)
+		f = -1;
 	scheduler->post_task_prio(
 	    []() {
 		    printf("fired0\n");
@@ -173,6 +191,15 @@ TEST(Scheduler, SchedulerSamePriorityOrdering) {
 TEST(Scheduler, SchedulerSamePriorityOrderingWithDelay) {
 	static int order = 0;
 	static int fired[7] = { -1 };
+	// Reset explicitly: a function-local `static` initialises ONCE, so under
+	// `-r N` the second repetition starts from where the first left off and the
+	// ordering assertions fail with values 7, then 14, then 21. The statics
+	// themselves have to stay -- the lambdas below capture nothing and reach
+	// these by name -- so idempotence is the caller's job. Without this, -r is
+	// unusable on this file, which is the one flag that finds a flaky test.
+	order = 0;
+	for (int &f : fired)
+		f = -1;
 	scheduler->post_task_prio(
 	    []() {
 		    printf("fired0\n");
@@ -228,6 +255,13 @@ TEST(Scheduler, SchedulerSamePriorityOrderingWithDelay) {
 
 TEST(Scheduler, SchedulerWithRecursion) {
 	static int order = 0;
+	// Reset explicitly: a function-local `static` initialises ONCE, so under
+	// `-r N` the second repetition starts from where the first left off and the
+	// ordering assertions fail with values 7, then 14, then 21. The statics
+	// themselves have to stay -- the lambdas below capture nothing and reach
+	// these by name -- so idempotence is the caller's job. Without this, -r is
+	// unusable on this file, which is the one flag that finds a flaky test.
+	order = 0;
 	scheduler->post_task_prio(
 	    []() {
 		    printf("counter0=%u\n", order);
