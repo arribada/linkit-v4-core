@@ -10,7 +10,10 @@
 #
 #   ./scripts/build_all_variants.sh                 # all variants
 #   ./scripts/build_all_variants.sh linkit-smd-uart # one, by name
-#   BUILD_ROOT=/tmp/x ./scripts/build_all_variants.sh
+#   BUILD_ROOT=/tmp/x ./scripts/build_all_variants.sh   # a build root of your own
+#
+# Two runs sharing a BUILD_ROOT serialise on a lock file; give a second run its
+# own BUILD_ROOT if you want them to go in parallel.
 #
 # Keeps going after a failure and reports every variant, because stopping at
 # the first hides how much is broken. Exits non-zero if any failed.
@@ -29,6 +32,22 @@ command -v arm-none-eabi-gcc >/dev/null || { echo "ERROR: arm-none-eabi-gcc not 
 # The CMake post-build step packages a DFU zip with nrfutil; without it every
 # variant fails at the last step of an otherwise successful compile.
 command -v nrfutil >/dev/null || { echo "ERROR: nrfutil not in PATH"; exit 1; }
+
+# One builder per build root. Each variant directory is rm -rf'd before use, so
+# a second concurrent run against the same BUILD_ROOT deletes the first one's
+# tree mid-compile and reports a failure that is not real. That is not
+# hypothetical: a parallel reviewer running this script made a clean tree report
+# "at least one variant does not compile", and the run right after it was green.
+# CI runs this alone, so the lock only ever matters locally -- which is exactly
+# where the false result is most expensive, because it sends someone hunting.
+mkdir -p "$BUILD_ROOT"
+exec 9>"$BUILD_ROOT/.lock"
+if command -v flock >/dev/null 2>&1; then
+	if ! flock -n 9; then
+		echo "another build already holds $BUILD_ROOT — waiting for it to finish"
+		flock 9
+	fi
+fi
 
 WANTED="${1:-}"
 GENERATOR=(); command -v ninja >/dev/null && GENERATOR=(-G Ninja)
