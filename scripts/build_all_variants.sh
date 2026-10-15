@@ -55,6 +55,16 @@ GENERATOR=(); command -v ninja >/dev/null && GENERATOR=(-G Ninja)
 declare -a NAMES=() RESULTS=() SIZES=()
 failed=0
 
+# The GitHub run summary is written row by row, as each variant finishes, not
+# once at the end: a job that times out or is cancelled mid-loop would
+# otherwise leave no table at all, which is exactly when you want to know how
+# far it got.
+summary() { [ -n "${GITHUB_STEP_SUMMARY:-}" ] && printf '%s\n' "$1" >> "$GITHUB_STEP_SUMMARY"; return 0; }
+summary "### Firmware compile check"
+summary ""
+summary "| Variant | Result | Flash (text+data) |"
+summary "|---|---|---|"
+
 while IFS='|' read -r name flags; do
 	case "$name" in ''|'#'*) continue ;; esac
 	# A line with a name but no flags is a MALFORMED variant, not a comment.
@@ -85,6 +95,7 @@ while IFS='|' read -r name flags; do
 		sz=$(arm-none-eabi-size "$elf" | awk 'NR==2 {print $1 + $2}')
 		echo "ok    flash ${sz} B"
 		NAMES+=("$name"); RESULTS+=(ok); SIZES+=("$sz")
+		summary "| \`$name\` | :white_check_mark: ok | $sz |"
 	else
 		echo "FAILED"
 		# Strip the colour codes first: they sit between the line start and
@@ -92,6 +103,11 @@ while IFS='|' read -r name flags; do
 		sed 's/\x1b\[[0-9;]*[mK]//g' "$dir"/cmake.log "$dir"/build.log 2>/dev/null \
 			| grep -E 'error:|Error [0-9]|CMake Error' | head -15 | sed 's/^/      /'
 		NAMES+=("$name"); RESULTS+=(FAILED); SIZES+=(-)
+		# The first error line in the summary too: a configure-time failure
+		# otherwise left nothing readable in CI without opening the log.
+		first_err=$(sed 's/\x1b\[[0-9;]*[mK]//g' "$dir"/cmake.log "$dir"/build.log 2>/dev/null \
+			| grep -E 'error:|Error [0-9]|CMake Error' | head -1 | tr -d '|')
+		summary "| \`$name\` | :x: FAILED | ${first_err:-see log} |"
 		failed=1
 	fi
 done < "$VARIANT_FILE"
@@ -103,21 +119,6 @@ printf '%-18s %-8s %s\n' VARIANT RESULT 'FLASH (text+data)'
 for i in "${!NAMES[@]}"; do
 	printf '%-18s %-8s %s\n' "${NAMES[$i]}" "${RESULTS[$i]}" "${SIZES[$i]}"
 done
-
-# Same table in the GitHub Actions run summary, so a failure is readable
-# without opening the log.
-if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
-	{
-		echo "### Firmware compile check"
-		echo
-		echo "| Variant | Result | Flash (text+data) |"
-		echo "|---|---|---|"
-		for i in "${!NAMES[@]}"; do
-			icon=$([ "${RESULTS[$i]}" = ok ] && echo ':white_check_mark:' || echo ':x:')
-			echo "| \`${NAMES[$i]}\` | $icon ${RESULTS[$i]} | ${SIZES[$i]} |"
-		done
-	} >> "$GITHUB_STEP_SUMMARY"
-fi
 
 if [ "$failed" -ne 0 ]; then
 	echo

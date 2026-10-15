@@ -82,5 +82,6 @@ jobs:
           path: |
             ports/nrf52840/build/ci/*/*.map
             ports/nrf52840/build/ci/*/build.log
+            ports/nrf52840/build/ci/*/cmake.log
           if-no-files-found: warn
           retention-days: 14

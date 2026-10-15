@@ -46,6 +46,20 @@ the pinned maximum unremarked. So the pinned value is the whole sorted list and
 the comparison is position by position. An overload ADDED to an existing key is
 judged as a newcomer, against NEW_CEILING.
 
+TWO LIMITS THIS CANNOT CLOSE, said plainly so nobody counts on them.
+
+A RENAME LOSES THE HISTORY. The key is file + name + arity, so renaming a
+function, adding a parameter, or moving it to another file retires the old pin
+and the result is judged as a newcomer -- bounded by NEW_CEILING, not by its own
+past. For the 84 pins currently in the [FLOOR, NEW_CEILING] band that is a
+weaker guard rather than none, but a function pinned at 16 can come back at 25
+through a rename. No key survives a rename without a compiler.
+
+A MACRO IS INVISIBLE. lizard counts decision points in the source it reads, so
+branches moved into a macro body leave the function that uses it and are counted
+once, where the macro is defined. Complexity can therefore be moved out of a
+watched function without being removed from the binary.
+
 AND THE BASELINE FILE IS REQUIRED. If it is missing this exits non-zero instead
 of writing one: creating a baseline from whatever is in the tree and reporting
 success is how a guard disables itself, and this repo has already had one do
@@ -75,7 +89,17 @@ NEW_CEILING = 25  # a function absent from the baseline may not exceed this
 
 
 def measure():
-    """{key: (ccn, file, name)} for every function lizard finds."""
+    """{key: {ccns, path, name}} for every function lizard finds."""
+    # lizard exits 0 on a path that does not exist and simply reports less. A
+    # renamed directory or a typo in SCAN would therefore shrink what the
+    # ratchet covers while still reporting success -- measured: adding one
+    # bogus path drops the function count from 2782 to 2760 with exit 0 and an
+    # empty stderr.
+    missing = [p for p in SCAN if not (REPO / p).exists()]
+    if missing:
+        print(f"ERROR: SCAN path(s) not found, so the ratchet would silently cover less: {missing}")
+        print("Fix SCAN in this script, or restore the paths.")
+        sys.exit(1)
     cmd = ["lizard", *SCAN, "-l", "cpp", "--csv"]
     try:
         out = subprocess.run(cmd, cwd=REPO, capture_output=True, text=True, check=False)
@@ -226,6 +250,10 @@ def main():
             return 1
         kept = dict(pinned)
         for key, _, now in improvements:
+            # Kept even when it drops BELOW the floor. Dropping the pin there
+            # looks tidy and is a loosening: the function would re-enter the
+            # newcomer regime and be free to grow back to NEW_CEILING, which is
+            # the opposite of a ratchet. A pin at CCN 3 costs one line.
             kept[key] = _pin_value(now)
         for key in gone:
             del kept[key]
@@ -237,7 +265,9 @@ def main():
         for key, v in found.items():
             if key not in kept and v["ccns"][0] >= FLOOR:
                 kept[key] = _pin_value(v["ccns"])
-        base["functions"] = {k: v for k, v in sorted(kept.items()) if v >= FLOOR}
+        # No >= FLOOR filter here, on purpose: see the comment above. The floor
+        # decides what gets pinned in the first place, not what stays pinned.
+        base["functions"] = dict(sorted(kept.items()))
         base["_comment"] = "Tightened with --tighten: improvements pinned at their new value."
         BASELINE.write_text(json.dumps(base, indent=1, sort_keys=True) + "\n", encoding="utf-8")
         newly = len(base["functions"]) - len(pinned) + len(gone)
