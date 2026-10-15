@@ -212,7 +212,7 @@ jobs:
     name: SWS tests
     needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    timeout-minutes: 120
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -237,8 +237,16 @@ jobs:
           # SWSLongRun was reaching no CI job at all: the unit job excludes it via
           # -xg SWS, and the two lines above name their groups explicitly. Its one
           # invariant (clean electrodes, fixed delay, >= 90 % of surfacings seen)
-          # therefore guarded nothing. It is 15 scenarios of 75 simulated days,
-          # ~40 min, hence this job's raised timeout rather than the unit suite.
+          # therefore guarded nothing. It is 17 scenarios of 75 simulated days.
+          #
+          # MEASURED, not estimated: 205-228 s per scenario at 99 % of one core on
+          # an idle desktop, 3618 s for the whole group. The "~40 min" written here before
+          # was a guess, and it is what produced a 75-minute job timeout with no
+          # real headroom -- a runner has 2 shared vCPUs and is slower per core,
+          # so that timeout was a coin flip. This group alone is an hour; if that
+          # becomes too slow a gate, the thing to split out is the 16 documentary
+          # scenarios, keeping H45_FixedDelayClean_ControlDetectsSurfacings (the
+          # one actual invariant) on every push.
           ./build/TrackerTests -ojunit -p -g SWSLongRun -k sws-longrun
           mv cpputest_*.xml reports/sws/ 2>/dev/null || true
 
