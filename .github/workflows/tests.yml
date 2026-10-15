@@ -51,12 +51,16 @@ jobs:
           cd tests/build
           cmake -GNinja ..
 
+      # TrackerTestsCyprus is a declared target that CI never built, so the two
+      # Cyprus-only flags it exists to cover (LORA_MOTION_EXT, LORA_LINKCHECK)
+      # were compiled by hand or not at all. It is built AND run below.
+      #
       # RSPBSimulation is compiled but not run. It has its own source list in
       # tests/CMakeLists.txt (39 of its 43 sources are shared with the other two
       # targets, but the list is maintained separately), so leaving it out of CI
       # let a stale list pass here and fail on the first local RSPB build.
-      - name: Compile TrackerTests + TurtleSimulation + RSPBSimulation
-        run: ninja -C tests/build TrackerTests TurtleSimulation RSPBSimulation
+      - name: Compile TrackerTests + TrackerTestsCyprus + TurtleSimulation + RSPBSimulation
+        run: ninja -C tests/build TrackerTests TrackerTestsCyprus TurtleSimulation RSPBSimulation
 
       - name: Upload test binaries
         uses: actions/upload-artifact@v4
@@ -65,6 +69,7 @@ jobs:
           path: |
             tests/build/TrackerTests
             tests/build/TurtleSimulation
+            tests/build/TrackerTestsCyprus
             tests/build/RSPBSimulation
           retention-days: 1
           if-no-files-found: error
@@ -154,7 +159,7 @@ jobs:
           path: tests/build
 
       - name: Make binaries executable
-        run: chmod +x tests/build/TrackerTests tests/build/TurtleSimulation
+        run: chmod +x tests/build/TrackerTests tests/build/TrackerTestsCyprus tests/build/TurtleSimulation
 
       - name: Run unit tests
         working-directory: tests
@@ -165,12 +170,28 @@ jobs:
           # CppUTest writes cpputest_<group>.xml in the cwd
           mkdir -p reports/unit && mv cpputest_*.xml reports/unit/ 2>/dev/null || true
 
+      # Same sources, compiled with the two Cyprus boat flags. It carries tests
+      # the default build cannot reach (the LinkCheck store-and-forward and the
+      # MOORED burst window), so compiling it without running it proved only
+      # that it links.
+      - name: Run unit tests, Cyprus flags
+        working-directory: tests
+        run: |
+          mkdir -p reports/unit-cyprus
+          ./build/TrackerTestsCyprus -ojunit -p -xg SWS -k unit-cyprus
+          # -k names them cpputest_unit-cyprus_*.xml; matching that prefix
+          # rather than cpputest_*.xml keeps this from sweeping up anything
+          # the step above failed to move.
+          mv cpputest_unit-cyprus_*.xml reports/unit-cyprus/ 2>/dev/null || true
+
       - name: Upload JUnit reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: unit-test-reports
-          path: tests/reports/unit/*.xml
+          path: |
+            tests/reports/unit/*.xml
+            tests/reports/unit-cyprus/*.xml
           if-no-files-found: warn
 
   # ---------------------------------------------------------------------------
@@ -240,7 +261,7 @@ jobs:
           path: tests/build
 
       - name: Make binaries executable
-        run: chmod +x tests/build/TrackerTests tests/build/TurtleSimulation
+        run: chmod +x tests/build/TrackerTests tests/build/TurtleSimulation tests/build/RSPBSimulation
 
       - name: Run turtle simulation
         working-directory: tests
@@ -254,6 +275,20 @@ jobs:
             cp "$TURTLE_REPORT_PATH" reports/turtle_simulation_latest.html
           fi
 
+      # Compiling it already guarded against a stale source list, which is why
+      # the step above exists and is documented. Running it is the other half:
+      # 10 tests over a simulated RSPB mortality deployment that nothing in CI
+      # was exercising.
+      - name: Run RSPB simulation
+        working-directory: tests
+        env:
+          # Without this it writes its four artefacts into the working
+          # directory. The override needs the directory to already exist.
+          RSPB_REPORT_DIR: ${{ github.workspace }}/tests/reports/rspb
+        run: |
+          mkdir -p reports/rspb
+          ./build/RSPBSimulation -v
+
       - name: Upload simulation report
         if: always()
         uses: actions/upload-artifact@v4
@@ -262,5 +297,6 @@ jobs:
           path: |
             tests/reports/turtle_simulation_*.html
             tests/reports/turtle_simulation_latest.html
+            tests/reports/rspb/*
           if-no-files-found: warn
           retention-days: 30
