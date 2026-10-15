@@ -267,18 +267,63 @@ avant tout ce qui n'est pas un essai d'émission délibéré.
 Les deux freins décidés le 12 octobre **ne sont pas dans les templates** :
 `RATE_LIMIT_EN = 0` dans les quatre, `HAULED_DETECT_EN = 0`.
 
-⚠️ **L'ordre compte, et un seul des deux est de la configuration.** Le frein
-d'échouage ne peut pas être activé tel quel : son entrée mesure
-`now − last_uw_event_rtc`, c'est-à-dire le temps depuis le dernier *événement de
-plongée*, et non le temps passé à sec ([`hauled_mode_service.cpp:196`]). Pendant une
-plongée longue aucun événement n'arrive, le compteur croît, et le mode échoué
-s'engage **sous l'eau**. Une tortue plonge plus d'une heure : la balise basculerait en
-LEGACY 30 min pour émettre dans l'eau.
+Les deux sont de la **configuration**. Une version antérieure de ce plan affirmait
+que le frein d'échouage demandait d'abord un correctif de code ; l'évaluation
+multi-agents du 15 octobre l'a réfuté à l'unanimité de quinze vérificateurs, et les
+trois points porteurs ont été revérifiés un par un :
 
-Donc : corriger l'entrée **avant** d'activer `HAULED_DETECT_EN`. Le limiteur de débit,
-lui, est purement configuration.
+- **Aucune émission sous l'eau n'est possible**, quel que soit le mode substitué. Ni
+  `ArgosTxService` ni `LoRaTxService` ne surchargent `service_is_usable_underwater()`,
+  dont le défaut est `false` (`core/services/service.hpp:203`) : `notify_underwater_state(true)`
+  les déprogramme et `reschedule()` court-circuite tant que `m_is_underwater`.
+- `HAULED_TR_NOM` vaut **7200 s (2 h)**, pas 1800 (`config_store.hpp:475`). Le 1800
+  venait d'un *fixture de test*, pas du firmware livré.
+- À la valeur livrée l'engagement sous l'eau est **inatteignable** : la SWS force une
+  émersion après 3 × `UW_MAX_DIVE_TIME` = 6 h (`UW_MAX_DIVE_TIME` = 7200 s,
+  `config_store.hpp:375`), contre un seuil `HAULED_IDLE_THRESHOLD_H` de **24 h**
+  (`config_store.hpp:472`). La re-plongée ré-estampe le compteur.
 
-### B5. Batterie et seuils critiques
+Le fait sous-jacent reste vrai et mérite d'être su : `hauled_mode_service.cpp:196`
+compare `now − last_uw_event_rtc`, estampé seulement à l'entrée en plongée, donc la
+grandeur **inclut la plongée en cours** alors que trois textes l'appellent « dry ».
+
+**La contrainte est donc un plancher de configuration** : garder
+`HAULED_IDLE_THRESHOLD_H` nettement au-dessus de 3 × `UW_MAX_DIVE_TIME`, soit **≥ 12 h**.
+Et attention au piège de banc : la valeur 1 h, qui est le minimum DTE
+(`dte_params.cpp:423`), tombe sous ce plancher — c'est un piège d'instrumentation, pas
+un défaut de code. Sous cette contrainte, `HAULED_DETECT_EN` s'active tel quel.
+
+Le coût d'un faux engagement, s'il survenait, est une perte de positions sur deux ou
+trois émersions (`HAULED_GNSS_STRAT=REUSE_LAST` éteint le GNSS), auto-résorbée.
+
+### B5. OTA — une image de n'importe quelle variante est acceptée
+
+Constat de l'évaluation du 15 octobre, vérifié de bout en bout, seule **fragilité**
+survivante sur 48 constats soumis.
+
+L'en-tête écrit en tête de zone OTA fait 8 octets, `[taille:4][crc32:4]` et rien d'autre
+(`ota_flash_file_updater.cpp:28`). La seule validation de taille est
+`length == 0 || length & 3 || length > zone - 8` (`:67`) — donc **4 octets suffisent** —
+et le `crc32` attendu est un *paramètre* de `start_file_transfer()`, fourni par le client
+BLE puis écrit tel quel. Le bootloader ne complète rien : il ne compare que le CRC
+calculé à celui de cet en-tête (`bootloader/secure_bootloader/dfu_ext_flash.c:141`),
+sans signature ni identifiant produit, et les cinq scripts de build passent tous
+`--application-version 0`.
+
+Conséquence : **les six arbres de build produisent des images indistinguables** à tous
+les niveaux de cette chaîne. Pousser une image Cyprus LoRa sur une balise tortue Argos
+est accepté — la carte démarre, et exécute la mauvaise mission avec la mauvaise radio.
+Sur un appareil scellé sans downlink, il n'y a pas de retour.
+
+Ce n'est pas exploitable à distance : il faut un accès BLE, donc la proximité physique
+et le mode configuration. D'où le classement en fragilité et non en panne.
+
+**À vérifier au banc** : pousser délibérément une image d'une autre variante et observer
+ce qui se passe. Et si la décision est de s'en protéger, deux gardes bon marché tiennent
+au même endroit — un identifiant de variante dans le bloc de 8 octets, où il reste de la
+place, et une taille plancher plausible.
+
+### B6. Batterie et seuils critiques
 
 Vérifier que le verdict critique demande des lectures basses étalées sur une heure, et
 non trois échantillons d'une même salve.
@@ -287,7 +332,7 @@ non trois échantillons d'une même salve.
 entre 3,4 et 3,9 V, n'est pas représentative, et n'a aucun lien avec VSYS. Elle peut
 parquer la carte en `OffState` ; neutraliser par `LBP12=0` au banc.
 
-### B6. Endurance
+### B7. Endurance
 
 `python3 tests/bench/endurance.py` — essai long, indépendant du lien USB, pour les
 fuites qui n'apparaissent qu'après des heures.
