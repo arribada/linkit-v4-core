@@ -11,6 +11,9 @@
 
 #include "state_machine_barrier.hpp"
 
+#include "linux_timer.hpp"
+#include "scheduler.hpp"
+
 #include <optional>
 
 #include "CppUTest/TestHarness.h"
@@ -203,4 +206,144 @@ TEST(StateMachineBarrier, every_thrown_type_is_named) {
 		got = StateMachineBarrier::describe_current_exception();
 	}
 	STRCMP_EQUAL("unknown exception", got);
+}
+
+
+// ===========================================================================
+// The missing link, and the reason the first version of this barrier was wrong.
+//
+// Everything above proves the barrier ASKS its caller to rethrow. What makes
+// that useful is that the rethrow reaches ports/nrf52840/main.cpp:1687, which
+// turns it into an ErrorEvent -- and main.cpp is not in the host build, so
+// nothing here could observe that chain.
+//
+// What IS observable is the one link that carries it: Scheduler::run() calls
+// task.m_func() bare, with no try/catch and with its InterruptLock already out
+// of scope, so an exception from a task body propagates out of run(). This test
+// pins that, with a task shaped exactly like the four real dispatchers: the work
+// in a try, re-arm on a delay, `throw;` on nullopt.
+//
+// If someone ever wraps Scheduler::run() in a catch, the escalation becomes
+// silent and this test is what says so.
+// ===========================================================================
+
+TEST_GROUP(StateMachineBarrierEscalation) {
+	Timer *timer = nullptr;
+	Scheduler *sched = nullptr;
+
+	void setup() {
+		timer = new LinuxTimer;
+		timer->start();
+		sched = new Scheduler(timer);
+	}
+	void teardown() {
+		sched->clear_all();
+		timer->stop();
+		delete sched;
+		delete timer;
+	}
+
+	/// Let a deferred task come due. post_task_prio sends delay_ms == 0 to the
+	/// immediate queue, which run()'s drain loop would consume in the SAME call
+	/// -- the first version of this test did that and ran the whole retry chain
+	/// in one run(), which is not how the drivers behave: they re-arm at 1000 or
+	/// 30000 ms, so each tick is a separate pass.
+	void settle() {
+		uint64_t start = timer->get_counter();
+		while (timer->get_counter() - start < 4) {}
+	}
+};
+
+namespace {
+/// Shaped like SmdSat/KIM2/M10Q/LoRa: dispatch in a try, barrier in the catch.
+struct FakeDriver {
+	StateMachineBarrier barrier{ "FakeDriver" };
+	Scheduler *sched = nullptr;
+	unsigned int dispatches = 0;
+	unsigned int rearms = 0;
+	bool handler_throws = true;
+
+	/// Non-zero on purpose: the deferred queue is what makes one run() equal one
+	/// tick, which is the real drivers' shape. 1 ms instead of the barrier's
+	/// 1000/30000 so the test does not wait minutes.
+	void arm() {
+		sched->post_task_prio([this]() { dispatch(); }, "FakeDriver", Scheduler::DEFAULT_PRIORITY, 1);
+	}
+
+	void dispatch() {
+		dispatches++;
+		try {
+			if (handler_throws) throw ErrorCode::SPI_COMMS_ERROR;
+			barrier.on_tick_completed();
+		} catch (...) {
+			auto delay = barrier.on_exception(7);
+			if (!delay) throw;  // exactly what the four drivers do
+			rearms++;
+			arm();
+		}
+	}
+};
+}  // namespace
+
+TEST(StateMachineBarrierEscalation, the_rethrow_escapes_the_scheduler_so_main_can_catch_it) {
+	FakeDriver drv;
+	drv.sched = sched;
+	drv.arm();
+
+	// Occurrences 1..ESCALATE_AFTER-1 are absorbed: run() returns normally and
+	// the driver is still ticking.
+	for (unsigned int n = 1; n < StateMachineBarrier::ESCALATE_AFTER; n++) {
+		settle();
+		sched->run();
+		CHECK_EQUAL(n, drv.dispatches);
+		CHECK_EQUAL(n, drv.rearms);
+	}
+
+	// The one that tips it over must come OUT of run(), as an ErrorCode, because
+	// that is the only thing main.cpp's catch(ErrorCode) converts into an
+	// ErrorEvent.
+	settle();
+	bool escaped_as_errorcode = false;
+	try {
+		sched->run();
+	} catch (ErrorCode e) {
+		escaped_as_errorcode = true;
+		CHECK_EQUAL((int)ErrorCode::SPI_COMMS_ERROR, (int)e);
+	} catch (...) {
+		FAIL("escaped as something other than ErrorCode: main.cpp would still catch it, but not as an ErrorEvent");
+	}
+	CHECK_TRUE(escaped_as_errorcode);
+	CHECK_EQUAL(StateMachineBarrier::ESCALATE_AFTER, drv.dispatches);
+	// Nothing was re-armed on the escalating pass: ErrorState resets the device.
+	CHECK_EQUAL(StateMachineBarrier::ESCALATE_AFTER - 1, drv.rearms);
+}
+
+/// The counterpart: a driver that recovers is never escalated, however close it
+/// came. Without this, an intermittent fault would eventually reset the tag.
+TEST(StateMachineBarrierEscalation, a_driver_that_recovers_keeps_running) {
+	FakeDriver drv;
+	drv.sched = sched;
+	drv.arm();
+
+	for (unsigned int n = 1; n < StateMachineBarrier::ESCALATE_AFTER; n++) {
+		settle();
+		sched->run();
+	}
+	CHECK_EQUAL(StateMachineBarrier::ESCALATE_AFTER - 1, drv.dispatches);
+	CHECK_EQUAL(StateMachineBarrier::ESCALATE_AFTER - 1, drv.barrier.consecutive());
+
+	// The peripheral comes back: this dispatch completes and clears the run.
+	drv.handler_throws = false;
+	settle();
+	sched->run();
+	CHECK_EQUAL(0u, drv.barrier.consecutive());
+
+	// A fresh burst is then absorbed from zero rather than escalating at once.
+	drv.handler_throws = true;
+	drv.arm();
+	for (unsigned int n = 1; n < StateMachineBarrier::ESCALATE_AFTER; n++) {
+		settle();
+		sched->run();  // must not throw
+	}
+	CHECK_EQUAL(StateMachineBarrier::ESCALATE_AFTER - 1, drv.barrier.consecutive());
 }
