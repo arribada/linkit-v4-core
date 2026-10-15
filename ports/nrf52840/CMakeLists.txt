@@ -77,6 +77,17 @@ macro(normalise_bool_flags)
 endmacro()
 
 set(BOARD "LINKIT" CACHE STRING "Board to compile for")
+set_property(CACHE BOARD PROPERTY STRINGS LINKIT RSPB)
+# Everything downstream selects the board with `if(${BOARD} MATCHES RSPB)`, so
+# any other value -- a typo, or a board name invented for a new variant --
+# falls through to the LinkIt branch and compiles LinkIt firmware without a
+# word of warning. `MATCHES` is a regex, so a value merely CONTAINING RSPB
+# picks the RSPB branch. Flashing the wrong variant is already one of the
+# traps that can invalidate a whole bench campaign; it must not be reachable
+# by a misspelling.
+if(NOT BOARD STREQUAL "LINKIT" AND NOT BOARD STREQUAL "RSPB")
+    message(FATAL_ERROR "BOARD=\"${BOARD}\" is not a board: use LINKIT or RSPB.")
+endif()
 option(ARGOS_SMD "Use SMD satellite module" OFF)
 option(LORA_RAK3172 "Use RAK3172-SiP LoRa module instead of satellite" OFF)
 # Bench-test harness: '%'-prefixed USB-CDC console (%CFG/%OP/%GPS/...) + runtime
