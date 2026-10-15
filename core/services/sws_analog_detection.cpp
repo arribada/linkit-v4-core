@@ -172,6 +172,211 @@ unsigned int SWSAnalogService::update_level3_trend(uint16_t filtered_value, unsi
 	return level;
 }
 
+/// @brief Catches a calibration that does not match what the ADC is reading.
+/// Moved verbatim out of detector_state() section 1b -- the body below is the
+/// section, unchanged.
+///
+/// Safe to move as written because the section was ALREADY a block scope: every
+/// local it declares (calib_incoherent, incoherent_in_water, new_water) died at
+/// the closing brace, so nothing downstream could see them. raw_value is the
+/// only value that crossed into it, and only ever read. Everything else it
+/// touches is a member, so the order in which it mutates them relative to the
+/// rest of detector_state is unchanged -- which is the one property that
+/// matters here, 26 members being mutated across the function.
+void SWSAnalogService::coherence_check(uint16_t raw_value) {
+	bool calib_incoherent = false;
+	// Track which coherence case fired so the recalib branch knows whether
+	// we are now in water (case 1) or in air (case 2). Without this, the
+	// generic raw>7000 heuristic would assume "in air" for moderate-salinity
+	// water (ADC=4800) and set water=raw*3 — driving the threshold above
+	// actual readings and blocking detection.
+	bool incoherent_in_water = false;
+
+	if (!m_first_sample_done) {
+		m_first_sample_done = true;
+
+		// F-SWS-3 audit fix: explicitly seed m_prev_raw with the current
+		// reading on the first sample. Without this seed, m_prev_raw is
+		// 0-initialised and L1/L2 (lines ~253, ~261) skip due to the
+		// `prev_raw > 0` guard for the entire first sample's check. With
+		// the seed, the existing line ~213 (`prev_raw = m_prev_raw`)
+		// captures the same-sample raw_value for L1/L2 — delta computes
+		// to 0 so L1/L2 still does not falsely fire on sample #1, but the
+		// m_prev_raw state is properly initialised. Defense-in-depth
+		// against future code changes that might re-order the prev_raw
+		// capture relative to L1/L2 checks.
+		m_prev_raw = raw_value;
+
+		// Case 1: Stored air is low, but reading is way above water → wrong medium
+		if (raw_value > m_calib.threshold_current + m_calib.hysteresis_value * 3
+		    && raw_value > m_calib.threshold_water * 1.3f) {
+			DEBUG_WARN("SWSAnalog: Coherence fail - raw=%u >> water=%u, recalibrating", raw_value,
+			           m_calib.threshold_water);
+			calib_incoherent = true;
+			incoherent_in_water = true;
+		}
+		// Case 2: Stored air is high (calibrated in water), but reading is low → in air
+		else if (raw_value < m_calib.threshold_air * 0.5f && m_calib.threshold_air > 5000) {
+			DEBUG_WARN("SWSAnalog: Coherence fail - raw=%u << air=%u, recalibrating", raw_value, m_calib.threshold_air);
+			calib_incoherent = true;
+		}
+	}
+
+	// EC-5: Continuous coherence — require 3 consecutive samples > water×2
+	// before adapting. Prevents splash/wave from corrupting water baseline.
+	// Runs in both states: at SURF it catches environment changes
+	// (deployment moved), at UW it catches salinity ramps that the EMA
+	// alpha=0.19 in calibrate_water_baseline would converge to too slowly.
+	// Note: time_in_state is *not* gated here — a state change resets the
+	// timer and would otherwise reset the coherence count mid-ramp.
+	if (!calib_incoherent && m_first_sample_done && m_calib.threshold_water > 0
+	    && raw_value > m_calib.threshold_water * 2) {
+		m_coherence_high_count++;
+		if (m_coherence_high_count >= 3) {
+			inc_diag(m_diag.coherence_recalib_count);
+			DEBUG_WARN("SWSAnalog: Continuous coherence - raw=%u >> water=%u (%u consecutive), adapting water",
+			           raw_value, m_calib.threshold_water, m_coherence_high_count);
+			// Cap at observed peak only when peak is established (>= raw/2):
+			// a stale peak from air calibration would otherwise pin water below
+			// real underwater readings.
+			uint16_t new_water = raw_value;
+			if (m_observed_peak_adc >= (uint16_t)(raw_value / 2) && new_water > m_observed_peak_adc) {
+				new_water = m_observed_peak_adc;
+			}
+			m_calib.threshold_water = new_water;
+			update_dynamic_threshold();
+			m_calib.crc =
+			    crc16_compute((const uint8_t *)&m_calib, offsetof(SWSAnalogService::CalibrationData, crc), nullptr);
+			m_coherence_high_count = 0;
+			// Flash save deferred to next state transition (section 10) to avoid
+			// excessive writes during rapid convergence
+		}
+	} else {
+		m_coherence_high_count = 0;
+	}
+
+	if (calib_incoherent) {
+		inc_diag(m_diag.coherence_recalib_count);
+		memset(&m_calib, 0, sizeof(m_calib));
+		if (incoherent_in_water || raw_value > 7000) {
+			// Case 1 OR raw is unambiguously water (ADC > heuristic):
+			// raw IS water, estimate air at raw/3.
+			m_calib.threshold_water = raw_value;
+			m_calib.threshold_air = raw_value / 3;
+		} else {
+			// Case 2 (low reading, was calibrated in water): raw is air.
+			m_calib.threshold_air = raw_value;
+			m_calib.threshold_water = raw_value * 3;
+			if (m_observed_peak_adc > 0 && m_calib.threshold_water > m_observed_peak_adc)
+				m_calib.threshold_water = m_observed_peak_adc;
+			if (m_calib.threshold_water > ADC_INVALID_MAX) m_calib.threshold_water = ADC_INVALID_MAX;
+		}
+		// Apply AIR_BASELINE_FLOOR — coherence recalib can be triggered with
+		// raw≈0 (disconnected electrode) which would set air=0 and trip the
+		// section 6b stuck-state recovery on the very next sample.
+		if (m_calib.threshold_air < AIR_BASELINE_FLOOR) m_calib.threshold_air = AIR_BASELINE_FLOOR;
+		if (m_calib.threshold_water <= m_calib.threshold_air * MIN_WATER_AIR_RATIO)
+			m_calib.threshold_water = m_calib.threshold_air * MIN_WATER_AIR_RATIO;
+		update_dynamic_threshold();
+		m_calib.is_calibrated = true;
+		m_calib.last_calibration_time = PMU::get_timestamp_ms() / 1000;
+		m_calib.crc =
+		    crc16_compute((const uint8_t *)&m_calib, offsetof(SWSAnalogService::CalibrationData, crc), nullptr);
+		DEBUG_TRACE("SWSAnalog: Recalib from coherence - air=%u water=%u thresh=%u", m_calib.threshold_air,
+		            m_calib.threshold_water, m_calib.threshold_current);
+		save_calibration_to_flash();
+	}
+}
+
+/// @brief Keeps m_observed_peak_adc tracking the highest plausible water
+/// reading. Moved verbatim out of detector_state() section 7b -- the body below
+/// is the section, unchanged.
+///
+/// Same reason it is safe to move as section 1b: it was ALREADY a block scope,
+/// so every local it declares died at the closing brace and nothing downstream
+/// could see them. raw_value is the only value crossing in, and only read.
+///
+/// The call site stays where it was, after calibrate_water_baseline(), so that
+/// water_is_estimated (peak == 0) is still evaluated on the first underwater
+/// samples.
+///
+/// EC-3: Anti-spike filter + slow decay + coherence guard.
+/// - Reject isolated spikes: new peak must be within 120% of current peak (once established)
+/// - Slow EMA decay (0.999) — only when raw is plausibly water (B5)
+/// - Coherence guard: reset peak if it exceeds water baseline × 3
+void SWSAnalogService::update_observed_peak(uint16_t raw_value) {
+	bool peak_updated = false;
+
+	if (raw_value > m_observed_peak_adc) {
+		// B4: "first_water_contact" must compare to a stable water reference,
+		// not threshold_current (which collapses if air baseline drifts).
+		// A peak below half the water baseline is stale (e.g. decayed during
+		// a long surface period) — accept new readings unconditionally to
+		// re-converge instead of trapping real water samples as "spikes".
+		uint16_t stale_ref =
+		    (m_calib.threshold_water > 0) ? (uint16_t)(m_calib.threshold_water / 2) : m_calib.threshold_current;
+		bool first_water_contact = (m_observed_peak_adc < stale_ref);
+		if (m_observed_peak_adc == 0 || first_water_contact || raw_value <= (uint32_t)m_observed_peak_adc * 6 / 5) {
+			m_observed_peak_adc = raw_value;
+			peak_updated = true;
+			m_consecutive_spike_rejects = 0;
+		} else {
+			m_consecutive_spike_rejects++;
+			if (m_consecutive_spike_rejects >= 10) {
+				inc_diag(m_diag.spike_reject_count);
+				// Peak is stuck far below actual readings — force reset
+				DEBUG_WARN("SWSAnalog: Peak stuck (10 consecutive rejects) raw=%u >> peak=%u, resetting peak",
+				           raw_value, m_observed_peak_adc);
+				m_observed_peak_adc = raw_value;
+				m_calib.threshold_water = raw_value;
+				update_dynamic_threshold();
+				m_calib.crc =
+				    crc16_compute((const uint8_t *)&m_calib, offsetof(SWSAnalogService::CalibrationData, crc), nullptr);
+				save_calibration_to_flash();
+				peak_updated = true;
+				m_consecutive_spike_rejects = 0;
+			} else {
+				DEBUG_WARN("SWSAnalog: Peak spike rejected raw=%u >> peak=%u", raw_value, m_observed_peak_adc);
+			}
+		}
+	} else if (m_observed_peak_adc > 0) {
+		// B5: only decay when raw is plausibly an underwater reading.
+		// At surface raw≈0; decaying peak toward 0 each surface sample makes
+		// peak collapse below water baseline over long surface periods, which
+		// then corrupts threshold_high via update_dynamic_threshold's cap.
+		// Floor the decay target at water_baseline so peak can't drop into
+		// surface-noise territory.
+		bool raw_is_water = (m_calib.threshold_water > 0 && raw_value > (uint16_t)(m_calib.threshold_water / 2));
+		if (raw_is_water) {
+			uint16_t decayed = (uint16_t)(m_observed_peak_adc * 0.999f + raw_value * 0.001f);
+			if (decayed < m_calib.threshold_water) decayed = m_calib.threshold_water;
+			if (decayed != m_observed_peak_adc) {
+				m_observed_peak_adc = decayed;
+				peak_updated = true;
+			}
+		}
+	}
+
+	// Coherence guard: peak should not grossly exceed water baseline. The
+	// ratio is loose (×5) because at first water contact peak accepts any
+	// value (B4) and water grows on a slow EMA — they take a few samples
+	// to converge. Tightening to ×3 fired spuriously and pinned peak to
+	// a not-yet-converged water, blocking detection.
+	if (m_observed_peak_adc > 0 && m_calib.threshold_water > 0
+	    && m_observed_peak_adc > (uint32_t)m_calib.threshold_water * 5) {
+		inc_diag(m_diag.peak_incoherent_count);
+		DEBUG_WARN("SWSAnalog: Peak incoherent peak=%u > water×5=%u, resetting", m_observed_peak_adc,
+		           m_calib.threshold_water * 5);
+		m_observed_peak_adc = m_calib.threshold_water;
+		peak_updated = true;
+	}
+
+	if (peak_updated) {
+		m_observed_peak_crc =
+		    crc16_compute((const uint8_t *)&m_observed_peak_adc, sizeof(m_observed_peak_adc), nullptr);
+	}
+}
+
 /// @brief Main detection logic — read ADC, filter, 5-level surface detection, calibrate, log.
 /// @return true if underwater, false if at surface.
 bool SWSAnalogService::detector_state() {
@@ -226,115 +431,8 @@ bool SWSAnalogService::detector_state() {
 		m_consecutive_invalid_adc = 0;
 	}
 
-	// === 1b. COHERENCE CHECK (first sample + continuous) ===
-	// Detects calibration mismatch vs actual ADC readings.
-	// First sample: catches stale noinit data.
-	// Continuous: catches environment changes (e.g. device moved from indoor to outdoor).
-	{
-		bool calib_incoherent = false;
-		// Track which coherence case fired so the recalib branch knows whether
-		// we are now in water (case 1) or in air (case 2). Without this, the
-		// generic raw>7000 heuristic would assume "in air" for moderate-salinity
-		// water (ADC=4800) and set water=raw*3 — driving the threshold above
-		// actual readings and blocking detection.
-		bool incoherent_in_water = false;
-
-		if (!m_first_sample_done) {
-			m_first_sample_done = true;
-
-			// F-SWS-3 audit fix: explicitly seed m_prev_raw with the current
-			// reading on the first sample. Without this seed, m_prev_raw is
-			// 0-initialised and L1/L2 (lines ~253, ~261) skip due to the
-			// `prev_raw > 0` guard for the entire first sample's check. With
-			// the seed, the existing line ~213 (`prev_raw = m_prev_raw`)
-			// captures the same-sample raw_value for L1/L2 — delta computes
-			// to 0 so L1/L2 still does not falsely fire on sample #1, but the
-			// m_prev_raw state is properly initialised. Defense-in-depth
-			// against future code changes that might re-order the prev_raw
-			// capture relative to L1/L2 checks.
-			m_prev_raw = raw_value;
-
-			// Case 1: Stored air is low, but reading is way above water → wrong medium
-			if (raw_value > m_calib.threshold_current + m_calib.hysteresis_value * 3
-			    && raw_value > m_calib.threshold_water * 1.3f) {
-				DEBUG_WARN("SWSAnalog: Coherence fail - raw=%u >> water=%u, recalibrating", raw_value,
-				           m_calib.threshold_water);
-				calib_incoherent = true;
-				incoherent_in_water = true;
-			}
-			// Case 2: Stored air is high (calibrated in water), but reading is low → in air
-			else if (raw_value < m_calib.threshold_air * 0.5f && m_calib.threshold_air > 5000) {
-				DEBUG_WARN("SWSAnalog: Coherence fail - raw=%u << air=%u, recalibrating", raw_value,
-				           m_calib.threshold_air);
-				calib_incoherent = true;
-			}
-		}
-
-		// EC-5: Continuous coherence — require 3 consecutive samples > water×2
-		// before adapting. Prevents splash/wave from corrupting water baseline.
-		// Runs in both states: at SURF it catches environment changes
-		// (deployment moved), at UW it catches salinity ramps that the EMA
-		// alpha=0.19 in calibrate_water_baseline would converge to too slowly.
-		// Note: time_in_state is *not* gated here — a state change resets the
-		// timer and would otherwise reset the coherence count mid-ramp.
-		if (!calib_incoherent && m_first_sample_done && m_calib.threshold_water > 0
-		    && raw_value > m_calib.threshold_water * 2) {
-			m_coherence_high_count++;
-			if (m_coherence_high_count >= 3) {
-				inc_diag(m_diag.coherence_recalib_count);
-				DEBUG_WARN("SWSAnalog: Continuous coherence - raw=%u >> water=%u (%u consecutive), adapting water",
-				           raw_value, m_calib.threshold_water, m_coherence_high_count);
-				// Cap at observed peak only when peak is established (>= raw/2):
-				// a stale peak from air calibration would otherwise pin water below
-				// real underwater readings.
-				uint16_t new_water = raw_value;
-				if (m_observed_peak_adc >= (uint16_t)(raw_value / 2) && new_water > m_observed_peak_adc) {
-					new_water = m_observed_peak_adc;
-				}
-				m_calib.threshold_water = new_water;
-				update_dynamic_threshold();
-				m_calib.crc =
-				    crc16_compute((const uint8_t *)&m_calib, offsetof(SWSAnalogService::CalibrationData, crc), nullptr);
-				m_coherence_high_count = 0;
-				// Flash save deferred to next state transition (section 10) to avoid
-				// excessive writes during rapid convergence
-			}
-		} else {
-			m_coherence_high_count = 0;
-		}
-
-		if (calib_incoherent) {
-			inc_diag(m_diag.coherence_recalib_count);
-			memset(&m_calib, 0, sizeof(m_calib));
-			if (incoherent_in_water || raw_value > 7000) {
-				// Case 1 OR raw is unambiguously water (ADC > heuristic):
-				// raw IS water, estimate air at raw/3.
-				m_calib.threshold_water = raw_value;
-				m_calib.threshold_air = raw_value / 3;
-			} else {
-				// Case 2 (low reading, was calibrated in water): raw is air.
-				m_calib.threshold_air = raw_value;
-				m_calib.threshold_water = raw_value * 3;
-				if (m_observed_peak_adc > 0 && m_calib.threshold_water > m_observed_peak_adc)
-					m_calib.threshold_water = m_observed_peak_adc;
-				if (m_calib.threshold_water > ADC_INVALID_MAX) m_calib.threshold_water = ADC_INVALID_MAX;
-			}
-			// Apply AIR_BASELINE_FLOOR — coherence recalib can be triggered with
-			// raw≈0 (disconnected electrode) which would set air=0 and trip the
-			// section 6b stuck-state recovery on the very next sample.
-			if (m_calib.threshold_air < AIR_BASELINE_FLOOR) m_calib.threshold_air = AIR_BASELINE_FLOOR;
-			if (m_calib.threshold_water <= m_calib.threshold_air * MIN_WATER_AIR_RATIO)
-				m_calib.threshold_water = m_calib.threshold_air * MIN_WATER_AIR_RATIO;
-			update_dynamic_threshold();
-			m_calib.is_calibrated = true;
-			m_calib.last_calibration_time = PMU::get_timestamp_ms() / 1000;
-			m_calib.crc =
-			    crc16_compute((const uint8_t *)&m_calib, offsetof(SWSAnalogService::CalibrationData, crc), nullptr);
-			DEBUG_TRACE("SWSAnalog: Recalib from coherence - air=%u water=%u thresh=%u", m_calib.threshold_air,
-			            m_calib.threshold_water, m_calib.threshold_current);
-			save_calibration_to_flash();
-		}
-	}
+	// === 1b. COHERENCE CHECK (first sample + continuous) === (see coherence_check)
+	coherence_check(raw_value);
 
 	// Save prev_raw BEFORE filtering overwrites history
 	uint16_t prev_raw = m_prev_raw;
@@ -640,86 +738,8 @@ bool SWSAnalogService::detector_state() {
 		m_consecutive_samples = 0;
 	}
 
-	// === 7b. UPDATE OBSERVED PEAK ADC ===
-	// Placed after calibrate_water_baseline() so water_is_estimated (peak==0)
-	// is correctly evaluated on the first underwater samples.
-	//
-	// EC-3: Anti-spike filter + slow decay + coherence guard.
-	// - Reject isolated spikes: new peak must be within 120% of current peak (once established)
-	// - Slow EMA decay (0.999) — only when raw is plausibly water (B5)
-	// - Coherence guard: reset peak if it exceeds water baseline × 3
-	{
-		bool peak_updated = false;
-
-		if (raw_value > m_observed_peak_adc) {
-			// B4: "first_water_contact" must compare to a stable water reference,
-			// not threshold_current (which collapses if air baseline drifts).
-			// A peak below half the water baseline is stale (e.g. decayed during
-			// a long surface period) — accept new readings unconditionally to
-			// re-converge instead of trapping real water samples as "spikes".
-			uint16_t stale_ref =
-			    (m_calib.threshold_water > 0) ? (uint16_t)(m_calib.threshold_water / 2) : m_calib.threshold_current;
-			bool first_water_contact = (m_observed_peak_adc < stale_ref);
-			if (m_observed_peak_adc == 0 || first_water_contact || raw_value <= (uint32_t)m_observed_peak_adc * 6 / 5) {
-				m_observed_peak_adc = raw_value;
-				peak_updated = true;
-				m_consecutive_spike_rejects = 0;
-			} else {
-				m_consecutive_spike_rejects++;
-				if (m_consecutive_spike_rejects >= 10) {
-					inc_diag(m_diag.spike_reject_count);
-					// Peak is stuck far below actual readings — force reset
-					DEBUG_WARN("SWSAnalog: Peak stuck (10 consecutive rejects) raw=%u >> peak=%u, resetting peak",
-					           raw_value, m_observed_peak_adc);
-					m_observed_peak_adc = raw_value;
-					m_calib.threshold_water = raw_value;
-					update_dynamic_threshold();
-					m_calib.crc = crc16_compute((const uint8_t *)&m_calib,
-					                            offsetof(SWSAnalogService::CalibrationData, crc), nullptr);
-					save_calibration_to_flash();
-					peak_updated = true;
-					m_consecutive_spike_rejects = 0;
-				} else {
-					DEBUG_WARN("SWSAnalog: Peak spike rejected raw=%u >> peak=%u", raw_value, m_observed_peak_adc);
-				}
-			}
-		} else if (m_observed_peak_adc > 0) {
-			// B5: only decay when raw is plausibly an underwater reading.
-			// At surface raw≈0; decaying peak toward 0 each surface sample makes
-			// peak collapse below water baseline over long surface periods, which
-			// then corrupts threshold_high via update_dynamic_threshold's cap.
-			// Floor the decay target at water_baseline so peak can't drop into
-			// surface-noise territory.
-			bool raw_is_water = (m_calib.threshold_water > 0 && raw_value > (uint16_t)(m_calib.threshold_water / 2));
-			if (raw_is_water) {
-				uint16_t decayed = (uint16_t)(m_observed_peak_adc * 0.999f + raw_value * 0.001f);
-				if (decayed < m_calib.threshold_water) decayed = m_calib.threshold_water;
-				if (decayed != m_observed_peak_adc) {
-					m_observed_peak_adc = decayed;
-					peak_updated = true;
-				}
-			}
-		}
-
-		// Coherence guard: peak should not grossly exceed water baseline. The
-		// ratio is loose (×5) because at first water contact peak accepts any
-		// value (B4) and water grows on a slow EMA — they take a few samples
-		// to converge. Tightening to ×3 fired spuriously and pinned peak to
-		// a not-yet-converged water, blocking detection.
-		if (m_observed_peak_adc > 0 && m_calib.threshold_water > 0
-		    && m_observed_peak_adc > (uint32_t)m_calib.threshold_water * 5) {
-			inc_diag(m_diag.peak_incoherent_count);
-			DEBUG_WARN("SWSAnalog: Peak incoherent peak=%u > water×5=%u, resetting", m_observed_peak_adc,
-			           m_calib.threshold_water * 5);
-			m_observed_peak_adc = m_calib.threshold_water;
-			peak_updated = true;
-		}
-
-		if (peak_updated) {
-			m_observed_peak_crc =
-			    crc16_compute((const uint8_t *)&m_observed_peak_adc, sizeof(m_observed_peak_adc), nullptr);
-		}
-	}
+	// === 7b. UPDATE OBSERVED PEAK ADC === (see update_observed_peak)
+	update_observed_peak(raw_value);
 
 	// Apply multi-level surface override
 	if (surface_level > 0 && m_current_state && new_state) {

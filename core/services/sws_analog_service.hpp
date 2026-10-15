@@ -593,6 +593,8 @@ private:
 	void warn_on_heartbeat_stall();
 	void stop_test_mode_on_timeout();
 	unsigned int update_level3_trend(uint16_t filtered_value, unsigned int current_level, bool proximity_ok);
+	void coherence_check(uint16_t raw_value);
+	void update_observed_peak(uint16_t raw_value);
 	void adjust_sample_delay();
 
 	/**
