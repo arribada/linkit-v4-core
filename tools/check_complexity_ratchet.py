@@ -35,7 +35,21 @@ the top 2%: a new function may not join it.
 tree, so running it to silence one complaint silently accepts every other
 regression present at the same time. --tighten is the one that is safe to run
 habitually -- it only ever lowers a limit, and it refuses outright while any
-regression is outstanding.
+regression OR any over-ceiling newcomer is outstanding.
+
+ONE KEY CAN HOLD SEVERAL FUNCTIONS. The key is file + name + arity, chosen so a
+renamed parameter does not read as a brand new function. Overloads of the same
+arity in one file therefore share a key -- react(const SomeEvent &) is the shape
+that matters, and m10qasync.cpp has nine of them. Pinning only the worst hid 352
+CCN across 43 keys and 238 functions, with each of the others free to grow up to
+the pinned maximum unremarked. So the pinned value is the whole sorted list and
+the comparison is position by position. An overload ADDED to an existing key is
+judged as a newcomer, against NEW_CEILING.
+
+AND THE BASELINE FILE IS REQUIRED. If it is missing this exits non-zero instead
+of writing one: creating a baseline from whatever is in the tree and reporting
+success is how a guard disables itself, and this repo has already had one do
+exactly that inside a git worktree.
 """
 
 import argparse
@@ -83,12 +97,23 @@ def measure():
         # would otherwise read as a brand new function and be judged against
         # NEW_CEILING instead of its own history.
         key = f"{path}::{name}/{params}"
-        # Same key twice means same name and arity in one file (a template
-        # specialisation, or two statics in different anonymous scopes). Keep
-        # the worst, so the ratchet cannot be loosened by adding a simple twin.
-        if key not in found or ccn > found[key][0]:
-            found[key] = (ccn, path, name)
+        # One key can hold SEVERAL functions: overloads of the same arity in one
+        # file. react(const SomeEvent &) is the shape that matters -- the event
+        # handlers of every driver -- and m10qasync.cpp has nine of them under
+        # one key. Keeping only the worst hid 352 CCN across 43 keys and 238
+        # functions, so each of the others could have grown up to the pinned
+        # maximum with the check green. The value is therefore the whole list,
+        # compared position by position.
+        found.setdefault(key, {"ccns": [], "path": path, "name": name})["ccns"].append(ccn)
+    for v in found.values():
+        v["ccns"].sort(reverse=True)
     return found
+
+
+def _fmt(ccns):
+    """A lone CCN prints bare, a key holding overloads prints its list."""
+    lst = _as_list(ccns) if not isinstance(ccns, list) else ccns
+    return str(lst[0]) if len(lst) == 1 else str(lst)
 
 
 def load_baseline():
@@ -98,8 +123,18 @@ def load_baseline():
         return json.load(f)
 
 
+def _pin_value(ccns):
+    """One int for a lone function, the sorted list when a key holds overloads."""
+    return ccns[0] if len(ccns) == 1 else list(ccns)
+
+
+def _as_list(pin):
+    """Baselines written before the overload fix hold a bare int."""
+    return [pin] if isinstance(pin, int) else list(pin)
+
+
 def write_baseline(found, note):
-    pinned = {k: v[0] for k, v in sorted(found.items()) if v[0] >= FLOOR}
+    pinned = {k: _pin_value(v["ccns"]) for k, v in sorted(found.items()) if v["ccns"][0] >= FLOOR}
     BASELINE.write_text(
         json.dumps(
             {
@@ -132,21 +167,42 @@ def main():
 
     base = load_baseline()
     if base is None:
-        n = write_baseline(found, "First baseline.")
-        print(f"no baseline yet — written: {n} functions pinned, floor {FLOOR}")
-        return 0
+        # Deliberately an ERROR, not a convenience. Writing a baseline from
+        # whatever happens to be in the tree and exiting 0 is how a guard
+        # disables itself: delete the file -- or land in a checkout that never
+        # had it -- and the hook and CI go green with no ratchet at all. This
+        # repo has already had a guard that silently disabled itself in a
+        # worktree. Creating the baseline is a deliberate act: --update.
+        print(f"ERROR: {BASELINE.relative_to(REPO)} is missing.")
+        print("Without it there is NO complexity ratchet. If this is deliberate -- a first")
+        print("baseline, or a reset you intend -- run:")
+        print("    python3 tools/check_complexity_ratchet.py --update")
+        print("Otherwise restore the file from git: it is tracked.")
+        return 1
 
     pinned = base["functions"]
     regressions, newcomers, improvements = [], [], []
 
-    for key, (ccn, path, name) in sorted(found.items()):
+    for key, v in sorted(found.items()):
+        ccns = v["ccns"]
         if key in pinned:
-            if ccn > pinned[key]:
-                regressions.append((key, pinned[key], ccn))
-            elif ccn < pinned[key]:
-                improvements.append((key, pinned[key], ccn))
-        elif ccn > NEW_CEILING:
-            newcomers.append((key, ccn))
+            was = sorted(_as_list(pinned[key]), reverse=True)
+            # Position by position on the sorted lists, so one overload of a
+            # nine-way react() cannot grow behind the worst one.
+            overlap = min(len(was), len(ccns))
+            if any(ccns[i] > was[i] for i in range(overlap)):
+                regressions.append((key, was, ccns))
+            elif any(ccns[i] < was[i] for i in range(overlap)) or len(ccns) < len(was):
+                improvements.append((key, was, ccns))
+            # An overload ADDED to an existing key is a new function and gets
+            # the newcomer rule, not the pinned one.
+            for extra in ccns[len(was):]:
+                if extra > NEW_CEILING:
+                    newcomers.append((key, extra))
+        else:
+            for ccn in ccns:
+                if ccn > NEW_CEILING:
+                    newcomers.append((key, ccn))
 
     gone = [k for k in pinned if k not in found]
 
@@ -157,9 +213,20 @@ def main():
             for key, was, now in regressions:
                 print(f"  {key}: {was} -> {now}")
             return 1
+        # Refuse for the same reason it refuses on a regression: a newcomer over
+        # the ceiling is a RED check, and pinning it would turn that red green.
+        # The docstring promises this command only ever lowers a limit; it has
+        # to keep that promise or it is the escape hatch --update was taken out
+        # of the failure message for being.
+        if newcomers:
+            print("--tighten refuses to run while a new function is over the ceiling:")
+            for key, ccn in newcomers:
+                print(f"  {key}: CCN {ccn} > {NEW_CEILING}")
+            print("Split it, or pin that one line by hand if it is genuinely intended.")
+            return 1
         kept = dict(pinned)
         for key, _, now in improvements:
-            kept[key] = now
+            kept[key] = _pin_value(now)
         for key in gone:
             del kept[key]
         # Every function at or above the floor, not only the ones that broke the
@@ -167,9 +234,9 @@ def main():
         # failed the check, but without pinning it here it could then grow to 25
         # unremarked. Pinning on each tighten is what makes this a ratchet rather
         # than a fence.
-        for key, (ccn, _path, _name) in found.items():
-            if key not in kept and ccn >= FLOOR:
-                kept[key] = ccn
+        for key, v in found.items():
+            if key not in kept and v["ccns"][0] >= FLOOR:
+                kept[key] = _pin_value(v["ccns"])
         base["functions"] = {k: v for k, v in sorted(kept.items()) if v >= FLOOR}
         base["_comment"] = "Tightened with --tighten: improvements pinned at their new value."
         BASELINE.write_text(json.dumps(base, indent=1, sort_keys=True) + "\n", encoding="utf-8")
@@ -179,7 +246,7 @@ def main():
         return 0
 
     for key, was, now in improvements:
-        print(f"  better  {key}: {was} -> {now}")
+        print(f"  better  {key}: {_fmt(was)} -> {_fmt(now)}")
     if improvements:
         print(f"  ({len(improvements)} improvement(s) — pin them with --tighten)\n")
 
@@ -187,8 +254,10 @@ def main():
     if regressions:
         ok = False
         print("COMPLEXITY REGRESSION — these functions got harder to read:")
-        for key, was, now in sorted(regressions, key=lambda r: r[2] - r[1], reverse=True):
-            print(f"  {key}: CCN {was} -> {now}  (+{now - was})")
+        for key, was, now in sorted(regressions, key=lambda r: max(now_i - was_i for now_i, was_i in zip(r[2], r[1])),
+                                    reverse=True):
+            worst = max(now_i - was_i for now_i, was_i in zip(now, was))
+            print(f"  {key}: CCN {_fmt(was)} -> {_fmt(now)}  (worst +{worst})")
     if newcomers:
         ok = False
         # Deliberately NOT advertising --update here. It rewrites the whole
@@ -207,7 +276,7 @@ def main():
         print(f"functions and each only has to come in under {NEW_CEILING}.")
         return 1
 
-    worst = max(((v[0], k) for k, v in found.items()), default=(0, "-"))
+    worst = max(((v["ccns"][0], k) for k, v in found.items()), default=(0, "-"))
     print(f"{len(pinned)} function(s) pinned, none regressed. Worst: {worst[1]} at CCN {worst[0]}")
     if gone:
         print(f"{len(gone)} pinned function(s) no longer found (renamed or removed) — --tighten drops them")

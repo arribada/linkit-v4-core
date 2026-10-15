@@ -29,7 +29,12 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: tests-${{ github.ref }}
+  # The scheduled run needs a group of its own. A `schedule` event carries
+  # github.ref = refs/heads/main, the same value a push to main carries, so one
+  # ref-keyed group plus cancel-in-progress meant a push to main killed the
+  # two-hour sws-longrun job, and a nightly starting killed an in-flight push
+  # run. Only the push and pull_request paths want to be superseded.
+  group: tests-${{ github.event_name == 'schedule' && 'nightly' || github.ref }}
   cancel-in-progress: true
 
 jobs:

@@ -1,5 +1,5 @@
 {
- "_comment": "Tightened with --tighten: improvements pinned at their new value.",
+ "_comment": "Taken with --update. Every function at or above _floor, pinned at its CCN.",
  "_floor": 15,
  "_new_ceiling": 25,
  "functions": {
@@ -13,7 +13,10 @@
   "core/filesystem/ota_flash_file_updater.cpp::OTAFlashFileUpdater::start_file_transfer/3": 27,
   "core/logging/console_log.hpp::ConsoleLog::write/1": 16,
   "core/logging/logger.cpp::LogFormatter::log_level_str/1": 16,
-  "core/protocol/base_types.hpp::operator ==/2": 15,
+  "core/protocol/base_types.hpp::operator ==/2": [
+   15,
+   6
+  ],
   "core/protocol/dte_handler.cpp::DTEHandler::ARGOSTX_REQ/2": 24,
   "core/protocol/dte_handler.cpp::DTEHandler::COMCW_REQ/2": 19,
   "core/protocol/dte_handler.cpp::DTEHandler::PARMW_REQ/4": 26,
@@ -22,7 +25,11 @@
   "core/protocol/dte_handler.cpp::DTEHandler::SENSR_REQ/2": 29,
   "core/protocol/dte_handler.cpp::DTEHandler::SMDDFU_REQ/2": 23,
   "core/protocol/dte_handler.cpp::DTEHandler::handle_dte_message/2": 49,
-  "core/protocol/dte_protocol.hpp::DTEDecoder::decode/3": 33,
+  "core/protocol/dte_protocol.hpp::DTEDecoder::decode/3": [
+   33,
+   7,
+   2
+  ],
   "core/protocol/dte_protocol.hpp::DTEDecoder::decode/7": 56,
   "core/protocol/dte_protocol.hpp::DTEEncoder::encode/1": 16,
   "core/protocol/dte_protocol.hpp::DTEEncoder::encode_acquisition_period/2": 17,
@@ -34,7 +41,11 @@
   "core/services/argos_tx_service.cpp::ArgosTxService::process_doppler_burst/0": 72,
   "core/services/argos_tx_service.cpp::ArgosTxService::process_gnss_burst/0": 31,
   "core/services/argos_tx_service.cpp::ArgosTxService::process_sensor_burst/0": 35,
-  "core/services/argos_tx_service.cpp::ArgosTxService::react/0": 35,
+  "core/services/argos_tx_service.cpp::ArgosTxService::react/0": [
+   35,
+   11,
+   2
+  ],
   "core/services/argos_tx_service.cpp::ArgosTxService::schedule_surfacing_burst/2": 20,
   "core/services/argos_tx_service.cpp::ArgosTxService::schedule_with_gnss/2": 28,
   "core/services/argos_tx_service.cpp::ArgosTxService::service_init/0": 24,
@@ -67,11 +78,18 @@
   "core/services/sws_analog_detection.cpp::SWSAnalogService::update_observed_peak/1": 16,
   "core/services/sws_analog_service.cpp::SWSAnalogService::service_init/0": 18,
   "core/services/uwdetector_service.cpp::UWDetectorService::service_initiate/0": 16,
-  "core/sm/gentracker.cpp::GenTracker::react/1": 17,
+  "core/sm/gentracker.cpp::GenTracker::react/1": [
+   17,
+   2,
+   1
+  ],
   "core/sm/gentracker.cpp::OperationalState::service_event_handler/1": 18,
   "core/sm/gentracker_config_state.cpp::ConfigurationState::exit/0": 22,
   "core/sm/gentracker_config_state.cpp::ConfigurationState::process_received_data/0": 23,
-  "core/sm/gentracker_config_state.cpp::ConfigurationState::process_usb_data/0": 37,
+  "core/sm/gentracker_config_state.cpp::ConfigurationState::process_usb_data/0": [
+   37,
+   1
+  ],
   "ports/nrf52840/core/hardware/bma400/bma400.c::bma400_enable_interrupt/3": 18,
   "ports/nrf52840/core/hardware/bma400/bma400.c::bma400_get_interrupts_enabled/3": 18,
   "ports/nrf52840/core/hardware/bma400/bma400.c::check_frame_available/5": 21,
@@ -94,7 +112,17 @@
   "ports/nrf52840/core/hardware/ltr_303/ltr_303.cpp::LTR303::read/1": 16,
   "ports/nrf52840/core/hardware/m10qasync/m10qasync.cpp::M10QAsyncReceiver::check_for_power_off/0": 17,
   "ports/nrf52840/core/hardware/m10qasync/m10qasync.cpp::M10QAsyncReceiver::load_dbd_from_flash/0": 17,
-  "ports/nrf52840/core/hardware/m10qasync/m10qasync.cpp::M10QAsyncReceiver::react/1": 31,
+  "ports/nrf52840/core/hardware/m10qasync/m10qasync.cpp::M10QAsyncReceiver::react/1": [
+   31,
+   24,
+   15,
+   13,
+   6,
+   5,
+   3,
+   2,
+   2
+  ],
   "ports/nrf52840/core/hardware/m10qasync/m10qasync.cpp::M10QAsyncReceiver::state_configure/0": 54,
   "ports/nrf52840/core/hardware/m10qasync/m10qasync.cpp::M10QAsyncReceiver::state_enterbackup/0": 26,
   "ports/nrf52840/core/hardware/m10qasync/m10qasync.cpp::M10QAsyncReceiver::state_startreceive/0": 27,
