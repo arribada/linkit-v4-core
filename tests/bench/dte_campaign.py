@@ -8852,7 +8852,21 @@ def c_edge_persistance_art(r, case):
         if relu:
             trace.append(f'ART12-14 {[st_av.get(k) for k in arts[:3]]} -> '
                          f'{[st_ap.get(k) for k in arts[:3]]}: {pourquoi}')
-            arts = ('ART15',)
+            # ART15 est ARGOS_MASTER_SYNC_ATTEMPT_FP: l empreinte de l IDP14
+            # pour laquelle un resync SMD a ete TENTE a l init. Le boot qui
+            # vient de faire la relecture legitime ci-dessus EST cette
+            # tentative, donc il ecrit ART15 avec la meme empreinte qu ART14.
+            # Exiger qu ART15 n ait pas bouge apres avoir accepte que ART14 ait
+            # bouge etait contradictoire, et c est ce qui a produit un ECHEC
+            # BLOQUANT « ART15: 0 -> 1298835591 » sur la campagne du 15/10,
+            # alors que ART14 portait exactement cette valeur. On accepte donc
+            # qu ART15 rejoigne ART14; tout autre mouvement reste un echec.
+            if st_ap.get('ART15') == st_ap.get('ART14'):
+                trace.append(f"ART15 {st_av.get('ART15')} -> {st_ap.get('ART15')}: "
+                             "tentative de resync a l init, egale a ART14 (attendu)")
+                arts = ()
+            else:
+                arts = ('ART15',)
         else:
             trace.append(f'changement ART12-14 non explique par une relecture: {pourquoi}')
     perdus = [f'{k}: {st_av.get(k)} -> {st_ap.get(k)}' for k in arts
