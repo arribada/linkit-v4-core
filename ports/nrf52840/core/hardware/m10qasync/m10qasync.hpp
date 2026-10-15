@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include "ubx_comms.hpp"
+#include "state_machine_barrier.hpp"
 #include "gps.hpp"
 #include "scheduler.hpp"
 
@@ -209,6 +210,8 @@ private:
 		Scheduler::TaskHandle handle;
 	} m_timeout;
 	Scheduler::TaskHandle m_state_machine_handle;
+	/// Catches a throw out of a state handler and says when to tick again.
+	StateMachineBarrier m_sm_barrier{ "M10QAsyncReceiver" };
 
 	enum State {
 		idle,

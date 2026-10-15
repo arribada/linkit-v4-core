@@ -9,6 +9,7 @@
 
 #include "smd_sat_cmd.hpp"
 #include "kineis_device.hpp"
+#include "state_machine_barrier.hpp"
 #include "scheduler.hpp"
 #include "filesystem.hpp"
 
@@ -50,6 +51,8 @@ private:
 	SmdSatState m_state;
 	unsigned int m_state_counter;
 	unsigned int m_next_delay;
+	/// Catches a throw out of a state handler and says when to tick again.
+	StateMachineBarrier m_sm_barrier{ "SmdSat" };
 	bool m_stopping;
 	bool is_kmac_profil_loaded = false;  ///< Routes idle_pending → load_kmac for boot config (TCXO, LPM)
 	bool m_needs_explicit_kmac_load =

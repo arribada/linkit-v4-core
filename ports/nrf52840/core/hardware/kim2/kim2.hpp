@@ -10,6 +10,7 @@
  */
 
 #include "kim2_comm.hpp"
+#include "state_machine_barrier.hpp"
 #include "kineis_device.hpp"
 #include "nrfx_uarte.h"
 #include "scheduler.hpp"
@@ -20,6 +21,8 @@
 class KIM2Device : public KIM2CommEventListener, public KineisDevice {
 private:
 	KIM2Comm m_kim2_comm;  ///< UART AT command layer
+	/// Catches a throw out of a state handler and says when to tick again.
+	StateMachineBarrier m_sm_barrier{ "KIM2Device" };
 
 public:
 	/// @throws ErrorCode if module does not respond to ping at first power-on.

@@ -954,15 +954,28 @@ void KIM2Device::power_off_immediate(void) {
 
 /// @brief Dispatch to the current state handler.
 void KIM2Device::state_machine(void) {
-	switch (m_state) {
-	case KIM2ManagerState::power_off: KIM2_STATE_CALL(power_off); break;
-	case KIM2ManagerState::power_on: KIM2_STATE_CALL(power_on); break;
-	case KIM2ManagerState::init: KIM2_STATE_CALL(init); break;
-	case KIM2ManagerState::idle: KIM2_STATE_CALL(idle); break;
-	case KIM2ManagerState::transmit: KIM2_STATE_CALL(transmit); break;
-	case KIM2ManagerState::receive: KIM2_STATE_CALL(receive); break;
-	case KIM2ManagerState::error: KIM2_STATE_CALL(error); break;
-	default: break;
+	// Unlike SmdSat, this dispatch does not re-arm itself -- the handlers do,
+	// through run_state_machine(). A throw therefore skipped the re-arm and the
+	// module went inert, on top of reaching std::terminate. See
+	// core/hardware/state_machine_barrier.hpp.
+	try {
+		switch (m_state) {
+		case KIM2ManagerState::power_off: KIM2_STATE_CALL(power_off); break;
+		case KIM2ManagerState::power_on: KIM2_STATE_CALL(power_on); break;
+		case KIM2ManagerState::init: KIM2_STATE_CALL(init); break;
+		case KIM2ManagerState::idle: KIM2_STATE_CALL(idle); break;
+		case KIM2ManagerState::transmit: KIM2_STATE_CALL(transmit); break;
+		case KIM2ManagerState::receive: KIM2_STATE_CALL(receive); break;
+		case KIM2ManagerState::error: KIM2_STATE_CALL(error); break;
+		default: break;
+		}
+		m_sm_barrier.on_tick_completed();
+	} catch (...) {
+		// run_state_machine takes a uint16_t, the barrier returns ms as unsigned
+		// int: raising the quiet delay past 65535 would silently truncate here.
+		static_assert(StateMachineBarrier::QUIET_DELAY_MS <= UINT16_MAX,
+		              "KIM2 re-arm delay must fit in run_state_machine's uint16_t");
+		run_state_machine((uint16_t)m_sm_barrier.on_exception(static_cast<int>(m_state)));
 	}
 }
 

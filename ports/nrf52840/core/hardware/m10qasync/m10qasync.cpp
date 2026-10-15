@@ -778,20 +778,29 @@ void M10QAsyncReceiver::exit_shutdown() {
 }
 
 void M10QAsyncReceiver::state_machine() {
-	switch (m_state) {
-	case State::poweron: STATE_CALL(poweron); break;
-	case State::poweroff: STATE_CALL(poweroff); break;
-	case State::configure: STATE_CALL(configure); break;
-	case State::senddatabase: STATE_CALL(senddatabase); break;
-	case State::sendofflinedatabase: STATE_CALL(sendofflinedatabase); break;
-	case State::startreceive: STATE_CALL(startreceive); break;
-	case State::receive: STATE_CALL(receive); break;
-	case State::stopreceive: STATE_CALL(stopreceive); break;
-	case State::fetchdatabase: STATE_CALL(fetchdatabase); break;
-	case State::enterbackup: STATE_CALL(enterbackup); break;
-	case State::backupidle: STATE_CALL(backupidle); break;
-	default:
-	case State::idle: break;
+	// Same contract as KIM2: the handlers re-arm through run_state_machine(), so
+	// a throw lost both the tick and the firmware. GPSService's own task timeout
+	// would eventually cancel the session, but only after it had already hung in
+	// std::terminate. See core/hardware/state_machine_barrier.hpp.
+	try {
+		switch (m_state) {
+		case State::poweron: STATE_CALL(poweron); break;
+		case State::poweroff: STATE_CALL(poweroff); break;
+		case State::configure: STATE_CALL(configure); break;
+		case State::senddatabase: STATE_CALL(senddatabase); break;
+		case State::sendofflinedatabase: STATE_CALL(sendofflinedatabase); break;
+		case State::startreceive: STATE_CALL(startreceive); break;
+		case State::receive: STATE_CALL(receive); break;
+		case State::stopreceive: STATE_CALL(stopreceive); break;
+		case State::fetchdatabase: STATE_CALL(fetchdatabase); break;
+		case State::enterbackup: STATE_CALL(enterbackup); break;
+		case State::backupidle: STATE_CALL(backupidle); break;
+		default:
+		case State::idle: break;
+		}
+		m_sm_barrier.on_tick_completed();
+	} catch (...) {
+		run_state_machine(m_sm_barrier.on_exception(static_cast<int>(m_state)));
 	}
 }
 

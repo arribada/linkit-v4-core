@@ -346,17 +346,26 @@ void SmdSat::power_off_immediate() {
 void SmdSat::state_machine(bool use_scheduler) {
 	m_next_delay = 0;
 
-	switch (m_state) {
-	case SmdSat::starting: SMD_STATE_CALL(starting); break;
-	case SmdSat::powering_on: SMD_STATE_CALL(powering_on); break;
-	case SmdSat::load_kmac: SMD_STATE_CALL(load_kmac); break;
-	case SmdSat::idle_pending: SMD_STATE_CALL(idle_pending); break;
-	case SmdSat::idle: SMD_STATE_CALL(idle); break;
-	case SmdSat::transmit_pending: SMD_STATE_CALL(transmit_pending); break;
-	case SmdSat::transmitting: SMD_STATE_CALL(transmitting); break;
-	case SmdSat::error: SMD_STATE_CALL(error); break;
-	case SmdSat::stopped: SMD_STATE_CALL(stopped); break;
-	default: break;
+	// The dispatch is guarded, the re-arm below deliberately is not: a state
+	// handler that throws must still leave the machine ticking. See
+	// core/hardware/state_machine_barrier.hpp.
+	try {
+		switch (m_state) {
+		case SmdSat::starting: SMD_STATE_CALL(starting); break;
+		case SmdSat::powering_on: SMD_STATE_CALL(powering_on); break;
+		case SmdSat::load_kmac: SMD_STATE_CALL(load_kmac); break;
+		case SmdSat::idle_pending: SMD_STATE_CALL(idle_pending); break;
+		case SmdSat::idle: SMD_STATE_CALL(idle); break;
+		case SmdSat::transmit_pending: SMD_STATE_CALL(transmit_pending); break;
+		case SmdSat::transmitting: SMD_STATE_CALL(transmitting); break;
+		case SmdSat::error: SMD_STATE_CALL(error); break;
+		case SmdSat::stopped: SMD_STATE_CALL(stopped); break;
+		default: break;
+		}
+		m_sm_barrier.on_tick_completed();
+	} catch (...) {
+		// Whatever the handler had set is not to be trusted now.
+		m_next_delay = m_sm_barrier.on_exception(static_cast<int>(m_state));
 	}
 
 	if (use_scheduler && !SMD_STATE_EQUAL(stopped)) {
