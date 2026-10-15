@@ -64,3 +64,6 @@ __pycache__/
 
 # Backups written by scripts/setup_environment.sh
 .vscode/*.backup
+
+# Written by the firmware compile-check job, read back into the run summary
+.ci-fw-summary.md

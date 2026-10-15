@@ -1,0 +1,54 @@
+# Firmware configurations the CI compile check builds, one per line:
+#
+#     <name>|<cmake flags>
+#
+# WHY THIS FILE EXISTS. Until now no CI job ever compiled the firmware:
+# tests.yml builds only the host test binaries, and build.yml -- which does
+# compile it -- is `workflow_dispatch` only, so it runs when a human asks and
+# never on a push. Breakage that only shows up in a variant nobody built that
+# week therefore reached a board. Two that did: SMD_UART had never been
+# compiled on LinkIt at all (a missing error.hpp include), and DEBUG_LEVEL=2 --
+# a value used in deployment -- did not compile.
+#
+# HOW THE LIST IS CHOSEN. Every board/comm variant appears once, and the
+# DEBUG_LEVEL values are spread across them so all five are compiled without
+# paying for a cross product: level 0 compiles every DEBUG_* macro out (which
+# is what catches an argument only evaluated at higher levels), level 4 keeps
+# them all in. The flags per variant mirror the defaults in the matching
+# scripts/build_*.sh -- that is where the shipped configuration lives; this
+# file is a compile check, not a second source of truth for it.
+#
+# This is a COMPILE check. It links an ELF and stops there: no bootloader
+# merge, no signing, no flashing. scripts/build_*.sh do that part and need the
+# unversioned build_config.sh; this list is built by calling cmake directly,
+# the same way build.yml does, so it works on a bare runner and in a worktree.
+#
+# Run the whole list locally with:  ./scripts/build_all_variants.sh
+
+# The turtle default. ENABLE_SWS_ANALOG is spelled out because the saltwater
+# detector is the part under active change.
+linkit-kim|-DBOARD=LINKIT -DDEBUG_LEVEL=3 -DENABLE_AXL_SENSOR=ON -DENABLE_SWS_ANALOG=1
+
+# ENABLE_SWS_LOG=1 guards code INSIDE sws_analog_service.cpp,
+# sws_analog_detection.cpp and main.cpp that no other variant here compiles.
+linkit-smd-spi|-DBOARD=LINKIT -DDEBUG_LEVEL=4 -DARGOS_SMD=ON -DENABLE_AXL_SENSOR=ON -DENABLE_SWS_LOG=1 -DGNSS_HAS_BACKUP_BATTERY=ON
+
+# The variant that had never been compiled on LinkIt, at the DEBUG_LEVEL that
+# had stopped compiling. Both are why this file exists.
+linkit-smd-uart|-DBOARD=LINKIT -DDEBUG_LEVEL=2 -DARGOS_SMD=ON -DSMD_UART=ON -DENABLE_AXL_SENSOR=ON -DGNSS_HAS_BACKUP_BATTERY=ON -DLORA_DCS_ENABLE=ON
+
+# DEBUG_LEVEL=0 compiles every debug macro out.
+linkit-lora|-DBOARD=LINKIT -DDEBUG_LEVEL=0 -DLORA_RAK3172=ON -DGNSS_HAS_BACKUP_BATTERY=ON
+
+# Cyprus boat: the two flags that also distinguish TrackerTestsCyprus.
+linkit-cyprus|-DBOARD=LINKIT -DDEBUG_LEVEL=3 -DLORA_RAK3172=ON -DLORA_MOTION_EXT=ON -DLORA_LINKCHECK=ON -DENABLE_AXL_SENSOR=ON -DLORA_DCS_ENABLE=ON -DLORA_TX_ERROR_SUSPEND_S=900
+
+# RSPB with its shipped sensor set. BATTERY_MONITOR_TYPE already defaults to
+# STC3117 for this board; naming it keeps the gauge driver covered if that
+# default ever changes.
+rspb-smd-spi|-DBOARD=RSPB -DDEBUG_LEVEL=1 -DARGOS_SMD=ON -DBATTERY_MONITOR_TYPE=STC3117 -DENABLE_AXL_SENSOR=1 -DENABLE_MORTALITY_SENSOR=1 -DENABLE_PRESSURE_SENSOR=1 -DENABLE_THERMISTOR_SENSOR=1 -DGNSS_HAS_BACKUP_BATTERY=1
+
+# The bench build. bench_console.cpp has no host test at all -- it is
+# BENCH_TEST-only firmware -- so compiling it here is the only automated check
+# it gets. tests/bench/console_sweep.py covers its dispatch on a real board.
+linkit-kim-bench|-DBOARD=LINKIT -DDEBUG_LEVEL=3 -DBENCH_TEST=ON -DENABLE_AXL_SENSOR=ON

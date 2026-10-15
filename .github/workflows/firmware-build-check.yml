@@ -1,0 +1,85 @@
+name: Firmware compile check
+
+# WHY THIS WORKFLOW EXISTS. Nothing in CI compiled the firmware. tests.yml
+# builds only the host test binaries, and build.yml -- which does compile it --
+# is `workflow_dispatch` only, so it runs when a human asks for an artifact and
+# never on a push. Breakage confined to a variant nobody happened to build that
+# week therefore reached a board: SMD_UART had never been compiled on LinkIt at
+# all, and DEBUG_LEVEL=2, a value used in deployment, had stopped compiling.
+#
+# It compiles and links every configuration in scripts/firmware_variants.txt.
+# It does not merge a bootloader, sign, or flash -- that is build.yml's job.
+
+# Deliberately every branch, not just main and pull requests: the clang-format
+# job in tests.yml runs on `pull_request` only, so merging by a direct push to
+# main skips it (documented in .claude/CLAUDE.md). A compile gate that the
+# normal way of working steps over is worse than none, because it reads as
+# covered.
+on:
+  push:
+  workflow_dispatch:
+
+# A newer push to the same branch makes this run moot.
+concurrency:
+  group: firmware-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  compile:
+    name: Compile every variant
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Same image and same GHA cache as build.yml, so the two share the
+      # toolchain layers instead of each downloading ARM GCC and the Nordic
+      # tools.
+      - name: Build toolchain image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          load: true
+          tags: linkit-toolchain:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # One container for the whole list: restoring the image costs more than
+      # the compiles do (a clean variant links in well under a minute), so a
+      # matrix would pay that per leg. The script keeps going after a failure
+      # and reports every variant, so one run shows everything that is broken.
+      - name: Compile all variants
+        run: |
+          docker run --rm \
+            -v "$PWD:/workspace" -w /workspace \
+            -e GITHUB_STEP_SUMMARY=/workspace/.ci-fw-summary.md \
+            linkit-toolchain:latest \
+            bash -lc "./scripts/build_all_variants.sh"
+
+      - name: Add the table to the run summary
+        if: always()
+        run: |
+          if [ -f .ci-fw-summary.md ]; then
+            cat .ci-fw-summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # Only the map files and the size report: the hex and elf of a specific
+      # configuration belong to build.yml, which names and signs them properly.
+      - name: Upload link maps
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-link-maps
+          path: |
+            ports/nrf52840/build/ci/*/*.map
+            ports/nrf52840/build/ci/*/build.log
+          if-no-files-found: warn
+          retention-days: 14
