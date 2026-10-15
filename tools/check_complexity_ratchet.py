@@ -156,13 +156,20 @@ def main():
             kept[key] = now
         for key in gone:
             del kept[key]
-        for key, ccn in newcomers:
-            kept[key] = ccn
+        # Every function at or above the floor, not only the ones that broke the
+        # ceiling: a new function landing at 21 is under NEW_CEILING and so never
+        # failed the check, but without pinning it here it could then grow to 25
+        # unremarked. Pinning on each tighten is what makes this a ratchet rather
+        # than a fence.
+        for key, (ccn, _path, _name) in found.items():
+            if key not in kept and ccn >= FLOOR:
+                kept[key] = ccn
         base["functions"] = {k: v for k, v in sorted(kept.items()) if v >= FLOOR}
         base["_comment"] = "Tightened with --tighten: improvements pinned at their new value."
         BASELINE.write_text(json.dumps(base, indent=1, sort_keys=True) + "\n", encoding="utf-8")
+        newly = len(base["functions"]) - len(pinned) + len(gone)
         print(f"baseline tightened: {len(improvements)} improvement(s) pinned, "
-              f"{len(gone)} gone, {len(newcomers)} newcomer(s) recorded")
+              f"{len(gone)} gone, {newly} function(s) newly pinned")
         return 0
 
     for key, was, now in improvements:
