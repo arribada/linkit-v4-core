@@ -8,6 +8,8 @@ name: Tests
 # Triggers:
 #  - push to main
 #  - pull_request targeting main
+#  - schedule, nightly: the only thing it adds is the sws-longrun job, which
+#    costs an hour and gates nothing (see that job)
 #  - workflow_dispatch (manual run from the Actions tab)
 
 env:
@@ -20,6 +22,10 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  schedule:
+    # 02:17 UTC. Off the hour on purpose: scheduled runs queue behind every
+    # other repository that picked a round number.
+    - cron: "17 2 * * *"
   workflow_dispatch:
 
 concurrency:
@@ -212,7 +218,7 @@ jobs:
     name: SWS tests
     needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -234,20 +240,18 @@ jobs:
           # Run SWSAnalog and SWSAnalogFlash groups; -p isolates each test
           ./build/TrackerTests -ojunit -p -g SWSAnalog -k sws-analog
           ./build/TrackerTests -ojunit -p -g SWSAnalogFlash -k sws-analog-flash
-          # SWSLongRun was reaching no CI job at all: the unit job excludes it via
-          # -xg SWS, and the two lines above name their groups explicitly. Its one
-          # invariant (clean electrodes, fixed delay, >= 90 % of surfacings seen)
-          # therefore guarded nothing. It is 17 scenarios of 75 simulated days.
+          # One scenario out of SWSLongRun's 17, and the only one that asserts
+          # anything: every other test in that group is named _Documentary and
+          # produces its report without a single CHECK. So this line carries the
+          # whole gating value of the group, for 226 s instead of 3618.
           #
-          # MEASURED, not estimated: 205-228 s per scenario at 99 % of one core on
-          # an idle desktop, 3618 s for the whole group. The "~40 min" written here before
-          # was a guess, and it is what produced a 75-minute job timeout with no
-          # real headroom -- a runner has 2 shared vCPUs and is slower per core,
-          # so that timeout was a coin flip. This group alone is an hour; if that
-          # becomes too slow a gate, the thing to split out is the 16 documentary
-          # scenarios, keeping H45_FixedDelayClean_ControlDetectsSurfacings (the
-          # one actual invariant) on every push.
-          ./build/TrackerTests -ojunit -p -g SWSLongRun -k sws-longrun
+          # Measured, not estimated: 205-228 s per scenario at 99 % of one core
+          # on an idle desktop. The "~40 min" that used to be written here was a
+          # guess, and it bought a 75-minute job timeout with negative headroom
+          # on a 2-vCPU runner. The other 16 scenarios run nightly, in the
+          # sws-longrun job below.
+          ./build/TrackerTests -ojunit -p -sg SWSLongRun \
+            -sn H45_FixedDelayClean_ControlDetectsSurfacings -k sws-longrun-control
           mv cpputest_*.xml reports/sws/ 2>/dev/null || true
 
       - name: Upload JUnit reports
@@ -257,6 +261,55 @@ jobs:
           name: sws-test-reports
           path: tests/reports/sws/*.xml
           if-no-files-found: warn
+
+  # ---------------------------------------------------------------------------
+  # SWS long run — the 16 documentary scenarios, nightly.
+  #
+  # NOT on push, and that costs no gating: of SWSLongRun's 17 scenarios exactly
+  # one contains a CHECK, and the sws-tests job above runs it on every push. The
+  # other 16 are research output -- they simulate 75 days of a deployment and
+  # write a report, asserting nothing. Running them per push bought an hour of
+  # wall clock, measured, in exchange for nothing a merge could fail on.
+  #
+  # They still run, because the reports are the point: the fouling scenarios are
+  # what refuted the hill-climbing fix, and what showed the field telemetry
+  # disagreeing with the simulation. A nightly run keeps producing them.
+  # ---------------------------------------------------------------------------
+  sws-longrun:
+    name: SWS long run (nightly)
+    needs: build
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download test binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: test-binaries
+          path: tests/build
+
+      - name: Make binaries executable
+        run: chmod +x tests/build/TrackerTests
+
+      - name: Run the documentary scenarios
+        working-directory: tests
+        run: |
+          ln -sf ../data build/data
+          mkdir -p reports/sws-longrun
+          ./build/TrackerTests -ojunit -p -g SWSLongRun -k sws-longrun
+          mv cpputest_sws-longrun_*.xml reports/sws-longrun/ 2>/dev/null || true
+
+      - name: Upload JUnit reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sws-longrun-reports
+          path: tests/reports/sws-longrun/*.xml
+          if-no-files-found: warn
+          retention-days: 30
 
   # ---------------------------------------------------------------------------
   # Turtle simulation — separate executable. Produces an HTML report stored
