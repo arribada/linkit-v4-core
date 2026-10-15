@@ -1496,6 +1496,17 @@ void ArgosTxService::notify_peer_event(ServiceEvent &e) {
 			m_tcxo_skip_on_next_tx = true;
 			m_kineis.set_tcxo_warmup_time(0);
 			// 2. Kill SMD and restore default idle timeout
+			//
+			// A TX still in flight usually dies here with the module (park_for_dive
+			// is a hard power-off unless the SMD has an LPM to park in): no
+			// TxComplete, no DeviceError, so without this line it left no trace at
+			// all. Seen on the bench 2026-10-14 (turtle_mission_rf pile, sb0-3).
+			if (m_is_tx_pending) {
+				DEBUG_WARN("ArgosTxService: dive while a TX is in flight (type=%s, %s the air, %u position(s)) — "
+				           "its completion may never come",
+				           m_last_val_tx_type, m_inflight_reached_air ? "reached" : "before",
+				           (unsigned int)m_inflight_gps.size());
+			}
 			m_kineis.set_idle_timeout(1000);
 			m_kineis.park_for_dive();
 
