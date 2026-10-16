@@ -454,10 +454,55 @@ class Runner:
             self._lock.release()
         return self.resume()
 
+    def _preflight_journal(self):
+        """Un build muet fait echouer une trentaine de cas pour UNE raison.
+
+        Les cas qui guettent une ligne de firmware -- GPS-02..06, GPS-D1..D5,
+        MOOR-01..04, DIVE-01..03, SWS-05, EDG-X1, EDG-S1, EDG-S2, EDG-T2 -- ne
+        peuvent rien voir si le binaire n emet aucun journal, et chacun le
+        rapporte dans SES termes: « aucune trace d arret », « jamais entre en
+        MOORED », « aucune lecture BMA400 ». Trente messages differents pour un
+        seul defaut, qui n est meme pas dans le firmware.
+
+        La cause est un piege de build, pas un reglage: CMAKE_BUILD_TYPE=Release
+        definit NDEBUG, main.cpp:203 pose alors g_debug_mode = NONE, et :643
+        met DebugLogger::console_log a nullptr. Les reponses '%' et DTE passent
+        par un autre chemin et marchent parfaitement -- d ou 65 cas verts et une
+        campagne qui a l air a moitie cassee. Mesure le 16/10: 0 ligne de
+        journal en Release, 93 en Debug sur le MEME code.
+
+        Ce controle ne bloque pas: les cas qui lisent des reponses restent
+        valables. Il nomme la cause une fois, au debut, au lieu de la laisser se
+        deguiser en trente defauts.
+        """
+        mk = self.b.mark()
+        try:
+            # %OP sort de configuration et relance les services: c est le moment
+            # ou un binaire qui parle produit ses premieres lignes.
+            self.raw_until('%OP\r', r'%OP ', timeout=10.0)
+        except Exception:
+            pass
+        t0 = time.time()
+        while time.time() - t0 < 12.0:
+            if _lignes(self.b, mk, r'\[(INFO|WARN|ERROR|TRACE)\]'):
+                return True
+            time.sleep(0.5)
+        self.say('')
+        self.say('!!  AUCUNE LIGNE DE JOURNAL FIRMWARE EN 12 s  !!')
+        self.say('!!  Ce binaire est MUET: construit en Release (NDEBUG -> g_debug_mode=NONE,')
+        self.say('!!  main.cpp:203/643 -> console_log=nullptr). Les reponses % et DTE marchent,')
+        self.say('!!  donc les cas de protocole passeront -- mais tout cas qui guette une ligne')
+        self.say('!!  de firmware va echouer, et pour cette raison seule.')
+        self.say('!!  Reflasher un build de banc:  --debug  (CMAKE_BUILD_TYPE=Debug)')
+        self.say('!!  et --validation si des cas [VAL-*] sont joues.')
+        self.say('')
+        return False
+
     def _run(self, cases):
         if not self.connect():
             self.say("ABANDON: carte injoignable au demarrage"); return
         self.say(f"=== campagne demarree — {len(cases)} cas — resultats: {RESULTS} ===")
+        self._preflight_journal()
         for i, case in enumerate(cases, 1):
             self.say(f"[{i}/{len(cases)}] {case['id']} — {case['titre']}")
             try:

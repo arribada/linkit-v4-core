@@ -83,10 +83,26 @@ def analyse(texte):
         'sans_fix':          compte(r'acquisition timeout — no fix'),
         'pvt_degrades':      compte(r'degraded PVT'),
         'redemarrages':      compte(r'entry: BootState'),
-        'resets_wdt':        compte(r'soft reset|WDT'),
+        # Les trois compteurs ci-dessous comptaient des MENTIONS, pas des
+        # evenements, et le resultat etait alarmant pour rien. Mesure sur un
+        # journal reel du 16/10: 'resets_wdt' annoncait 14 pour UN seul reset
+        # chien-de-garde, parce que la regex 'WDT' attrapait les treize lignes
+        # de l INHIBITION post-WDT ('WDT-reset inhibit', 'dispatch=wdt_...'),
+        # qui sont le comportement voulu et non des resets. 'reset_usine'
+        # annoncait 4 pour ZERO, en comptant 'BootFail: clearing (was 1
+        # failures, factory_reset=0)'. Et 'batterie_critique' annoncait 2 pour
+        # zero, parce que 'critical' apparait dans chaque releve sain
+        # ('low=0 critical=0') et dans les avertissements de coherence de seuils
+        # que le cas EDG-X2 provoque exprès.
+        #
+        # Les causes de reset sont journalisees une fois par demarrage, sous la
+        # forme 'reset cause: ... (RESETREAS=0x...)': bit 1 = DOG (chien de
+        # garde), bit 2 = SREQ (reset logiciel). C est cela qu il faut compter.
+        'resets_wdt':        compte(r'RESETREAS=0x[0-9a-fA-F]*[26AaEe]\b'),
+        'resets_logiciels':  compte(r'RESETREAS=0x[0-9a-fA-F]*[4567CcDdEeFf]\b'),
         'echecs_boot':       compte(r'BootFail: counter'),
-        'reset_usine':       compte(r'factory_reset'),
-        'batterie_critique': compte(r'VoltageCritical|critical'),
+        'reset_usine':       compte(r'factory_reset(?!=0)'),
+        'batterie_critique': compte(r'VoltageCritical|battery.*critical.*shutdown'),
         'backoff':           compte(r'backoff|suspension'),
         'limiteur':          compte(r'rate limit reached'),
     }
