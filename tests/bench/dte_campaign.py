@@ -477,18 +477,25 @@ class Runner:
         """
         mk = self.b.mark()
         try:
-            # %OP sort de configuration et relance les services: c est le moment
-            # ou un binaire qui parle produit ses premieres lignes.
+            # ALLER-RETOUR complet, pas un simple %OP. Sur une carte deja en
+            # OPERATIONAL, %OP repond « not-in-config » et ne change rien: rien
+            # n est journalise et le controle criait au loup. Verifie sur
+            # carte le 16/10: %PING state=CONFIG puis %OP -> 59 lignes, mais
+            # %OP seul sur une carte operationnelle -> 0. %CFG puis %OP arrete
+            # et relance les services dans tous les cas, donc journalise
+            # toujours.
+            self.raw_until('%CFG\r', r'%CFG ', timeout=10.0)
+            time.sleep(1.5)
             self.raw_until('%OP\r', r'%OP ', timeout=10.0)
         except Exception:
             pass
         t0 = time.time()
-        while time.time() - t0 < 12.0:
+        while time.time() - t0 < 20.0:
             if _lignes(self.b, mk, r'\[(INFO|WARN|ERROR|TRACE)\]'):
                 return True
             time.sleep(0.5)
         self.say('')
-        self.say('!!  AUCUNE LIGNE DE JOURNAL FIRMWARE EN 12 s  !!')
+        self.say('!!  AUCUNE LIGNE DE JOURNAL FIRMWARE APRES UN ALLER-RETOUR %CFG/%OP  !!')
         self.say('!!  Ce binaire est MUET: construit en Release (NDEBUG -> g_debug_mode=NONE,')
         self.say('!!  main.cpp:203/643 -> console_log=nullptr). Les reponses % et DTE marchent,')
         self.say('!!  donc les cas de protocole passeront -- mais tout cas qui guette une ligne')
