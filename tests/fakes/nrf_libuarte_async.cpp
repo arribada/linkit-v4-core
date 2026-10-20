@@ -1,6 +1,21 @@
 #include <stdbool.h>
+#include <vector>
 #include "nrf_libuarte_async.h"
 #include "debug.hpp"
+
+/* Every byte handed to the UART, in order, so a test can check what the driver
+ * actually sent to the receiver (frame order, polls, assistance). */
+static std::vector<uint8_t> s_tx_log;
+
+void nrf_libuarte_tx_log_clear(void) {
+	s_tx_log.clear();
+}
+size_t nrf_libuarte_tx_log_size(void) {
+	return s_tx_log.size();
+}
+const uint8_t *nrf_libuarte_tx_log_data(void) {
+	return s_tx_log.data();
+}
 
 static nrf_libuarte_async_evt_handler_t m_evt_callback;
 static void *m_context;
@@ -45,8 +60,7 @@ void nrf_libuarte_async_set_timeout(const nrf_libuarte_async_t *const p_libuarte
 
 ret_code_t nrf_libuarte_async_tx(const nrf_libuarte_async_t *const p_libuarte, uint8_t *p_data, size_t length) {
 	(void)p_libuarte;
-	(void)p_data;
-	(void)length;
+	if (p_data && length) s_tx_log.insert(s_tx_log.end(), p_data, p_data + length);
 	DEBUG_TRACE("nrf_libuarte_async_tx");
 	nrf_libuarte_async_evt_t evt;
 	evt.type = NRF_LIBUARTE_ASYNC_EVT_TX_DONE;

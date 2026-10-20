@@ -418,7 +418,7 @@ bool M10QAsyncReceiver::bbr_orbits_likely_fresh() {
 	// "broadcast ephemeris still fresh". Unknown time / no valid last fix ⇒ false
 	// ⇒ run assistance (safe: ANO only displaces already-expired orbits).
 	if (!(rtc && rtc->is_set())) return false;
-	const auto &last_gps = configuration_store->get_last_gps_entry();
+	const auto &last_gps = configuration_store->get_position_hint();
 	if (!last_gps.info.valid) return false;
 	const std::time_t fix_t = convert_epochtime(last_gps.info.year, last_gps.info.month, last_gps.info.day,
 	                                            last_gps.info.hour, last_gps.info.min, last_gps.info.sec);
@@ -441,7 +441,7 @@ void M10QAsyncReceiver::supply_position_assistance() {
 		return;
 	}
 
-	const auto &last_gps = configuration_store->get_last_gps_entry();
+	const auto &last_gps = configuration_store->get_position_hint();
 	if (!last_gps.info.valid) {
 		DEBUG_TRACE("M10QAsyncReceiver::supply_position_assistance: no valid last position");
 		m_step++;
@@ -831,6 +831,25 @@ void M10QAsyncReceiver::query_sec_uniqid() {
 	initiate_timeout();
 	m_ubx_comms.send_packet_with_expect(MessageClass::MSG_CLASS_SEC, SEC::ID_UNIQID, msg, MessageClass::MSG_CLASS_SEC,
 	                                    SEC::ID_UNIQID);
+}
+
+void M10QAsyncReceiver::poll_aop_status() {
+	DEBUG_TRACE("M10QAsyncReceiver::poll_aop_status");
+	UBX::Empty msg = {};
+	initiate_timeout(AOP_POLL_TIMEOUT_MS);
+	m_ubx_comms.send_packet_with_expect(MessageClass::MSG_CLASS_NAV, NAV::ID_AOPSTATUS, msg,
+	                                    MessageClass::MSG_CLASS_NAV, NAV::ID_AOPSTATUS);
+}
+
+void M10QAsyncReceiver::react(const UBXCommsEventAopStatus &aop) {
+	// UART IRQ context: record and hand over to the state machine, nothing else.
+	if (m_op_state == OpState::PENDING) {
+		cancel_timeout();
+		m_aop_status = aop.status;
+		m_aop_status_valid = aop.valid;
+		m_op_state = OpState::SUCCESS;
+		run_state_machine();
+	}
 }
 
 void M10QAsyncReceiver::react(const UBXCommsEventMonVer &ver) {

@@ -29,8 +29,10 @@
 #include "rtc.hpp"
 #include "config_store.hpp"
 #include "service.hpp"
+#include "gps.hpp"
 extern RTC *rtc;
 extern ConfigurationStore *configuration_store;
+extern GPSDevice *gps_device;
 extern RGBLed *status_led;
 
 static uint32_t m_reset_cause = 0;  ///< Raw RESETREAS register + pseudo power-off flag
@@ -63,7 +65,8 @@ static void pof_soc_evt_handler(uint32_t evt_id, void *p_context) {
 		// next clean-shutdown save_params or periodic flush. Trade-off
 		// accepted: lose <=30 min of RTC vs. risk corrupting all 227 params.
 		if (configuration_store && rtc && rtc->is_set()) {
-			configuration_store->write_param(ParamID::LAST_KNOWN_RTC, static_cast<unsigned int>(rtc->gettime()));
+			const std::time_t persisted = RTC::persisted_time(rtc->gettime(), PMU::get_timestamp_ms());
+			configuration_store->write_param(ParamID::LAST_KNOWN_RTC, static_cast<unsigned int>(persisted));
 		}
 	}
 }
@@ -361,6 +364,20 @@ void PMU::set_firmware_updated_flag() {
 #define VALIDATION_LOG_ENABLE 0
 #endif
 
+/// @brief Commit what the GNSS driver deferred (its MGA-DBD write, 15 s after the end
+/// of a session, off the fix -> TX path). Several callers of powerdown() do not go
+/// through the driver first -- the RSPB transmit budget, a critical battery,
+/// OffState -- so a power-down inside that window lost the freshest database and
+/// the next start replayed an older one, or none.
+static void flush_gnss_persistence() {
+	if (!gps_device) return;
+	try {
+		gps_device->flush_pending_persistence();
+	} catch (...) {
+		DEBUG_ERROR("PMU::powerdown: GNSS state flush failed");
+	}
+}
+
 /// @brief Shut down device — save state, cut power rails, then reset or infinite sleep.
 void PMU::powerdown() {
 	// #if VALIDATION_LOG_ENABLE
@@ -383,9 +400,14 @@ void PMU::powerdown() {
 	// Persist cooldown state to noinit RAM before shutdown
 	ServiceManager::save_cooldown_state();
 
+	flush_gnss_persistence();
+
 	// Persist current RTC for pseudo RTC chain on next boot
 	if (configuration_store && rtc && rtc->is_set()) {
-		configuration_store->write_param(ParamID::LAST_KNOWN_RTC, static_cast<unsigned int>(rtc->gettime()));
+		// On RSPB the next boot computes LAST_KNOWN_RTC + WAKEUP_PERIOD: what it
+		// needs is the instant this run BOOTED, not now (RTC::persisted_time).
+		const std::time_t persisted = RTC::persisted_time(rtc->gettime(), PMU::get_timestamp_ms());
+		configuration_store->write_param(ParamID::LAST_KNOWN_RTC, static_cast<unsigned int>(persisted));
 		configuration_store->save_params();
 		DEBUG_TRACE("PMU::powerdown: Saved LAST_KNOWN_RTC = %u", static_cast<unsigned int>(rtc->gettime()));
 	}

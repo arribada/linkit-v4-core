@@ -51,17 +51,85 @@ public:
 	RtcSource source() const { return m_source; }
 	int32_t drift_ppm() const { return m_drift_ppm; }
 
-	/// @brief Uncertainty of one hop of the pseudo-RTC chain (RSPB / TPL5111).
+	/// @brief The value to persist in LAST_KNOWN_RTC.
+	///
+	/// On a TPL5111 board (EXTERNAL_WAKEUP) the next boot rebuilds its clock as
+	/// LAST_KNOWN_RTC + WAKEUP_PERIOD. The TPL5111 period runs from one DRV rising
+	/// edge to the next -- DONE only shortens the high time (TI SNAS659B, timer
+	/// mode) -- so the right base is the instant THIS run booted, not the instant
+	/// it powers down. Persisting the power-down time pushed the chain ahead by the
+	/// length of every working run (GNSS plus the transmissions: minutes), on top
+	/// of the resistor tolerance it was meant to carry alone.
+	///
+	/// @param now        current RTC time
+	/// @param uptime_ms  time since this boot (PMU::get_timestamp_ms())
+	static std::time_t persisted_time(std::time_t now, uint64_t uptime_ms) {
+#ifdef EXTERNAL_WAKEUP
+		const std::time_t up_s = static_cast<std::time_t>(uptime_ms / 1000ULL);
+		return (now > up_s) ? (now - up_s) : now;
+#else
+		(void)uptime_ms;
+		return now;
+#endif
+	}
+
+	/// Fixed part of the pseudo-RTC uncertainty: boot-latency jitter between the
+	/// DRV edge and the timestamp origin, and the accuracy of the anchor itself
+	/// ($RTCW typed from a PC is a few seconds at best).
+	static constexpr unsigned int PSEUDO_BASE_UNC_S = 10;
+
+	/// @brief Honest uncertainty of a pseudo-RTC value, or 0 if it cannot be bounded.
+	///
+	/// The TPL5111 period is set by a resistor: each hop adds up to its tolerance
+	/// (TplClock: 5 % with the nominal period, 2 % once the board's real period has
+	/// been learnt from GNSS fixes), and the hops add up. What bounds the error is
+	/// therefore the time elapsed since the last TRUSTED setting (a GNSS fix or
+	/// $RTCW, persisted in LAST_TIME_SYNC), not the length of the current hop: the
+	/// one-hop bound used before claimed +/-3 min after a day without a fix, when the
+	/// clock could be a whole hour out.
+	///
+	/// @param pseudo_now          the pseudo-RTC value just computed
+	/// @param last_sync           LAST_TIME_SYNC (0 = never)
+	/// @param tolerance_permille  tolerance per hop
+	/// @return seconds, or 0 when there is no usable anchor (never synchronised, an
+	///         anchor in the future, or a bound past what MGA-INI-TIME can carry)
+	static unsigned int pseudo_uncertainty_s(std::time_t pseudo_now, std::time_t last_sync,
+	                                         unsigned int tolerance_permille) {
+		if (last_sync <= 0 || pseudo_now < last_sync) return 0;
+		const unsigned long elapsed = static_cast<unsigned long>(pseudo_now - last_sync);
+		const unsigned long unc = PSEUDO_BASE_UNC_S + (elapsed * tolerance_permille + 999UL) / 1000UL;
+		return (unc > 65535UL) ? 0u : static_cast<unsigned int>(unc);
+	}
+
+	/// @brief Uncertainty of the pseudo-RTC value (RSPB / TPL5111), as computed by
+	/// pseudo_uncertainty_s().
 	///
 	/// On a TPL5111 board the time spent unpowered is NOT unknown: it is the wake
 	/// period, set by a resistor and exposed as a parameter. The error is therefore
-	/// bounded by the timer's tolerance, and it would be a shame to give up time
-	/// assistance on that ground alone.
+	/// bounded by the timer's tolerance -- accumulated over every hop since the last
+	/// trusted setting -- and it would be a shame to give up time assistance on that
+	/// ground alone.
 	///
 	/// CAUTION: this bound only holds if the wake really came from the TPL. A manual
 	/// wake (magnet), a watchdog or a software reset break the chain -- the caller
 	/// must then declare RESTORED rather than PSEUDO.
 	void set_pseudo_uncertainty_s(unsigned int u) { m_pseudo_unc_s = u; }
+
+	/// @brief Can a time set during THIS run anchor the TPL5111 chain?
+	///
+	/// Only if the run started on a TPL edge: the next wake then comes one period
+	/// after this boot. A run started by anything else (magnet, watchdog, software
+	/// reset, OTA) has no known phase against the TPL timer, so a fix or a $RTCW
+	/// taken during it says nothing about when the next TPL wake will come. Set at
+	/// boot by the TPL5111 board code; always true elsewhere.
+	void set_chain_anchorable(bool anchorable) { m_chain_anchorable = anchorable; }
+	bool chain_anchorable() const { return m_chain_anchorable; }
+
+	/// @brief Value to persist in LAST_TIME_SYNC for a trusted setting at `now`:
+	/// `now`, or 0 ("no anchor") when this run cannot anchor the chain.
+	unsigned int anchor_value(std::time_t now) const {
+		return m_chain_anchorable ? static_cast<unsigned int>(now) : 0u;
+	}
 
 	/// @brief Age, in seconds, of the last time that was set.
 	unsigned int age_s() {
@@ -122,10 +190,8 @@ public:
 		} else if (m_source == RtcSource::OPERATOR) {
 			base = 60;
 		} else if (m_source == RtcSource::PSEUDO) {
-			// Bound for ONE hop of the chain. It underestimates after several TPL
-			// cycles without a single fix, for want of a persisted anchor on the last
-			// synchronisation point -- documented, and of no consequence on a BBR
-			// board where the injection is skipped anyway.
+			// 2026-10: bound accumulated since the last trusted setting (see
+			// pseudo_uncertainty_s), no longer the length of one hop.
 			base = (m_pseudo_unc_s > 0) ? m_pseudo_unc_s : 60;
 		} else {
 			// NONE or RESTORED: the time spent unpowered is unknown, so the error
@@ -144,4 +210,5 @@ protected:
 	std::time_t m_last_gnss_sync = 0;  ///< derniere synchro GNSS (pour la derive)
 	int32_t m_drift_ppm = 0;           ///< derive MESUREE, 0 tant qu'inconnue
 	unsigned int m_pseudo_unc_s = 0;   ///< incertitude d'un bond pseudo-RTC
+	bool m_chain_anchorable = true;    ///< see set_chain_anchorable()
 };

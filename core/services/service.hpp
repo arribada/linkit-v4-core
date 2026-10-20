@@ -41,6 +41,11 @@ public:
 	/// is called.
 	/// @return true if the service started now.
 	bool start_or_retry(std::function<void(ServiceEvent &)> data_notification_callback = nullptr);
+	/// @brief Read back from flash what this service persisted before a reset or
+	/// a power cut. ServiceManager::startall() calls it on EVERY service before it
+	/// starts ANY of them, so a service's init can rely on another one's restored
+	/// state. Default: nothing to restore.
+	virtual void restore_persisted_state() {}
 	void stop();
 	virtual void notify_peer_event(ServiceEvent &event);
 	bool is_started();

@@ -246,6 +246,15 @@ public:
 	/// GNP52 auto-off timer to actually terminate deep-idle after the configured
 	/// duration. No-op if the device is not currently in deep-idle.
 	virtual void poweroff_from_deep_idle() {}
+	/// @brief Commit to flash, now, whatever the driver deferred to a quieter
+	/// moment (the M10Q writes its MGA-DBD dump 15 s after the session, off the
+	/// fix -> TX path).
+	///
+	/// For the paths that end the run without going back through the driver:
+	/// PMU::powerdown() (OffState, the RSPB transmit budget, critical battery)
+	/// and the GNSS watchdog resets. Without it, a power-down inside the deferral
+	/// window threw away the freshest navigation database. Default no-op.
+	virtual void flush_pending_persistence() {}
 	virtual GNSSDeviceInfo get_device_info() const { return {}; }
 	virtual GNSSAlmanacStatus get_almanac_status(unsigned int ano_stale_threshold_s = 25 * 24 * 3600) const {
 		(void)ano_stale_threshold_s;

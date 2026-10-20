@@ -141,6 +141,7 @@
 #include <cstddef>
 #include <cstring>
 #include "heap.h"
+#include "tpl_clock.hpp"
 #include "etl/error_handler.h"
 
 /// @name Global peripheral pointers
@@ -861,6 +862,48 @@ static void init_power_on_check(NrfSwitch &nrf_reed_switch) {
 }
 
 
+#ifdef EXTERNAL_WAKEUP
+/// @brief Declare where a freshly computed pseudo-RTC value stands, and how far
+/// off it may be.
+///
+/// Extrapolation, BOUNDED only by the time elapsed since the last trusted setting:
+/// the TPL5111 period is set by a resistor, and every hop since the last fix adds
+/// its share of the tolerance. Without an anchor (never synchronised, or a
+/// configuration from before LAST_TIME_SYNC existed) nothing bounds it.
+/// @return the uncertainty in seconds, 0 = unbounded (declared RESTORED)
+static unsigned int declare_pseudo_rtc_source(unsigned int pseudo_rtc, unsigned int tolerance_permille) {
+	const unsigned int last_sync = configuration_store->read_param<unsigned int>(ParamID::LAST_TIME_SYNC);
+	const unsigned int unc = RTC::pseudo_uncertainty_s(static_cast<std::time_t>(pseudo_rtc),
+	                                                   static_cast<std::time_t>(last_sync), tolerance_permille);
+	if (unc == 0) {
+		// Reported by the caller's line (uncertainty 0): no extra flash write on a
+		// boot that may well power down 300 ms later (modulo).
+		rtc->note_source(RtcSource::RESTORED);
+		return 0;
+	}
+	rtc->note_source(RtcSource::PSEUDO);
+	rtc->set_pseudo_uncertainty_s(unc);
+	return unc;
+}
+#endif
+
+/// @brief Lower bound for a RESTORED clock: the timestamp of the persisted GNSS DBD.
+///
+/// That file is written with GNSS time a few seconds after each session with a
+/// fix, while LAST_KNOWN_RTC reaches flash only every 30 min (or at power-down).
+/// After a reset inside that window, the DBD is proof the clock had reached at
+/// least its timestamp. Taking the max costs one 4-byte read and saves the DBD
+/// from the "RTC went backwards" discard. The time stays RESTORED (unbounded).
+static unsigned int restored_time_floor(unsigned int last_rtc) {
+	constexpr unsigned int RTC_MAX_VALID = 4102444800U;  // 2100-01-01, same guard as in init_storage
+	const uint32_t dbd_t = M10QAsyncReceiver::persisted_dbd_time(main_filesystem);
+	if (dbd_t > last_rtc && dbd_t <= RTC_MAX_VALID) {
+		DEBUG_INFO("Restored time raised to the GNSS DBD timestamp (%u > %u)", (unsigned int)dbd_t, last_rtc);
+		return dbd_t;
+	}
+	return last_rtc;
+}
+
 /**
  * @brief Phase 3 — Storage and configuration.
  *
@@ -988,8 +1031,13 @@ static LFSFileSystem &init_storage(NrfSwitch &nrf_reed_switch, Is25Flash &is25_f
 			last_rtc = 0;  // force virtual RTC fallback
 		}
 #ifdef EXTERNAL_WAKEUP
-		// Pseudo RTC: advance the last known RTC by WAKEUP_PERIOD at each boot.
-		unsigned int wakeup_period = configuration_store->read_param<unsigned int>(ParamID::WAKEUP_PERIOD);
+		// Pseudo RTC: advance the last known RTC by one TPL5111 period at each boot --
+		// the period THIS board's resistor gives once GNSS fixes have measured it
+		// (PWP08), WAKEUP_PERIOD (the period it was chosen for) until then.
+		const unsigned int nominal_period = configuration_store->read_param<unsigned int>(ParamID::WAKEUP_PERIOD);
+		const unsigned int measured_period_ms =
+		    configuration_store->read_param<unsigned int>(ParamID::WAKEUP_PERIOD_MEASURED_MS);
+		const unsigned int wakeup_period = TplClock::chain_period_s(nominal_period, measured_period_ms);
 
 		// 2026-08 — advance the chain ONLY if this boot really comes from
 		// a TPL5111 cycle, that is from a clean power cut. Previously the
@@ -1001,26 +1049,35 @@ static LFSFileSystem &init_storage(NrfSwitch &nrf_reed_switch, Is25Flash &is25_f
 		// not boundable.
 		const ResetCause boot_cause = PMU::reset_cause();
 		const bool tpl_cycle = (boot_cause == ResetCause::POWER_ON);
-
-		// Tolerance of the TPL5111 RC timer. Deliberately conservative: it is
-		// what bounds the uncertainty announced to the GNSS receiver.
-		constexpr unsigned int TPL_TOLERANCE_PCT = 5;
+		// Only a run that started on a TPL edge can anchor the chain (see
+		// RTC::set_chain_anchorable): this one's fix or $RTCW will tell the time,
+		// not when the next TPL wake comes.
+		rtc->set_chain_anchorable(tpl_cycle);
 
 		if (last_rtc > 0 && wakeup_period > 0 && tpl_cycle) {
+			// LAST_KNOWN_RTC holds the instant the previous run BOOTED (see
+			// RTC::persisted_time): the TPL5111 period runs from one wake to the
+			// next, whatever the run length.
 			unsigned int pseudo_rtc = last_rtc + wakeup_period;
 			configuration_store->write_param(ParamID::LAST_KNOWN_RTC, pseudo_rtc);
 			rtc->settime(static_cast<std::time_t>(pseudo_rtc));
-			// Extrapolation, but BOUNDED: the time spent unpowered equals the
-			// wakeup period, to within the timer tolerance.
-			rtc->note_source(RtcSource::PSEUDO);
-			rtc->set_pseudo_uncertainty_s((wakeup_period * TPL_TOLERANCE_PCT) / 100 + 1);
-			DEBUG_INFO("EXTERNAL_WAKEUP: Pseudo RTC set to %u (last=%u + period=%u, incertitude +/-%u s)", pseudo_rtc,
-			           last_rtc, wakeup_period, (wakeup_period * TPL_TOLERANCE_PCT) / 100 + 1);
+			const unsigned int unc =
+			    declare_pseudo_rtc_source(pseudo_rtc, TplClock::tolerance_permille(nominal_period, measured_period_ms));
+			DEBUG_INFO(
+			    "EXTERNAL_WAKEUP: Pseudo RTC set to %u (last=%u + period=%u, uncertainty +/-%u s, 0 = unbounded)",
+			    pseudo_rtc, last_rtc, wakeup_period, unc);
 		} else if (last_rtc > 0) {
 			// Chain broken: put back the known time WITHOUT advancing it, and
-			// declare it not boundable.
+			// declare it not boundable. A DBD saved after the last flush of
+			// LAST_KNOWN_RTC is proof the clock had at least reached its timestamp.
+			last_rtc = restored_time_floor(last_rtc);
 			rtc->settime(static_cast<std::time_t>(last_rtc));
 			rtc->note_source(RtcSource::RESTORED);
+			// The anchor no longer bounds anything: this run's clock is off by an
+			// unknown amount, and the next TPL wake is not one period after this
+			// boot. The next TPL boots stay unbounded until a fix taken in a TPL
+			// run sets a new anchor -- a fix or a $RTCW in THIS run cannot.
+			configuration_store->write_param(ParamID::LAST_TIME_SYNC, 0U);
 			DEBUG_WARN("EXTERNAL_WAKEUP: wake outside TPL (cause=%d) — pseudo-RTC chain broken, time restored without "
 			           "advance (%u)",
 			           (int)boot_cause, last_rtc);
@@ -1056,6 +1113,10 @@ static LFSFileSystem &init_storage(NrfSwitch &nrf_reed_switch, Is25Flash &is25_f
 #else
 		// Non-TPL5111 boards: restore last known RTC directly
 		if (last_rtc > 0) {
+			// LAST_KNOWN_RTC reaches flash every 30 min only; a reset inside that
+			// window restored a time OLDER than the DBD saved since, and
+			// load_dbd_from_flash() then threw that DBD away ("RTC went backwards").
+			last_rtc = restored_time_floor(last_rtc);
 			rtc->settime(static_cast<std::time_t>(last_rtc));
 			// RESTORED and not GNSS: the time spent unpowered is unknown, so the
 			// error on this time cannot be bounded. Without this distinction,

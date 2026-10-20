@@ -1621,3 +1621,104 @@ TEST(GPSService, HealthWDT_StaleTransmissionIsReset) {
 	jump_time_s(25 * 3600);
 	mock().checkExpectations();
 }
+
+// ── 2026-10: the last position survives a reset (and every RSPB TPL cycle) ────
+// The live cache (get_last_gps_entry) is RAM only. The fix itself is in the GPS
+// log in flash; restore_persisted_state() reads it back as a position HINT for
+// assistance and prediction -- never as a payload.
+
+static GPSLogEntry gps_log_entry(GPSEventType type, bool valid, double lat, uint8_t day) {
+	GPSLogEntry e{};
+	e.header.log_type = LOG_GPS;
+	e.info.event_type = type;
+	e.info.valid = valid;
+	e.info.lat = lat;
+	e.info.lon = 55.0;
+	e.info.year = 2026;
+	e.info.month = 10;
+	e.info.day = day;
+	return e;
+}
+
+TEST(GPSService, RestoresTheLastPositionFromTheLogAfterAReset) {
+	GPSService s(*mock_m10q, fake_log);
+	GPSLogEntry older = gps_log_entry(GPSEventType::FIX, true, 10.0, 1);
+	GPSLogEntry newer = gps_log_entry(GPSEventType::FIX, true, 20.0, 2);
+	GPSLogEntry nofix = gps_log_entry(GPSEventType::NO_FIX, false, 0.0, 3);
+	fake_log->write(&older);
+	fake_log->write(&newer);
+	fake_log->write(&nofix);  // the log ends on fixless sessions: a dive, a night under a rock
+	fake_log->write(&nofix);
+
+	// Fresh RAM, as after a reset: nothing to aid the receiver with.
+	CHECK_FALSE(configuration_store->get_position_hint().info.valid);
+
+	s.restore_persisted_state();
+
+	CHECK_TRUE(configuration_store->get_position_hint().info.valid);
+	DOUBLES_EQUAL(20.0, configuration_store->get_position_hint().info.lat, 1e-9);
+	CHECK_EQUAL(2, configuration_store->get_position_hint().info.day);
+	// The transmit paths still see an empty cache: a reset must not turn an old
+	// position into a payload.
+	CHECK_FALSE(configuration_store->get_last_gps_entry().info.valid);
+}
+
+TEST(GPSService, RestoredPositionAcceptsADegradedFix) {
+	GPSService s(*mock_m10q, fake_log);
+	GPSLogEntry fastloc = gps_log_entry(GPSEventType::FASTLOC, true, 30.0, 4);
+	fake_log->write(&fastloc);
+
+	s.restore_persisted_state();
+
+	CHECK_TRUE(configuration_store->get_position_hint().info.valid);
+	DOUBLES_EQUAL(30.0, configuration_store->get_position_hint().info.lat, 1e-9);
+}
+
+TEST(GPSService, LiveFixTakesPrecedenceOverTheRestoredPosition) {
+	GPSService s(*mock_m10q, fake_log);
+	GPSLogEntry stored = gps_log_entry(GPSEventType::FIX, true, 20.0, 2);
+	fake_log->write(&stored);
+	s.restore_persisted_state();
+
+	GPSLogEntry live = gps_log_entry(GPSEventType::FIX, true, 40.0, 5);
+	configuration_store->notify_gps_location(live);
+
+	DOUBLES_EQUAL(40.0, configuration_store->get_position_hint().info.lat, 1e-9);
+}
+
+TEST(GPSService, RestoreFindsNothingInALogWithoutPosition) {
+	GPSService s(*mock_m10q, fake_log);
+	GPSLogEntry nofix = gps_log_entry(GPSEventType::NO_FIX, false, 0.0, 3);
+	for (unsigned int i = 0; i < 3; i++)
+		fake_log->write(&nofix);
+
+	s.restore_persisted_state();
+
+	CHECK_FALSE(configuration_store->get_position_hint().info.valid);
+}
+
+TEST(GPSService, RestoreLooksOnlyAtTheTailOfTheLog) {
+	GPSService s(*mock_m10q, fake_log);
+	GPSLogEntry stored = gps_log_entry(GPSEventType::FIX, true, 20.0, 2);
+	GPSLogEntry nofix = gps_log_entry(GPSEventType::NO_FIX, false, 0.0, 3);
+	fake_log->write(&stored);
+	for (unsigned int i = 0; i < GPSService::POSITION_RESTORE_MAX_SCAN; i++)
+		fake_log->write(&nofix);
+
+	s.restore_persisted_state();
+
+	// Past the scan window the position is too old to be worth the reads.
+	CHECK_FALSE(configuration_store->get_position_hint().info.valid);
+}
+
+TEST(GPSService, ServiceManagerRestoresBeforeStartingAnyService) {
+	GPSService s(*mock_m10q, fake_log);
+	GPSLogEntry stored = gps_log_entry(GPSEventType::FIX, true, 20.0, 2);
+	fake_log->write(&stored);
+	mock().ignoreOtherCalls();
+
+	ServiceManager::startall();
+
+	CHECK_TRUE(configuration_store->get_position_hint().info.valid);
+	ServiceManager::stopall();
+}

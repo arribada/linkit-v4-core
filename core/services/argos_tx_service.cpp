@@ -127,8 +127,12 @@ void ArgosTxService::service_init() {
 	// PASS_PREDICTION, while its last known position had been available in
 	// flash the whole time. A position from the day before is still largely
 	// usable to predict satellite visibility.
+	//
+	// 2026-10: "available in flash" was only true of the GPS log, never of the
+	// RAM cache read here, which a reset empties. get_position_hint() falls back to
+	// the entry GPSService reads back from the log before any service starts.
 	{
-		const GPSLogEntry &last_gps = configuration_store->get_last_gps_entry();
+		const GPSLogEntry &last_gps = configuration_store->get_position_hint();
 		if (last_gps.info.valid) {
 			m_sched.set_last_location(last_gps.info.lon, last_gps.info.lat);
 			DEBUG_INFO("ArgosTxService: prepass position seeded from the persisted last fix (lon=%f lat=%f)",

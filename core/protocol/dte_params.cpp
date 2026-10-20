@@ -574,6 +574,15 @@ const BaseMap param_map[] = {
 	// ART15: fingerprint of the IDP14 for which the SMD init-time resync was
 	// last ATTEMPTED (saved before the module is powered: one attempt per master).
 	{ "ARGOS_MASTER_SYNC_ATTEMPT_FP", "ART15", BaseEncoding::UINT, 0U, 0xFFFFFFFFU, {}, (LORA_RAK3172 != 1), false },
+	// [271] PWP07: epoch of the last TRUSTED time setting (GNSS fix or $RTCW).
+	// Firmware-owned, read-only. On RSPB it bounds the pseudo-RTC honestly: the
+	// TPL5111 period is set by a resistor, so the error grows with the time
+	// elapsed since this anchor, not with the number of the current hop only.
+	{ "LAST_TIME_SYNC", "PWP07", BaseEncoding::UINT, 0U, 0U, {}, true, false },
+	// [272] PWP08: the TPL5111 period this board's resistor really gives, in ms,
+	// learnt from successive GNSS fixes (TplClock). Firmware-owned, read-only,
+	// RSPB only. 0 = not measured yet; reset when WAKEUP_PERIOD (PWP04) changes.
+	{ "WAKEUP_PERIOD_MEASURED_MS", "PWP08", BaseEncoding::UINT, 0U, 0U, {}, HAS_EXTERNAL_WAKEUP, false },
 };
 // clang-format on
 

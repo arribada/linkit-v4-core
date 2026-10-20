@@ -64,6 +64,54 @@ static void copy_gnss_to_log(const GNSSData &src, GPSLogEntry &dst) {
 }
 
 
+void GPSService::restore_persisted_state() {
+	// The live cache is RAM only. After a reset -- and on RSPB after EVERY TPL5111
+	// power cut -- it starts empty, and the receiver was then configured without
+	// any position aiding, although the last fix sat in this very log in flash.
+	Logger *log = get_logger();
+	if (!log || !log->is_ready()) return;
+	const unsigned int n = log->num_entries();
+	const unsigned int scan = (n < POSITION_RESTORE_MAX_SCAN) ? n : POSITION_RESTORE_MAX_SCAN;
+	for (unsigned int k = 1; k <= scan; k++) {
+		GPSLogEntry entry{};
+		static_assert(sizeof(GPSLogEntry) == sizeof(LogEntry), "FsLog::read() copies sizeof(LogEntry)");
+		log->read(&entry, static_cast<int>(n - k));
+		if (entry.header.log_type != LOG_GPS || !entry.info.valid) continue;
+		// Entries that carry a position. FASTLOC is a degraded PVT -- still a fine
+		// seed for aiding, whose radius is driven by the age of the entry anyway.
+		if (entry.info.event_type != GPSEventType::FIX && entry.info.event_type != GPSEventType::UPDATE
+		    && entry.info.event_type != GPSEventType::FASTLOC)
+			continue;
+		configuration_store->set_restored_position_hint(entry);
+		DEBUG_INFO("GPSService: position hint restored from flash (%04u-%02u-%02u %02u:%02u, %u entries back)",
+		           (unsigned)entry.info.year, (unsigned)entry.info.month, (unsigned)entry.info.day,
+		           (unsigned)entry.info.hour, (unsigned)entry.info.min, k);
+		return;
+	}
+}
+
+/// @brief Commit to flash what a GNSS watchdog reset must not lose: the current
+/// time (otherwise restored up to 30 min stale, which makes the persisted DBD look
+/// newer than "now" and discards it) and the DBD write the driver may still be
+/// deferring. Both GNSS watchdog resets go through here.
+void GPSService::persist_before_reset() {
+	try {
+		m_device.flush_pending_persistence();
+	} catch (...) {
+		DEBUG_ERROR("GPSService: GNSS state flush failed before reset");
+	}
+	if (rtc && rtc->is_set() && rtc->gettime() > 0) {
+		try {
+			// Plain wall time, not the TPL chain anchor: the boot that follows a
+			// software reset is never a TPL cycle, the time is restored as is.
+			configuration_store->write_param(ParamID::LAST_KNOWN_RTC, static_cast<unsigned int>(rtc->gettime()));
+			configuration_store->save_params();
+		} catch (...) {
+			DEBUG_ERROR("GPSService: RTC snapshot failed before reset");
+		}
+	}
+}
+
 /// @brief Init: reset fix state, warn about fastloc mode.
 void GPSService::service_init() {
 	m_is_active = false;
@@ -243,9 +291,11 @@ void GPSService::arm_health_wdt() {
 			    // periodic-flush gap. A backward RTC makes injected MGA-INI-TIME wrong
 			    // and breaks AssistNow — a reset loop would march time backward and
 			    // never recover. Persisting here bounds the loss to ~0.
-			    if (rtc && rtc->is_set() && rtc->gettime() > 0)
-				    configuration_store->write_param(ParamID::LAST_KNOWN_RTC,
-					                                 static_cast<unsigned int>(rtc->gettime()));
+			    //
+			    // 2026-10: write_param() only updates RAM, and PMU::reset() follows
+			    // immediately -- this "snapshot to flash" never reached the flash.
+			    // persist_before_reset() commits it, along with the pending DBD.
+			    persist_before_reset();
 			    PMU::save_stack(PMULogType::WDT);
 			    PMU::reset(false);
 		    } catch (...) {
@@ -332,9 +382,11 @@ void GPSService::arm_no_pvt_wdt() {
 			    DEBUG_ERROR("GPS No-PVT WDT: no real PVT and no transmission in %u days — soft reset", NO_PVT_WDT_DAYS);
 			    // 2026-06: persist the accurate RTC before reset (see Health WDT) so the
 			    // restore doesn't rewind time and poison AssistNow after the reset.
-			    if (rtc && rtc->is_set() && rtc->gettime() > 0)
-				    configuration_store->write_param(ParamID::LAST_KNOWN_RTC,
-					                                 static_cast<unsigned int>(rtc->gettime()));
+			    //
+			    // 2026-10: write_param() only updates RAM, and PMU::reset() follows
+			    // immediately -- this "snapshot to flash" never reached the flash.
+			    // persist_before_reset() commits it, along with the pending DBD.
+			    persist_before_reset();
 			    PMU::save_stack(PMULogType::WDT);
 			    PMU::reset(false);
 		    } catch (...) {

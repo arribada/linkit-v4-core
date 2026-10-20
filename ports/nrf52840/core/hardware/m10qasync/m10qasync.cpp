@@ -20,6 +20,7 @@
 #include "config_store.hpp"
 #include "hauled_mode_service.hpp"
 #include "rate_limiter.hpp"
+#include "tpl_clock.hpp"
 
 using namespace UBX;
 
@@ -98,6 +99,8 @@ static constexpr unsigned int BOOT_BAUD_ALT_RETRIES = 2;  ///< Budget par debit 
 //     warm-start vector. Keep everything that can still be of use.
 static constexpr unsigned int DBD_MAX_AGE_BBR_S = 72 * 3600;          ///< 3 j — carte a BBR retenue
 static constexpr unsigned int DBD_MAX_AGE_NO_BBR_S = 14 * 24 * 3600;  ///< 14 j — carte sans pile V_BCKP
+/// Below this the RTC holds a virtual (uptime-based) or unset time, not real UTC.
+static constexpr std::time_t RTC_MIN_REAL = 946684800;  // 2000-01-01
 
 // State machine helper macros
 #if VALIDATION_LOG_ENABLE
@@ -572,6 +575,13 @@ void M10QAsyncReceiver::power_off_immediate() {
 	// block on a half-booted M10Q.
 	enter_shutdown();
 
+	// A DBD fetched at the end of the previous session may still be waiting for
+	// its deferred write (DBD_SAVE_DEFER_MS). This path leads to OffState, the
+	// configuration mode, an OTA or a critical battery: commit it now rather than
+	// bet that the device survives the deferral window. Rail first, flash second
+	// -- the write touches neither the UART nor the receiver.
+	flush_deferred_dbd_save();
+
 	// Reset instance state. After PMU::powerdown soft-reset these get
 	// re-initialized by the constructor anyway, but ConfigurationState entry
 	// and a few other paths re-use the same instance — they must see a clean
@@ -1040,44 +1050,7 @@ void M10QAsyncReceiver::react(const UBXCommsEventNavReport &n) {
 
 			    if (nav.pvt.fixType != UBX::NAV::PVT::FIXTYPE_NO && nav.pvt.valid & UBX::NAV::PVT::VALID_VALID_DATE
 			        && nav.pvt.valid & UBX::NAV::PVT::VALID_VALID_TIME) {
-				    // Mitigations K + L (2026-05): detect first transition from
-				    // virtual RTC (cold-boot fallback initialised to 1) to real
-				    // UTC. Without this hook, time-based noinit state computed
-				    // against the old virtual frame produces nonsense after the
-				    // jump (e.g. HAULED could falsely engage with elapsed = 50
-				    // years). Threshold 2000-01-01: anything below is virtual or
-				    // unset, anything above is real GNSS-derived.
-				    constexpr std::time_t RTC_MIN_REAL = 946684800;  // 2000-01-01
-				    std::time_t prev = rtc ? rtc->gettime() : 0;
-				    std::time_t now = convert_epochtime(nav.pvt.year, nav.pvt.month, nav.pvt.day, nav.pvt.hour,
-					                                    nav.pvt.min, nav.pvt.sec);
-				    rtc->settime(now);
-				    // Measuring the crystal drift: `prev` (what the RTC believed) and
-				    // `now` (satellite truth) are both already to hand. No probe to add,
-				    // just a subtraction on a path already taken at every fix.
-				    rtc->note_gnss_sync(prev, now);
-
-				    // Persist the just-SYNCHRONISED time, once per session. Without this,
-				    // LAST_KNOWN_RTC was only refreshed by the periodic flush: a reset
-				    // landing in that interval restored a time EARLIER than the GPS
-				    // correction. Measured on the bench on 2026-08-25 — the clock went
-				    // 52 days backwards and the assistance data saved three minutes
-				    // earlier was thrown away by the anti-rollback guard, for a full
-				    // cold start.
-				    if (!m_rtc_persisted_this_session && now >= RTC_MIN_REAL && configuration_store) {
-					    m_rtc_persisted_this_session = true;
-					    configuration_store->write_param(ParamID::LAST_KNOWN_RTC, static_cast<unsigned int>(now));
-					    DEBUG_INFO("M10QAsyncReceiver: GNSS time persisted (%u), measured drift %d ppm",
-						           (unsigned int)now, (int)rtc->drift_ppm());
-				    }
-
-				    if (prev < RTC_MIN_REAL && now >= RTC_MIN_REAL) {
-					    DEBUG_INFO(
-					        "RTC: virtual→real sync detected (prev=%u → now=%u), re-anchoring noinit timekeepers",
-					        (unsigned int)prev, (unsigned int)now);
-					    HauledModeService::reset_for_rtc_sync(now);
-					    RateLimiter::reset_for_rtc_sync();
-				    }
+				    sync_rtc_from_pvt(nav.pvt);
 			    }
 
 			    if ((nav.pvt.fixType != UBX::NAV::PVT::FIXTYPE_2D && nav.pvt.fixType != UBX::NAV::PVT::FIXTYPE_3D)) {
@@ -1259,6 +1232,110 @@ void M10QAsyncReceiver::react(const UBXCommsEventNavReport &n) {
 	    "NavReport");
 }
 
+/// @brief Set the RTC from a PVT carrying a valid date and time, and record it.
+/// Runs in scheduler context (the NavReport task), at every such PVT.
+void M10QAsyncReceiver::sync_rtc_from_pvt(const UBX::NAV::PVT::MSG_PVT &pvt) {
+	// Mitigations K + L (2026-05): detect first transition from
+	// virtual RTC (cold-boot fallback initialised to 1) to real
+	// UTC. Without this hook, time-based noinit state computed
+	// against the old virtual frame produces nonsense after the
+	// jump (e.g. HAULED could falsely engage with elapsed = 50
+	// years). Threshold 2000-01-01: anything below is virtual or
+	// unset, anything above is real GNSS-derived.
+	std::time_t prev = rtc ? rtc->gettime() : 0;
+	std::time_t now = convert_epochtime(pvt.year, pvt.month, pvt.day, pvt.hour, pvt.min, pvt.sec);
+	// What the clock claimed before being corrected: on RSPB, the bound the TPL5111
+	// chain announced (see RTC::pseudo_uncertainty_s).
+	const bool was_pseudo = (rtc->source() == RtcSource::PSEUDO);
+	const unsigned int announced_unc_s = was_pseudo ? rtc->time_accuracy_s() : 0;
+	rtc->settime(now);
+	// Measuring the crystal drift: `prev` (what the RTC believed) and
+	// `now` (satellite truth) are both already to hand. No probe to add,
+	// just a subtraction on a path already taken at every fix.
+	rtc->note_gnss_sync(prev, now);
+
+	if (!m_rtc_persisted_this_session && now >= RTC_MIN_REAL && configuration_store) {
+		m_rtc_persisted_this_session = true;
+		// Before record_time_sync(): the measurement needs the PREVIOUS anchor.
+		if (was_pseudo && prev >= RTC_MIN_REAL) learn_from_pseudo_rtc(prev, now, announced_unc_s);
+		record_time_sync(now);
+	}
+
+	if (prev < RTC_MIN_REAL && now >= RTC_MIN_REAL) {
+		DEBUG_INFO("RTC: virtual→real sync detected (prev=%u → now=%u), re-anchoring noinit timekeepers",
+		           (unsigned int)prev, (unsigned int)now);
+		HauledModeService::reset_for_rtc_sync(now);
+		RateLimiter::reset_for_rtc_sync();
+	}
+}
+
+/// @brief Record the just-SYNCHRONISED time, once per session.
+///
+/// 2026-10: write_param() only updates RAM. The log line below used to say "GNSS
+/// time persisted" while nothing reached the flash before the next 30-min flush --
+/// a reset in between still restored an older time and the DBD saved since was
+/// discarded as "RTC went backwards" (measured 2026-08-25: 52 days back, full cold
+/// start). The first synchronisation of each boot is now committed, deferred off
+/// the fix -> TX path like the DBD.
+void M10QAsyncReceiver::record_time_sync(std::time_t now) {
+	configuration_store->write_param(ParamID::LAST_KNOWN_RTC,
+	                                 static_cast<unsigned int>(RTC::persisted_time(now, PMU::get_timestamp_ms())));
+	// The anchor that bounds the RSPB pseudo-RTC at the next boots -- 0 when this
+	// run did not start on a TPL edge (RTC::set_chain_anchorable).
+	configuration_store->write_param(ParamID::LAST_TIME_SYNC, rtc->anchor_value(now));
+	if (!m_time_sync_committed_this_boot) {
+		m_time_sync_committed_this_boot = true;
+		system_scheduler->post_task_prio(
+		    []() {
+			    try {
+				    configuration_store->save_params();
+			    } catch (...) {
+				    DEBUG_ERROR("M10QAsyncReceiver: GNSS time commit failed");
+			    }
+		    },
+		    "GnssTimeCommit", Scheduler::DEFAULT_PRIORITY, DBD_SAVE_DEFER_MS);
+	}
+	// Wording kept: the bench harness keys the fix on "GNSS time persisted".
+	DEBUG_INFO("M10QAsyncReceiver: GNSS time persisted (%u), measured drift %d ppm", (unsigned int)now,
+	           (int)rtc->drift_ppm());
+}
+
+/// @brief Measure how far off the TPL5111 pseudo-RTC really was, and learn from it
+/// the period this board's resistor actually gives.
+///
+/// The period comes from a resistor: the first fix of a run is the one place where
+/// the chain's real error can be measured. Divided by the hops since the previous
+/// anchor, it is the gap between the period the chain used and the real one
+/// (TplClock). The learnt period (PWP08) feeds the next boots' chain and tightens
+/// their bound from 5 % to 2 % per hop.
+void M10QAsyncReceiver::learn_from_pseudo_rtc(std::time_t prev, std::time_t now, unsigned int announced_unc_s) {
+	unsigned int nominal_s = 0;
+	uint32_t measured_ms = 0;
+	[[maybe_unused]] uint32_t updated_ms = 0;  // only read by the [VAL-GNSS] line
+	                                           // The only boards with a pseudo-RTC chain (and a WAKEUP_PERIOD).
+#ifdef EXTERNAL_WAKEUP
+	nominal_s = configuration_store->read_param<unsigned int>(ParamID::WAKEUP_PERIOD);
+	const unsigned int current_ms = configuration_store->read_param<unsigned int>(ParamID::WAKEUP_PERIOD_MEASURED_MS);
+	const unsigned int anchor = configuration_store->read_param<unsigned int>(ParamID::LAST_TIME_SYNC);
+	const std::time_t up_s = static_cast<std::time_t>(PMU::get_timestamp_ms() / 1000ULL);
+	const uint32_t chain_ms = TplClock::chain_period_s(nominal_s, current_ms) * 1000U;
+	measured_ms = TplClock::measure_period_ms(chain_ms, prev - up_s, now - up_s, anchor);
+	updated_ms = TplClock::update_calibration_ms(nominal_s, current_ms, measured_ms);
+	if (updated_ms != current_ms)
+		configuration_store->write_param(ParamID::WAKEUP_PERIOD_MEASURED_MS, static_cast<unsigned int>(updated_ms));
+#endif
+
+	const long err_s = static_cast<long>(prev - now);
+	const unsigned long abs_err_s = (err_s < 0) ? (unsigned long)(-err_s) : (unsigned long)err_s;
+	if (abs_err_s > announced_unc_s) {
+		DEBUG_WARN("M10QAsyncReceiver: pseudo-RTC was off by %ld s, beyond its announced +/-%u s (period measured "
+		           "%u ms, WAKEUP_PERIOD %u s) — check WAKEUP_PERIOD against the TPL5111 resistor",
+		           err_s, announced_unc_s, (unsigned)measured_ms, nominal_s);
+	}
+	VAL_GNSS("pseudo_rtc_err s=%ld announced=%u tpl_measured_ms=%u tpl_calibration_ms=%u", err_s, announced_unc_s,
+	         (unsigned)measured_ms, (unsigned)updated_ms);
+}
+
 void M10QAsyncReceiver::react(const UBXCommsEventRawMeasurement &meas) {
 	// Called from ISR context via UBX comms filter — protect shared state
 	bool emit_cloudlocate_ready = false;
@@ -1367,9 +1444,10 @@ void M10QAsyncReceiver::react(const UBXCommsEventMgaDBD &dbd) {
 		// Writing above max(payload length) removes the overlap by construction, at
 		// no cost in capacity: the region above the payload is free by definition,
 		// and the send cursor stops at the payload end. Only one of the two lengths
-		// is ever non-zero in these states (state_sendofflinedatabase_enter zeroes
-		// m_ana_database_len, and senddatabase runs after it), so the max is the
-		// payload end in both.
+		// is ever non-zero in these states (state_senddatabase_enter zeroes
+		// m_ano_database_len, then state_sendofflinedatabase_enter, which runs
+		// after it, zeroes m_ana_database_len), so the max is the payload end in
+		// both.
 		const unsigned int ack_base = mga_ack_base();
 		if ((ack_base + m_mga_ack_count + dbd.length) <= sizeof(m_navigation_database)) {
 			std::memcpy(&m_navigation_database[ack_base + m_mga_ack_count], dbd.database, dbd.length);
@@ -1618,7 +1696,8 @@ void M10QAsyncReceiver::state_poweroff() {
 	enter_shutdown();
 	// Persist current RTC for next boot (enables MGA-ANO assistance and faster TTFF)
 	if (rtc->is_set()) {
-		configuration_store->write_param(ParamID::LAST_KNOWN_RTC, static_cast<unsigned int>(rtc->gettime()));
+		const std::time_t persisted = RTC::persisted_time(rtc->gettime(), PMU::get_timestamp_ms());
+		configuration_store->write_param(ParamID::LAST_KNOWN_RTC, static_cast<unsigned int>(persisted));
 		// RAM updated — flash deferred to periodic flush / powerdown
 		DEBUG_TRACE("Updated LAST_KNOWN_RTC = %u (RAM)", static_cast<unsigned int>(rtc->gettime()));
 	}
@@ -2266,7 +2345,9 @@ void M10QAsyncReceiver::state_configure() {
 					m_step++;
 				}
 			} else if (m_step == 14) {
-				const auto &last_gps = configuration_store->get_last_gps_entry();
+				// The hint, not the live cache: after a reset (and on RSPB after every
+				// TPL cycle) the live cache is empty while the GPS log still holds the fix.
+				const auto &last_gps = configuration_store->get_position_hint();
 				if (last_gps.info.valid) {
 					supply_position_assistance();
 					break;
@@ -2309,12 +2390,23 @@ void M10QAsyncReceiver::state_configure() {
 				//    one thing that helps here). DBD is still skipped (redundant — the
 				//    receiver has its own last dump live; see state_senddatabase_enter).
 				//    This gates the blanket ANO-skip of 26ab5c6a on recency (audit #3).
-				//  - BBR lost (cold rail / reset): full assistance chain (TIME+POS+ANO
-				//    +DBD) exactly as before.
+				//  - BBR lost (cold rail / reset): full assistance chain, TIME+POS
+				//    (steps 13-14) then DBD then ANO.
+				//
+				// 2026-10 — DBD FIRST, then ANO, and the ANO no longer cancels the DBD.
+				// The chain used to run ANO first and jump straight to startreceive as
+				// soon as the ANO had produced a single byte, so a receiver with a valid
+				// offline file never got its own database back: no broadcast ephemeris
+				// (a dive shorter than ~4 h leaves them valid = hot start), no
+				// AssistNow Autonomous orbits, no iono/UTC/health. The two do not
+				// compete -- the SAM-M10Q integration manual (§2.12.3) says the
+				// receiver uses ANO "when no better data is available". The ANO goes
+				// LAST so that the day's file is the newest offline data the receiver
+				// holds, whatever older ANO the DBD dump may carry.
 				if (m_bbr_retained && bbr_orbits_likely_fresh()) {
 					STATE_CHANGE(configure, startreceive);
 				} else {
-					STATE_CHANGE(configure, sendofflinedatabase);
+					STATE_CHANGE(configure, senddatabase);
 				}
 				break;
 			}
@@ -2570,6 +2662,33 @@ void M10QAsyncReceiver::state_stopreceive_enter() {
 	m_step = 0;
 	m_retries = DEFAULT_RETRIES;
 	m_op_state = OpState::IDLE;
+	m_aop_wait_started_ms = 0;
+	m_aop_busy_seen = false;
+	m_aop_status_valid = false;
+}
+
+/// @brief One AssistNow Autonomous status has been read in stopreceive step 5.
+/// @return true to poll again later, false to move on to the DBD read-out.
+bool M10QAsyncReceiver::aop_wait_should_continue() {
+	const uint64_t now_ms = PMU::get_timestamp_ms();
+	const uint64_t waited_ms = (now_ms > m_aop_wait_started_ms) ? (now_ms - m_aop_wait_started_ms) : 0;
+	const bool busy = m_aop_status_valid && (m_aop_status != 0);
+	if (busy) {
+		m_aop_busy_seen = true;
+		if (waited_ms < AOP_WAIT_MAX_MS) return true;
+		// Safety ceiling: never hold the receiver on indefinitely for this.
+		DEBUG_WARN("M10QAsyncReceiver: AssistNow Autonomous still busy after %u ms (status=%u) — powering off anyway",
+		           (unsigned)waited_ms, (unsigned)m_aop_status);
+		VAL_GNSS("aop_wait cap waited_ms=%u status=%u", (unsigned)waited_ms, (unsigned)m_aop_status);
+		return false;
+	}
+	if (m_aop_busy_seen) {
+		// Rare and worth a production line: the orbits now in the DBD dump are
+		// the ones this wait exists to save.
+		DEBUG_INFO("M10QAsyncReceiver: AssistNow Autonomous finished after %u ms — orbits kept", (unsigned)waited_ms);
+	}
+	VAL_GNSS("aop_wait idle waited_ms=%u busy_seen=%u", (unsigned)waited_ms, (unsigned)m_aop_busy_seen);
+	return false;
 }
 
 void M10QAsyncReceiver::state_stopreceive() {
@@ -2603,17 +2722,46 @@ void M10QAsyncReceiver::state_stopreceive() {
 				m_op_state = OpState::IDLE;
 				run_state_machine(100);  // Allow 100 ms to flush out any stray messages
 				break;
+			} else if (m_step == 5) {
+				// Wait for AssistNow Autonomous to go idle BEFORE the DBD is read
+				// out (see AOP_WAIT_MAX_MS). Pointless with ANA off (status is
+				// always 0) and on a receiver already in error.
+				if (!m_nav_settings.assistnow_autonomous_enable || m_unrecoverable_error) {
+					m_step++;
+					m_op_state = OpState::IDLE;
+					continue;
+				}
+				if (m_aop_wait_started_ms == 0) m_aop_wait_started_ms = PMU::get_timestamp_ms();
+				poll_aop_status();
+				break;
 			} else {
 				STATE_CHANGE(stopreceive, fetchdatabase);
 				break;
 			}
 		} else if (m_op_state == OpState::SUCCESS) {
+			if (m_step == 5 && aop_wait_should_continue()) {
+				m_op_state = OpState::IDLE;
+				run_state_machine(AOP_POLL_PERIOD_MS);
+				break;
+			}
 			m_step++;
 			m_retries = DEFAULT_RETRIES;
 			m_op_state = OpState::IDLE;
 		} else if (m_op_state == OpState::PENDING) {
 			break;
 		} else {
+			if (m_step == 5) {
+				// No reply to the AOPSTATUS poll (or a NACK): this receiver will not
+				// tell us, so it must not hold the shutdown either. Straight on to
+				// the DBD read-out, without touching the retry budget.
+				DEBUG_TRACE("M10QAsyncReceiver: NAV-AOPSTATUS unanswered (op=%d) — not waiting", (int)m_op_state);
+				VAL_GNSS("aop_wait no_reply op=%d", (int)m_op_state);
+				if (m_op_state == OpState::ERROR) m_ubx_comms.set_baudrate(m_synced_baud);  // restarts the RX
+				m_step++;
+				m_retries = DEFAULT_RETRIES;
+				m_op_state = OpState::IDLE;
+				continue;
+			}
 			if (--m_retries == 0) {
 				// FSM recovers cleanly: transition to poweroff which honors
 				// m_deep_idle_pending (reroutes to enterbackup → backupidle).
@@ -2696,6 +2844,19 @@ void M10QAsyncReceiver::save_dbd_to_flash() {
 		DEBUG_TRACE("M10QAsyncReceiver::save_dbd_to_flash: saved %u bytes (t=%u)", m_ana_database_len, save_time);
 	} catch (...) {
 		DEBUG_WARN("M10QAsyncReceiver::save_dbd_to_flash: write failed");
+	}
+}
+
+uint32_t M10QAsyncReceiver::persisted_dbd_time(FileSystem *fs) {
+	if (!fs) return 0;
+	try {
+		LFSFile file(fs, "gnss_dbd.dat", LFS_O_RDONLY);
+		if ((unsigned int)file.size() <= sizeof(uint32_t)) return 0;
+		uint32_t save_time = 0;
+		if (file.read(&save_time, sizeof(save_time)) != (lfs_ssize_t)sizeof(save_time)) return 0;
+		return save_time;
+	} catch (...) {
+		return 0;  // no file yet: nothing to say about the clock
 	}
 }
 
@@ -2914,21 +3075,23 @@ void M10QAsyncReceiver::state_senddatabase_enter() {
 	m_step = 0;
 	m_op_state = OpState::IDLE;
 	m_mga_ack_count = 0;
+	// 2026-10 — this state now runs BEFORE sendofflinedatabase (see the end of
+	// state_configure). No ANO is held at this point; zeroing the length keeps
+	// mga_ack_base() on the DBD payload.
+	m_ano_database_len = 0;
 
-	// Pas de DBD en RAM et pas d'ANO servi cette session : relire la copie
-	// persistee. La condition m_ano_database_len == 0 RESTE : elle empeche
-	// d'ecraser un buffer ANO deja rempli (m_navigation_database est partage,
-	// voir state_sendofflinedatabase_enter). 2026-09 — la condition sur le
-	// drapeau ANA a ete retiree, voir state_fetchdatabase : le DBD est un
-	// vecteur de persistance, pas une fonction de l'ANA. Quand ANA=true le terme
-	// retire valait true et le predicat est inchange.
-	// 2026-10 — ET !m_bbr_retained : quand la BBR est retenue le recepteur tient
-	// deja sa base de navigation en vie, rejouer notre propre dump est redondant
-	// et risque le "clears the existing data" de l'IM. On n'arrive ici sur BBR
-	// retenue QUE si les orbites sont perimees (voir configure final-else) : dans
-	// ce cas on veut l'ANO (deja tente en amont), pas le DBD. Sans BBR (froid), on
-	// relit le DBD comme avant.
-	if (m_ana_database_len == 0 && m_ano_database_len == 0 && !m_bbr_retained) {
+	if (m_bbr_retained) {
+		// The receiver kept its BBR and therefore its own live navigation
+		// database: replaying our dump of it is redundant, and the integration
+		// manual warns that host assistance "clears the existing data". A
+		// BBR-retained session only reaches this state when its orbits are
+		// likely stale (configure final-else), and what helps then is the ANO
+		// that follows -- not the DBD. The RAM copy, if any, is left unsent.
+		m_ana_database_len = 0;
+	} else if (m_ana_database_len == 0) {
+		// No DBD in RAM (first session since boot, or the last fetch failed):
+		// reload the persisted copy. 2026-09 — not gated by the ANA flag: the DBD
+		// is a persistence vector, not an ANA feature (see state_fetchdatabase).
 		load_dbd_from_flash();
 	}
 
@@ -2965,7 +3128,7 @@ void M10QAsyncReceiver::state_senddatabase() {
 				    MessageClass::MSG_CLASS_MGA, MGA::ID_ACK);
 				DEBUG_TRACE("M10QAsyncReceiver::state_senddatabase: %s: %u/%u acks recieved",
 				            success ? "success" : "missing MGA-ACK", actual_count, m_expected_dbd_messages);
-				STATE_CHANGE(senddatabase, startreceive);
+				STATE_CHANGE(senddatabase, sendofflinedatabase);
 				break;
 			}
 		} else if (m_op_state == OpState::SUCCESS) {
@@ -3067,13 +3230,14 @@ void M10QAsyncReceiver::state_sendofflinedatabase_enter() {
 }
 
 void M10QAsyncReceiver::state_sendofflinedatabase() {
+	// Last link of the assistance chain since 2026-10 (the DBD went before it).
 	if (!m_nav_settings.assistnow_offline_enable) {
-		STATE_CHANGE(sendofflinedatabase, senddatabase);
+		STATE_CHANGE(sendofflinedatabase, startreceive);
 		return;
 	}
 
 	if (m_ano_database_len == 0) {
-		STATE_CHANGE(sendofflinedatabase, senddatabase);
+		STATE_CHANGE(sendofflinedatabase, startreceive);
 		return;
 	}
 
@@ -3142,6 +3306,9 @@ void M10QAsyncReceiver::state_sendofflinedatabase() {
 
 void M10QAsyncReceiver::state_sendofflinedatabase_exit() {
 	m_ubx_comms.stop_dbd_filter();
+	// The ANO bytes have been sent (or abandoned): like the DBD in
+	// state_senddatabase_exit, the RAM copy is dead from here on.
+	m_ano_database_len = 0;
 }
 
 void M10QAsyncReceiver::state_idle_enter() {

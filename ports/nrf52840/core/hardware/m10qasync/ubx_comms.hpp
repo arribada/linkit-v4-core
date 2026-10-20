@@ -88,6 +88,23 @@ struct UBXCommsEventMonVer {
 	}
 };
 
+/// @brief Reply to a UBX-NAV-AOPSTATUS poll.
+/// `status` 0 = AssistNow Autonomous idle (or disabled); anything else = busy
+/// generating orbit data, which the receiver must not be powered off during.
+struct UBXCommsEventAopStatus {
+	uint8_t aop_cfg = 0;
+	uint8_t status = 0;
+	bool valid = false;
+	UBXCommsEventAopStatus(const uint8_t *payload, unsigned int len) {
+		if (len >= sizeof(UBX::NAV::AOPSTATUS::MSG_AOPSTATUS)) {
+			const UBX::NAV::AOPSTATUS::MSG_AOPSTATUS *aop = (const UBX::NAV::AOPSTATUS::MSG_AOPSTATUS *)payload;
+			aop_cfg = aop->aopCfg;
+			status = aop->status;
+			valid = true;
+		}
+	}
+};
+
 struct UBXCommsEventSecUniqId {
 	uint8_t uniqueId[5];
 	UBXCommsEventSecUniqId(const uint8_t *payload, unsigned int len) {
@@ -111,6 +128,7 @@ public:
 	virtual void react(const UBXCommsEventMgaDBD &) {}
 	virtual void react(const UBXCommsEventMonVer &) {}
 	virtual void react(const UBXCommsEventSecUniqId &) {}
+	virtual void react(const UBXCommsEventAopStatus &) {}
 	virtual void react(const UBXCommsEventRawMeasurement &) {}
 	virtual void react(const UBXCommsEventDebug &) {}
 	virtual void react(const UBXCommsEventError &) {}
@@ -248,6 +266,7 @@ private:
 	UBX::HeaderAndPayloadCRC *parse_message(uint8_t **buffer, unsigned int *length);
 	void compute_crc(const uint8_t *const buffer, const unsigned int length, uint8_t &ck_a, uint8_t &ck_b);
 	void run_expect_filter(const UBX::HeaderAndPayloadCRC *const msg);
+	bool notify_poll_response(const UBX::HeaderAndPayloadCRC *const msg);
 	void run_nav_filter(const UBX::HeaderAndPayloadCRC *const msg);
 	void run_rxm_filter(const UBX::HeaderAndPayloadCRC *const msg);
 	void run_dbd_filter(uint8_t *buffer, unsigned int length);

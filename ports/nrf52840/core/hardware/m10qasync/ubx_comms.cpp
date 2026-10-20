@@ -414,19 +414,33 @@ void UBXComms::run_expect_filter(const UBX::HeaderAndPayloadCRC *const msg) {
 			m_expect.enable = false;
 			notify(UBXCommsEventAckNack(ack->infoCode == 0));
 		}
-	} else if (msg->msgClass == MessageClass::MSG_CLASS_CFG && msg->msgId == UBX::CFG::ID_VALGET) {
-		m_expect.enable = false;
-		notify(UBXCommsEventCfgValget((uint8_t *)msg->payload, msg->msgLength));
-	} else if (msg->msgClass == MessageClass::MSG_CLASS_MON && msg->msgId == UBX::MON::ID_VER) {
-		m_expect.enable = false;
-		notify(UBXCommsEventMonVer((uint8_t *)msg->payload, msg->msgLength));
-	} else if (msg->msgClass == MessageClass::MSG_CLASS_SEC && msg->msgId == UBX::SEC::ID_UNIQID) {
-		m_expect.enable = false;
-		notify(UBXCommsEventSecUniqId((uint8_t *)msg->payload, msg->msgLength));
-	} else {
+	} else if (!notify_poll_response(msg)) {
 		m_expect.enable = false;
 		notify(UBXCommsEventAckNack(true));
 	}
+}
+
+/// @brief Hand a polled message (the reply to a request with a payload of its own)
+/// to the listener as its typed event.
+/// @return false if `msg` is not one of the polled messages handled here.
+bool UBXComms::notify_poll_response(const UBX::HeaderAndPayloadCRC *const msg) {
+	uint8_t *payload = (uint8_t *)msg->payload;
+	if (msg->msgClass == MessageClass::MSG_CLASS_CFG && msg->msgId == UBX::CFG::ID_VALGET) {
+		m_expect.enable = false;
+		notify(UBXCommsEventCfgValget(payload, msg->msgLength));
+	} else if (msg->msgClass == MessageClass::MSG_CLASS_MON && msg->msgId == UBX::MON::ID_VER) {
+		m_expect.enable = false;
+		notify(UBXCommsEventMonVer(payload, msg->msgLength));
+	} else if (msg->msgClass == MessageClass::MSG_CLASS_SEC && msg->msgId == UBX::SEC::ID_UNIQID) {
+		m_expect.enable = false;
+		notify(UBXCommsEventSecUniqId(payload, msg->msgLength));
+	} else if (msg->msgClass == MessageClass::MSG_CLASS_NAV && msg->msgId == UBX::NAV::ID_AOPSTATUS) {
+		m_expect.enable = false;
+		notify(UBXCommsEventAopStatus(payload, msg->msgLength));
+	} else {
+		return false;
+	}
+	return true;
 }
 
 void UBXComms::run_nav_filter(const UBX::HeaderAndPayloadCRC *const msg) {

@@ -407,7 +407,9 @@ void GenTracker::periodic_config_flush() {
 		if (rtc && rtc->is_set()) {
 			std::time_t now = rtc->gettime();
 			if (now > 0) {
-				configuration_store->write_param(ParamID::LAST_KNOWN_RTC, static_cast<unsigned int>(now));
+				// RTC::persisted_time: on a TPL5111 board, the instant this run booted.
+				const std::time_t persisted = RTC::persisted_time(now, PMU::get_timestamp_ms());
+				configuration_store->write_param(ParamID::LAST_KNOWN_RTC, static_cast<unsigned int>(persisted));
 			}
 		}
 		DEBUG_TRACE("GenTracker::periodic_config_flush: saving counters to flash");

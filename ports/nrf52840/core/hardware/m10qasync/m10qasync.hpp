@@ -345,6 +345,31 @@ private:
 	void fetch_navigation_database();
 	void query_mon_ver();
 	void query_sec_uniqid();
+	/// @brief Poll UBX-NAV-AOPSTATUS (reply: react(UBXCommsEventAopStatus)).
+	void poll_aop_status();
+	void sync_rtc_from_pvt(const UBX::NAV::PVT::MSG_PVT &pvt);
+	void record_time_sync(std::time_t now);
+	void learn_from_pseudo_rtc(std::time_t prev, std::time_t now, unsigned int announced_unc_s);
+
+	// 2026-10 — wait for AssistNow Autonomous to go idle before the DBD is read
+	// out and the receiver powered off. Integration manual §2.12.4.2: "Hosts
+	// should monitor this information and only power off the receiver when the
+	// subsystem is idle". Stopping at the first fix used to cut it mid-
+	// computation: the orbits it was deriving from freshly decoded ephemerides --
+	// valid 3 to 6 days, and carried by the MGA-DBD dump -- were never finished.
+	// The wait costs one poll (~tens of ms) when the subsystem is already idle,
+	// which is the common case; it only lasts when there is something to save.
+	static constexpr unsigned int AOP_POLL_TIMEOUT_MS = 500;  ///< no reply = not supported, do not wait
+	static constexpr unsigned int AOP_POLL_PERIOD_MS = 1000;  ///< re-poll interval while busy
+	/// Safety ceiling on the wait: past it the receiver is powered off anyway.
+	/// ~12 mA x 20 s = 0.07 mAh, against a cold start (~30 s at 13 mA) that the
+	/// finished orbits are meant to avoid. Tune from the [VAL-GNSS] aop_wait lines.
+	static constexpr unsigned int AOP_WAIT_MAX_MS = 20000;
+	bool aop_wait_should_continue();
+	volatile uint8_t m_aop_status = 0;
+	volatile bool m_aop_status_valid = false;
+	bool m_aop_busy_seen = false;
+	uint64_t m_aop_wait_started_ms = 0;
 	void sync_baud_rate(unsigned int baud);
 	void send_pmreq_backup();
 	void pulse_extint_wake();  ///< 2026-05 deep-idle: pulse EXTINT to wake M10Q from PMREQ-backup
@@ -384,6 +409,9 @@ private:
 	// the scheduler right when the fix triggers the GNSS transmission.
 	static constexpr unsigned int DBD_SAVE_DEFER_MS = 15000;
 	bool m_dbd_save_pending = false;
+	/// The first GNSS time synchronisation of this boot has been committed to
+	/// flash (deliberately NOT reset per session: once per boot is the point).
+	bool m_time_sync_committed_this_boot = false;
 	Scheduler::TaskHandle m_dbd_save_task;
 	void defer_dbd_save();
 	void flush_deferred_dbd_save();
@@ -406,11 +434,16 @@ private:
 	void react(const UBXCommsEventMgaDBD &) override;
 	void react(const UBXCommsEventMonVer &) override;
 	void react(const UBXCommsEventSecUniqId &) override;
+	void react(const UBXCommsEventAopStatus &) override;
 	void react(const UBXCommsEventRawMeasurement &) override;
 	void react(const UBXCommsEventDebug &) override;
 	void react(const UBXCommsEventError &) override;
 
 public:
+	void flush_pending_persistence() override { flush_deferred_dbd_save(); }
+	/// @brief Timestamp (GNSS time) at which the persisted DBD was written, 0 if
+	/// none. Read at boot, before any driver exists, as a floor for a restored clock.
+	static uint32_t persisted_dbd_time(FileSystem *fs);
 	GNSSDeviceInfo get_device_info() const override;
 	GNSSAlmanacStatus get_almanac_status(unsigned int ano_stale_threshold_s = 25 * 24 * 3600) const override;
 	bool has_degraded_pvt() const override { return m_has_degraded_pvt; }

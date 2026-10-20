@@ -72,6 +72,15 @@ public:
 	/// on_stop  fires on every stop (manual, timer, abort) and clears both callbacks.
 	void set_backup_charge_callbacks(std::function<void()> on_start, std::function<void()> on_stop);
 
+	/// @brief Seed the position hint (ConfigurationStore::get_position_hint) from
+	/// the most recent positional entry of the GPS log in flash.
+	void restore_persisted_state() override;
+
+	/// How far back into the GPS log the restore looks for a positional entry.
+	/// The log can end on a run of NO_FIX sessions (a long dive, a night under a
+	/// rock); past this many entries the position is too old to be worth a read.
+	static constexpr unsigned int POSITION_RESTORE_MAX_SCAN = 64;
+
 protected:
 	// Service interface methods
 	void service_init() override;
@@ -88,6 +97,7 @@ protected:
 
 private:
 	GPSDevice &m_device;
+	void persist_before_reset();
 	bool m_is_first_fix_found = false;
 	/// @brief Has ANY acquisition succeeded since boot — a real PVT or a CloudLocate
 	/// raw measurement?

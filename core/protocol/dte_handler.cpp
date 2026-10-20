@@ -2063,7 +2063,12 @@ std::string DTEHandler::RTCW_REQ(int error_code, std::vector<BaseType> &arg_list
 	DEBUG_INFO("DTEHandler::RTCW_REQ: RTC set to %u", timestamp);
 
 	// Also update LAST_KNOWN_RTC so the pseudo RTC chain continues from this value
-	configuration_store->write_param(ParamID::LAST_KNOWN_RTC, timestamp);
+	// (as the instant this run booted on a TPL5111 board, see RTC::persisted_time),
+	// and LAST_TIME_SYNC: an operator setting is a trusted anchor for the chain's
+	// uncertainty until the first GNSS fix replaces it.
+	const std::time_t persisted = RTC::persisted_time(rtc->gettime(), PMU::get_timestamp_ms());
+	configuration_store->write_param(ParamID::LAST_KNOWN_RTC, static_cast<unsigned int>(persisted));
+	configuration_store->write_param(ParamID::LAST_TIME_SYNC, rtc->anchor_value(static_cast<std::time_t>(timestamp)));
 	configuration_store->save_params();
 	DEBUG_TRACE("DTEHandler::RTCW_REQ: LAST_KNOWN_RTC updated to %u", timestamp);
 

@@ -499,8 +499,10 @@ enum class ParamID {
 	ARGOS_MASTER_MODULATION                  = 268,  // uint: master RCONF modulation from a GENUINE read-back, 0 LDA2 / 1 LDK / 2 VLDA4 / 3 unknown
 	ARGOS_MASTER_RCONF_FP                    = 269,  // uint: fingerprint of the IDP14 that ARGOS_MASTER_MODULATION was read back from
 	ARGOS_MASTER_SYNC_ATTEMPT_FP             = 270,  // uint: fingerprint of the IDP14 for which an init-time SMD resync was last attempted
+	LAST_TIME_SYNC                           = 271,  // uint epoch: last time the RTC was set from a trusted source (GNSS fix or $RTCW); anchors the RSPB pseudo-RTC uncertainty
+	WAKEUP_PERIOD_MEASURED_MS                = 272,  // uint ms: TPL5111 period this board's resistor really gives, learnt from GNSS fixes (0 = not yet)
 	// === Sentinel (fixed regardless of #ifdef combinations) ===
-	__PARAM_SIZE                             = 271,
+	__PARAM_SIZE                             = 273,
 	__NULL_PARAM                             = 0xFFFF
 };
 // clang-format on

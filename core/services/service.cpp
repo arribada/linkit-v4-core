@@ -138,6 +138,17 @@ void ServiceManager::startall(std::function<void(ServiceEvent &)> data_notificat
 	// edges seen in configuration mode must not count as dives.
 	restore_step(DiveBehaviourTracker::reset, "DiveBehaviourTracker::reset");
 #endif
+	// Every service restores its persisted state before ANY service starts: the
+	// start order is the registration order, and ArgosTxService (registered
+	// before GPSService) seeds its pass predictor from the position GPSService
+	// reads back from flash here.
+	for (auto const &p : m_map) {
+		try {
+			p.second.restore_persisted_state();
+		} catch (...) {
+			log_caught_exception("ServiceManager::startall restore", p.second.get_name());
+		}
+	}
 	for (auto const &p : m_map) {
 		DEBUG_TRACE("ServiceManager::startall: starting %s id=%u", p.second.get_name(), p.first);
 		p.second.start_or_retry(data_notification_callback);

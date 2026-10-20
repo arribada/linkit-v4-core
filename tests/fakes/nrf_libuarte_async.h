@@ -159,6 +159,11 @@ extern bool m_is_rx_enabled; /* etat RX du fake, lu par les tests */
 
 void nrf_libuarte_inject_event(nrf_libuarte_async_evt_t *evt);
 
+// Test capture of everything transmitted (cleared by the test)
+void nrf_libuarte_tx_log_clear(void);
+size_t nrf_libuarte_tx_log_size(void);
+const uint8_t *nrf_libuarte_tx_log_data(void);
+
 /** @} */
 
 #ifdef __cplusplus

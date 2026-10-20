@@ -193,6 +193,13 @@ protected:
 	// pure append, __PARAM_SIZE 267 -> 271. An older file ends before them, so
 	// they come back at their defaults (unknown / untrusted), which costs at most
 	// one init-time resync attempt on SMD and nothing on KIM2.
+	// 0x20 KEPT in 2026-10 for slot 271 (LAST_TIME_SYNC, PWP07): pure append,
+	// __PARAM_SIZE 271 -> 272. An older file comes back with 0 = "never
+	// synchronised", so an RSPB unit treats its pseudo-RTC as unbounded until its
+	// next fix -- no time aiding for one cycle, nothing else.
+	// 0x20 KEPT for slot 272 (WAKEUP_PERIOD_MEASURED_MS, PWP08): pure append,
+	// __PARAM_SIZE 272 -> 273. 0 = not measured: the chain uses WAKEUP_PERIOD until
+	// two fixes have measured the resistor.
 	static inline const unsigned int m_config_version_code = 0x1c07e800 | 0x20;
 	static inline const unsigned int m_config_version_code_aop = 0x1c07e800 | 0x03;
 	// Board-conditional default for slot [240] GNSS_DEEP_IDLE_AFTER_OFF_S. Kept as a
@@ -507,6 +514,8 @@ protected:
 		/* [268] ARGOS_MASTER_MODULATION */ 3U,       // unknown until a genuine master read-back
 		/* [269] ARGOS_MASTER_RCONF_FP */ 0U,         // 0 never matches a non-empty master: untrusted
 		/* [270] ARGOS_MASTER_SYNC_ATTEMPT_FP */ 0U,  // no init-time resync attempted yet
+		/* [271] LAST_TIME_SYNC */ 0U,                // never synchronised: the pseudo-RTC cannot be bounded
+		/* [272] WAKEUP_PERIOD_MEASURED_MS */ 0U,     // not measured yet: the chain uses WAKEUP_PERIOD
 	};
 	// clang-format on
 
@@ -565,6 +574,7 @@ protected:
 	bool m_is_battery_level_low = false;
 	GPSLogEntry m_last_gps_log_entry;
 	GPSLogEntry m_last_fastloc_log_entry;
+	GPSLogEntry m_restored_position_hint;  ///< read back from the GPS log at start, see get_position_hint()
 	ConfigMode m_last_config_mode;
 
 	/// @brief HM-2 audit fix: track config-mode transitions with an explicit
@@ -643,6 +653,7 @@ public:
 	ConfigurationStore() {
 		m_last_gps_log_entry.info.valid = 0;      // Mark last GPS entry as invalid
 		m_last_fastloc_log_entry.info.valid = 0;  // Mark last Fastloc entry as invalid
+		m_restored_position_hint.info.valid = 0;  // Nothing restored from flash yet
 		m_last_config_mode = ConfigMode::NORMAL;
 	}
 
@@ -863,6 +874,9 @@ public:
 	template <typename T> void write_param(ParamID param_id, const T &value) {
 		try {
 			if (is_valid()) {
+#ifdef EXTERNAL_WAKEUP
+				if (param_id == ParamID::WAKEUP_PERIOD) forget_measured_period_if_changed(value);
+#endif
 				m_params.at((unsigned)param_id) = value;
 				// Mark credentials dirty when credential params change
 				if (param_id == ParamID::ARGOS_DECID || param_id == ParamID::ARGOS_HEXID ||
@@ -878,6 +892,18 @@ public:
 			throw CONFIG_STORE_CORRUPTED;
 		}
 	}
+
+#ifdef EXTERNAL_WAKEUP
+	/// @brief A new WAKEUP_PERIOD means a new TPL5111 resistor (or a corrected
+	/// nominal): the period learnt from the old one no longer applies. Rewriting the
+	/// same value -- a full configuration upload does that -- keeps it.
+	template <typename T> void forget_measured_period_if_changed(const T &value) {
+		const BaseType incoming = value;
+		const unsigned int *old_s = std::get_if<unsigned int>(&m_params.at((unsigned)ParamID::WAKEUP_PERIOD));
+		const unsigned int *new_s = std::get_if<unsigned int>(&incoming);
+		if (!old_s || !new_s || *old_s != *new_s) m_params.at((unsigned)ParamID::WAKEUP_PERIOD_MEASURED_MS) = 0U;
+	}
+#endif
 
 	/// @brief Check if credential params have been modified since last SMD write.
 	bool is_credentials_dirty() const { return m_credentials_dirty; }
@@ -951,6 +977,26 @@ public:
 
 	/// @brief Get the last known GPS fix.
 	const GPSLogEntry &get_last_gps_entry() const { return m_last_gps_log_entry; }
+
+	/// @brief Record the last position read back from the GPS log in flash.
+	///
+	/// `m_last_gps_log_entry` lives in RAM only: it is empty after every reset, and
+	/// on RSPB -- where the TPL5111 cuts the power at every cycle -- it was empty at
+	/// the start of EVERY session, so the receiver never got MGA-INI-POS there.
+	/// The position is not lost, the GPS log keeps it in flash; GPSService reads it
+	/// back at start (service_restore_persisted_state) and hands it in here.
+	void set_restored_position_hint(const GPSLogEntry &entry) { m_restored_position_hint = entry; }
+
+	/// @brief Last known position, for ASSISTANCE and PREDICTION only.
+	///
+	/// The live fix of this run when there is one, otherwise the one restored from
+	/// flash. Meant for consumers that degrade gracefully with the age of the
+	/// position -- GNSS position aiding (its radius grows with age), the orbit
+	/// freshness proxy, satellite pass prediction. The transmit paths keep using
+	/// get_last_gps_entry(): a reset must not turn an old position into a payload.
+	const GPSLogEntry &get_position_hint() const {
+		return m_last_gps_log_entry.info.valid ? m_last_gps_log_entry : m_restored_position_hint;
+	}
 
 	/// @brief Update cached last Fastloc / degraded-PVT position.
 	/// Used by Phase-1 surfacing burst to TX the most recent known position
