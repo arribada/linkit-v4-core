@@ -176,7 +176,27 @@ KIM2Device::KIM2Device() {
 	m_tx_poll_counter = 0;
 	m_rx_window_ended = false;
 	m_rx_allcast_queue.clear();
-	// Start in power_off — device will power on when send() is called
+
+	// Read the module identity right away instead of waiting for the first
+	// transmission. Safe here: the device is built in phase 6 of main
+	// (init_communication), after GPIO init (phase 1) and after the scheduler
+	// and the configuration store (phase 3); the power rails are still at
+	// 3.3 V since reduce_power_rails() only runs from the main loop.
+	// Must never throw: the constructor sits in a try/catch(...) in main, and an
+	// exception would mark the KIM2 "not detected" and skip the TX/RX services
+	// for the whole boot.
+	try {
+		identify();
+	} catch (...) {
+		DEBUG_WARN("KIM2Device: identity probe raised — deferred to the first session");
+		// Leave the module in the documented OFF state without touching the
+		// UART, whose state is unknown here.
+		GPIOPins::clear(SAT_EXTWAKEUP);
+		GPIOPins::init_pin(SAT_RESET);
+		GPIOPins::clear(SAT_RESET);
+		GPIOPins::clear(SAT_PWR_EN);
+	}
+	// Module back in power_off — the state machine powers it on when send() is called
 }
 
 KIM2Device::~KIM2Device() {
@@ -503,6 +523,124 @@ void KIM2Device::cache_current_modulation() {
 }
 
 // ============================================================================
+// Synchronous power cycle (accesses made outside the state machine)
+// ============================================================================
+
+/// @brief Power the module up for a synchronous exchange and check it answers.
+/// @note  Freezes the state machine so it does not race with the caller's
+///        blocking AT commands. On PING failure the module is powered back
+///        down, so the caller only has to call sync_power_down() on success.
+bool KIM2Device::sync_power_up() {
+	cancel_timeout();
+	system_scheduler->cancel_task(m_task);
+
+	GPIOPins::set(SAT_PWR_EN);
+	// USR_NRST (broche 2): "Should not be left floating" (datasheet v0.4
+	// §4.2). There is no external pull-up on this board: the reset is
+	// released onto the INTERNAL pull-up, which gives a defined high level
+	// while still letting an SWD probe drive reset without fighting it.
+	GPIOPins::release_to_pullup(SAT_RESET);
+	GPIOPins::set(SAT_EXTWAKEUP);
+	m_kim2_comm.init();
+	m_kim2_comm.subscribe(*this);
+	PMU::delay_ms(KIM2_DELAY_POWER_ON_MS);
+
+	if (send_AT(AT_PING))
+        return true;
+
+	DEBUG_WARN("KIM2Device::sync_power_up: ping failed — module not responding");
+	sync_power_down();
+	return false;
+}
+
+/// @brief Counterpart of sync_power_up().
+void KIM2Device::sync_power_down() {
+	m_kim2_comm.unsubscribe(*this);
+	m_kim2_comm.deinit();
+	GPIOPins::clear(SAT_EXTWAKEUP);
+	// Reset asserted BEFORE cutting the supply, and held low afterwards: a
+	// floating reset line on a powered-down module is what the datasheet
+	// proscrit explicitement.
+	GPIOPins::init_pin(SAT_RESET);
+	GPIOPins::clear(SAT_RESET);
+	GPIOPins::clear(SAT_PWR_EN);
+}
+
+// ============================================================================
+// Identity probe (ID / ADDR read at instantiation)
+// ============================================================================
+
+/// @brief Read ID, ADDR and the firmware build string through a synchronous
+///        power cycle, then persist ID/ADDR to flash when they changed.
+/// @note  Once m_kineis_id / m_hex_addr are known, state_init skips its own
+///        read, and check_rx_firmware_support() does not query AT+FW=? again.
+bool KIM2Device::identify() {
+	// Bridge active or session already running: state_init reads the identity.
+	if (m_bridge_active || m_state != KIM2ManagerState::power_off) {
+		DEBUG_TRACE("KIM2Device::identify: skipped (state=%u, bridge=%u)", static_cast<unsigned>(m_state),
+		            m_bridge_active ? 1U : 0U);
+		return false;
+	}
+
+	if (!sync_power_up()) {
+		DEBUG_ERROR("KIM2Device::identify: not responding at boot");
+		return false;
+	}
+
+	bool valid_credentials = false;
+	try {
+        valid_credentials = send_AT(AT_GET_ID) && send_AT(AT_GET_ADDR) && m_kim2_comm.m_kineis_id != 0
+		     && m_kim2_comm.m_hex_addr != 0;
+		// Bonus: the RX capability gate is known from boot as well.
+		if (valid_credentials)
+            check_rx_firmware_support();
+	} catch (...) {
+		valid_credentials = false;
+	}
+
+	sync_power_down();
+
+	if (!valid_credentials) {
+		DEBUG_WARN("KIM2Device::identify: ID/ADDR read failed — deferred to the first session");
+		// Do not keep a half-read identity: state_init must read both again.
+		m_kim2_comm.m_kineis_id = 0;
+		m_kim2_comm.m_hex_addr = 0;
+		return false;
+	}
+
+	DEBUG_TRACE("KIM2Device::identify: ID=%u ADDR=%08X", m_kim2_comm.m_kineis_id, m_kim2_comm.m_hex_addr);
+	store_credentials();
+	return true;
+}
+
+/// @brief Commit ID/ADDR to flash, only when they differ from the stored ones.
+/// @note  save_params() rewrites the whole config.dat (every parameter), hence
+///        the comparison: without it every boot would rewrite the file. It also
+///        flushes any other parameter changed in RAM since the last save.
+void KIM2Device::store_credentials() {
+	if (!configuration_store) return;
+
+	const unsigned int id = m_kim2_comm.m_kineis_id;
+	const unsigned int addr = m_kim2_comm.m_hex_addr;
+	if (id == 0 || addr == 0) return;
+
+	try {
+		if (configuration_store->read_param<unsigned int>(ParamID::ARGOS_DECID) == id
+		    && configuration_store->read_param<unsigned int>(ParamID::ARGOS_HEXID) == addr) {
+			DEBUG_TRACE("KIM2Device::store_credentials: ID/ADDR unchanged — no flash write");
+			return;
+		}
+
+		configuration_store->write_param(ParamID::ARGOS_DECID, id);
+		configuration_store->write_param(ParamID::ARGOS_HEXID, addr);
+		configuration_store->save_params();
+		DEBUG_TRACE("KIM2Device::store_credentials: ID=%u ADDR=%08X persisted to flash", id, addr);
+	} catch (...) {
+		DEBUG_ERROR("KIM2Device::store_credentials: failed to persist ID/ADDR to flash");
+	}
+}
+
+// ============================================================================
 // Credential read-back (SATVF)
 // ============================================================================
 
@@ -538,35 +676,11 @@ void KIM2Device::read_credentials(unsigned int *dec_id, unsigned int *address, s
 
 	const bool was_off = (m_state == KIM2ManagerState::power_off);
 
-	if (was_off) {
-		// Freeze the state machine so it doesn't race with our synchronous reads.
-		cancel_timeout();
-		system_scheduler->cancel_task(m_task);
-
-		GPIOPins::set(SAT_PWR_EN);
-		// USR_NRST (broche 2): "Should not be left floating" (datasheet v0.4
-		// §4.2). There is no external pull-up on this board: the reset is
-		// released onto the INTERNAL pull-up, which gives a defined high level
-		// while still letting an SWD probe drive reset without fighting it.
-		GPIOPins::release_to_pullup(SAT_RESET);
-		GPIOPins::set(SAT_EXTWAKEUP);
-		m_kim2_comm.init();
-		m_kim2_comm.subscribe(*this);
-		PMU::delay_ms(KIM2_DELAY_POWER_ON_MS);
-
-		if (!send_AT(AT_PING)) {
-			DEBUG_WARN("KIM2Device::read_credentials: ping failed — module not responding");
-			m_kim2_comm.unsubscribe(*this);
-			m_kim2_comm.deinit();
-			GPIOPins::clear(SAT_EXTWAKEUP);
-			// Reset asserted BEFORE cutting the supply, and held low afterwards: a
-			// floating reset line on a powered-down module is what the datasheet
-			// proscrit explicitement.
-			GPIOPins::init_pin(SAT_RESET);
-			GPIOPins::clear(SAT_RESET);
-			GPIOPins::clear(SAT_PWR_EN);
-			return;
-		}
+	// Freeze the state machine and power up so it doesn't race with our
+	// synchronous reads. sync_power_up() powers back down on ping failure.
+	if (was_off && !sync_power_up()) {
+		DEBUG_WARN("KIM2Device::read_credentials: ping failed — module not responding");
+		return;
 	}
 
 	if (send_AT(AT_GET_ID)) {
@@ -616,15 +730,7 @@ void KIM2Device::read_credentials(unsigned int *dec_id, unsigned int *address, s
 	}
 
 	if (was_off) {
-		m_kim2_comm.unsubscribe(*this);
-		m_kim2_comm.deinit();
-		GPIOPins::clear(SAT_EXTWAKEUP);
-		// Reset asserted BEFORE cutting the supply, and held low afterwards: a
-		// floating reset line on a powered-down module is what the datasheet
-		// proscrit explicitement.
-		GPIOPins::init_pin(SAT_RESET);
-		GPIOPins::clear(SAT_RESET);
-		GPIOPins::clear(SAT_PWR_EN);
+		sync_power_down();
 	}
 }
 
@@ -645,32 +751,9 @@ bool KIM2Device::resync_rconf_cache() {
 	}
 
 	const bool was_off = (m_state == KIM2ManagerState::power_off);
-	if (was_off) {
-		cancel_timeout();
-		system_scheduler->cancel_task(m_task);
-		GPIOPins::set(SAT_PWR_EN);
-		// USR_NRST (broche 2): "Should not be left floating" (datasheet v0.4
-		// §4.2). There is no external pull-up on this board: the reset is
-		// released onto the INTERNAL pull-up, which gives a defined high level
-		// while still letting an SWD probe drive reset without fighting it.
-		GPIOPins::release_to_pullup(SAT_RESET);
-		GPIOPins::set(SAT_EXTWAKEUP);
-		m_kim2_comm.init();
-		m_kim2_comm.subscribe(*this);
-		PMU::delay_ms(KIM2_DELAY_POWER_ON_MS);
-		if (!send_AT(AT_PING)) {
-			DEBUG_WARN("KIM2Device::resync_rconf_cache: ping failed — module not responding");
-			m_kim2_comm.unsubscribe(*this);
-			m_kim2_comm.deinit();
-			GPIOPins::clear(SAT_EXTWAKEUP);
-			// Reset asserted BEFORE cutting the supply, and held low afterwards: a
-			// floating reset line on a powered-down module is what the datasheet
-			// proscrit explicitement.
-			GPIOPins::init_pin(SAT_RESET);
-			GPIOPins::clear(SAT_RESET);
-			GPIOPins::clear(SAT_PWR_EN);
-			return false;
-		}
+	if (was_off && !sync_power_up()) {
+		DEBUG_WARN("KIM2Device::resync_rconf_cache: ping failed — module not responding");
+		return false;
 	}
 
 	bool ok = false;
@@ -696,16 +779,8 @@ bool KIM2Device::resync_rconf_cache() {
 	}
 
 	if (was_off) {
-		m_kim2_comm.unsubscribe(*this);
-		m_kim2_comm.deinit();
-		GPIOPins::clear(SAT_EXTWAKEUP);
-		// Reset asserted BEFORE cutting the supply, and held low afterwards: a
-		// floating reset line on a powered-down module is what the datasheet
-		// proscrit explicitement.
-		GPIOPins::init_pin(SAT_RESET);
-		GPIOPins::clear(SAT_RESET);
-		GPIOPins::clear(SAT_PWR_EN);
-	}
+        sync_power_down();
+    }
 	return ok;
 }
 
@@ -1016,15 +1091,15 @@ void KIM2Device::state_init() {
 	m_vlda4_allowed = true;
 
 
-	// Read credentials from module if not already known
-	if (m_kim2_comm.m_kineis_id == 0 && m_kim2_comm.m_hex_addr == 0) {
+	// Read credentials from module if not already known. Normally already done
+	// at instantiation; this is the fallback when the module did not answer at boot.
+	if (m_kim2_comm.m_kineis_id == 0 || m_kim2_comm.m_hex_addr == 0) {
 		if (!send_AT(AT_GET_ID)) {
 			DEBUG_ERROR("KIM2Device::state_init: can not read ID");
 			KIM2_STATE_CHANGE(init, error);
 			return;
 		}
 		DEBUG_TRACE("KIM2Device::state_init ID:%d", m_kim2_comm.m_kineis_id);
-		configuration_store->write_param(ParamID::ARGOS_DECID, m_kim2_comm.m_kineis_id);
 
 		if (!send_AT(AT_GET_ADDR)) {
 			DEBUG_ERROR("KIM2Device::state_init: can not read ADDR");
@@ -1032,7 +1107,8 @@ void KIM2Device::state_init() {
 			return;
 		}
 		DEBUG_TRACE("KIM2Device::state_init ADDR:%x", m_kim2_comm.m_hex_addr);
-		configuration_store->write_param(ParamID::ARGOS_HEXID, m_kim2_comm.m_hex_addr);
+
+		store_credentials(); // Write to the store AND commit to flash, only if changed.
 	}
 
 	// Read the firmware build string once per session and evaluate the RX gate.
@@ -1655,17 +1731,20 @@ void KIM2Device::state_receive_exit() {
 /// @brief Query AT+FW=? once per power-on and evaluate the RX capability gate.
 /// @note  Never fails the init: an unsupported (or unreadable) firmware only
 ///        disables reception, transmission is unaffected.
+/// @note  Only an ANSWERED query is latched: a failed AT+FW=? (e.g. during the
+///        boot identity probe) is retried at the next state_init instead of
+///        disabling reception for the whole boot.
 void KIM2Device::check_rx_firmware_support() {
 	if (m_fw_checked) return;
-	m_fw_checked = true;
 
 	m_kim2_comm.m_module_banner.clear();
 	if (!send_AT(AT_GET_FW)) {
-		DEBUG_WARN("KIM2Device::check_rx_firmware_support: AT+FW=? failed");
+		DEBUG_WARN("KIM2Device::check_rx_firmware_support: AT+FW=? failed — will retry at next init");
 		m_fw_version.clear();
 		m_rx_supported = false;
 		return;
 	}
+	m_fw_checked = true;
 
 	m_fw_version = m_kim2_comm.m_module_banner;
 	m_rx_supported = KIM2::fw_supports_rx(m_fw_version);

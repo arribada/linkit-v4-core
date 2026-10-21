@@ -22,7 +22,6 @@ private:
 	KIM2Comm m_kim2_comm;  ///< UART AT command layer
 
 public:
-	/// @throws ErrorCode if module does not respond to ping at first power-on.
 	KIM2Device();
 	~KIM2Device();
 
@@ -90,6 +89,16 @@ public:
 	///        state_init has queried AT+FW=?.
 	bool is_rx_supported() const { return m_rx_supported; }
 
+	/// @brief Read the module identity (ID, ADDR) and firmware build string
+	///        through a synchronous power cycle, then persist ID/ADDR to flash
+	///        when they differ from the stored values.
+	/// @note  Called from the constructor so the identifiers are known at boot,
+	///        without waiting for the first transmission. Blocking (~550 ms).
+	///        No-op when the state machine is already running or the bridge is
+	///        active: state_init then reads the identity itself.
+	/// @return true when both ID and ADDR were read.
+	bool identify();
+
 private:
 	/// @brief KIM2 state machine states.
 	enum KIM2ManagerState { power_off, power_on, init, idle, transmit, receive, error };
@@ -132,7 +141,7 @@ private:
 	std::atomic<bool> m_rx_window_ended;  ///< Set on the empty +DL= end-of-window line
 	uint64_t m_rx_start_ms = 0;           ///< Wall clock at RX start, for rx_time
 	std::string m_fw_version;             ///< AT+FW=? build string (empty before init)
-	bool m_fw_checked = false;            ///< AT+FW=? already queried this session
+	bool m_fw_checked = false;            ///< AT+FW=? already answered this session
 	bool m_rx_supported = false;          ///< Firmware recent enough for AT+DL
 	/// @brief Allcast payloads received since the last state machine tick.
 	///        Filled from react(KIM2CommEventAllcast) — which runs in
@@ -258,6 +267,22 @@ private:
 
 	/// @brief Immediate power off — cancel all tasks, uninit UART, cut power.
 	void power_off_immediate();
+
+	/// @brief Synchronous power-up for accesses made outside the state machine
+	///        (identify, SATVF, RCONF resync): freeze the state machine,
+	///        raise the rails, init the UART, wait for the module boot, PING.
+	///        On PING failure the module is powered back down.
+	/// @return true when the module answered the PING.
+	bool sync_power_up();
+
+	/// @brief Counterpart of sync_power_up(): UART off, reset asserted BEFORE
+	///        cutting the supply and held low afterwards.
+	void sync_power_down();
+
+	/// @brief Write ID/ADDR to the configuration store and commit config.dat,
+	///        only when they differ from the stored values (save_params()
+	///        rewrites the whole file). Never throws.
+	void store_credentials();
 
 	void cancel_timeout();                                  ///< Cancel pending AT response timeout
 	void initiate_timeout(unsigned int timeout_ms = 1000);  ///< Schedule AT response timeout
