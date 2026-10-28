@@ -28,6 +28,16 @@ static constexpr unsigned int SERVICE_SAFETY_MARGIN_S =
 static constexpr unsigned int DEEP_IDLE_HARD_CAP_S =
     24 * 3600;  ///< R5: ceiling on any single deep-idle window (see try_enter_deep_idle_or_poweroff)
 
+// CLS woodbuoy (scripts/build_woodbuoy.sh): the battery sampled where that product's
+// own firmware samples it (dev/cls_102026, c93ce7fd: "read at least once at every
+// GNSS fix"), fresh at the start of every GNSS session and in a NO_FIX, degraded or
+// CloudLocate entry; a PVT fix reuses the start sample. 0 everywhere else, where
+// these reuse a sample younger than 30 min: on the turtle, 84 sessions a simulated
+// day would more than double the samples, each a busy-wait of up to 500 ms on KIM.
+#ifndef BATTERY_SAMPLE_EACH_GNSS_SESSION
+#define BATTERY_SAMPLE_EACH_GNSS_SESSION 0
+#endif
+
 /// @brief Copy GNSSData fields into GPSLogEntry (avoids 30-line duplication).
 static void copy_gnss_to_log(const GNSSData &src, GPSLogEntry &dst) {
 	dst.info.iTOW = src.iTOW;
@@ -827,6 +837,15 @@ ScheduleDecision GPSService::service_next_schedule() {
 	                             aq_why);
 }
 
+/// @brief The battery for this session (BATTERY_SAMPLE_EACH_GNSS_SESSION, top of file).
+void GPSService::update_battery_for_session() {
+#if BATTERY_SAMPLE_EACH_GNSS_SESSION
+	service_update_battery_now();
+#else
+	service_update_battery();
+#endif
+}
+
 /// @brief Start GNSS acquisition — configure nav settings, power on M10Q.
 void GPSService::service_initiate() {
 	// HIGH #3 audit fix: detect re-entry during a previous session's teardown.
@@ -897,7 +916,7 @@ void GPSService::service_initiate() {
 	//   - first_fix / ntry / dead : a rising dead-session count = receiver stuck on
 	//     stale assistance (H2), the trigger for GNSS_COLD_START_AFTER_NTRY.
 	const bool diag_rtc_set = (rtc && rtc->is_set());
-	service_update_battery();
+	update_battery_for_session();
 	const unsigned int diag_batt_mv = service_get_voltage();
 	const bool diag_lb = service_is_battery_level_low();
 	{
@@ -1315,7 +1334,7 @@ GPSLogEntry GPSService::invalid_log_entry() {
 
 	service_set_log_header_time(gps_entry.header, service_current_time());
 
-	service_update_battery();
+	update_battery_for_session();
 	gps_entry.info.batt_voltage = service_get_voltage();
 	gps_entry.info.event_type = GPSEventType::NO_FIX;
 	gps_entry.info.valid = false;
@@ -1414,7 +1433,7 @@ void GPSService::task_process_degraded_gnss_data() {
 	gps_entry.header.log_type = LOG_GPS;
 	service_set_log_header_time(gps_entry.header, service_current_time());
 
-	service_update_battery();
+	update_battery_for_session();
 	gps_entry.info.batt_voltage = service_get_voltage();
 	copy_gnss_to_log(m_gnss_data.data, gps_entry);
 	gps_entry.info.onTime = service_current_timer() - m_wakeup_time;
@@ -1459,7 +1478,7 @@ void GPSService::task_process_cloudlocate_data() {
 	gps_entry.header.log_type = LOG_GPS;
 	service_set_log_header_time(gps_entry.header, service_current_time());
 
-	service_update_battery();
+	update_battery_for_session();
 	gps_entry.info.batt_voltage = service_get_voltage();
 	gps_entry.info.onTime = service_current_timer() - m_wakeup_time;
 	gps_entry.info.schedTime = m_next_schedule;

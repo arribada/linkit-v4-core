@@ -7,7 +7,7 @@
 #   ./flash.sh --recover  unlock APPROTECT (erases ALL flash) then full flash
 #
 # Runs from WSL against a J-Link attached via usbipd (see wsl_usb.sh). Assumes the
-# firmware was built with:  ./scripts/build_linkitv4_kim.sh --bench
+# firmware was built with:  ENABLE_SWS_ANALOG=1 ./scripts/build_linkitv4_kim.sh --bench
 #
 set -euo pipefail
 

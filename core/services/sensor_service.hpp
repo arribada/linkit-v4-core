@@ -83,10 +83,6 @@ protected:
 				ServiceEventData data = sensor;
 				sensor_populate_log_entry(&e, sensor);
 				service_log(&data, &e);
-				// Same as the end of a TX sampling run: release what the sample took.
-				// Without it the barometer's supply stayed on after the first
-				// periodic sample, for good.
-				sensor_service_terminate();
 				service_complete(nullptr, nullptr, reschedule);
 			}
 		} catch (ErrorCode e) {

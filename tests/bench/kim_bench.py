@@ -4,7 +4,7 @@ kim_bench.py — Autonomous hardware-in-the-loop bench driver for LinkIt V4 KIM.
 
 Requires firmware built with the bench harness:
 
-    ./scripts/build_linkitv4_kim.sh --bench      # implies --debug (USB-CDC logs on)
+    ENABLE_SWS_ANALOG=1 ./scripts/build_linkitv4_kim.sh --bench   # implies --debug; SWS: turtle cases
 
 That firmware exposes a '%'-prefixed USB-CDC console (no magnet, no antenna):
 

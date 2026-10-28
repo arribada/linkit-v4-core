@@ -11,7 +11,7 @@ WHAT TO FLASH FIRST
 Build the bench firmware with a short suspension, or the probe check has to
 wait an hour:
 
-    ARGOS_TX_ERROR_SUSPEND_S=120 ./scripts/build_linkitv4_kim.sh --bench
+    ENABLE_SWS_ANALOG=1 ARGOS_TX_ERROR_SUSPEND_S=120 ./scripts/build_linkitv4_kim.sh --bench
 
 Then flash as usual (tests/bench/flash.sh) and run:
 

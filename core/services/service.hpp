@@ -277,8 +277,11 @@ protected:
 	bool service_is_time_known();
 	/// @brief Set RTC time (e.g., from GNSS fix).
 	void service_set_time(std::time_t);
-	/// @brief Sample battery ADC/gauge.
+	/// @brief Refresh the battery: a new sample only when the last one is older than
+	/// BatteryMonitor::SAMPLE_MAX_AGE_MS (30 min), the last values otherwise.
 	void service_update_battery();
+	/// @brief A new battery sample whatever the age of the last one.
+	void service_update_battery_now();
 	/// @brief Get last battery voltage (mV).
 	uint16_t service_get_voltage();
 	/// @brief Get last battery level (0-100%).

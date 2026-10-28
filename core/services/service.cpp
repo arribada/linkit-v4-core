@@ -563,6 +563,10 @@ void Service::service_update_battery() {
 	return battery_monitor->update();
 }
 
+void Service::service_update_battery_now() {
+	battery_monitor->update(0);  // max age 0: never reuses
+}
+
 uint16_t Service::service_get_voltage() {
 	return battery_monitor->get_voltage();
 }

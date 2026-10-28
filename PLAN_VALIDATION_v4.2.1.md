@@ -25,7 +25,7 @@ KIM2 à un STM32WL qui ne les comprend pas.
 | Carte | Script |
 |---|---|
 | LinkIt V4 + SMD (STM32WL) | `./scripts/build_linkitv4_smd.sh` |
-| LinkIt V4 + KIM2 | `./scripts/build_linkitv4_kim.sh` |
+| LinkIt V4 + KIM2 | `ENABLE_SWS_ANALOG=1 ./scripts/build_linkitv4_kim.sh` (tortue ; sans la variable, pas de capteur d'eau salée depuis le 28/10) |
 | LinkIt V4 + RAK3172 LoRa | `./scripts/build_linkitv4_lora.sh` |
 | Cyprus (bateau) | `./scripts/build_linkitv4_lora_cyprus.sh` |
 | RSPB | `./scripts/build_rspb.sh` |

@@ -11,7 +11,7 @@ de rail. Tout est observable depuis les logs, sans antenne et sans fix.
     ./gnss_bench.py --run --only T1,T4
     ./gnss_bench.py --observe 120    capture brute horodatée
 
-Prérequis : firmware construit avec `./scripts/build_linkitv4_kim.sh --bench
+Prérequis : firmware construit avec `ENABLE_SWS_ANALOG=1 ./scripts/build_linkitv4_kim.sh --bench
 --validation` (la campagne s'appuie sur les lignes [VAL-GNSS]).
 """
 import argparse, datetime, os, re, sys, threading, time

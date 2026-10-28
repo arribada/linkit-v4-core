@@ -572,7 +572,7 @@ d'eau salée. Fusion faite le 28/10, chaque commit relu contre l'état de cette 
 
 | Commit CLS | Décision | Pourquoi |
 |---|---|---|
-| `4f157cf7` script KIM | pris en partie | Caméra à 0 par défaut : déjà fait ici. Mise en forme de la commande cmake : prise, avec nos options (`DEBUG_LEVEL`, `BENCH_ALLOW_POWERDOWN`). **`ENABLE_SWS_ANALOG` à 0 par défaut : refusé** : ce script construit la tortue, qui n'aurait plus ni plongée ni remontée. Le woodbuoy a son propre script, qui pose 0 |
+| `4f157cf7` script KIM | pris | Caméra à 0 par défaut : déjà fait ici. Mise en forme de la commande cmake : prise, avec nos options (`DEBUG_LEVEL`, `BENCH_ALLOW_POWERDOWN`). **`ENABLE_SWS_ANALOG` à 0 par défaut : pris** (décision de l'utilisateur, 28/10 : la tortue n'est pas le seul produit KIM2). Une tortue KIM se construit avec `ENABLE_SWS_ANALOG=1 ./scripts/build_linkitv4_kim.sh` ; plan de validation, harnais de banc KIM et README mis à jour, la matrice CI passe déjà la valeur |
 | `d8348a47`, `4484d227`, `650170e2` script, trame et baromètre woodbuoy | pris, corrigés | Voir ci-dessous. Les paramètres BAP01-BAP05 passent de 266-270 à **283-287** : ces emplacements étaient pris ici par UNP26..DBP02. La relecture de `config.dat` par clé (2.8) les replace sur une balise CLS déjà configurée |
 | `832b9a0f` compilation de la température de mer | pris | |
 | `4579d432` température de mer × 1000 | déjà fait | Même formule que `0b7ac2ee` (10/09), qui garde en plus la division par 10 côté LoRa |
@@ -581,17 +581,17 @@ d'eau salée. Fusion faite le 28/10, chaque commit relu contre l'état de cette 
 | `98fafb92` buzzer et geste aimant | pris | Carillon au démarrage, phases sonores du geste d'extinction, coupure de sécurité à 30 s. Builds `BUZZER_ENABLE` seulement |
 | `4caeb8e4` TX du KIM2 à l'extinction | **refusé, remplacé** | Même fuite que `34ebb4a1` (19/09, PPK : 70 → 27 µA). Leur `park_tx_for_power_off()` doublait le nôtre sous le même nom (haute impédance, instance UART 1 en dur) : un seul mécanisme gardé. Pris : le désabonnement du module éteint |
 | `f0136b9c` identité du KIM2 au démarrage | pris, corrigé | ID, ADDR et version lus à la construction (≈ 550 ms, **aucune émission**). `sync_power_up()` et `sync_power_down()` factorisent quatre copies ; la coupure passe par `cut_module_rail()`, TX tirée bas d'abord, sans quoi la fuite de 43 µA revenait |
-| `c93ce7fd` batterie lue seulement à la demande | **refusé** | Sans lecture DTE ni GNSS, la batterie n'était plus jamais mesurée : sur une configuration sans GNSS (`turtle_doppler_only`), plus de garde batterie critique. La règle de 2.1 (mesure réutilisée au plus 30 min) couvre leur besoin |
+| `c93ce7fd` batterie lue seulement à la demande | **remplacé, garantie gardée** | Leur version ne mesurait plus dans les accesseurs de configuration ni dans l'entrée GPS d'un fix (elle reprend la mesure du début de session). Restait une mesure à chaque début de session GNSS, entrée sans fix, dégradée ou CloudLocate, émission Doppler, et contrôle critique en mode batterie basse. Ici, la règle de 2.1 (mesure réutilisée au plus 30 min) partout, plus l'option `BATTERY_SAMPLE_EACH_GNSS_SESSION=1`, posée par `build_woodbuoy.sh` : le service GNSS mesure alors aux mêmes points que leur firmware, vérifié dans le binaire woodbuoy (quatre appels à la mesure fraîche, le fix à la mesure réutilisable). Pas sur la tortue : 84 sessions par jour simulé feraient plus que doubler ses mesures. Différences restantes (émission Doppler et contrôle critique sur une mesure de moins de 30 min, verdict critique confirmé de `c3ba3cac`) : `NOTES_FUSION_CLS_102026.md` §2.8 |
 
 **Corrigé dans leur code en fusionnant** (rien de cela ne compile hors woodbuoy) :
 - trame woodbuoy : le champ baromètre déréférençait un pointeur nul dans une trame
-  « température seule » ;
+  « température seule ». Leur binaire, compilé ici et désassemblé, lit alors 8 octets à
+  l'adresse 0 (MBR), un double dénormalisé converti en 0 : les bits transmis sont les
+  mêmes, la correction retire le comportement indéfini ;
 - encodage `(hPa − 800) × 100` borné aux 15 bits. Hors plage, il était indéfini sous
   800 hPa, et `PACK_BITS` repliait en silence une pression plausible et fausse
   au-delà de 1127 hPa ;
 - ADS1115 : lecture en entier signé, sinon un capteur éteint lisait 1652 hPa ;
-- alimentation du baromètre coupée aussi après une mesure **périodique** (BAP02 > 0) :
-  elle restait allumée pour toujours ;
 - export du journal BARO : `%d` sur un `double` ;
 - pile et cache du baromètre sous `#if ENABLE_BARO_SENSOR`, comme les autres capteurs ;
 - CMake refuse le baromètre hors LinkIt et sur un SMD SPI (P0.06 est aussi le MOSI du
@@ -614,17 +614,29 @@ libérerait environ 38 Ko. Nouvelle commande de banc `%MEM` : pic de pile et min
 tas libre depuis le démarrage.
 
 **À transmettre à CLS, non changé faute de matériel :**
-- **Modulation.** La trame woodbuoy est forcée en LDK (128 bits). Avec
+- **Modulation.** Sans effet pour CLS tant qu'ils restent sans modulation adaptative
+  avec un maître LDK, ce qui doit être leur cas puisque leurs trames partent : même trame
+  LDK, même RCONF (`load_rconf_for_mode` identique), compteur de messages sans effet sur
+  KIM2. La trame woodbuoy est forcée en LDK (128 bits). Avec
   `ARGOS_ADAPTIVE_MODULATION=0` et un RCONF maître d'une autre modulation, leur branche
   **abandonnait l'émission** à chaque fois (DeviceError, puis report) : la trame ne
   partait jamais. Ici, la garde de modulation la ré-encapsule dans la modulation du
   maître et elle part, mais en LDA2 sur un maître LDA2. Pour recevoir la trame telle
   qu'elle est conçue, il faut un maître LDK, ou la modulation adaptative.
 - **ADS1115 en conversion continue** (`0xE2`, MODE = 0, alors que le commentaire dit
-  « single ») : environ 150 µA permanents s'il est sur un rail toujours alimenté. En
-  conversion unique, déclenchée à chaque lecture, il tombe à environ 0,5 µA.
+  « single »). `BARO_PWR_EN` ne coupe que le PTB110 : l'ADS1115 est configuré une fois au
+  démarrage, quand `BARO_PWR_EN` est à 0, et le pilote I²C lève une exception sur un NACK.
+  Il est donc sur une alimentation permanente, et convertit en permanence : environ 150 µA,
+  3,6 mAh par jour. En conversion unique, déclenchée à chaque lecture, environ 0,5 µA.
 - **Attente active de 2 s** à chaque mise sous tension du baromètre : l'ordonnanceur
-  est bloqué pendant ce temps.
+  est bloqué pendant ce temps. **Non changé** : la fin de session GNSS lit aussi le
+  capteur (`sensor_handler(false, true)`), et c'est ce blocage qui garantit que cette
+  lecture vient après le préchauffage. En non bloquant, une session GNSS finie en moins
+  de 2 s lirait un capteur pas encore stabilisé.
+- **Mode périodique (BAP02 > 0)** : l'alimentation du PTB110 n'est jamais recoupée après
+  une mesure périodique. Corrigé d'abord, puis **remis comme chez CLS** : couper aurait
+  ajouté 2 s d'attente active à chaque mesure périodique et changé le préchauffage, un
+  changement de comportement non vérifiable sans leur matériel.
 - **Retour à un firmware CLS** après celui-ci : leur relecture de `config.dat` est
   encore positionnelle, donc les paramètres après l'emplacement 265 seraient décalés.
   Fusionner cette branche chez eux corrige ce point.
@@ -638,10 +650,10 @@ tas libre depuis le démarrage.
 | Compilation | 14 variantes : les 8 de la matrice, la caméra UART et son banc, les bancs SMD UART et RSPB, le woodbuoy et son banc | ✅ 28/10 : toutes compilent, 0 avertissement, marge RAM de 3036 à 13616 o avec la pile à 28 Ko. Avec 32 Ko, quatre ne se liaient plus (ci-dessus) |
 | Gardes CMake | baromètre sur SMD SPI, puis sur RSPB : refusés, avec le message | ✅ 28/10 |
 | Carte du banc (SMD UART) | la fusion touche du code commun : relecture complète de la configuration identique, commandes de banc, plongée et remontée par `%SWSRAW` | ✅ 28/10 : 34 contrôles sur 34, configuration identique (161 clés, PWP06 à part), publication de l'émersion en 1 ms, 1re session GNSS synchronisée, aucune émission |
-| Pile à 28 Ko | build de banc, après une session complète (DTE, GNSS, plongée et remontée, commandes de banc) : `%MEM`, `stack_max` loin sous `stack_size` | ✅ 28/10 : `stack_max=4220` sur 28672 ; même contrôle carte que ci-dessus, 36 sur 36. Au passage, `heap_min_free=9968` sur 65536 après des lectures complètes des paramètres : le tas est la ressource la plus serrée, d'où le choix de ne pas y toucher |
+| Pile à 28 Ko | build de banc, après une session complète (DTE, GNSS, plongée et remontée, commandes de banc) : `%MEM`, `stack_max` loin sous `stack_size` | ✅ 28/10 : `stack_max=4220` sur 28672 ; même contrôle carte que ci-dessus, 36 sur 36, rejoué sur l'arbre final (option batterie étendue aux trois entrées GNSS) avec le même résultat. Au passage, `heap_min_free=9968` sur 65536 après des lectures complètes des paramètres : le tas est la ressource la plus serrée, d'où le choix de ne pas y toucher |
 | Pile à 28 Ko, longue durée | sur carte saine et sur le terrain, les lignes « STACK: N max » du journal (toutes les 12 h) restent loin sous 28 Ko | ⬜ |
 | Carte KIM2 | au démarrage, une seule mise sous tension du module, `ARGOS_DECID` / `ARGOS_HEXID` lus et sauvés une fois, aucune émission ; puis une session normale | ⬜ |
-| Woodbuoy (CLS) | trame reçue et décodée, pression plausible, alimentation du baromètre coupée après chaque mesure, buzzer | ⬜ CLS |
+| Woodbuoy (CLS) | la liste de `NOTES_FUSION_CLS_102026.md` §6 : mise à jour depuis leur firmware (BAP intacts), trame `001`/`101` décodée, mesure batterie à chaque session GNSS, alimentation du PTB110 coupée après l'échantillonnage pour l'émission, buzzer, veille du KIM2 | ⬜ CLS |
 
 ---
 

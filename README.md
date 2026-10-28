@@ -53,7 +53,7 @@ Use the build scripts (they source `build_config.sh` automatically):
 
 | Script | Board | Output |
 |--------|-------|--------|
-| `./scripts/build_linkitv4_kim.sh` | LinkIt V4 KIM | `build/LINKIT/` |
+| `./scripts/build_linkitv4_kim.sh` | LinkIt V4 KIM — no saltwater switch unless `ENABLE_SWS_ANALOG=1` (turtle) | `build/LINKIT/` |
 | `./scripts/build_linkitv4_smd.sh` | LinkIt V4 SMD | `build/LINKIT_SMD/` |
 | `./scripts/build_linkitv4_lora.sh` | LinkIt V4 LoRa | `build/LINKIT_LORA/` |
 | `./scripts/build_rspb.sh` | RSPB | `build/RSPB/` |

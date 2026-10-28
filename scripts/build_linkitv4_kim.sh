@@ -185,11 +185,12 @@ GNSS_HAS_BACKUP_BATTERY=${GNSS_HAS_BACKUP_BATTERY:-0}
 # 0/1 (consumed as `#if ENABLE_SWS_ANALOG` in C — ON/OFF would both evaluate to 0).
 # Runtime detection is still gated by UNDERWATER_EN (UNP01); this flag only controls
 # whether the service is compiled/instantiated at all.
-# 1 by default: this is the turtle build, and without the service a tag has no
-# dive or surfacing at all. A build with no saltwater switch sets it to 0, as
-# scripts/build_woodbuoy.sh does (dev/cls_102026 turned this default to 0 before
-# that script existed; not taken in the merge).
-ENABLE_SWS_ANALOG=${ENABLE_SWS_ANALOG:-1}
+# 0 by default since the dev/cls_102026 merge (2026-10-28): the turtle is not the
+# only KIM2 product, and CLS's have no saltwater switch. A TURTLE build turns it
+# on -- without the service a tag has no dive and no surfacing at all:
+#   ENABLE_SWS_ANALOG=1 ./scripts/build_linkitv4_kim.sh [--bench|--release|...]
+# The CI matrix (scripts/firmware_variants.txt, linkit-kim) passes it explicitly.
+ENABLE_SWS_ANALOG=${ENABLE_SWS_ANALOG:-0}
 
 echo "  CAM_ENABLE=${CAM_ENABLE}  BUZZER_ENABLE=${BUZZER_ENABLE}"
 echo "  BATTERY_CHEMISTRY=${BATTERY_CHEMISTRY}"

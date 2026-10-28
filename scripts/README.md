@@ -12,7 +12,7 @@ Build, setup and utility scripts.
 
 | Script | Output | Comm |
 |--------|--------|------|
-| `build_linkitv4_kim.sh`  | `ports/nrf52840/build/LINKIT/`      | KIM2 (default) |
+| `build_linkitv4_kim.sh`  | `ports/nrf52840/build/LINKIT/`      | KIM2 (default); `ENABLE_SWS_ANALOG=1` for a turtle (SWS off by default) |
 | `build_linkitv4_smd.sh`  | `ports/nrf52840/build/LINKIT_SMD/`  | SMD (`-DARGOS_SMD=ON`) |
 | `build_linkitv4_lora.sh` | `ports/nrf52840/build/LINKIT_LORA/` | LoRa (`-DLORA_RAK3172=ON`) |
 | `build_rspb.sh`          | `ports/nrf52840/build/RSPB/`        | SMD on RSPB board |

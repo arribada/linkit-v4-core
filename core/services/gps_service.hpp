@@ -326,6 +326,10 @@ public:
 	void bench_inject_nofix();
 #endif
 private:
+	/// @brief The battery a session starts with, or a NO_FIX, degraded or CloudLocate
+	/// entry records: a fresh sample on the CLS woodbuoy (BATTERY_SAMPLE_EACH_GNSS_SESSION),
+	/// one younger than 30 min elsewhere.
+	void update_battery_for_session();
 	void backup_charge_stop_internal();
 	void schedule_backup_charge_retry(unsigned int attempt);
 	/// @brief Safety net 3.5 — (re-)arm the GPS-event health watchdog.

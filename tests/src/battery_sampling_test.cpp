@@ -108,6 +108,18 @@ TEST(BatterySampling, ForcedReadAlwaysSamples) {
 	CHECK_EQUAL(3U, battery->update_calls);
 }
 
+// update(0) is what Service::service_update_battery_now() asks for: the CLS
+// woodbuoy's fresh sample at every GNSS session (BATTERY_SAMPLE_EACH_GNSS_SESSION).
+TEST(BatterySampling, ZeroMaxAgeAlwaysSamples) {
+	battery->update();
+	battery->update(0);
+	battery->update(0);
+	CHECK_EQUAL(3U, battery->update_calls);
+	// ...a routine refresh right after reuses it, as after a forced read.
+	battery->update();
+	CHECK_EQUAL(3U, battery->update_calls);
+}
+
 TEST(BatterySampling, ChangedThresholdsSampleAtOnceSamePairDoesNot) {
 	battery->update();
 	battery->set_thresholds(10, 5);  // the pair the monitor was built with

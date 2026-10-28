@@ -122,7 +122,7 @@ Production keeps strict DTR gating.
 
 ```bash
 # 1. Build the bench firmware
-./scripts/build_linkitv4_kim.sh --bench
+ENABLE_SWS_ANALOG=1 ./scripts/build_linkitv4_kim.sh --bench   # turtle: SWS compiled in
 
 # 2. Flash it over SWD (J-Link)
 tests/bench/flash.sh --full          # first flash (app+BL+SD, chiperase)
@@ -158,7 +158,7 @@ device-error tests in `tests/src/argos_tx_test.cpp`. Flash first with a short
 deadline, or the probe check waits an hour:
 
 ```bash
-ARGOS_TX_ERROR_SUSPEND_S=120 ./scripts/build_linkitv4_kim.sh --bench
+ARGOS_TX_ERROR_SUSPEND_S=120 ENABLE_SWS_ANALOG=1 ./scripts/build_linkitv4_kim.sh --bench   # turtle: SWS compiled in
 ./tests/bench/flash.sh
 python3 tests/bench/kim_bench.py --run            # baseline, expect 10/10
 python3 tests/bench/argos_backoff_bench.py --run  # then this
