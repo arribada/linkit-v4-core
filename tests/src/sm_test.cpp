@@ -395,14 +395,60 @@ TEST(Sm, CrashLoopIsSpacedOutWithoutFactoryReset) {
 	mock().clear();
 
 	// The boot after the wait is a real attempt. Healthy, it reaches
-	// Operational, which clears the record.
+	// Operational, which clears the record once it has held a minute there.
 	mock().disable();
 	reboot();
 	run_until(fake_timer->get_counter() + 6000);
+	CHECK_TRUE(fsm_handle::is_in_state<OperationalState>());
+	CHECK_EQUAL(9u, gentracker_test_bootfail_get().failures);
+	run_until(fake_timer->get_counter() + 62000);
 	mock().enable();
 	CHECK_TRUE(fsm_handle::is_in_state<OperationalState>());
 	CHECK_EQUAL(0u, gentracker_test_bootfail_get().failures);
 	CHECK_EQUAL(0u, gentracker_test_bootfail_get().backoff_waited_s);
+}
+
+// A fault in the first minute of Operational (a service's first task, the
+// first GNSS session) used to find the count cleared at every boot: each boot
+// read 1, never reached UNPLANNED_RESET_BACKOFF_FAILURES, and the crash loop
+// ran flat out. The count now survives until the boot has held a minute.
+TEST(Sm, CrashInTheFirstMinuteOfOperationalBacksOff) {
+	gentracker_test_bootfail_keep(true);
+	gentracker_test_bootfail_set({ 0, false, 0, false });
+	mock().disable();
+	for (unsigned int boot = 1; boot <= 2; boot++) {
+		reboot();
+		run_until(fake_timer->get_counter() + 6000 + 10000);  // Operational, then 10 s of it
+		CHECK_TRUE(fsm_handle::is_in_state<OperationalState>());
+		CHECK_EQUAL(boot, gentracker_test_bootfail_get().failures);
+		// ...and the crash: a reset, without ErrorState.
+	}
+	reboot();
+	system_scheduler->run();
+	mock().enable();
+	CHECK_TRUE(fsm_handle::is_in_state<ErrorState>());  // waits before touching the flash
+	CHECK_EQUAL(3u, gentracker_test_bootfail_get().failures);
+}
+
+TEST(Sm, FaultBeforeTheMinuteKeepsTheBootFailCount) {
+	gentracker_test_bootfail_keep(true);
+	gentracker_test_bootfail_set({ 0, false, 0, false });
+	mock().disable();
+	fsm_handle::start();
+	run_until(6000);
+	CHECK_TRUE(fsm_handle::is_in_state<OperationalState>());
+	run_until(6000 + 58000);
+	CHECK_EQUAL(1u, gentracker_test_bootfail_get().failures);  // not proven good yet
+
+	// A fault before the minute is up: ErrorState inherits this boot's count,
+	// and the clear that was pending goes with the state.
+	ErrorEvent e;
+	e.error_code = ErrorCode::RESOURCE_NOT_AVAILABLE;
+	fsm_handle::dispatch(e);
+	CHECK_TRUE(fsm_handle::is_in_state<ErrorState>());
+	run_until(6000 + 70000);
+	CHECK_EQUAL(1u, gentracker_test_bootfail_get().failures);
+	mock().enable();
 }
 
 TEST(Sm, CrashLoopThatOutlivesTheWaitsGetsTheFactoryReset) {
@@ -490,13 +536,15 @@ TEST(Sm, ServiceThatFailsToStartDoesNotBlockOperational) {
 	CHECK_TRUE(comms_scheduler->is_started());
 	CHECK_FALSE(broken.is_started());
 	CHECK_EQUAL(1u, broken.init_calls);
-	// Operational reached: a good boot, whatever one service did.
-	CHECK_EQUAL(0u, gentracker_test_bootfail_get().failures);
 
 	// The failed start is retried in place, without a reboot.
 	run_until(6000 + 5000);
 	CHECK_EQUAL(2u, broken.init_calls);
 	CHECK_TRUE(fsm_handle::is_in_state<OperationalState>());
+	// A minute in Operational: a good boot, whatever one service did.
+	run_until(6000 + 62000);
+	CHECK_TRUE(fsm_handle::is_in_state<OperationalState>());
+	CHECK_EQUAL(0u, gentracker_test_bootfail_get().failures);
 	mock().enable();
 }
 

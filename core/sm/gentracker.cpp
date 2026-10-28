@@ -761,8 +761,16 @@ void OperationalState::entry() {
 
 	// Proof of a good boot, so cleared last: a throw above leaves the count
 	// running, and a deterministic fault escalates through ErrorState instead
-	// of looping on the shortest retry for ever.
-	bootfail_reset();
+	// of looping on the shortest retry for ever. And cleared only after
+	// BOOTFAIL_CLEAR_DWELL_MS here: a fault in the first minute (a service's
+	// first task, the first GNSS session) found the count cleared at every
+	// boot, so it never reached UNPLANNED_RESET_BACKOFF_FAILURES and the crash
+	// loop ran flat out (e713ca66, the July audit).
+	// exit() drops the pending clear, so leaving early keeps the count; a
+	// power-off loses it anyway, with the RAM.
+	system_scheduler->cancel_task(m_bootfail_clear_task);
+	m_bootfail_clear_task = system_scheduler->post_task_prio([]() { bootfail_reset(); }, "GenTrackerBootfailClear",
+	                                                         Scheduler::DEFAULT_PRIORITY, BOOTFAIL_CLEAR_DWELL_MS);
 }
 
 /// @brief Battery critical event — stop services, transition to BatteryCriticalState.
@@ -860,6 +868,8 @@ void OperationalState::service_event_handler(ServiceEvent &e) {
 
 void OperationalState::exit() {
 	DEBUG_DETAIL("exit: OperationalState");
+	// Leaving before the dwell keeps this boot's count (see entry()).
+	system_scheduler->cancel_task(m_bootfail_clear_task);
 	// Stop periodic config flush and do a final save to persist counters.
 	// EVERY destructive step below is independently try/catched: a teardown
 	// exception (e.g. SMD SPI dies mid-service_term, BLE stop hits SoftDevice

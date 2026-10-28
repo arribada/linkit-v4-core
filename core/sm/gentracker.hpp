@@ -149,6 +149,9 @@ public:
 /// @brief Operational — all services running, GPS/TX/sensors active, battery monitoring.
 class OperationalState : public GenTracker, public BatteryMonitorEventListener {
 private:
+	/// A boot counts as good only after this long in Operational (see entry()).
+	static constexpr unsigned int BOOTFAIL_CLEAR_DWELL_MS = 60 * 1000;
+	Scheduler::TaskHandle m_bootfail_clear_task;
 	void service_event_handler(ServiceEvent &e);
 
 public:
