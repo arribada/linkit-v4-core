@@ -8,7 +8,12 @@ extern BatteryMonitor *battery_monitor;
 
 class FakeConfigurationStore : public ConfigurationStore {
 protected:
-	void serialize_config() { m_saved_count++; }
+	/// A save that fails as a worn or full flash does: LittleFS throws its error code.
+	void serialize_config() {
+		if (m_fail_saves) throw -5;  // LFS_ERR_IO
+		m_saved_count++;
+	}
+	bool m_fail_saves = false;
 	void serialize_zone() {}
 	/// Asks the monitor for a refresh exactly like LFSConfigurationStore, so a test
 	/// counting samples (FakeBatteryMonitor::update_calls) sees every getter that
@@ -35,6 +40,7 @@ public:
 	BasePassPredict &read_pass_predict() { return m_pass_predict; }
 	void write_pass_predict(BasePassPredict &value) { m_pass_predict = value; }
 	unsigned int get_saved_count() { return m_saved_count; }
+	void set_fail_saves(bool fail) { m_fail_saves = fail; }
 	void set_battery_level(unsigned int level) { m_battery_level = level; }
 	void set_is_battery_level_low(bool state) { m_is_battery_level_low = state; }
 

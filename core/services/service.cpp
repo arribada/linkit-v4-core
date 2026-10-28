@@ -598,7 +598,7 @@ std::optional<ScheduleDecision> Service::shutdown_if_battery_critical(bool in_lo
 	if (current_soc >= critical_level || !service_is_battery_critical()) return std::nullopt;
 
 	DEBUG_INFO("%s: CRITICAL battery SOC %u%% < %u%% (confirmed) - shutdown", m_name, current_soc, critical_level);
-	configuration_store->save_params();
+	configuration_store->save_params_before_power_cut(m_name);
 	PMU::powerdown();
 	return ScheduleDecision::off("battery critical — powering down");
 }

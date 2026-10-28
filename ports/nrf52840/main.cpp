@@ -931,6 +931,25 @@ static unsigned int restored_time_floor(unsigned int last_rtc) {
  * @param is25_flash       External flash device for LFS backing store.
  * @return Reference to the mounted LFSFileSystem (static, lives in .bss).
  */
+#ifdef EXTERNAL_WAKEUP
+/// @brief Count this TPL5111 wake, and say whether it is this board's turn to run.
+///
+/// Both steps save the counter, and the save throws on a flash that refuses the
+/// write: out of init_storage() it reached main() and std::terminate, without the
+/// MCU_DONE pulse, so the TPL5111 never cut the power (July audit). A failed save
+/// runs this wake. Skipping it would be worse: the counter read back from the flash
+/// would not have moved, and every later wake would skip too.
+static bool tpl_wake_is_our_turn(unsigned int &boot_counter) {
+	try {
+		boot_counter = configuration_store->boot_count_increment();
+		return boot_counter == 0 || configuration_store->boot_count_check_modulo(boot_counter);
+	} catch (...) {
+		DEBUG_ERROR("EXTERNAL_WAKEUP: boot counter save failed | running this boot");
+		return true;
+	}
+}
+#endif
+
 static LFSFileSystem &init_storage(NrfSwitch &nrf_reed_switch, Is25Flash &is25_flash) {
 	DEBUG_TRACE("Scheduler...");
 	static Scheduler scheduler(system_timer);
@@ -1103,11 +1122,12 @@ static LFSFileSystem &init_storage(NrfSwitch &nrf_reed_switch, Is25Flash &is25_f
 		}
 
 		// TPL5111 boot counter management
-		unsigned int boot_counter = configuration_store->boot_count_increment();
+		unsigned int boot_counter = 0;
+		const bool our_turn = tpl_wake_is_our_turn(boot_counter);
 		DEBUG_INFO("EXTERNAL_WAKEUP: Boot counter = %u", boot_counter);
 
 		// Check if this is not our turn to run based on modulo
-		if (boot_counter > 0 && !configuration_store->boot_count_check_modulo(boot_counter)) {
+		if (!our_turn) {
 #ifdef BENCH_TEST
 			// Bench: never modulo-powerdown — powerdown is suppressed anyway
 			// (see PMU::powerdown), and we want every boot to reach the work +

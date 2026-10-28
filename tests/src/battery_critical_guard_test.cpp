@@ -129,6 +129,16 @@ TEST(BatteryCriticalGuard, confirmed_critical_below_the_threshold_powers_down) {
 	CHECK_FALSE(decision->comes_back_on_its_own());
 }
 
+/// A flash that refuses the save before the cut must not stop the cut: on RSPB
+/// the MCU_DONE pulse in powerdown() is what makes the TPL5111 cut the power.
+TEST(BatteryCriticalGuard, a_failed_save_before_the_cut_still_powers_down) {
+	mock().expectOneCall("powerdown");
+	fake_battery->set_values(3, 3300, true, true);
+	fake_config_store->set_fail_saves(true);
+
+	CHECK_TRUE(probe->shutdown_if_battery_critical(true).has_value());
+}
+
 /// The threshold is read on every call, not captured once: LB_CRITICAL_THRESH
 /// is writable over DTE and a sealed tag cannot be rebooted to pick it up.
 TEST(BatteryCriticalGuard, the_threshold_is_read_fresh_each_time) {

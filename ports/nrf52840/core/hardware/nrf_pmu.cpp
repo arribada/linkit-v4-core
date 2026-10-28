@@ -378,6 +378,26 @@ static void flush_gnss_persistence() {
 	}
 }
 
+/// @brief Persist the time the next boot restores (the pseudo-RTC chain on RSPB).
+///
+/// Best effort, like the GNSS flush above: write_param() and save_params() throw on
+/// an invalid store or a flash that refuses the write, and out of powerdown() that
+/// skipped the MCU_DONE pulse below -- on RSPB the TPL5111 then never cuts the
+/// power and the battery drains (3a562b38, July audit).
+static void persist_rtc_for_next_boot() {
+	if (!configuration_store || !rtc || !rtc->is_set()) return;
+	try {
+		// On RSPB the next boot computes LAST_KNOWN_RTC + WAKEUP_PERIOD: what it
+		// needs is the instant this run BOOTED, not now (RTC::persisted_time).
+		const std::time_t persisted = RTC::persisted_time(rtc->gettime(), PMU::get_timestamp_ms());
+		configuration_store->write_param(ParamID::LAST_KNOWN_RTC, static_cast<unsigned int>(persisted));
+		configuration_store->save_params();
+		DEBUG_TRACE("PMU::powerdown: Saved LAST_KNOWN_RTC = %u", static_cast<unsigned int>(rtc->gettime()));
+	} catch (...) {
+		DEBUG_ERROR("PMU::powerdown: LAST_KNOWN_RTC save failed, powering down anyway");
+	}
+}
+
 /// @brief Shut down device — save state, cut power rails, then reset or infinite sleep.
 void PMU::powerdown() {
 	// #if VALIDATION_LOG_ENABLE
@@ -419,14 +439,7 @@ void PMU::powerdown() {
 	flush_gnss_persistence();
 
 	// Persist current RTC for pseudo RTC chain on next boot
-	if (configuration_store && rtc && rtc->is_set()) {
-		// On RSPB the next boot computes LAST_KNOWN_RTC + WAKEUP_PERIOD: what it
-		// needs is the instant this run BOOTED, not now (RTC::persisted_time).
-		const std::time_t persisted = RTC::persisted_time(rtc->gettime(), PMU::get_timestamp_ms());
-		configuration_store->write_param(ParamID::LAST_KNOWN_RTC, static_cast<unsigned int>(persisted));
-		configuration_store->save_params();
-		DEBUG_TRACE("PMU::powerdown: Saved LAST_KNOWN_RTC = %u", static_cast<unsigned int>(rtc->gettime()));
-	}
+	persist_rtc_for_next_boot();
 
 #if defined(BENCH_TEST) && !defined(BENCH_ALLOW_POWERDOWN)
 	// Bench: EVERY power-off path below cuts VDD and we lose host/UART/SWD access.

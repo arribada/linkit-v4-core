@@ -3186,7 +3186,7 @@ void ArgosTxService::react(KineisEventTxComplete const &) {
 		// restores power, and the counter resets on the next boot.
 		DEBUG_ERROR("ArgosTxService: session TX budget reached (%u/%u) — powering down ON PURPOSE", m_session_tx_count,
 		            argos_config.shutdown_ntime_sat);
-		configuration_store->save_params();  // Flush before shutdown
+		configuration_store->save_params_before_power_cut("ArgosTxService");  // Flush before shutdown
 		PMU::powerdown();
 		return;
 #else

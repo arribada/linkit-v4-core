@@ -1006,6 +1006,18 @@ public:
 		}
 	}
 
+	/// @brief save_params() right before a power cut: a flash that refuses the
+	/// write must not stop the cut. On RSPB the cut is the MCU_DONE pulse in
+	/// PMU::powerdown(); a throw on the way left the TPL5111 holding the power
+	/// and the battery drained (3a562b38, July audit). @p who names the caller.
+	void save_params_before_power_cut(const char *who) {
+		try {
+			save_params();
+		} catch (...) {
+			DEBUG_ERROR("%s: config save failed, powering down anyway", who);
+		}
+	}
+
 	/// @brief Update cached last GPS fix (used for zone exclusion calculation).
 	void notify_gps_location(GPSLogEntry &gps_location) { m_last_gps_log_entry = gps_location; }
 

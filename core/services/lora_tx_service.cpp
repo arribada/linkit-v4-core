@@ -1152,7 +1152,7 @@ void LoRaTxService::react([[maybe_unused]] KineisEventTxComplete const &e) {
 		// The TPL5111 duty cycle restores power; the counter resets on the next boot.
 		DEBUG_ERROR("LoRaTxService: session TX budget reached (%u/%u) — powering down ON PURPOSE", m_session_tx_count,
 		            argos_config.shutdown_ntime_sat);
-		configuration_store->save_params();  // Flush before shutdown
+		configuration_store->save_params_before_power_cut("LoRaTxService");  // Flush before shutdown
 		PMU::powerdown();
 		return;
 #else
