@@ -197,6 +197,23 @@ TEST(Logger, CorruptedFileAttributeStartsAFreshLog) {
 	check_fresh_log_after_reboot(ram_filesystem, fs_sensor);
 }
 
+// A chunk that cannot be opened (a worn block, a power cut) makes read() throw,
+// after the handle of the chunk read before has been deleted. Left pointing at
+// it, the next read() of another chunk freed it a second time.
+TEST(Logger, UnreadableChunkLeavesNoDanglingReadHandle) {
+	LoggerManager::create();
+	LogEntry entry = {};
+	const unsigned int per_chunk = LOG_CHUNK_SIZE / sizeof(LogEntry);
+	for (unsigned int i = 0; i < per_chunk + 1; i++)
+		fs_sensor->write(&entry);
+	fs_sensor->read(&entry, 0);  // chunk 0 is now the cached read handle
+	ram_filesystem->remove("sensor.log.1");
+
+	CHECK_THROWS(int, fs_sensor->read(&entry, per_chunk));
+	CHECK_THROWS(int, fs_sensor->read(&entry, per_chunk));  // the second free, before the fix
+	fs_sensor->read(&entry, 0);                             // and the log still reads
+}
+
 TEST(Logger, MissingLogChunkStartsAFreshLog) {
 	LoggerManager::create();
 	LogEntry dummy;

@@ -196,10 +196,15 @@ public:
 
 		// Check if the cached read file handle is pointing to the correct file for reading
 		if (m_last_read_index != file_index) {
-			// Close the existing cached file handle (if any) and open a new one
+			// Close the existing cached file handle (if any) and open a new one.
+			// Forgotten before the open: the LFSFile ctor throws on a chunk it
+			// cannot open, and a pointer left to the deleted handle was freed a
+			// second time by the next read() or write() (3a562b38, July audit).
 			std::string filename(m_filename);
 			filename += "." + std::to_string(file_index);
-			if (m_file_read) delete m_file_read;
+			delete m_file_read;
+			m_file_read = nullptr;
+			m_last_read_index = static_cast<unsigned int>(-1);
 			m_file_read = new LFSFile(m_filesystem, filename.c_str(), LFS_O_RDONLY);
 			m_last_read_index = file_index;
 		}
