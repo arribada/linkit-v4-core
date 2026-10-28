@@ -365,10 +365,11 @@ echo ""
 echo "Flash commands:"
 echo "  NOTE: If flashing fails with 'Access protection enabled', the device has"
 echo "  readback protection (APPROTECT) active. Run 'nrfjprog --recover' first."
-echo "  This erases ALL flash (firmware + config) and disables protection."
+echo "  It erases the nRF internal flash (app, SoftDevice, bootloader, UICR) and disables"
+echo "  protection. The configuration store survives it: it lives on the external flash."
 echo ""
 if [ "$RECOVER" = true ]; then
-    echo "  Recover (erase ALL flash + disable APPROTECT — run BEFORE flashing):"
+    echo "  Recover (erase the nRF internal flash + disable APPROTECT — run BEFORE flashing):"
     echo "    nrfjprog --recover -f nrf52"
     echo ""
 fi

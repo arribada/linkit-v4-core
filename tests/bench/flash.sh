@@ -4,7 +4,8 @@
 #
 #   ./flash.sh            app-only, fast (sectorerase; keeps bootloader+SoftDevice)
 #   ./flash.sh --full     full merged image (chiperase app+BL+SD) — use for 1st flash
-#   ./flash.sh --recover  unlock APPROTECT (erases ALL flash) then full flash
+#   ./flash.sh --recover  unlock APPROTECT (erases the nRF internal flash; the
+#                         configuration store, on the external flash, survives) then full flash
 #
 # Runs from WSL against a J-Link attached via usbipd (see wsl_usb.sh). Assumes the
 # firmware was built with:  ENABLE_SWS_ANALOG=1 ./scripts/build_linkitv4_kim.sh --bench
@@ -39,7 +40,7 @@ if ! nrfjprog --ids >/dev/null 2>&1 || [ -z "$(nrfjprog --ids 2>/dev/null)" ]; t
 fi
 
 do_recover() {
-    echo ">> nrfjprog --recover (erases ALL flash, clears APPROTECT)"
+    echo ">> nrfjprog --recover (erases the nRF internal flash, clears APPROTECT; config store kept)"
     nrfjprog --recover -f nrf52
 }
 

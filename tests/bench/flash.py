@@ -11,13 +11,16 @@ Sequence (never a different one): nrfjprog --recover (ONE attempt, hard limit
 only then. APPROTECT re-arms on these boards and a silent flash failure leaves
 the OLD image running.
 
---recover WIPES the configuration store: re-apply every parameter afterwards.
+--recover does NOT wipe the configuration store: it erases the nRF internal
+flash, and config.dat lives on the external IS25 flash. A value set for an
+earlier test is still set after the flash.
 Replaces flash.sh (bash, defaulted to app_settings, did not check the output).
 
-RADIO DISARM (after a confirmed flash, unless --no-disarm). The wiped store
-boots on factory defaults -- ARGOS_MODE=LEGACY, GNSS on, TR_NOM 60 s
-(config_store.hpp) -- and a KIM2 that answers transmits on its built-in LDK
-RCONF and factory ID even without credentials. So flash.py waits for the CDC
+RADIO DISARM (after a confirmed flash, unless --no-disarm). The board boots on
+the configuration it already held, or on factory defaults on a fresh store --
+ARGOS_MODE=LEGACY, GNSS on, TR_NOM 60 s (config_store.hpp) -- and a KIM2 that
+answers transmits on its built-in LDK RCONF and factory ID even without
+credentials. Either way the radio may be armed. So flash.py waits for the CDC
 port, sends %AMODE 0 at once (RAM, immediate), enters configuration, writes
 ARGOS_MODE=0 + CERT_TX_ENABLE=0 (persisted by PARMW), reads ARGOS_MODE=0 back,
 and closes the port. RF is only safe once 'RADIO DISARMED' is printed. Exit 4:
@@ -124,9 +127,10 @@ def disarm_radio(port_timeout=45.0):
         time.sleep(2.0)
         if not b.enter_config(timeout=20.0):
             return False, f"%CFG not acknowledged on {port} (%AMODE 0 {'acked' if amode else 'NOT acked'})"
-        # The DTE is not served at once after %CFG, and the first boot after
-        # --recover also formats the config store: both swallowed the single
+        # The DTE is not served at once after %CFG: that swallowed the single
         # PARMW/PARMR of the first version (reply None, exit 4 on 2026-10-10).
+        # The store format blamed at the time does not happen: the store
+        # survives --recover.
         time.sleep(2.0)
         replies = []
         disarmed = False

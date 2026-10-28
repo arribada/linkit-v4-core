@@ -1694,8 +1694,10 @@ PLAN D ESSAI -- mission tortue, emission reelle (LinkIt V4 SMD UART-AT, maitress
 0. Preparation (UNE fois) -- jamais par ce script :
    - flasher selon .claude/CLAUDE.md (nrfjprog --recover puis --program *_merged-*.hex
      --chiperase --verify --reset ; exiger "Verify successful" ET "Run.").
-   - --recover EFFACE le magasin : re-provisionner identifiants Argos + RCONF maitresse
-     LDA2, lancer SATVF, verifier STATR ART13=0. Le script refuse une maitresse != LDA2.
+   - --recover N EFFACE PAS le magasin (flash QSPI externe) : verifier par PARMR les
+     identifiants Argos et la RCONF maitresse LDA2 (une valeur d un essai precedent
+     reste posee), lancer SATVF, verifier STATR ART13=0. Le script refuse une
+     maitresse != LDA2.
    - antenne branchee, ciel visible ; DTE_RF_AUTORISE=1 ; PYTHONUTF8=1.
 
 1. turtle_mission_rf.py burst            ~ 10 min   ~ 9 trames, borne 16 (--max-tx)

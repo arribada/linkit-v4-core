@@ -330,8 +330,9 @@ def recover(log_dir=None):
     A recover that hangs or fails is reported, never retried in a loop: the
     usual causes (probe held by nRF Connect / nrfutil-device, a J-Link firmware
     update prompt, the board unplugged) are not cured by repetition.
-    WIPES the configuration store: every parameter a case relies on must be
-    re-applied afterwards.
+    It erases the nRF internal flash only. The configuration store lives on the
+    external IS25 flash and SURVIVES: a value an earlier case set is still set,
+    so every parameter a case relies on must be set by the case itself.
     """
     return nrfjprog(["--recover"], timeout=RECOVER_TIMEOUT_S, log_dir=log_dir)
 
@@ -365,8 +366,9 @@ def flash_merged(hexpath, log_dir=None, say=print):
     verified = "Verify successful" in txt or "Verified OK" in txt
     ran = re.search(r"(?m)^\s*Run\.\s*$", txt) is not None or "Run." in txt
     if p.ok and verified and ran:
-        return True, ("flashed and verified ('Verify successful' + 'Run.'). The configuration store was "
-                      "WIPED by --recover: re-apply every parameter a test depends on.")
+        return True, ("flashed and verified ('Verify successful' + 'Run.'). The configuration store "
+                      "survived --recover (external flash): set every parameter a test depends on, "
+                      "an earlier value is still there.")
     return False, (f"--program NOT confirmed (rc={p.returncode}, timeout={p.timed_out}, "
                    f"verify={'yes' if verified else 'NO'}, run={'yes' if ran else 'NO'}) -- the chip may still "
                    f"run the OLD image.\n{txt.strip()[-800:]}")
