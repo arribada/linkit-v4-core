@@ -6,7 +6,17 @@ namespace BSP
 	const GPIO_InitTypeDefAndInst_t GPIO_Inits[GPIO_TOTAL_NUMBER] =
 	{
 		// pin number, direction, input, pull, drive sense
-		/* GPIO_POWER_CONTROL   */ {NRF_GPIO_PIN_MAP(0,  4), NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_PULLUP, NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE, {}},
+		//
+		// A push-pull output carries NO pull. While it is driven, the pin sets the
+		// level, so the resistor either does nothing (same level) or conducts VDD
+		// over ~13 kOhm (opposite level). Measured on a LinkIt 2026-10-27 with the
+		// %PULLAB bench probe: the pull-down of a HIGH GPS_PWR_EN drew current for
+		// the whole GNSS deep-idle window, ~0.12 mA seen by a PPK sharing the supply
+		// with USB, ~0.25 mA expected from 3.3 V / 13 kOhm. Nor does it hold anything
+		// through a reset, which returns PIN_CNF to a disconnected input with no
+		// pull: a level that must survive a reset needs a resistor on the board.
+		// tools/check_gpio_output_pulls.py enforces this in CI.
+		/* GPIO_POWER_CONTROL   */ {NRF_GPIO_PIN_MAP(0,  4), NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE, {}},
         /* GPIO_VSYS_SEL        */ {NRF_GPIO_PIN_MAP(1, 14), NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_S0D1, NRF_GPIO_PIN_NOSENSE, {}},
 		/* GPIO_DEBUG           */ {NRF_GPIO_PIN_MAP(0, 11), NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE, {}},
 		/* GPIO_SWS             */ {NRF_GPIO_PIN_MAP(0,  2), NRF_GPIO_PIN_DIR_INPUT,  NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE, {}},
@@ -18,20 +28,18 @@ namespace BSP
 		// SWD probe wired to NRST can still assert reset at any time (both ends
 		// open-drain → no contention), so STM32WL firmware flashing is unaffected.
 		/* GPIO_SAT_RESET       */ {NRF_GPIO_PIN_MAP(0, 31), NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_S0D1, NRF_GPIO_PIN_NOSENSE, {}},
-		/* GPIO_SAT_EN          */ {NRF_GPIO_PIN_MAP(1, 15), NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_PULLDOWN, NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE, {}},
-        // PULLDOWN, not NOPULL: this line drives the KIM2 external wake-up, and the
-        // pin is high-Z whenever the nRF is in reset or System OFF. Floating, it can
-        // sit at whatever the module's input leakage decides -- holding the radio
-        // awake and burning the budget, or bouncing it. The pull-down defines the
-        // idle state as 'asleep' even when nothing is driving it.
-        // From dev/kineis_blind_wakeup; the rest of that branch is already superseded.
-        /* GPIO_SAT_WKUP        */ {NRF_GPIO_PIN_MAP(0, 30), NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_PULLDOWN, NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE, {}},
+		/* GPIO_SAT_EN          */ {NRF_GPIO_PIN_MAP(1, 15), NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE, {}},
+        // KIM2 external wake-up. It used to carry a pull-down, meant to keep the
+        // module asleep while the nRF is in reset or System OFF. It did neither:
+        // a reset clears the pull with the rest of PIN_CNF, and System OFF keeps
+        // the driven level. It only ever conducted, while the line was HIGH.
+        /* GPIO_SAT_WKUP        */ {NRF_GPIO_PIN_MAP(0, 30), NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE, {}},
         /* GPIO_KIM_PWR_ON      */ {NRF_GPIO_PIN_MAP(0,  5), NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE, {}},
         // KIM_INT (module pin 5) -- an output of the module into nRF P0.29, so an
         // INPUT here. Pull-down: the module releases it when powered off, and a
         // floating input both burns current and picks up noise. Unused so far.
         /* GPIO_SAT_INT         */ {NRF_GPIO_PIN_MAP(0, 29), NRF_GPIO_PIN_DIR_INPUT, NRF_GPIO_PIN_INPUT_CONNECT, NRF_GPIO_PIN_PULLDOWN, NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE, {}},
-		/* GPIO_GPS_PWR_EN      */ {NRF_GPIO_PIN_MAP(1,  6), NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_PULLDOWN, NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE, {}},
+		/* GPIO_GPS_PWR_EN      */ {NRF_GPIO_PIN_MAP(1,  6), NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE, {}},
 		/* GPIO_GPS_RST         */ {NRF_GPIO_PIN_MAP(1, 13), NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_S0D1, NRF_GPIO_PIN_NOSENSE, {}},
 		// GPIO_GPS_EXT_INT: nRF drives the M10Q EXTINT input pin to wake it from
 		// PMREQ-backup deep-sleep (2026-05 deep-idle refactor). Was DIR_INPUT
@@ -51,6 +59,23 @@ namespace BSP
 		/* GPIO_LED_GREEN       */ {NRF_GPIO_PIN_MAP(1, 10), NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE, {}},
 		/* GPIO_LED_RED         */ {NRF_GPIO_PIN_MAP(1,  7), NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE, {}},
 		/* GPIO_LED_BLUE        */ {NRF_GPIO_PIN_MAP(1,  4), NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE, {}},
+		// REED_SW and the accelerometer INT1 are GPIOTE inputs in IN (event) mode:
+		// hi_accuracy = true, the 4th field of the last brace. Nordic documents that
+		// mode as costing sleep current while any IN channel is on, ~20 to ~250 uA
+		// by source; PORT (SENSE) events cost ~1 uA. Kept as is on purpose (audit
+		// point 9, 2026-10-28): the reed is the only way back into a sealed tag, and
+		// the real cost was never measured on a sound board. It is armed for the
+		// whole mission (UW_DIVE_MODE_ENABLE, which pauses it underwater, is off by
+		// default), so whatever it costs, it costs all day.
+		// To move both to PORT later, all three, or an input dies:
+		// - hi_accuracy = false on BOTH rows (one left in IN mode keeps the clock);
+		// - NRFX_GPIOTE_CONFIG_NUM_OF_LOW_POWER_EVENTS and the legacy
+		//   GPIOTE_CONFIG_NUM_OF_LOW_POWER_EVENTS >= 2 in sdk_config.h: at 1 the
+		//   second nrfx_gpiote_in_init fails and that input never fires;
+		// - no other pin left with a SENSE field (PORT events share one DETECT
+		//   line; the bootloader arms P0.11): %SENSE must list none.
+		// Measure first, bench build: %GPIOTE (registers, reed edges), %GPIOTEAB
+		// (A/B of every IN channel for a PPK, USB unplugged).
 		/* GPIO_REED_SW         */ {NRF_GPIO_PIN_MAP(1,  3), NRF_GPIO_PIN_DIR_INPUT,  NRF_GPIO_PIN_INPUT_CONNECT,    NRF_GPIO_PIN_PULLDOWN, NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE, {NRF_GPIOTE_POLARITY_TOGGLE, NRF_GPIO_PIN_PULLDOWN, false, true, false}},
         /* GPIO_ADC_EN          */ {NRF_GPIO_PIN_MAP(0, 12), NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE, {}},
         /* GPIO_ADC_ALERT_READY */ {NRF_GPIO_PIN_MAP(1,  1), NRF_GPIO_PIN_DIR_INPUT,  NRF_GPIO_PIN_INPUT_CONNECT,    NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE, {}},
@@ -58,8 +83,8 @@ namespace BSP
 		/* GPIO_EXT_GPIO1       */ {NRF_GPIO_PIN_MAP(0,  6), NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE, {}},
 		/* GPIO_EXT_GPIO2       */ {NRF_GPIO_PIN_MAP(0,  7), NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE, {}},
 		/* GPIO_EXT_GPIO3       */ {NRF_GPIO_PIN_MAP(0,  8), NRF_GPIO_PIN_DIR_INPUT,  NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE, {}},
-		/* GPIO_EXT_GPIO4       */ {NRF_GPIO_PIN_MAP(0,  9), NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE, {}},  // CAM_PWR_EN
-		/* GPIO_EXT_GPIO5       */ {NRF_GPIO_PIN_MAP(0, 16), NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE, {}},  // CAM_PWR_BUTT / BUZZER
+		/* GPIO_EXT_GPIO4       */ {NRF_GPIO_PIN_MAP(0,  9), NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE, {}},  // CAM_PWR_EN (CAM_CONTROL=BUTTON) / SMD SPI CS
+		/* GPIO_EXT_GPIO5       */ {NRF_GPIO_PIN_MAP(0, 16), NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE, {}},  // CAM_PWR_BUTT / CAM_PWR_EN (CAM_CONTROL=UART) / BUZZER
     };
 
 /////////////////////////////////// UART definitions ////////////////////////////////
@@ -385,6 +410,40 @@ namespace BSP
                 .int_prio = INTERRUPT_PRIORITY_UART_0,
             }
         },
+#if defined(CAM_CONTROL_UART) && (CAM_CONTROL_UART == 1)
+        // RunCam camera, RunCam Device Protocol (-DCAM_CONTROL=UART). CMake allows
+        // it on an SMD SPI build only, where the satellite slot no longer needs
+        // this UART. nRF TX P0.14 -> camera RX, nRF RX P0.26 <- camera TX: the
+        // orientation of the SMD UART it replaces.
+        //
+        // HARDWARE: the SMD module must no longer be on these two lines. Its
+        // LPUART1 debug TX lands on P0.26 (bench 2026-09-02): left connected it
+        // drives against the camera's TX, and the camera's idle-high TX feeds an
+        // SMD whose rail is cut through its ESD clamp. %SATLOG with the camera
+        // off tells whether something still talks on P0.26.
+        {
+            .uart = &async_uarte_1,
+            .config = {
+                .rx_pin = NRF_GPIO_PIN_MAP(0, 26),
+                .tx_pin = NRF_GPIO_PIN_MAP(0, 14),
+                .cts_pin = NRF_UARTE_PSEL_DISCONNECTED,
+                .rts_pin = NRF_UARTE_PSEL_DISCONNECTED,
+                // ~6 byte times at 115200: a 5-byte answer is handed over 0.5 ms
+                // after its last byte instead of waiting for a full buffer.
+                .timeout_us = 500,
+                .flush_on_timeout = true,
+                .hwfc = NRF_UARTE_HWFC_DISABLED,
+                .parity = NRF_UARTE_PARITY_EXCLUDED,
+                .baudrate = NRF_UARTE_BAUDRATE_115200,  // fixed by the protocol
+                // Only while the link is up, which is from one second after the
+                // rail to just before it is cut (RunCamUartDevice): it never feeds
+                // an unpowered camera, and it holds the line idle while the
+                // camera's own TX is not driven yet during its boot.
+                .pullup_rx = true,
+                .int_prio = INTERRUPT_PRIORITY_UART_1,
+            }
+        }
+#else
         {
             .uart = &async_uarte_1,
             .config = {
@@ -430,5 +489,6 @@ namespace BSP
                 .int_prio = INTERRUPT_PRIORITY_UART_1,
             }
         }
+#endif
     };
 }

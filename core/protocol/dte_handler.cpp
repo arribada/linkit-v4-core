@@ -14,6 +14,7 @@
 #include "pmu.hpp"
 #include "rgb_led.hpp"
 #include "argos_config_check.hpp"
+#include <algorithm>
 #include <cmath>
 
 extern RGBLed *status_led;
@@ -64,7 +65,11 @@ DTEHandler::DTEHandler() {
 	m_gps_subscribed = false;
 }
 
-DTEHandler::~DTEHandler() {}
+DTEHandler::~DTEHandler() {
+#if defined(CAM_CONTROL_UART) && (CAM_CONTROL_UART == 1)
+	if (m_cam_subscribed && runcam_uart_device) runcam_uart_device->unsubscribe(*this);
+#endif
+}
 
 void DTEHandler::set_async_write(std::function<void(const std::string &)> fn) {
 	m_async_write = fn;
@@ -300,10 +305,24 @@ std::string DTEHandler::STATR_REQ(int error_code, std::vector<ParamID> &params,
 	if (rtc) {
 		configuration_store->write_param(ParamID::RTC_CURRENT_TIME, static_cast<unsigned int>(rtc->gettime()));
 	}
+#if ENABLE_CAM_SENSOR
+	// CAT00 states the camera control this build was made with, whatever an older
+	// firmware left in the store.
+	configuration_store->write_param(ParamID::CAM_CONTROL_MODE, CAM_CONTROL_UART ? 2U : 1U);
+#endif
 #if !defined(LORA_RAK3172) || (LORA_RAK3172 != 1)
 	// ART12 as of now (a PARMW / SATVF earlier in this session already logged it).
 	(void)dte_refresh_argos_cfg_warnings();
 #endif
+	// The battery as it is now. BATT_SOC and BATT_VOLTAGE refresh through the
+	// routine path, which accepts a sample up to BatteryMonitor::SAMPLE_MAX_AGE_MS
+	// (30 min) old, and nothing else samples in configuration mode: the services
+	// are stopped. 10 s still serves a tool that polls STATR with one sample.
+	constexpr uint64_t STATR_BATTERY_MAX_AGE_MS = 10000;
+	const bool reads_battery = (params.empty() && rejected_keys.empty())
+	                           || std::find(params.begin(), params.end(), ParamID::BATT_SOC) != params.end()
+	                           || std::find(params.begin(), params.end(), ParamID::BATT_VOLTAGE) != params.end();
+	if (!error_code && reads_battery && battery_monitor) battery_monitor->update(STATR_BATTERY_MAX_AGE_MS);
 	return read_params_by_filter(error_code, params, rejected_keys, 'T', DTECommand::STATR_RESP);
 }
 
@@ -2021,6 +2040,122 @@ void DTEHandler::react(const GPSEventError &) {
 	system_scheduler->post_task_prio([this]() { finish_gnssi(false); }, "DTEGnssiError");
 }
 
+#if defined(CAM_CONTROL_UART) && (CAM_CONTROL_UART == 1)
+/// @brief CAMTST: the camera's real session, run from the configuration tool.
+///
+/// What an operator needs to know before fixing the tag on an animal is whether
+/// the camera will film: that its card has room, and that a recording starts and
+/// stops. The session the tag runs at sea answers exactly that, since
+/// RunCamUartDevice checks every press against the card — so this runs it, for
+/// a recording of a few seconds, and answers with what the card said. The same
+/// code as at sea, not a second implementation of it.
+///
+/// Asynchronous like GNSSI: no immediate answer. The CAMTST response comes when
+/// the camera is off again (~20 s), or after CAMTST_TIMEOUT_MS at the latest.
+std::string DTEHandler::CAMTST_REQ(int error_code) {
+	if (error_code) {
+		return DTEEncoder::encode(DTECommand::CAMTST_RESP, error_code);
+	}
+	if (!runcam_uart_device) {
+		return DTEEncoder::encode(DTECommand::CAMTST_RESP, (int)DTEError::INCORRECT_DATA);
+	}
+	if (m_camtst_pending || !runcam_uart_device->is_idle()) {
+		DEBUG_WARN("DTEHandler::CAMTST_REQ: camera busy (%s)", runcam_uart_device->state_name());
+		return camtst_response(CamTestStatus::BUSY);
+	}
+	if (!m_cam_subscribed) {
+		runcam_uart_device->subscribe(*this);
+		m_cam_subscribed = true;
+	}
+	m_camtst_pending = true;
+	m_camtst_start_ms = PMU::get_timestamp_ms();
+	m_camtst_timeout = system_scheduler->post_task_prio(
+	    [this]() {
+		    if (!m_camtst_pending) return;
+		    m_camtst_pending = false;
+		    DEBUG_WARN("DTEHandler: CAMTST timed out after %u ms — camera cut", CAMTST_TIMEOUT_MS);
+		    if (runcam_uart_device) runcam_uart_device->power_off_blocking();
+		    if (m_async_write) m_async_write(camtst_response(CamTestStatus::TIMEOUT));
+	    },
+	    "DTEHandlerCamtstTimeout", Scheduler::DEFAULT_PRIORITY, CAMTST_TIMEOUT_MS);
+	DEBUG_INFO("DTEHandler::CAMTST_REQ: camera test started");
+	runcam_uart_device->power_on();
+
+	// No immediate response — the camera's power-off or error event answers.
+	return {};
+}
+
+// The session's own outcome is CAMTST's status: one set of codes, two names.
+static_assert((unsigned int)CamTestStatus::OK == (unsigned int)RunCamUartDevice::Outcome::OK, "CAMTST codes");
+static_assert((unsigned int)CamTestStatus::NO_ANSWER == (unsigned int)RunCamUartDevice::Outcome::NO_ANSWER,
+              "CAMTST codes");
+static_assert((unsigned int)CamTestStatus::NO_SPACE == (unsigned int)RunCamUartDevice::Outcome::NO_SPACE,
+              "CAMTST codes");
+static_assert((unsigned int)CamTestStatus::NOT_RECORDING == (unsigned int)RunCamUartDevice::Outcome::NOT_RECORDING,
+              "CAMTST codes");
+static_assert((unsigned int)CamTestStatus::UNVERIFIED == (unsigned int)RunCamUartDevice::Outcome::UNVERIFIED,
+              "CAMTST codes");
+static_assert((unsigned int)CamTestStatus::STOP_FAILED == (unsigned int)RunCamUartDevice::Outcome::STOP_FAILED,
+              "CAMTST codes");
+static_assert((unsigned int)CamTestStatus::LINK_ERROR == (unsigned int)RunCamUartDevice::Outcome::LINK_ERROR,
+              "CAMTST codes");
+
+/// @brief What the session's outcome means for the operator.
+static CamTestStatus camtst_outcome(const RunCamUartDevice &cam) {
+	return static_cast<CamTestStatus>(cam.outcome());
+}
+
+/// @brief The CAMTST answer: @p status, then what the camera and its card said.
+std::string DTEHandler::camtst_response(CamTestStatus status) const {
+	const RunCamUartDevice &cam = *runcam_uart_device;
+	const unsigned int features = cam.has_answered() ? cam.device_info().features : 0U;
+	const unsigned int duration_ms =
+	    (status == CamTestStatus::BUSY) ? 0U : (unsigned int)(PMU::get_timestamp_ms() - m_camtst_start_ms);
+	return DTEEncoder::encode(DTECommand::CAMTST_RESP, (int)DTEError::OK, (unsigned int)status, features,
+	                          cam.last_free_mb(), cam.last_total_mb(), cam.last_remaining_s(),
+	                          cam.is_recording_verified() ? 1U : 0U, cam.is_stop_verified() ? 1U : 0U,
+	                          cam.is_clock_set() ? 1U : 0U, cam.start_attempts(), duration_ms,
+	                          static_cast<unsigned int>(cam.resolution_read()));
+}
+
+/// @brief Seen on the card, recording: now the stop, which the test checks as
+/// much as the start. Not from inside the camera's own notification.
+void DTEHandler::react(const CAMEventPowerOn &) {
+	if (!m_camtst_pending) return;
+	system_scheduler->post_task_prio(
+	    []() {
+		    if (runcam_uart_device) runcam_uart_device->power_off();
+	    },
+	    "DTECamtstStop");
+}
+
+void DTEHandler::react(const CAMEventPowerOff &) {
+	if (m_camtst_pending) finish_camtst();
+}
+
+void DTEHandler::react(const CAMEventError &) {
+	if (m_camtst_pending) finish_camtst();
+}
+
+/// @brief The camera is off again (or never started): answer. These events come
+/// from the camera's scheduler tasks, never from an interrupt.
+void DTEHandler::finish_camtst() {
+	m_camtst_pending = false;
+	system_scheduler->cancel_task(m_camtst_timeout);
+	const CamTestStatus status = camtst_outcome(*runcam_uart_device);
+	if (m_async_write) m_async_write(camtst_response(status));
+	DEBUG_INFO("DTEHandler: CAMTST answered, status %u", (unsigned int)status);
+}
+
+void DTEHandler::abort_camera_test() {
+	if (!m_camtst_pending) return;
+	m_camtst_pending = false;
+	system_scheduler->cancel_task(m_camtst_timeout);
+	DEBUG_WARN("DTEHandler: leaving configuration during a camera test — camera cut");
+	if (runcam_uart_device) runcam_uart_device->power_off_blocking();
+}
+#endif
+
 std::string DTEHandler::GNSSA_REQ(int error_code) {
 	if (error_code) {
 		return DTEEncoder::encode(DTECommand::GNSSA_RESP, error_code);
@@ -2196,6 +2331,9 @@ DTEAction DTEHandler::handle_dte_message(const std::string &req, std::string &re
 #endif
 #if !(defined(LORA_RAK3172) && (LORA_RAK3172 == 1)) && !(defined(ARGOS_SMD) && (ARGOS_SMD == 1))
 		case DTECommand::KIMBR_REQ: resp = KIMBR_REQ(error_code, arg_list); break;
+#endif
+#if defined(CAM_CONTROL_UART) && (CAM_CONTROL_UART == 1)
+		case DTECommand::CAMTST_REQ: resp = CAMTST_REQ(error_code); break;
 #endif
 		default: break;
 		}

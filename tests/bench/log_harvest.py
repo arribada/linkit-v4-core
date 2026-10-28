@@ -82,7 +82,11 @@ def analyse(texte):
         'sessions_gnss':     compte(r'M10Q on —'),
         'sans_fix':          compte(r'acquisition timeout — no fix'),
         'pvt_degrades':      compte(r'degraded PVT'),
-        'redemarrages':      compte(r'entry: BootState'),
+        # Une ligne par demarrage QUI ATTEINT le journal. 'entry: BootState' et
+        # 'BootFail: counter' sont journalises avant LoggerManager::create(),
+        # donc jamais en flash : ces deux compteurs rendaient 0 quoi qu il
+        # arrive (constate le 27/10/2026).
+        'redemarrages':      compte(r'Firmware Version: '),
         # Les trois compteurs ci-dessous comptaient des MENTIONS, pas des
         # evenements, et le resultat etait alarmant pour rien. Mesure sur un
         # journal reel du 16/10: 'resets_wdt' annoncait 14 pour UN seul reset
@@ -100,7 +104,10 @@ def analyse(texte):
         # garde), bit 2 = SREQ (reset logiciel). C est cela qu il faut compter.
         'resets_wdt':        compte(r'RESETREAS=0x[0-9a-fA-F]*[26AaEe]\b'),
         'resets_logiciels':  compte(r'RESETREAS=0x[0-9a-fA-F]*[4567CcDdEeFf]\b'),
-        'echecs_boot':       compte(r'BootFail: counter'),
+        # Un demarrage normal compte deja 1 au moment ou OperationalState
+        # remet le compteur a zero ('was 1 failures') : seuls 2 et plus disent
+        # qu un demarrage a echoue avant celui-ci.
+        'echecs_boot':       compte(r'BootFail: clearing \(was ([2-9]|[1-9]\d+) failures'),
         'reset_usine':       compte(r'factory_reset(?!=0)'),
         'batterie_critique': compte(r'VoltageCritical|battery.*critical.*shutdown'),
         'backoff':           compte(r'backoff|suspension'),

@@ -17,13 +17,19 @@
  * called the degraded state healthy, because a heartbeat is a transmission.
  */
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
+#include <map>
+#include <string>
 #include <vector>
 
 #include "argos_tx_service.hpp"
+#include "debug.hpp"
 #include "gps_service.hpp"
+#include "logger.hpp"
 #include "sws_analog_service.hpp"
 #include "nrfx_saadc.h"
 #include "fake_battery_mon.hpp"
@@ -61,6 +67,27 @@ extern Logger *sensor_log;
 extern OTAFileUpdater *ota_updater;
 extern DTEHandler *dte_handler;
 extern BLEService *ble_service;
+extern uint64_t g_pmu_busy_wait_us;  // tests/mocks/mock_pmu.cpp
+
+/// Busy-wait a simulated turtle day may ask for through PMU::delay_ms/us
+/// (battery samples are counted apart). Measured 0 ms on 2026-10-27; one second
+/// of headroom. Blind to target-only branches: the SWS front end's per-sample
+/// charge delay sits under #else of its CPPUTEST stub and never reaches here.
+static constexpr uint64_t BUSY_WAIT_BUDGET_MS_PER_DAY = 1000ULL;
+
+/// Flash-log lines a simulated turtle day may write (services only: the radio and
+/// GNSS drivers are fakes here and add their own on a tag). A ratchet: 1252
+/// measured on 2026-10-27 after the journal cleanup -- one line per step, the
+/// sub-steps as DEBUG_DETAIL -- plus ~10 %. It was 2811 before (33.5 a
+/// surfacing, ~6.5 min of flash writes a day), more than half of them TX
+/// START / TX SUCCESS pairs and scheduling chatter. See
+/// BatteryAndBusyWaitWithinBudget.
+static constexpr unsigned int SYSLOG_LINES_RATCHET_PER_DAY = 1380U;
+
+/// The same at SYSTEM_LOG_LEVEL=WARN: a nominal day writes no fault, and the
+/// configuration warnings of a boot are the only lines left (measured on
+/// 2026-10-27, see JournalAtWarnHoldsOnlyFaults).
+static constexpr unsigned int SYSLOG_LINES_AT_WARN_PER_DAY = 10U;
 extern RGBLed *status_led;
 extern ReedSwitch *reed_switch;
 
@@ -126,6 +153,91 @@ public:
 
 private:
 	KineisModulation m_mod = KineisModulation::LDA2;
+};
+
+/// Records like RecordingKineisDevice, and completes each transmission the way
+/// a module does: TxStarted ~1 s after send(), TxComplete ~1 s later; a dive
+/// (stop_send / power_off_immediate) cancels the pending completion. Without it
+/// every TX ends on ArgosTxService's timeout, and the TX-complete path -- the
+/// busiest single task, the costs measured on 2026-10-27 showed -- never runs.
+class CompletingKineisDevice : public RecordingKineisDevice {
+public:
+	void send(const KineisModulation m, const KineisPacket &p, const unsigned int bits) override {
+		RecordingKineisDevice::send(m, p, bits);
+		const unsigned int g = ++m_generation;
+		system_scheduler->post_task_prio(
+		    [this, g]() {
+			    if (g == m_generation) notify(KineisEventTxStarted({}));
+		    },
+		    "SimTxStarted", Scheduler::DEFAULT_PRIORITY, 1000);
+		system_scheduler->post_task_prio(
+		    [this, g]() {
+			    if (g == m_generation) notify(KineisEventTxComplete({}));
+		    },
+		    "SimTxComplete", Scheduler::DEFAULT_PRIORITY, 2000);
+	}
+	void stop_send() override { m_generation++; }
+	void power_off_immediate() override {
+		m_generation++;
+		RecordingKineisDevice::power_off_immediate();
+	}
+
+private:
+	unsigned int m_generation = 0;
+};
+
+/// Counts the lines a release build commits to system.log in flash, one
+/// LittleFS write each (72-480 ms, ~140 ms on an aged filesystem, measured
+/// 2026-10-27). Installed as DebugLogger::system_log -- this target builds with
+/// DEBUG_TO_SYSTEMLOG, as the firmware does -- it receives exactly what the
+/// journal would: no DEBUG_DETAIL or TRACE, the hold window replayed, and only
+/// what its SYSTEM_LOG_LEVEL lets through (set_log_level, as PreOperational
+/// entry does on a tag).
+class SyslogLineCounter : public Logger {
+public:
+	SyslogLineCounter() : Logger("SyslogLineCounter") {}
+	unsigned int lines = 0;
+	/// Lines by text, every run of digits folded to '#', so the 254 copies of
+	/// one message count as one entry: when the ratchet trips, this says which
+	/// line to look at.
+	std::map<std::string, unsigned int> by_text;
+	void create() override {}
+	void write(void *entry) override {
+		const LogEntry *e = static_cast<LogEntry *>(entry);
+		const unsigned int type = e->header.log_type;
+		if (type != LOG_ERROR && type != LOG_WARN && type != LOG_INFO) return;
+		lines++;
+		// SIM_PRINT_SYSLOG=1 prints the journal as a tag would write it, to
+		// read one surfacing end to end.
+		static const bool print = getenv("SIM_PRINT_SYSLOG") != nullptr;
+		if (print)
+			printf("SYSLOG %02u:%02u:%02u %s\n", e->header.hours, e->header.minutes, e->header.seconds,
+			       reinterpret_cast<const char *>(e->data));
+		std::string key;
+		for (const char *s = reinterpret_cast<const char *>(e->data); *s; s++) {
+			if (*s >= '0' && *s <= '9') {
+				if (key.empty() || key.back() != '#') key += '#';
+			} else {
+				key += *s;
+			}
+		}
+		by_text[key]++;
+	}
+	void print_top(unsigned int n) const {
+		std::vector<std::pair<unsigned int, std::string>> v;
+		for (const auto &kv : by_text)
+			v.push_back({ kv.second, kv.first });
+		std::sort(v.begin(), v.end(), [](const auto &a, const auto &b) { return a.first > b.first; });
+		for (unsigned int i = 0; i < v.size() && i < n; i++)
+			printf("  %5u  %s\n", v[i].first, v[i].second.c_str());
+	}
+	void read(void *, int) override {}
+	unsigned int num_entries() override { return lines; }
+	bool is_ready() override { return true; }
+	void truncate() override {
+		lines = 0;
+		by_text.clear();
+	}
 };
 
 }  // namespace
@@ -203,6 +315,11 @@ struct MissionStats {
 	unsigned int gnss_fixes = 0;
 	unsigned int detector_transitions = 0;  ///< what the REAL SWS detector decided
 	unsigned int first_silent_day = 0;
+	// The costs no functional assertion sees: frames still go out, later and
+	// dearer. Held to a budget by BatteryAndBusyWaitWithinBudget.
+	unsigned int battery_samples = 0;               ///< BatteryMonitor samples actually taken
+	unsigned int max_battery_samples_to_frame = 0;  ///< worst surfacing, samples before its first frame
+	uint64_t busy_wait_ms = 0;                      ///< PMU::delay_ms/us asked for, outside the battery
 };
 
 TEST_GROUP(TurtleMission) {
@@ -307,6 +424,14 @@ static MissionStats run_mission(unsigned int days, RecordingKineisDevice *kineis
 	size_t frames_at_surface_start = 0;
 	uint64_t ms = 0;
 
+	// FakeConfigurationStore refreshes the battery like the real store, so these
+	// count every sample a getter takes (FakeBatteryMonitor::update_calls).
+	auto *batt = static_cast<FakeBatteryMonitor *>(battery_monitor);
+	const unsigned int samples_at_start = batt->update_calls;
+	const uint64_t busy_at_start_us = g_pmu_busy_wait_us;
+	unsigned int samples_at_surfacing = 0;
+	bool first_frame_pending = false;
+
 	for (unsigned int sec = 0; sec < days * 86400U; sec++) {
 		const unsigned int day = sec / 86400U;
 
@@ -318,6 +443,8 @@ static MissionStats run_mission(unsigned int days, RecordingKineisDevice *kineis
 			if (underwater) {  // surfacing
 				st.surfacings++;
 				frames_at_surface_start = kineis->frames.size();
+				samples_at_surfacing = batt->update_calls;
+				first_frame_pending = true;
 				underwater = false;
 				phase_left = env.surface_s;
 				gps_dev->ttff_s = 20 + (sec % 40);          // 20-59 s, as at sea
@@ -344,14 +471,37 @@ static MissionStats run_mission(unsigned int days, RecordingKineisDevice *kineis
 		// and never execute -- the first version of this harness reported 593
 		// surfacings and zero frames for exactly that reason.
 		system_scheduler->run();
+
+		if (first_frame_pending && kineis->frames.size() > frames_at_surface_start) {
+			first_frame_pending = false;
+			st.max_battery_samples_to_frame =
+			    std::max(st.max_battery_samples_to_frame, batt->update_calls - samples_at_surfacing);
+		}
 	}
 
+	st.battery_samples = batt->update_calls - samples_at_start;
+	st.busy_wait_ms = (g_pmu_busy_wait_us - busy_at_start_us) / 1000U;
 	st.frames_total = (unsigned int)kineis->frames.size();
 	for (auto &f : kineis->frames)
 		if (f.carries_position) st.frames_with_position++;
 	st.detector_transitions = detector_transitions;
 	st.gnss_sessions = gps_dev->sessions;
 	st.gnss_fixes = gps_dev->fixes;
+	return st;
+}
+
+/// run_mission() with the counter as the flash journal and the console off
+/// (the console half of every DEBUG_* line would otherwise flood the output).
+static MissionStats run_mission_journaled(unsigned int days, RecordingKineisDevice *radio, SimGPSDevice *gps_dev,
+                                          FakeRTC *fake_rtc, FakeTimer *fake_timer, SyslogLineCounter &journal) {
+	Logger *const console = DebugLogger::console_log;
+	Logger *const system = DebugLogger::system_log;
+	DebugLogger::console_log = nullptr;
+	DebugLogger::system_log = &journal;
+	MissionStats st = run_mission(days, radio, gps_dev, fake_rtc, fake_timer);
+	DebugLogger::release();  // nothing left held for the next test
+	DebugLogger::console_log = console;
+	DebugLogger::system_log = system;
 	return st;
 }
 
@@ -366,6 +516,74 @@ TEST(TurtleMission, SevenDayMission) {
 	printf("  trames emises                : %u (dont %u avec position)\n", st.frames_total, st.frames_with_position);
 	printf("  sessions GNSS / fixes        : %u / %u\n", st.gnss_sessions, st.gnss_fixes);
 	printf("  transitions du DETECTEUR SWS : %u (attendu ~%u)\n", st.detector_transitions, st.surfacings * 2);
+	printf("  mesures batterie             : %u (pire remontee : %u avant la 1re trame)\n", st.battery_samples,
+	       st.max_battery_samples_to_frame);
+	printf("  attente active hors batterie : %llu ms\n", (unsigned long long)st.busy_wait_ms);
 
 	CHECK(st.surfacings > 0);
+}
+
+/// The costs a functional assertion cannot see, held to a budget.
+///
+/// get_argos_configuration() sampled the battery on every call, and the services
+/// call it at each scheduling step: 4023 samples a simulated day, 13 between
+/// surfacing and the first frame, each a 500 ms busy-wait on KIM. Every frame
+/// still went out, so every test passed -- and this file could not see it
+/// either, because FakeConfigurationStore's refresh was an empty body. Three
+/// budgets, so the next hidden cost fails here instead of in the field:
+///  - battery samples: one per BatteryMonitor::SAMPLE_MAX_AGE_MS, none forced
+///    between surfacing and the first frame beyond the one that may fall due;
+///  - busy-wait through PMU::delay_ms/us: what the code measured when this test
+///    was written, with headroom;
+///  - lines a release build commits to the flash log, one LittleFS write each.
+///    A RATCHET, not a target: today's count plus headroom, so a change adding
+///    per-TX or per-surfacing lines fails here. Lower it when lines are removed.
+/// Raise a ceiling only with the reason in the commit. The radio completes its
+/// transmissions, so the TX-complete path runs as on a tag.
+TEST(TurtleMission, BatteryAndBusyWaitWithinBudget) {
+	configure_turtle_profile();
+	CompletingKineisDevice radio;
+	SyslogLineCounter syslog_lines;
+	MissionStats st = run_mission_journaled(1, &radio, gps_dev, fake_rtc, fake_timer, syslog_lines);
+
+	const unsigned int max_samples = (unsigned int)(86400000ULL / BatteryMonitor::SAMPLE_MAX_AGE_MS) + 1U;
+	printf("\n=== BUDGET 1 JOUR (emissions completees) ===\n");
+	printf("  remontees / trames           : %u / %u\n", st.surfacings, st.frames_total);
+	printf("  mesures batterie             : %u (plafond %u), pire remontee : %u avant la 1re trame\n",
+	       st.battery_samples, max_samples, st.max_battery_samples_to_frame);
+	printf("  attente active hors batterie : %llu ms (plafond %llu)\n", (unsigned long long)st.busy_wait_ms,
+	       (unsigned long long)BUSY_WAIT_BUDGET_MS_PER_DAY);
+	printf("  lignes vers le journal flash : %u (plafond %u), %.1f par remontee\n", syslog_lines.lines,
+	       SYSLOG_LINES_RATCHET_PER_DAY, st.surfacings ? (double)syslog_lines.lines / st.surfacings : 0.0);
+	printf("  lignes les plus frequentes (chiffres -> #) :\n");
+	syslog_lines.print_top(40);
+
+	CHECK(st.surfacings > 0);
+	CHECK(st.frames_total > 0);
+	CHECK(st.battery_samples <= max_samples);
+	CHECK(st.max_battery_samples_to_frame <= 1U);
+	CHECK(st.busy_wait_ms <= BUSY_WAIT_BUDGET_MS_PER_DAY);
+	CHECK(syslog_lines.lines <= SYSLOG_LINES_RATCHET_PER_DAY);
+}
+
+/// The same day at SYSTEM_LOG_LEVEL=WARN (DBP02=2), the level for a tag nobody
+/// will read again. A nominal mission has nothing to warn about, so the journal
+/// must stay close to empty: a WARN logged for routine behaviour fails here.
+/// Two did on 2026-10-27, both now INFO or DETAIL: the GNSS session cut by a
+/// dive (9 a day) and the "sensor timeout" fired after every no-fix session
+/// with only the GNSS bit pending, which filled nothing (17).
+TEST(TurtleMission, JournalAtWarnHoldsOnlyFaults) {
+	configure_turtle_profile();
+	CompletingKineisDevice radio;
+	SyslogLineCounter syslog_lines;
+	syslog_lines.set_log_level(LOG_LEVEL_WARN);
+	MissionStats st = run_mission_journaled(1, &radio, gps_dev, fake_rtc, fake_timer, syslog_lines);
+
+	printf("\n=== JOURNAL A WARN, 1 JOUR ===\n");
+	printf("  remontees / trames           : %u / %u\n", st.surfacings, st.frames_total);
+	printf("  lignes vers le journal flash : %u (plafond %u)\n", syslog_lines.lines, SYSLOG_LINES_AT_WARN_PER_DAY);
+	syslog_lines.print_top(20);
+
+	CHECK(st.frames_total > 0);  // the filter changes what is written, not what the tag does
+	CHECK(syslog_lines.lines <= SYSLOG_LINES_AT_WARN_PER_DAY);
 }

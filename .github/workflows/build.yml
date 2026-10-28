@@ -196,6 +196,12 @@ jobs:
             LORA)     LORA_RAK3172=ON ;;
           esac
 
+          # Camera control follows the transport, as in build_linkitv4_smd.sh:
+          # SMD SPI frees UARTE1 for the camera but takes P0.09, the button
+          # driver's rail pin; every other variant keeps UARTE1 for its module.
+          # CMake refuses any other pairing.
+          if [ "$COMM" = "SMD_SPI" ]; then CAM_CONTROL=UART; else CAM_CONTROL=BUTTON; fi
+
           # Export everything for next steps
           {
             echo "BOARD=$BOARD"
@@ -219,6 +225,7 @@ jobs:
             echo "ENABLE_SWS_LOG=$(to01 "${{ inputs.sensor_sws_log }}")"
             echo "GNSS_HAS_BACKUP_BATTERY=$(to01 "${{ inputs.sensor_gnss_bbr }}")"
             echo "CAM_ENABLE=$(to01 "${{ inputs.sensor_cam }}")"
+            echo "CAM_CONTROL=$CAM_CONTROL"
             echo "BUZZER_ENABLE=$(to01 "${{ inputs.buzzer }}")"
             echo "BATTERY_MONITOR_TYPE=${{ inputs.battery_monitor }}"
             echo "LORA_DCS_ENABLE=$(to01 "${{ inputs.lora_dcs }}")"
@@ -309,6 +316,7 @@ jobs:
                     -DENABLE_SWS_LOG=${{ steps.cfg.outputs.ENABLE_SWS_LOG }} \
                     -DGNSS_HAS_BACKUP_BATTERY=${{ steps.cfg.outputs.GNSS_HAS_BACKUP_BATTERY }} \
                     -DCAM_ENABLE=${{ steps.cfg.outputs.CAM_ENABLE }} \
+                    -DCAM_CONTROL=${{ steps.cfg.outputs.CAM_CONTROL }} \
                     -DBUZZER_ENABLE=${{ steps.cfg.outputs.BUZZER_ENABLE }} \
                     -DBATTERY_MONITOR_TYPE=${{ steps.cfg.outputs.BATTERY_MONITOR_TYPE }} \
                     ../.."
@@ -402,6 +410,7 @@ jobs:
           ENABLE_SWS_LOG=${{ steps.cfg.outputs.ENABLE_SWS_LOG }}
           GNSS_HAS_BACKUP_BATTERY=${{ steps.cfg.outputs.GNSS_HAS_BACKUP_BATTERY }}
           CAM_ENABLE=${{ steps.cfg.outputs.CAM_ENABLE }}
+          CAM_CONTROL=${{ steps.cfg.outputs.CAM_CONTROL }}
           BUZZER_ENABLE=${{ steps.cfg.outputs.BUZZER_ENABLE }}
           BATTERY_MONITOR_TYPE=${{ steps.cfg.outputs.BATTERY_MONITOR_TYPE }}
           EOF

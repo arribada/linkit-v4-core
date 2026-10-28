@@ -64,7 +64,7 @@ set(BOOL_BUILD_FLAGS
     BENCH_TEST BENCH_ALLOW_POWERDOWN BENCH_FORCE_LPM_NONE SMD_FLASH_HOLD SMD_UART KIM2_BLIND_WKUP_RELEASE
     SMD_DIVE_STANDBY
     DX1_GROUND_DECODER_READY
-    CAM_ENABLE BUZZER_ENABLE
+    CAM_ENABLE BUZZER_ENABLE CAM_CONTROL_UART
     METRIC_LATENCY_LOG_ENABLE VALIDATION_LOG_ENABLE RSPB_VSENSORS_FLOOR)
 
 # Idempotent : appelé une première fois dès que les valeurs utilisateur sont
@@ -729,16 +729,55 @@ if(CAM_ENABLE AND BUZZER_ENABLE)
     message(FATAL_ERROR "CAM_ENABLE and BUZZER_ENABLE cannot both be set to 1 (they share GPIO5)")
 endif()
 
+# Camera control, CAM_ENABLE builds only (2026-10):
+#   BUTTON (default) -- rail on P0.09 (CAM_PWR_EN), a 2 s press simulated on P0.16
+#   UART             -- RunCam Device Protocol on UARTE1, rail on P0.16
+# UARTE1 is the satellite slot's UART and KIM2, SMD_UART and the RAK3172 all
+# keep it for their module, so UART control exists on an SMD SPI build only.
+# BUTTON cannot go there either, P0.09 being that build's SMD chip-select: the
+# two modes have no satellite variant in common.
+set(CAM_CONTROL "BUTTON" CACHE STRING "Camera control: BUTTON (press simulated on GPIO5) or UART (RunCam protocol on UARTE1)")
+set_property(CACHE CAM_CONTROL PROPERTY STRINGS BUTTON UART)
+if(NOT CAM_CONTROL STREQUAL "BUTTON" AND NOT CAM_CONTROL STREQUAL "UART")
+    message(FATAL_ERROR "CAM_CONTROL=\"${CAM_CONTROL}\" is not a camera control: use BUTTON or UART.")
+endif()
+set(CAM_CONTROL_UART 0)
+
 if(CAM_ENABLE)
-    message(STATUS "Configuring for CAM sensor on GPIO_EXT_GPIO4/5")
     set(ENABLE_CAM_SENSOR 1)
     set(ENABLE_BUZZER 0)
+    set(_cam_on_smd_spi FALSE)
+    if(ARGOS_SMD AND NOT SMD_UART AND NOT LORA_RAK3172)
+        set(_cam_on_smd_spi TRUE)
+    endif()
 
-    # Add CAM-specific sources
-    target_sources(${TARGET_NAME} PRIVATE
-        ${PROJ_DIR}/core/hardware/run_cam/runcam.cpp
-        ${CORE_DIR}/services/cam_service.cpp
-    )
+    if(CAM_CONTROL STREQUAL "UART")
+        if(NOT BOARD STREQUAL "LINKIT" OR NOT _cam_on_smd_spi)
+            message(FATAL_ERROR
+                "CAM_CONTROL=UART drives the camera on UARTE1, the satellite slot's UART: it needs "
+                "BOARD=LINKIT with ARGOS_SMD=ON and SMD_UART=OFF (SMD over SPI). KIM2, SMD_UART and "
+                "LORA_RAK3172 all keep UARTE1 for their module.")
+        endif()
+        message(STATUS "Configuring for CAM sensor over UART (UARTE1, rail on GPIO_EXT_GPIO5)")
+        set(CAM_CONTROL_UART 1)
+        target_sources(${TARGET_NAME} PRIVATE
+            ${PROJ_DIR}/core/hardware/run_cam/runcam_uart_link.cpp
+            ${CORE_DIR}/hardware/runcam_uart_device.cpp
+            ${CORE_DIR}/protocol/runcam_protocol.cpp
+            ${CORE_DIR}/services/cam_service.cpp
+        )
+    else()
+        if(_cam_on_smd_spi)
+            message(FATAL_ERROR
+                "CAM_CONTROL=BUTTON cannot go on an SMD SPI build: P0.09 is both the SMD chip-select and "
+                "CAM_PWR_EN. Use CAM_CONTROL=UART, or SMD_UART=ON.")
+        endif()
+        message(STATUS "Configuring for CAM sensor on GPIO_EXT_GPIO4/5 (button)")
+        target_sources(${TARGET_NAME} PRIVATE
+            ${PROJ_DIR}/core/hardware/run_cam/runcam.cpp
+            ${CORE_DIR}/services/cam_service.cpp
+        )
+    endif()
 elseif(BUZZER_ENABLE)
     message(STATUS "Configuring for BUZZER on GPIO_EXT_GPIO5")
     set(ENABLE_CAM_SENSOR 0)
@@ -835,6 +874,7 @@ target_compile_definitions(${TARGET_NAME} PRIVATE
     Debug=1
     $<$<BOOL:${GPS_FAKE_POSITION}>:GPS_FAKE_POSITION>
     ENABLE_CAM_SENSOR=${ENABLE_CAM_SENSOR}
+    CAM_CONTROL_UART=${CAM_CONTROL_UART}
     ENABLE_BUZZER=${ENABLE_BUZZER}
     ENABLE_PH_SENSOR=${ENABLE_PH_SENSOR}
     ENABLE_SEA_TEMP_SENSOR=${ENABLE_SEA_TEMP_SENSOR}

@@ -2,8 +2,9 @@
  * @file nrf_uart_async.hpp
  * @brief Common async UART driver for nRF52840 — deferred RX pattern.
  *
- * Base class for all UART-based communication layers (KIM2, LoRa RAK3172, SMD AT).
- * Handles init/deinit, ISR buffering, deferred RX processing, and TX busy management.
+ * Base class for all UART-based communication layers (KIM2, LoRa RAK3172, SMD AT,
+ * RunCam camera). Handles init/deinit, ISR buffering, deferred RX processing, and
+ * TX busy management.
  *
  * ISR context: only memcpy into fixed buffer + rx_free (no heap allocation).
  * Main context: process_rx() drains ISR buffer, accumulates lines, calls on_rx_line().
@@ -11,6 +12,7 @@
  * Subclasses implement:
  *   - on_rx_line(std::string& line)  — protocol-specific line parsing
  *   - on_rx_error(unsigned int)      — protocol-specific error handling
+ *   - on_rx_data(data, len), optionally — raw bytes, for a binary protocol
  */
 
 #pragma once
@@ -74,6 +76,15 @@ protected:
 	/// @brief Wait (bounded) for the previous DMA transfer's TX_DONE. Returns true if idle.
 	bool wait_send_idle();
 
+	/// @brief Called in main context with each batch of bytes process_rx() drains
+	/// from the ISR buffer.
+	///
+	/// The default is the AT modules' framing: accumulate, split on LF, hand each
+	/// line to on_rx_line(). A binary protocol overrides it (the RunCam camera,
+	/// 2026-10): there 0x0A or 0x0D is a byte like any other -- a CRC, say -- and
+	/// line splitting would strip it or hold the frame back for good.
+	virtual void on_rx_data(const uint8_t *data, size_t len);
+
 	/// @brief Called for each complete line received (stripped of CR/LF).
 	/// Runs in main context (safe for heap/string operations).
 	virtual void on_rx_line(std::string &line) = 0;
@@ -81,6 +92,18 @@ protected:
 	/// @brief Called on UART error (deferred from ISR).
 	/// @param error_type  0x100=alloc, 0x200=overrun, other=HW errorsrc.
 	virtual void on_rx_error(unsigned int error_type) = 0;
+
+	/// @brief Hand the bytes received BEFORE a UART error to on_rx_data() instead
+	/// of dropping them with the error. Off by default: a line protocol cannot
+	/// trust a line an error went through. A binary protocol with its own CRC can
+	/// keep what came before -- the RunCam camera, whose answer would otherwise be
+	/// lost to a framing error on a later byte, long after it was complete.
+	virtual bool keeps_rx_data_on_error() const { return false; }
+
+	/// @brief Diagnostics: an error the ISR raised that process_rx() has not handled yet...
+	bool isr_error_pending() const { return m_isr_error; }
+	/// @brief ...and the bytes waiting in the ISR buffer.
+	uint16_t isr_pending_bytes() const { return m_isr_buf_len; }
 
 	unsigned int m_uart_instance;
 	bool m_is_rx_started;

@@ -423,6 +423,18 @@ const DTECommandMap command_map[] = {
 		}
 	},
 #endif
+#if defined(CAM_CONTROL_UART) && (CAM_CONTROL_UART == 1)
+	// CAMTST - camera test, CAM_CONTROL=UART builds: the camera's real session
+	// (card check, clock, a recording, its stop), every step checked on its SD
+	// card. Answered when it is over, about 20 s later (about 40 s when CAP07
+	// costs the camera a restart).
+	// Usage: $CAMTST#000;\r
+	{
+		.name = "CAMTST",
+		.command = DTECommand::CAMTST_REQ,
+		.prototype = {}
+	},
+#endif
 	{
 		.name = "PARML",
 		.command = DTECommand::PARML_RESP,
@@ -760,6 +772,30 @@ const DTECommandMap command_map[] = {
 		.name = "KIMBR",
 		.command = DTECommand::KIMBR_RESP,
 		.prototype = {}
+	},
+#endif
+#if defined(CAM_CONTROL_UART) && (CAM_CONTROL_UART == 1)
+	// CAMTST response. free_mb / total_mb / remaining_s are -1 when the card was
+	// never read; recording, stopped and clock are 0/1; starts is 2 when the
+	// camera's own auto-record disagrees with CAP06 and the first start was undone;
+	// resolution is the camera's as read (CAP07 codes, 0 unknown).
+	{
+		.name = "CAMTST",
+		.command = DTECommand::CAMTST_RESP,
+		.prototype =
+		{
+			ARG("status", UINT, 0U, 0U),
+			ARG("features", UINT, 0U, 0U),
+			ARG("free_mb", DECIMAL, 0, 0),
+			ARG("total_mb", DECIMAL, 0, 0),
+			ARG("remaining_s", DECIMAL, 0, 0),
+			ARG("recording", UINT, 0U, 0U),
+			ARG("stopped", UINT, 0U, 0U),
+			ARG("clock", UINT, 0U, 0U),
+			ARG("starts", UINT, 0U, 0U),
+			ARG("duration_ms", UINT, 0U, 0U),
+			ARG("resolution", UINT, 0U, 0U)
+		}
 	},
 #endif
 };

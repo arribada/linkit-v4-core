@@ -725,12 +725,16 @@ TEST(Dx1ArgosTx, PrewarmCarriesTheViewOfTheModulation) {
 		ArgosTxService serv(*mock_kineis);
 		serv.start();
 		mock_kineis->send_count = 0;
+		fake_battery_monitor->set_values(100, 3700);  // the dive-time reading every case encodes
 		uw(true);
+		// Prewarm path, not a fresh build: the battery moves with no peer event to
+		// notice it, and the surface must still send the dive-time byte. Counting
+		// samples cannot tell the two apart any more -- the monitor takes one when
+		// its last is older than SAMPLE_MAX_AGE_MS, whichever path runs.
+		fake_battery_monitor->set_values(100, 3600);
 		set_time(t + 1200000ULL);
-		const unsigned int updates = fake_battery_monitor->update_calls;
 		uw(false);
 		system_scheduler->run();
-		CHECK_EQUAL(updates, fake_battery_monitor->update_calls);  // prewarm path, not a fresh build
 		CHECK_EQUAL(1U, mock_kineis->send_count);
 		CHECK_EQUAL(c.bits, mock_kineis->last_size_bits);
 		STRCMP_EQUAL(c.hex, hex(mock_kineis->last_packet).c_str());
@@ -798,22 +802,22 @@ TEST(Dx1ArgosTx, UwSensorEventsOnlyRefreshFromAnUnderwaterSampleEnd) {
 	ArgosTxService serv(*mock_kineis);
 	serv.start();
 	uw(true);
+	CHECK_EQUAL(3700U, serv.prepared_doppler_voltage());
 	fake_battery_monitor->set_values(100, 3600);  // inputs changed -> a qualifying event rebuilds
-	unsigned int updates = fake_battery_monitor->update_calls;
 	ServiceEvent e;
 	e.event_source = ServiceIdentifier::UW_SENSOR;
 	e.event_originator_unique_id = 0x12345678;
 	e.event_type = ServiceEventType::SERVICE_ACTIVE;
 	ServiceManager::notify_peer_event(e);
-	CHECK_EQUAL(updates, fake_battery_monitor->update_calls);
+	CHECK_EQUAL(3700U, serv.prepared_doppler_voltage());
 	e.event_type = ServiceEventType::SERVICE_INACTIVE;  // status says surface: no rebuild
 	ServiceManager::notify_peer_event(e);
-	CHECK_EQUAL(updates, fake_battery_monitor->update_calls);
+	CHECK_EQUAL(3700U, serv.prepared_doppler_voltage());
 	SWSAnalogService::Status st{};
 	st.is_underwater = true;
 	SWSAnalogService::test_set_status(st);
 	ServiceManager::notify_peer_event(e);  // end of an underwater sample: rebuild
-	CHECK_EQUAL(updates + 1, fake_battery_monitor->update_calls);
+	CHECK_EQUAL(3600U, serv.prepared_doppler_voltage());
 	serv.stop();
 }
 
@@ -839,21 +843,21 @@ TEST(Dx1ArgosTx, LatchedAdcFaultSampleEndDoesNotRefresh) {
 	SWSAnalogService::test_set_consecutive_invalid_adc(SWSAnalogService::test_max_consecutive_invalid_adc() - 1);
 	CHECK_FALSE(SWSAnalogService::adc_fault_active());
 	fake_battery_monitor->set_values(100, 3600);
-	unsigned int updates = fake_battery_monitor->update_calls;
 	ServiceManager::notify_peer_event(e);
-	CHECK_EQUAL(updates + 1, fake_battery_monitor->update_calls);
+	CHECK_EQUAL(3600U, serv.prepared_doppler_voltage());
 
 	// The read that latches the fault forces the surface: no rebuild.
 	SWSAnalogService::test_set_consecutive_invalid_adc(SWSAnalogService::test_max_consecutive_invalid_adc());
 	CHECK_TRUE(SWSAnalogService::adc_fault_active());
+	// Never rebuilt from the 3500 mV reading (the surfacing may consume the packet,
+	// so its absence, 0, is also an acceptable answer).
 	fake_battery_monitor->set_values(100, 3500);
-	updates = fake_battery_monitor->update_calls;
 	ServiceManager::notify_peer_event(e);
-	CHECK_EQUAL(updates, fake_battery_monitor->update_calls);
+	CHECK_FALSE(serv.prepared_doppler_voltage() == 3500U);
 	// ...nor on the hourly backstop.
 	set_time(t + 3600000ULL);
 	ServiceManager::notify_peer_event(e);
-	CHECK_EQUAL(updates, fake_battery_monitor->update_calls);
+	CHECK_FALSE(serv.prepared_doppler_voltage() == 3500U);
 	serv.stop();
 }
 

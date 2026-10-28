@@ -181,6 +181,214 @@ TEST(ConfigStore, VersionMismatchKeepsEveryProtectedParam) {
 	CHECK_EQUAL(nwkskey, store->read_param<std::string>(ParamID::LORA_NWKSKEY));
 }
 
+// --- Each record goes to the slot that carries its key ---------------------
+//
+// config.dat is a version word, then one fixed-size record per slot the
+// writing build implements, <KEY><VALUE zero-padded>, in table order. Builds
+// that implement different slots write different sequences: the camera slots
+// 166-171 exist only with ENABLE_CAM_SENSOR, SECKEY only on SMD, PWP05/LBP14
+// only on RSPB since f4ba6c16 (on every board before). deserialize_config()
+// used to take the records in order, one per slot, and to drop the slot when
+// the key did not match -- consuming the record all the same. One record more
+// or less shifted every one after it: they all came back at their defaults,
+// and init() saved that for good. On the bench board on 2026-10-27, a camera
+// build reflashed without the camera lost 71 parameters from slot 172 on, the
+// master RCONF and LAST_KNOWN_RTC among them (clock back to 1970). Every
+// v4.1.9 -> v4.1.10 upgrade lost 17 the same way (ARP36/37, see the version
+// constant in config_store.hpp).
+//
+// The helpers below rewrite the file the way another build would have.
+
+static constexpr size_t CONFIG_HEADER = sizeof(unsigned int);
+static constexpr size_t CONFIG_RECORD = KEY_LENGTH + BASE_TEXT_MAX_LENGTH;
+
+static std::vector<uint8_t> read_config_file() {
+	LFSFile f(main_filesystem, "config.dat", LFS_O_RDONLY);
+	std::vector<uint8_t> bytes((size_t)f.size());
+	CHECK_EQUAL((lfs_ssize_t)bytes.size(), f.read(bytes.data(), bytes.size()));
+	return bytes;
+}
+
+static void write_config_file(std::vector<uint8_t> &bytes) {
+	LFSFile f(main_filesystem, "config.dat", LFS_O_WRONLY | LFS_O_TRUNC);
+	CHECK_EQUAL((lfs_ssize_t)bytes.size(), f.write(bytes.data(), bytes.size()));
+}
+
+/// Offset of the record of `id`, or 0 when the file has none.
+static size_t config_record_offset(const std::vector<uint8_t> &bytes, ParamID id) {
+	const std::string &key = param_map[(unsigned int)id].key;
+	for (size_t off = CONFIG_HEADER; off + CONFIG_RECORD <= bytes.size(); off += CONFIG_RECORD)
+		if (std::memcmp(&bytes[off], key.data(), KEY_LENGTH) == 0) return off;
+	return 0;
+}
+
+/// A UINT record as a build that has slot `key` writes it.
+static std::vector<uint8_t> uint_config_record(const std::string &key, unsigned int value) {
+	std::vector<uint8_t> record(CONFIG_RECORD, 0);
+	std::memcpy(record.data(), key.data(), KEY_LENGTH);
+	std::memcpy(&record[KEY_LENGTH], &value, sizeof(value));
+	return record;
+}
+
+/// Values spread over the table, before and after every slot where builds
+/// differ, so that a shift anywhere shows.
+struct ConfigMarkers {
+	unsigned int decid = 4321U;                               // slot 0
+	std::string radioconf = "RADIOCONF-MASTER";               // 173
+	unsigned int last_known_rtc = 1793120000U;                // 179
+	std::string appkey = "0123456789ABCDEF0123456789ABCDEF";  // 183
+	unsigned int deep_idle_s = 1800U;                         // 240
+	unsigned int log_level = 1U;                              // 282, the last slot
+
+	void write(ConfigurationStore &s) const {
+		s.write_param(ParamID::ARGOS_DECID, decid);
+		s.write_param(ParamID::ARGOS_RADIOCONF, radioconf);
+		s.write_param(ParamID::LAST_KNOWN_RTC, last_known_rtc);
+		s.write_param(ParamID::LORA_APPKEY, appkey);
+		s.write_param(ParamID::GNSS_DEEP_IDLE_AFTER_OFF_S, deep_idle_s);
+		s.write_param(ParamID::SYSTEM_LOG_LEVEL, log_level);
+	}
+	void check(ConfigurationStore &s) const {
+		CHECK_EQUAL(decid, s.read_param<unsigned int>(ParamID::ARGOS_DECID));
+		CHECK_EQUAL(radioconf, s.read_param<std::string>(ParamID::ARGOS_RADIOCONF));
+		CHECK_EQUAL(last_known_rtc, s.read_param<unsigned int>(ParamID::LAST_KNOWN_RTC));
+		CHECK_EQUAL(appkey, s.read_param<std::string>(ParamID::LORA_APPKEY));
+		CHECK_EQUAL(deep_idle_s, s.read_param<unsigned int>(ParamID::GNSS_DEEP_IDLE_AFTER_OFF_S));
+		CHECK_EQUAL(log_level, s.read_param<unsigned int>(ParamID::SYSTEM_LOG_LEVEL));
+	}
+};
+
+// The file of a LinkIt build from before f4ba6c16, which still wrote PWP05 and
+// LBP14, read by one that no longer has them.
+TEST(ConfigStore, RecordsOfSlotsThisBuildLacksShiftNothing) {
+	CHECK_FALSE(param_map[(unsigned int)ParamID::SHUTDOWN_NTIME_SAT].is_implemented);
+	CHECK_FALSE(param_map[(unsigned int)ParamID::LB_SHUTDOWN_NTIME_SAT].is_implemented);
+
+	store = new LFSConfigurationStore(*main_filesystem);
+	store->init();
+	const ConfigMarkers markers;
+	markers.write(*store);
+	store->save_params();
+	delete store;
+	store = nullptr;
+
+	std::vector<uint8_t> bytes = read_config_file();
+	const size_t this_build_size = bytes.size();
+	const size_t radioconf = config_record_offset(bytes, ParamID::ARGOS_RADIOCONF);
+	CHECK(radioconf != 0);
+	std::vector<uint8_t> extra = uint_config_record(param_map[(unsigned int)ParamID::SHUTDOWN_NTIME_SAT].key, 5U);
+	const std::vector<uint8_t> lbp14 =
+	    uint_config_record(param_map[(unsigned int)ParamID::LB_SHUTDOWN_NTIME_SAT].key, 3U);
+	extra.insert(extra.end(), lbp14.begin(), lbp14.end());
+	bytes.insert(bytes.begin() + radioconf + CONFIG_RECORD, extra.begin(), extra.end());
+	write_config_file(bytes);
+
+	store = new LFSConfigurationStore(*main_filesystem);
+	store->init();
+	markers.check(*store);
+
+	// Saved back in this build's layout, so the next boot reads it straight through.
+	bytes = read_config_file();
+	CHECK_EQUAL(this_build_size, bytes.size());
+	CHECK_EQUAL((size_t)0, config_record_offset(bytes, ParamID::SHUTDOWN_NTIME_SAT));
+}
+
+// The file of a build without the camera, read by one with it: no record at
+// all for slots 166-171. Those six come back at their defaults, nothing else.
+TEST(ConfigStore, MissingRecordsResetOnlyTheirOwnSlots) {
+	store = new LFSConfigurationStore(*main_filesystem);
+	store->init();
+	const unsigned int cam_period_default = store->read_param<unsigned int>(ParamID::CAM_PERIOD_ON);
+	const ConfigMarkers markers;
+	markers.write(*store);
+	store->write_param(ParamID::CAM_PERIOD_ON, cam_period_default + 7U);
+	store->save_params();
+	delete store;
+	store = nullptr;
+
+	std::vector<uint8_t> bytes = read_config_file();
+	const size_t first = config_record_offset(bytes, ParamID::CAM_ENABLE);
+	const size_t last = config_record_offset(bytes, ParamID::LB_CAM_EN);
+	CHECK(first != 0);
+	CHECK_EQUAL((size_t)5, (last - first) / CONFIG_RECORD);
+	bytes.erase(bytes.begin() + first, bytes.begin() + last + CONFIG_RECORD);
+	write_config_file(bytes);
+
+	store = new LFSConfigurationStore(*main_filesystem);
+	store->init();
+	markers.check(*store);
+	CHECK_EQUAL(cam_period_default, store->read_param<unsigned int>(ParamID::CAM_PERIOD_ON));
+}
+
+// A slot a later firmware added in the middle of the table, read after a
+// downgrade: its key is nowhere in this build's table.
+TEST(ConfigStore, ARecordWithAKeyThisBuildDoesNotKnowIsSkipped) {
+	store = new LFSConfigurationStore(*main_filesystem);
+	store->init();
+	const ConfigMarkers markers;
+	markers.write(*store);
+	store->save_params();
+	delete store;
+	store = nullptr;
+
+	std::vector<uint8_t> bytes = read_config_file();
+	const std::vector<uint8_t> unknown = uint_config_record("ZZP99", 42U);
+	bytes.insert(bytes.begin() + CONFIG_HEADER + CONFIG_RECORD, unknown.begin(), unknown.end());
+	write_config_file(bytes);
+
+	store = new LFSConfigurationStore(*main_filesystem);
+	store->init();
+	markers.check(*store);
+}
+
+// A slot moved in the table: two records out of order are both placed.
+TEST(ConfigStore, RecordsOutOfOrderAreAllPlaced) {
+	store = new LFSConfigurationStore(*main_filesystem);
+	store->init();
+	const ConfigMarkers markers;
+	markers.write(*store);
+	store->save_params();
+	delete store;
+	store = nullptr;
+
+	std::vector<uint8_t> bytes = read_config_file();
+	const size_t radioconf = config_record_offset(bytes, ParamID::ARGOS_RADIOCONF);
+	const size_t rtc = config_record_offset(bytes, ParamID::LAST_KNOWN_RTC);
+	CHECK(radioconf != 0 && rtc > radioconf);
+	std::swap_ranges(bytes.begin() + radioconf, bytes.begin() + radioconf + CONFIG_RECORD, bytes.begin() + rtc);
+	write_config_file(bytes);
+
+	store = new LFSConfigurationStore(*main_filesystem);
+	store->init();
+	markers.check(*store);
+}
+
+// The normal boot: the file is exactly what this build writes, and reading it
+// must not save it back (~0.4 s of flash per boot on LinkIt, at every TPL wake
+// on RSPB). A padding byte, which the reader ignores and a save would zero,
+// tells whether init() rewrote the file.
+TEST(ConfigStore, AFileInThisBuildsLayoutIsNotRewrittenAtBoot) {
+	store = new LFSConfigurationStore(*main_filesystem);
+	store->init();
+	const ConfigMarkers markers;
+	markers.write(*store);
+	store->save_params();
+	delete store;
+	store = nullptr;
+
+	std::vector<uint8_t> bytes = read_config_file();
+	const size_t deep_idle = config_record_offset(bytes, ParamID::GNSS_DEEP_IDLE_AFTER_OFF_S);
+	CHECK(deep_idle != 0);
+	const size_t padding = deep_idle + CONFIG_RECORD - 1;
+	bytes[padding] = 0xA5;
+	write_config_file(bytes);
+
+	store = new LFSConfigurationStore(*main_filesystem);
+	store->init();
+	markers.check(*store);
+	CHECK_EQUAL(0xA5U, (unsigned int)read_config_file()[padding]);
+}
+
 TEST(ConfigStore, CheckConfigStoreResetsBadVariantType) {
 	store = new LFSConfigurationStore(*main_filesystem);
 

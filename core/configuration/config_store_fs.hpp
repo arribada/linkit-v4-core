@@ -27,9 +27,10 @@ protected:
 	//
 	// <KEY><BINARY_DATA_ZERO_PADDED_TO_128_BYTES>
 	//
-	// Note that <KEY> must match the entry at index inside the
-	// param_map table otherwise the configuration item is
-	// rejected.  <KEY> has fixed length of 5 e.g., "IDT01".
+	// one record per implemented slot, in table order. <KEY> (fixed length
+	// of 5, e.g. "IDT01") is what places a record when it is read back:
+	// deserialize_config() puts it in the slot that carries that key, and
+	// skips a record whose key no slot of this build carries.
 
 	/// @brief Serialize a single config entry (key + zero-padded binary data) to file.
 	bool serialize_config_entry(LFSFile &f, unsigned int index) {
@@ -261,92 +262,163 @@ protected:
 		return true;
 	}
 
+	/// @brief The slot whose key a record carries, or -1 when this build's table has none.
+	static int slot_of_key(const char *key) {
+		for (unsigned int i = 0; i < MAX_CONFIG_ITEMS; i++) {
+			const BaseKey &k = param_map[i].key;
+			if (k.size() == KEY_LENGTH && std::memcmp(k.data(), key, KEY_LENGTH) == 0) return (int)i;
+		}
+		return -1;
+	}
+
+	/// @brief Version mismatch: recover the identifiers and every protected field,
+	/// each by its KEY. Everything else keeps its default.
+	/// @param first_record  offset of the first record, just past the version field
+	void recover_protected_params(LFSFile &f, lfs_soff_t first_record) {
+		// Recover every protected field, identified by its KEY and not by its
+		// position in the file.
+		//
+		// This used to read POSITIONALLY: two calls straight after the version
+		// field, which land on records 0 and 1. That recovered exactly
+		// ARGOS_DECID and ARGOS_HEXID, because those two happen to sit first in
+		// param_map, and silently lost the thirteen entries of
+		// PROTECTED_PARAMS, which are scattered. Those thirteen are ALL the
+		// credentials -- the Argos secret key, the four RADIOCONF and the eight
+		// LoRaWAN keys -- and config_store.hpp:159-195 already states what
+		// losing them costs: "would leave every provisioned LoRa unit unable to
+		// rejoin its network, with nothing in the logs to say why". The
+		// protection was declared and simply never wired to the path that needs
+		// it.
+		//
+		// Reading by key also makes the recovery correct for the very situation
+		// a version mismatch implies: records may have been added, removed or
+		// reordered, so no position can be trusted. deserialize_config_entry()
+		// consumes one record and accepts it only when its key matches the index
+		// asked for, so rewinding and walking forward finds a param wherever it
+		// now sits. A few hundred fixed-size records per param, on a path that
+		// runs once per firmware version change.
+		const ParamID recover[] = {
+			ParamID::ARGOS_DECID,
+			ParamID::ARGOS_HEXID,
+		};
+		unsigned int recovered = 0, lost = 0;
+
+		auto recover_by_key = [&](ParamID id) {
+			if (f.seek(first_record) != first_record) return false;
+			for (unsigned int record = 0; record < MAX_CONFIG_ITEMS; record++) {
+				if (deserialize_config_entry(f, (unsigned int)id)) return true;
+			}
+			return false;
+		};
+
+		for (ParamID id : recover) {
+			if (recover_by_key(id))
+				recovered++;
+			else {
+				lost++;
+				DEBUG_WARN("deserialize_config: failed to recover %s", param_map[(unsigned int)id].name.c_str());
+			}
+		}
+		for (ParamID id : PROTECTED_PARAMS) {
+			if (!param_map[(unsigned int)id].is_implemented) continue;
+			if (recover_by_key(id))
+				recovered++;
+			else {
+				lost++;
+				DEBUG_WARN("deserialize_config: failed to recover %s", param_map[(unsigned int)id].name.c_str());
+			}
+		}
+		// Console only, despite the general rule that a DEBUG_WARN also lands
+		// in the flash system log. This runs from configuration_store->init()
+		// at main.cpp:956 and DebugLogger::system_log is not attached until
+		// main.cpp:1143, 185 lines later -- so on a sealed tag, the one event
+		// you would most want a record of leaves no trace a recovered device
+		// can be asked about. Moving it would need the counts carried out to
+		// main; not done here.
+		DEBUG_WARN("deserialize_config: version mismatch — %u protected param(s) recovered, %u lost", recovered, lost);
+
+		m_requires_serialization = true;
+	}
+
+	/// @brief Read every record of a file in this build's version into the slot
+	/// that carries its key. @p placed says which slots received one.
+	/// @param first_record  offset of the first record, just past the version field
+	void read_records_by_key(LFSFile &f, lfs_soff_t first_record, bool (&placed)[MAX_CONFIG_ITEMS]) {
+		// Each record goes to the slot that carries its KEY, wherever it sits.
+		//
+		// The file holds one record per slot the WRITING build implements, in
+		// table order, and builds differ: the camera slots exist only with
+		// ENABLE_CAM_SENSOR, SECKEY only on SMD, PWP05/LBP14 only on RSPB since
+		// f4ba6c16 (on every board before). This loop used to take one record per
+		// slot and to drop the slot when the key did not match -- consuming the
+		// record anyway, so one record more or less shifted every later one: they
+		// all came back at their defaults, and init() saved that for good. That is
+		// how a camera build reflashed without the camera lost 71 parameters from
+		// slot 172 on, the master RCONF and LAST_KNOWN_RTC among them (bench,
+		// 2026-10-27), and how every v4.1.9 -> v4.1.10 upgrade lost 17.
+		//
+		// A file in this build's layout -- every boot but the first after a
+		// change -- costs what it always did: one read and one key comparison per
+		// record. A record that is not the expected one costs a key lookup and
+		// two more reads, and the file is then saved in this build's layout.
+		constexpr lfs_soff_t RECORD = KEY_LENGTH + BASE_TEXT_MAX_LENGTH;
+		unsigned int skipped = 0, moved = 0;
+		unsigned int expected = 0;  // the slot of the next record, when the file is this build's
+		const lfs_soff_t file_size = f.size();
+		for (lfs_soff_t at = first_record; at + RECORD <= file_size; at += RECORD) {
+			while (expected < MAX_CONFIG_ITEMS && !param_map[expected].is_implemented)
+				expected++;
+			if (expected < MAX_CONFIG_ITEMS && deserialize_config_entry(f, expected)) {
+				placed[expected++] = true;
+				continue;
+			}
+			// Not the expected record, or past the last slot: whose is it?
+			char key[KEY_LENGTH];
+			if (f.seek(at) != at || f.read(key, KEY_LENGTH) != KEY_LENGTH) break;
+			const int slot = slot_of_key(key);
+			if (slot < 0 || !param_map[slot].is_implemented || placed[slot]) {
+				skipped++;  // a slot this build does not have, or a second record of one
+			} else {
+				if (f.seek(at) == at && deserialize_config_entry(f, (unsigned int)slot)) placed[slot] = true;
+				if ((unsigned int)slot != expected) moved++;
+				// Forward only: every placed slot stays below `expected`, so the
+				// fast path never lands on one already placed.
+				if ((unsigned int)slot >= expected) expected = (unsigned int)slot + 1;
+			}
+			if (f.seek(at + RECORD) != at + RECORD) break;
+		}
+		if (skipped || moved) {
+			DEBUG_WARN("deserialize_config: %u record(s) of slots this build lacks skipped, %u placed by key", skipped,
+			           moved);
+			m_requires_serialization = true;
+		}
+	}
+
 	/// @brief Read full configuration from config.dat, recover protected fields on version mismatch.
 	void deserialize_config() {
 		DEBUG_TRACE("ConfigurationStoreLFS::deserialize_config");
 		LFSFile f(&m_filesystem, "config.dat", LFS_O_RDONLY);
 
 		unsigned int config_version_code = 0;
+		const lfs_soff_t first_record = (lfs_soff_t)sizeof(config_version_code);
 
 		// Read configuration version field
 		if (f.read(&config_version_code, sizeof(config_version_code)) != sizeof(config_version_code)
 		    || config_version_code != m_config_version_code) {
 			DEBUG_WARN(
 			    "deserialize_config: configuration version mismatch; try to recover protected & reset all others");
-
-			// Recover every protected field, identified by its KEY and not by its
-			// position in the file.
-			//
-			// This used to read POSITIONALLY: two calls straight after the version
-			// field, which land on records 0 and 1. That recovered exactly
-			// ARGOS_DECID and ARGOS_HEXID, because those two happen to sit first in
-			// param_map, and silently lost the thirteen entries of
-			// PROTECTED_PARAMS, which are scattered. Those thirteen are ALL the
-			// credentials -- the Argos secret key, the four RADIOCONF and the eight
-			// LoRaWAN keys -- and config_store.hpp:159-195 already states what
-			// losing them costs: "would leave every provisioned LoRa unit unable to
-			// rejoin its network, with nothing in the logs to say why". The
-			// protection was declared and simply never wired to the path that needs
-			// it.
-			//
-			// Reading by key also makes the recovery correct for the very situation
-			// a version mismatch implies: records may have been added, removed or
-			// reordered, so no position can be trusted. deserialize_config_entry()
-			// consumes one record and accepts it only when its key matches the index
-			// asked for, so rewinding and walking forward finds a param wherever it
-			// now sits. A few hundred fixed-size records per param, on a path that
-			// runs once per firmware version change.
-			const ParamID recover[] = {
-				ParamID::ARGOS_DECID,
-				ParamID::ARGOS_HEXID,
-			};
-			unsigned int recovered = 0, lost = 0;
-
-			auto recover_by_key = [&](ParamID id) {
-				const lfs_soff_t first_record = (lfs_soff_t)sizeof(config_version_code);
-				if (f.seek(first_record) != first_record) return false;
-				for (unsigned int record = 0; record < MAX_CONFIG_ITEMS; record++) {
-					if (deserialize_config_entry(f, (unsigned int)id)) return true;
-				}
-				return false;
-			};
-
-			for (ParamID id : recover) {
-				if (recover_by_key(id))
-					recovered++;
-				else {
-					lost++;
-					DEBUG_WARN("deserialize_config: failed to recover %s", param_map[(unsigned int)id].name.c_str());
-				}
-			}
-			for (ParamID id : PROTECTED_PARAMS) {
-				if (!param_map[(unsigned int)id].is_implemented) continue;
-				if (recover_by_key(id))
-					recovered++;
-				else {
-					lost++;
-					DEBUG_WARN("deserialize_config: failed to recover %s", param_map[(unsigned int)id].name.c_str());
-				}
-			}
-			// Console only, despite the general rule that a DEBUG_WARN also lands
-			// in the flash system log. This runs from configuration_store->init()
-			// at main.cpp:956 and DebugLogger::system_log is not attached until
-			// main.cpp:1143, 185 lines later -- so on a sealed tag, the one event
-			// you would most want a record of leaves no trace a recovered device
-			// can be asked about. Moving it would need the counts carried out to
-			// main; not done here.
-			DEBUG_WARN("deserialize_config: version mismatch — %u protected param(s) recovered, %u lost", recovered,
-			           lost);
-
-			m_requires_serialization = true;
+			recover_protected_params(f, first_record);
 			return;
 		}
+
+		bool placed[MAX_CONFIG_ITEMS] = {};
+		read_records_by_key(f, first_record, placed);
 
 		for (unsigned int i = 0; i < MAX_CONFIG_ITEMS; i++) {
 			// Skip non-implemented/disabled parameters (reserved slots, disabled sensors)
 			if (!param_map[i].is_implemented) continue;
 
-			if (!deserialize_config_entry(f, i)) {
+			if (!placed[i]) {
 				DEBUG_WARN("deserialize_config: unable to deserialize param %s - resetting...",
 				           param_map[i].name.c_str());
 				// Reset parameter to factory default
@@ -518,12 +590,13 @@ private:
 	/// @brief Write config.dat for factory_reset: every parameter back to its default
 	/// except the identifiers and the provisioning secrets.
 	///
-	/// deserialize_config reads config.dat by table index and rejects a record whose
-	/// key does not match that slot. The file must therefore hold every implemented
-	/// parameter, in order, exactly like a normal save. It used to be written sparse
-	/// (identifiers, then the secrets): each secret landed in the wrong slot, was
+	/// The file holds every implemented parameter, in order, exactly like a normal
+	/// save. It used to be written sparse (identifiers, then the secrets) while the
+	/// reader took records by position: each secret landed in the wrong slot, was
 	/// rejected, and came back empty on the next boot, so a tag recovered by the
-	/// boot-fail path could no longer join or build a frame.
+	/// boot-fail path could no longer join or build a frame. The reader now places
+	/// records by key; a full file still reads on its fast path, and still reads on
+	/// a firmware older than that after a downgrade.
 	/// Power is left to the caller (factory_reset brackets it).
 	void serialize_protected_config() {
 		for (unsigned int i = 0; i < MAX_CONFIG_ITEMS; i++) {

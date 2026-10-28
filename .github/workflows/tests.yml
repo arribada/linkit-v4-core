@@ -155,6 +155,23 @@ jobs:
       - name: Every TX service calls the battery guard
         run: python3 tools/check_battery_guard_callers.py
 
+      # A pull on a driven output either does nothing or conducts VDD over
+      # ~13 kOhm: GPS_PWR_EN's pull-down cost ~0.25 mA through every GNSS
+      # deep-idle window, and no host test runs the BSP to notice.
+      - name: No push-pull output carries a pull
+        run: python3 tools/check_gpio_output_pulls.py
+
+      # A journal entry holds 118 bytes of text and cuts the rest, on the
+      # console too: 53 messages could never print whole, configuration
+      # warnings cut just before the part saying what to do.
+      - name: Every log line fits a journal entry
+        run: python3 tools/check_log_lines.py
+
+      # The bench waits on firmware log text; a reworded line makes a case go
+      # green or red for a reason unrelated to the firmware.
+      - name: Every log string the bench waits for exists
+        run: python3 tools/check_bench_log_patterns.py
+
       # A ratchet on the CCN of each function, not on the number of warnings:
       # splitting handle_line() took its worst function from 118 to 12 and the
       # file from 4 warnings to 8, so a warning-count gate would have rejected

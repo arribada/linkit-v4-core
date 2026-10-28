@@ -8,6 +8,7 @@
 #include <cstdint>
 
 #include "smd_sat_cmd.hpp"
+#include "smd_tcxo_register.hpp"
 #include "kineis_device.hpp"
 #include "state_machine_barrier.hpp"
 #include "scheduler.hpp"
@@ -171,6 +172,12 @@ private:
 	// service requests a skip (0) for the first TX after a dive.
 	uint32_t m_tcxo_configured_s = 5;
 	uint32_t effective_tcxo_warmup_s() const;
+	/// @brief What the module's TCXO register holds; forgotten with the rest of
+	/// its RAM wherever is_kmac_profil_loaded is cleared.
+	SmdTcxoRegister m_module_tcxo;
+	/// @brief Write the warm-up the next TX needs, unless the module holds it.
+	/// Throws what write_tcxo_warmup() throws.
+	void ensure_tcxo_warmup();
 	uint64_t m_tx_trace_start_ms = 0;
 #ifdef BENCH_TEST
 	/// @brief Latency marks, in ms since m_tx_trace_start_ms, dumped as ONE log

@@ -95,7 +95,12 @@
 #include "thermistor.hpp"
 #endif
 #if ENABLE_CAM_SENSOR
+#if defined(CAM_CONTROL_UART) && (CAM_CONTROL_UART == 1)
+#include "runcam_uart_device.hpp"
+#include "runcam_uart_link.hpp"
+#else
 #include "runcam.hpp"
+#endif
 #endif
 
 // --- Services ---
@@ -419,6 +424,11 @@ static constexpr unsigned int LFS_MOUNT_RETRY_DELAY_MS = 50;
 ///      sleep WITHOUT feeding the watchdog, so the WDT reclaims the board every
 ///      15 min and the whole recovery cycle runs again — slow, low power, and
 ///      never a permanent trap.
+#if ENABLE_CAM_SENSOR && defined(CAM_CONTROL_UART) && (CAM_CONTROL_UART == 1)
+/// @brief The UART-driven camera, for the DTE camera test (CAMTST) and, on the
+/// bench, the %CAM commands. Null until init_sensors() has built it.
+RunCamUartDevice *runcam_uart_device = nullptr;
+#endif
 #ifdef BENCH_TEST
 /// @brief Bench-only handle on the filesystem flash, for the %FLASH probes.
 Is25Flash *bench_flash = nullptr;
@@ -1523,7 +1533,15 @@ static void init_sensors(LFSFileSystem &lfs_file_system) {
 	static FsLog cam_sensor_log(&lfs_file_system, "CAM", 1024 * 1024);
 	cam_sensor_log.set_log_formatter(&cam_sensor_log_formatter);
 	try {
+#if defined(CAM_CONTROL_UART) && (CAM_CONTROL_UART == 1)
+		// Nothing is probed here: the camera is unpowered until its first
+		// session, and that session's GET_DEVICE_INFO is the detection.
+		static NrfRunCamLink run_cam_link;
+		static RunCamUartDevice run_cam(run_cam_link);
+		runcam_uart_device = &run_cam;
+#else
 		static RunCam run_cam;
+#endif
 		static CAMService cam_service(run_cam, &cam_sensor_log);
 	} catch (...) {
 		DEBUG_INFO("RunCam: not detected");

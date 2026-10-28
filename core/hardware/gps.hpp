@@ -255,6 +255,10 @@ public:
 	/// and the GNSS watchdog resets. Without it, a power-down inside the deferral
 	/// window threw away the freshest navigation database. Default no-op.
 	virtual void flush_pending_persistence() {}
+	/// @brief The moment is quiet (the tag has been underwater a while): commit a
+	/// deferred write now rather than at its deadline, once the receiver is idle.
+	/// Default no-op.
+	virtual void persist_soon() {}
 	virtual GNSSDeviceInfo get_device_info() const { return {}; }
 	virtual GNSSAlmanacStatus get_almanac_status(unsigned int ano_stale_threshold_s = 25 * 24 * 3600) const {
 		(void)ano_stale_threshold_s;

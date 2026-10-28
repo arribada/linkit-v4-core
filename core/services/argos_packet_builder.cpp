@@ -225,8 +225,8 @@ KineisPacket ArgosPacketBuilder::build_fastloc_packet(GPSLogEntry *gps_entry, bo
 	// LDA2 firmware-embedded CRC8 at byte 23 (modem does not add CRC for LDA2).
 	apply_lda2_crc8(packet);
 
-	DEBUG_INFO("ArgosPacketBuilder::build_fastloc_packet: fixType=%u numSV=%u hAcc=%um pDOP=%.1f batt=%u", fixType,
-	           numSV, hAcc_m, (double)gps_entry->info.pDOP, (unsigned int)gps_entry->info.batt_voltage);
+	DEBUG_DETAIL("ArgosPacketBuilder::build_fastloc_packet: fixType=%u numSV=%u hAcc=%um pDOP=%.1f batt=%u", fixType,
+	             numSV, hAcc_m, (double)gps_entry->info.pDOP, (unsigned int)gps_entry->info.batt_voltage);
 
 	return packet;
 }
@@ -331,8 +331,8 @@ KineisPacket ArgosPacketBuilder::build_cloudlocate_packet(const uint8_t *blob, u
 		apply_lda2_crc8(packet);
 	}
 
-	DEBUG_INFO("CL_PKT: fmt=%u sz=%u batt=%u t_present=%u age=%u data=%s", format_id, blob_size, battery_voltage,
-	           (unsigned)time_is_trustworthy, age, Binascii::hexlify(packet).c_str());
+	DEBUG_DETAIL("CL_PKT: fmt=%u sz=%u batt=%u t_present=%u age=%u data=%s", format_id, blob_size, battery_voltage,
+	             (unsigned)time_is_trustworthy, age, Binascii::hexlify(packet).c_str());
 
 	return packet;
 }
@@ -439,12 +439,12 @@ KineisPacket ArgosPacketBuilder::build_gnss_packet(std::vector<GPSLogEntry *> &v
 	} else if (v.size() > 1) {
 		std::reverse(v.begin(), v.end());  // Reverse to most-recent-first: gps_entries[0]=newest (date header anchor)
 		size_bits = LONG_PACKET_BITS;
-		DEBUG_INFO("ArgosPacketBuilder::build_gnss_packet: LONG packet, %u position(s), %u bits",
-		           (unsigned int)v.size(), size_bits);
+		DEBUG_DETAIL("ArgosPacketBuilder::build_gnss_packet: LONG packet, %u position(s), %u bits",
+		             (unsigned int)v.size(), size_bits);
 		return build_long_packet(v, is_out_of_zone, is_low_battery, delta_time_loc);
 	} else {
 		size_bits = SHORT_PACKET_BITS;
-		DEBUG_INFO("ArgosPacketBuilder::build_gnss_packet: SHORT packet, 1 position, %u bits", size_bits);
+		DEBUG_DETAIL("ArgosPacketBuilder::build_gnss_packet: SHORT packet, 1 position, %u bits", size_bits);
 		return build_short_packet(v[0], is_out_of_zone, is_low_battery);
 	}
 }
@@ -952,8 +952,8 @@ KineisPacket ArgosPacketBuilder::build_rspb_long_packet(GPSLogEntry *gps_entry, 
 	apply_lda2_crc8(packet);
 	size_bits = LDA2_FRAME_BITS;
 
-	DEBUG_INFO("ArgosPacketBuilder::build_rspb_long_packet: %u data bits + CRC | %s", RSPB_LONG_PACKET_DATA_BITS,
-	           Binascii::hexlify(packet).c_str());
+	DEBUG_DETAIL("ArgosPacketBuilder::build_rspb_long_packet: %u data bits + CRC | %s", RSPB_LONG_PACKET_DATA_BITS,
+	             Binascii::hexlify(packet).c_str());
 	return packet;
 }
 
@@ -996,8 +996,8 @@ KineisPacket ArgosPacketBuilder::build_rspb_short_packet(GPSLogEntry *gps_entry,
 	size_bits = base_pos;
 	packet.resize((size_bits + 7) / 8);
 
-	DEBUG_INFO("ArgosPacketBuilder::build_rspb_short_packet: %u bits | %s", size_bits,
-	           Binascii::hexlify(packet).c_str());
+	DEBUG_DETAIL("ArgosPacketBuilder::build_rspb_short_packet: %u bits | %s", size_bits,
+	             Binascii::hexlify(packet).c_str());
 	return packet;
 }
 

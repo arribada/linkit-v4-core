@@ -121,6 +121,22 @@ public:
 	/// `PMU::powerdown()` and the R1 boot invariant in `main()`).
 	static bool is_gnss_rail_active();
 
+	/// @brief "The camera rail is powered" interlock (2026-10, CAM_CONTROL=UART).
+	///
+	/// With the camera on its UART, its TX drives the nRF's RX pin at the
+	/// camera's own 3.3 V. With VSYS dropped to 2.3 V between tasks that is a
+	/// volt above the nRF's VDD on that pin, past its VDD + 0.3 V absolute
+	/// maximum, and the camera then feeds the nRF rail through the pin's ESD
+	/// clamp; the nRF's TX high at 2.3 V is also at the bottom of what a 3.3 V
+	/// receiver reads as a one. So VSYS stays at 3.3 V for as long as the camera
+	/// is powered, which costs nothing next to the camera's ~450 mA.
+	///
+	/// Taken and released in `GPIOPins::set()` / `clear()` on CAM_PWR_EN, the one
+	/// point the driver and the `PMU::powerdown()` backstop both go through.
+	/// Always false on a CAM_CONTROL=BUTTON build, where the nRF only drives the
+	/// camera's pins and the camera drives none of the nRF's.
+	static bool is_cam_rail_active();
+
 	/// @brief Force a VSENSORS off→on power-cycle to release a wedged I2C slave,
 	/// WITHOUT changing the reference count (the rail ends powered). Used by the
 	/// I2C bus-recovery path. No-op if the rail is currently off. Resets every
@@ -161,6 +177,7 @@ private:
 	static bool m_flash_busy;
 	static bool m_config_mode_active;
 	static bool m_gnss_rail_active;
+	static bool m_cam_rail_active;
 
 	/// @brief Disconnect sensor I2C/interrupt pins to prevent backfeed when VSENSORS off.
 	static void disconnect_sensor_pins();

@@ -161,6 +161,7 @@ See [Wiki: CI Workflows](https://github.com/arribada/linkit-v4-core/wiki/17-%E2%
 | `ENABLE_ALS_SENSOR` | 0 | LTR-303 ambient light |
 | `ENABLE_CDT_SENSOR` | 0 | Conductivity-Depth-Temperature |
 | `CAM_ENABLE` | 0 | RunCam camera trigger |
+| `CAM_CONTROL` | BUTTON | Camera control: `BUTTON` (press simulated on P0.16, KIM2 / SMD UART) or `UART` (RunCam Device Protocol on UARTE1, SMD SPI only) |
 
 Note: `ENABLE_THERMISTOR_SENSOR` and `ENABLE_SEA_TEMP_SENSOR` are mutually exclusive (shared Argos TX slot).
 

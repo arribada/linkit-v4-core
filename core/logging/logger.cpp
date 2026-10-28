@@ -17,6 +17,7 @@ const char *LogFormatter::log_level_str(LogType t) {
 	case LogType::LOG_WARN: return "WARN";
 	case LogType::LOG_INFO: return "INFO";
 	case LogType::LOG_TRACE: return "TRACE";
+	case LogType::LOG_DETAIL: return "DETAIL";
 	default:
 	case LogType::LOG_GPS:
 	case LogType::LOG_CAM:
@@ -108,6 +109,20 @@ void Logger::info(const char *msg, ...) {
 	}
 }
 
+void Logger::detail(const char *msg, ...) {
+	if (m_log_level >= LOG_LEVEL_INFO) {
+		LogEntry buffer;
+		va_list args;
+		va_start(args, msg);
+		vsnprintf(reinterpret_cast<char *>(buffer.data), sizeof(buffer.data), msg, args);
+		va_end(args);
+		buffer.header.log_type = LOG_DETAIL;
+		buffer.header.payload_size = std::strlen(reinterpret_cast<char *>(buffer.data));
+		sync_datetime(buffer.header);
+		write(&buffer);
+	}
+}
+
 void Logger::trace(const char *msg, ...) {
 	if (m_log_level >= LOG_LEVEL_DEBUG) {
 		LogEntry buffer;
@@ -123,7 +138,7 @@ void Logger::trace(const char *msg, ...) {
 }
 
 void Logger::show_info() {
-	DEBUG_INFO("Logger %s has %u entries", m_name, num_entries());
+	DEBUG_DETAIL("Logger %s has %u entries", m_name, num_entries());
 }
 
 unsigned int Logger::get_unique_id() {
@@ -154,8 +169,18 @@ void LoggerManager::truncate() {
 }
 
 void LoggerManager::show_info() {
-	for (auto const &s : m_map)
-		s.second.show_info();
+	// One journal line for every log, empty ones left out: a line per log was a
+	// flash commit each, at every boot -- and an RSPB boots at every TPL wake.
+	// The per-log lines stay on the console.
+	char line[MAX_LOG_PAYLOAD];
+	int n = snprintf(line, sizeof(line), "Logs (entries):");
+	for (auto const &s : m_map) {
+		const unsigned int entries = s.second.num_entries();
+		DEBUG_DETAIL("Logger %s has %u entries", s.second.get_name(), entries);
+		if (entries && n > 0 && n < (int)sizeof(line))
+			n += snprintf(line + n, sizeof(line) - n, " %s=%u", s.second.get_name(), entries);
+	}
+	DEBUG_INFO("%s", line);
 }
 
 Logger *LoggerManager::find_by_name(const char *name) {

@@ -398,6 +398,11 @@ bool SWSAnalogService::detector_state() {
 
 	// === 1. READ ADC ===
 	uint16_t raw_value = read_analog_sws();
+#ifdef BENCH_TEST
+	// %SWSRAW: the electrode is still powered and read (same timing), then
+	// replaced by the bench value -- see UWDetectorService::bench_raw_override.
+	if (bench_raw_override >= 0) raw_value = (uint16_t)bench_raw_override;
+#endif
 	if (!is_value_valid(raw_value)) {
 		DEBUG_WARN("SWSAnalog: Invalid ADC %u", raw_value);
 		// Stuck-failure escape: if the SAADC silicon or SWS frontend dies
@@ -894,8 +899,12 @@ bool SWSAnalogService::detector_state() {
 		            m_calib.threshold_air, m_calib.threshold_water);
 #endif
 
-		// Persist calibration to flash on state transitions — debounced to reduce flash wear
-		save_calibration_to_flash_debounced();
+		// Arm the SWS.CAL save rather than write it here. This sample is the one
+		// that publishes the change, and a surfacing put the write between the
+		// electrode going dry and the first ping: UWDetectorService broadcasts
+		// only once detector_state() returns, so ArgosTxService's log hold window
+		// is not even open yet. A later sample does it: save_calibration_when_quiet().
+		m_calib_save_due_sec = PMU::get_timestamp_ms() / 1000 + CALIB_SAVE_AFTER_TRANSITION_SEC;
 
 		// Test mode: override LED to show SWS state.
 		// Convention: BLUE = underwater, GREEN = surface (matches ledsm).
@@ -959,6 +968,11 @@ bool SWSAnalogService::detector_state() {
 	// with the rest of the calibration code. It is driven from here because it
 	// needs a fresh ADC sample on every tick, and this is where one is read.
 	tick_guided_calibration(raw_value);
+
+	// === 13. ARMED CALIBRATION SAVE ===
+	// m_current_state is still the published state here: a difference means
+	// this sample is a change, and a change never writes (see step 10).
+	save_calibration_when_quiet(new_state, new_state != m_current_state);
 
 	return new_state;
 }

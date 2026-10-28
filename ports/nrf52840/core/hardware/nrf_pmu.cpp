@@ -393,7 +393,23 @@ void PMU::powerdown() {
 	// output levels are retained in System OFF: a CAM_PWR_EN left high would
 	// keep the camera's LDO on for the rest of the deployment.
 	DEBUG_TRACE("PMU::powerdown: CAM rail off");
+#if defined(CAM_CONTROL_UART) && (CAM_CONTROL_UART == 1)
+	// CAM_CONTROL=UART: the UART lines as well, through the GPIO registers.
+	// GPIO configuration is what System OFF keeps once the peripheral stops: a
+	// TX left high would feed the unpowered camera through its RX pin for the
+	// rest of the deployment (the KIM2 43 µA leak, 34ebb4a1), the RX pull-up
+	// libuarte sets would do the same through the camera's TX, and a connected
+	// input on a line nothing drives any more leaks on its own. TX low, RX
+	// disconnected -- what RunCamUartDevice::cut_power() leaves after a clean
+	// stop. Like the button backstop this does not tell the driver: on a bench
+	// build, where powerdown is suppressed below, a camera that was on reads ON
+	// with its rail gone until its next power_off().
+	nrf_gpio_cfg_output(BSP::UARTAsync_Inits[CAM_UART_INSTANCE].config.tx_pin);
+	nrf_gpio_pin_clear(BSP::UARTAsync_Inits[CAM_UART_INSTANCE].config.tx_pin);
+	nrf_gpio_cfg_default(BSP::UARTAsync_Inits[CAM_UART_INSTANCE].config.rx_pin);
+#else
 	GPIOPins::clear(CAM_PWR_BUTT);
+#endif
 	GPIOPins::clear(CAM_PWR_EN);
 #endif
 
@@ -700,6 +716,21 @@ bool PMU::was_firmware_updated() {
 	return m_firmware_was_updated;
 }
 
+#ifdef BENCH_TEST
+/// @brief restore_power_rails() calls that found VSYS down (and waited the 2 ms
+/// settle) or already up (and skipped it). Read by the %RAILS bench command.
+uint32_t g_bench_vsys_restore_settled = 0;
+uint32_t g_bench_vsys_restore_skipped = 0;
+#endif
+
+#if defined(VSYS_SEL) && !defined(BOARD_RSPB) && defined(SOFTDEVICE_PRESENT)
+/// @brief reduce_power_rails() lowered the POF threshold to 2.0 V for the 2.3 V
+/// idle rail, and restore_power_rails() has not raised it back yet. Kept apart
+/// from the VSYS_SEL latch: ensure_vsys_nominal() raises the rail from any
+/// context but leaves the threshold to the main loop.
+static bool s_pof_lowered_for_idle = false;
+#endif
+
 /// @brief Cut peripheral power rails during idle (VSYS → 2.3 V, POWER_CONTROL off).
 void PMU::reduce_power_rails() {
 	// FIXME (RSPB only): External I2C pull-ups R21/R24 (4.7K) are connected to
@@ -765,16 +796,22 @@ void PMU::reduce_power_rails() {
 	//     shared, which is the only assumption that cannot damage anything. See
 	//     GPIOPins::is_gnss_rail_active for the cost (~8 µA, deep-idle window
 	//     only; GNP52 = 0 is unaffected because the rail is then off).
+	//   - 2026-10: camera rail powered, CAM_CONTROL=UART. The camera's TX at its
+	//     own 3.3 V on an nRF pin at 2.3 V exceeds the pin's VDD + 0.3 V maximum.
+	//     See GPIOPins::is_cam_rail_active; always false on other builds.
 	if (!GPIOPins::get_sensors_pwr_state() && !GPIOPins::is_gnss_uart_active() && !GPIOPins::is_gnss_rail_active()
-	    && !GPIOPins::is_flash_busy() && !GPIOPins::is_config_mode_active() && status_led
-	    && status_led->get_state() == RGBLedColor::BLACK && !status_led->is_flashing()) {
+	    && !GPIOPins::is_cam_rail_active() && !GPIOPins::is_flash_busy() && !GPIOPins::is_config_mode_active()
+	    && status_led && status_led->get_state() == RGBLedColor::BLACK && !status_led->is_flashing()) {
 		// Lower the POF brownout threshold BELOW the idle rail BEFORE dropping VSYS:
 		// POFCON is armed at 2.7V, but the idle rail is 2.3V, so at 2.7V the comparator
 		// would assert POFWARN continuously in deep idle (CPU wakes / cooldown-save churn,
 		// and pre-fix a HardFault via the NULL nrf_drv_power handler). restore_power_rails()
 		// raises it back to 2.7V once VSYS is back at 3.3V (where brownout-under-load matters).
 #ifdef SOFTDEVICE_PRESENT
-		if (nrf_sdh_is_enabled()) sd_power_pof_threshold_set(NRF_POWER_THRESHOLD_V20);  // 2.0 V (< 2.3 V idle rail)
+		if (nrf_sdh_is_enabled()) {
+			sd_power_pof_threshold_set(NRF_POWER_THRESHOLD_V20);  // 2.0 V (< 2.3 V idle rail)
+			s_pof_lowered_for_idle = true;
+		}
 #endif
 		GPIOPins::clear(VSYS_SEL);  // Switch to 2.3V
 	}
@@ -785,13 +822,31 @@ void PMU::reduce_power_rails() {
 void PMU::restore_power_rails() {
 	// LinkIt V4: Restore VSYS to 3.3V before any peripheral access.
 	// Must settle before SPI/I2C/UART transactions with 3.3V peripherals.
+	//
+	// Only what reduce_power_rails() actually lowered. It keeps the rail at 3.3 V
+	// whenever the GNSS rail is up (deep idle, never-poweroff), the LED is lit or
+	// the flash is busy -- and this 2 ms settle then ran at every wake of the main
+	// loop for a rail that never moved: once a second underwater at the SWS
+	// cadence, ~170 s of busy-wait a day. The OUT latch says whether the rail is
+	// down (its input buffer is disconnected, see ensure_vsys_nominal()).
 #if defined(VSYS_SEL) && !defined(BOARD_RSPB)
-	GPIOPins::set(VSYS_SEL);  // Switch to 3.3V
-	PMU::delay_ms(2);         // Allow VSYS rail to stabilize from 2.3V → 3.3V
-	                          // Rail is back at 3.3V: restore the full 2.7V POF brownout threshold
-	                          // (lowered to 2.0V in reduce_power_rails for the 2.3V idle rail).
+	if (!nrf_gpio_pin_out_read(BSP::GPIO_Inits[VSYS_SEL].pin_number)) {
+		GPIOPins::set(VSYS_SEL);  // Switch to 3.3V
+		PMU::delay_ms(2);         // Allow VSYS rail to stabilize from 2.3V → 3.3V
+#ifdef BENCH_TEST
+		g_bench_vsys_restore_settled++;
+	} else {
+		g_bench_vsys_restore_skipped++;
+#endif
+	}
+	// Rail at 3.3V: restore the full 2.7V POF brownout threshold if it was lowered
+	// to 2.0V in reduce_power_rails() -- also when ensure_vsys_nominal() already
+	// raised the rail, as it leaves the threshold to this call.
 #ifdef SOFTDEVICE_PRESENT
-	if (nrf_sdh_is_enabled()) sd_power_pof_threshold_set(NRF_POWER_THRESHOLD_V27);  // back to 2.7 V
+	if (s_pof_lowered_for_idle && nrf_sdh_is_enabled()) {
+		sd_power_pof_threshold_set(NRF_POWER_THRESHOLD_V27);  // back to 2.7 V
+		s_pof_lowered_for_idle = false;
+	}
 #endif
 #endif
 

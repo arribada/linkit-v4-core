@@ -126,6 +126,32 @@ TEST_GROUP(GPSService) {
 };
 
 
+// A dive is the quiet window the driver's deferred flash write (the M10Q's
+// MGA-DBD dump) waits for: GPSService asks for it once the tag has been
+// underwater 30 s, from a task, never from the dive broadcast itself.
+TEST(GPSService, ADiveLetsTheDriverPersistAfter30s) {
+	mock().ignoreOtherCalls();
+	GPSService s(*mock_m10q, fake_log);
+	notify_underwater_state(true);
+	CHECK_EQUAL(0U, mock_m10q->persist_soon_calls());
+	increment_time_s(29);
+	CHECK_EQUAL(0U, mock_m10q->persist_soon_calls());
+	increment_time_s(2);
+	CHECK_EQUAL(1U, mock_m10q->persist_soon_calls());
+}
+
+// A wave over the electrodes at the surface is not a quiet window: a dive
+// shorter than the delay asks nothing.
+TEST(GPSService, AShortDiveAsksTheDriverNothing) {
+	mock().ignoreOtherCalls();
+	GPSService s(*mock_m10q, fake_log);
+	notify_underwater_state(true);
+	increment_time_s(10);
+	notify_underwater_state(false);
+	increment_time_s(60);
+	CHECK_EQUAL(0U, mock_m10q->persist_soon_calls());
+}
+
 TEST(GPSService, GNSSDisabled) {
 	bool lb_en = false;
 	unsigned int lb_threshold = 0U;

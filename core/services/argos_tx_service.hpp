@@ -46,6 +46,11 @@ public:
 	/// encodes -- ramp versus fixed -- is worth asserting on directly.
 	static unsigned int doppler_interval_s(const ArgosConfig &argos_config, unsigned int msg_index);
 
+	/// @brief Battery voltage the pre-warmed Doppler packet encodes, 0 when none
+	/// is prepared. Tells a rebuild from a reuse directly: counting battery
+	/// samples no longer can, since the monitor reuses a young sample on its own.
+	uint16_t prepared_doppler_voltage() const { return m_prepared_doppler_packet.empty() ? 0 : m_prepared_voltage; }
+
 	/// @brief What enforce_modulation_state() did (for tests and the caller's save).
 	struct ModulationStateOutcome {
 		bool adaptive = false;   ///< adaptive modulation ON: nothing was done

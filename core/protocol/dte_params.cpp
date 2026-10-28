@@ -583,6 +583,40 @@ const BaseMap param_map[] = {
 	// learnt from successive GNSS fixes (TplClock). Firmware-owned, read-only,
 	// RSPB only. 0 = not measured yet; reset when WAKEUP_PERIOD (PWP04) changes.
 	{ "WAKEUP_PERIOD_MEASURED_MS", "PWP08", BaseEncoding::UINT, 0U, 0U, {}, HAS_EXTERNAL_WAKEUP, false },
+	// [273] CAP06: how the camera is told to record, CAM_CONTROL=UART builds only.
+	// It must match the camera's own auto-record setting (its OSD menu), or every
+	// start becomes a stop: 0 TOGGLE, auto-record OFF -- one power-button press
+	// once booted, one to stop; 1 AUTO, auto-record ON -- nothing at start, one
+	// press to stop; 2 COMMANDS -- START/STOP_RECORDING, for a camera that really
+	// implements both (the Split 4 is reported not to).
+	{ "CAM_REC_MODE", "CAP06", BaseEncoding::UINT, 0U, 2U, {}, CAM_CONTROL_UART, true },
+	// [274] CAP07: the recording resolution to apply, CAM_CONTROL=UART builds only.
+	// 0 leaves the camera's own setting alone; 1-4 are the four the Split 4 offers
+	// over its UART (1080P60, 1080P50, 1080P30, 720P60 -- not the 4K / 2.7K modes
+	// of its manual). The camera only takes a new one up at its next boot: a
+	// session that finds it different writes it and restarts the camera through
+	// its rail.
+	{ "CAM_RESOLUTION", "CAP07", BaseEncoding::UINT, 0U, 4U, {}, CAM_CONTROL_UART, true },
+	// [275-280] CAT01-CAT06: what the last camera session found, read-only (STATR).
+	// Written in RAM at the end of each session, persisted by the store's
+	// periodic flush. 0xFFFFFFFF = not read by that session.
+	{ "CAM_LAST_OUTCOME", "CAT01", BaseEncoding::UINT, 0U, 255U, {}, CAM_CONTROL_UART, false },
+	{ "CAM_SD_FREE_MB", "CAT02", BaseEncoding::UINT, 0U, 0U, {}, CAM_CONTROL_UART, false },
+	{ "CAM_SD_TOTAL_MB", "CAT03", BaseEncoding::UINT, 0U, 0U, {}, CAM_CONTROL_UART, false },
+	{ "CAM_REC_TIME_LEFT_S", "CAT04", BaseEncoding::UINT, 0U, 0U, {}, CAM_CONTROL_UART, false },
+	{ "CAM_RESOLUTION_READ", "CAT05", BaseEncoding::UINT, 0U, 4U, {}, CAM_CONTROL_UART, false },
+	{ "CAM_FEATURES", "CAT06", BaseEncoding::UINT, 0U, 0xFFFFU, {}, CAM_CONTROL_UART, false },
+	// [281] CAT00: how this build drives the camera, on every camera build -- so a
+	// configuration tool reads the mode instead of guessing it from which keys
+	// exist: 1 BUTTON (the power-button pin), 2 UART. Read-only, rewritten from the
+	// build at each STATR, so a value an older firmware stored never shows.
+	{ "CAM_CONTROL_MODE", "CAT00", BaseEncoding::UINT, 0U, 2U, {}, ENABLE_CAM_SENSOR, false },
+	// [282] DBP02: which lines reach the flash journal (system.log), on every
+	// build: 0 OFF, 1 ERROR, 2 WARN, 3 INFO. The boot record -- version, reset
+	// cause, crash backtrace -- is written before it applies, so it is always
+	// there; the console is never filtered. A tag nobody will read again can
+	// run at WARN and write only what went wrong.
+	{ "SYSTEM_LOG_LEVEL", "DBP02", BaseEncoding::UINT, 0U, 3U, {}, true, true },
 };
 // clang-format on
 

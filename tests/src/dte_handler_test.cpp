@@ -177,9 +177,9 @@ TEST(DTEHandler, STATR_REQ_CheckEmptyRequest) {
 	std::string req = "$STATR#000;\r";
 	CHECK_TRUE(DTEAction::NONE == dte_handler->handle_dte_message(req, resp));
 	STRCMP_EQUAL(
-	    "$O;STATR#0CE;IDT06=0,IDT02=LinkIt V4,IDT03=V0.1,ART01=01/01/1970 00:00:00,ART02=0,POT03=0,ART03=07/10/2021 "
+	    "$O;STATR#123;IDT06=0,IDT02=LinkIt V4,IDT03=V0.1,ART01=01/01/1970 00:00:00,ART02=0,POT03=0,ART03=07/10/2021 "
 	    "22:41:14,ART10=0,ART11=0,IDT04=simulator,POT06=0,IDT10=305419896,SYT01=0,PPT01=0,PPT02=0,PPT03=0,PPT04=0,"
-	    "MRT01=0\r",
+	    "MRT01=0,CAT01=255,CAT02=4294967295,CAT03=4294967295,CAT04=4294967295,CAT05=0,CAT06=0,CAT00=2\r",
 	    resp.c_str());
 }
 
@@ -220,8 +220,13 @@ TEST(DTEHandler, PARMR_REQ_CheckEmptyRequest) {
 	// #83E -> #846 (2026-10): +ARP47 (DX1 Doppler extension gate) appended.
 	// #846 unchanged (2026-10): slot 266 renamed in place ARP47=0 -> UNP26=1
 	// (SWS_SENSOR_ENABLE_TX_MODE, default AUTO), same length.
+	// #84E -> #856 (2026-10): +CAP06 (CAM_REC_MODE) appended. The host build now
+	// compiles the UART-driven camera (CAM_CONTROL_UART=1), whose key it is; a
+	// firmware build advertises it on CAM_CONTROL=UART only.
+	// #85E -> #866 (2026-10): +DBP02 (SYSTEM_LOG_LEVEL, default 3 = INFO)
+	// appended, on every build.
 	STRCMP_EQUAL(
-	    "$O;PARMR#84E;IDP12=0,IDP11=FACTORY,ARP05=60,ARP01=2,ARP19=0,ARP18=0,GNP01=1,ARP11=1,ARP16=10,GNP02=1,GNP03=5,"
+	    "$O;PARMR#866;IDP12=0,IDP11=FACTORY,ARP05=60,ARP01=2,ARP19=0,ARP18=0,GNP01=1,ARP11=1,ARP16=10,GNP02=1,GNP03=5,"
 	    "GNP05=120,GNP04=0,UNP01=0,UNP02=0,UNP03=1,LBP01=0,LBP02=10,ARP06=240,LBP04=2,LBP05=0,LBP06=1,ARP12=4,LBP07=5,"
 	    "LBP08=1,LBP09=120,UNP04=10,PPP01=15,PPP02=90,PPP03=30,PPP04=1000,PPP05=300,PPP06=10,GNP09=530,GNP10=3,GNP11=0,"
 	    "GNP20=1,GNP21=50,GNP22=1,GNP23=60,ARP30=1,LDP01=1,ARP31=1,ARP32=1,ARP33=900,ARP34=90,GNP24=1,LBP10=50,LBP11=4,"
@@ -243,7 +248,7 @@ TEST(DTEHandler, PARMR_REQ_CheckEmptyRequest) {
 	    "00:00:00,SMP01=0,GNP50=86400,RLP01=0,RLP02=3600,RLP03=10,HMP00=0,HMP01=24,HMP02=3,HMP10=2,HMP11=7200,"
 	    "HMP12=0,HMP13=1,GNP51=0,GNP52=4294967295,GNP53=0,GNP54=0,ARP44=0,ARP45=4,ARP46=60,PPP07=0,PPP08=14,PPP09=0,"
 	    "MRP00=0,MRP01=150,MRP02=3,MRP03=2,MRP04=900,MRP05=4,MRP06=3600,MRP07=1,MRP08=1,PPP10=0,PPP11=20,PPP12=0,"
-	    "UNP26=1,PWP07=0\r",
+	    "UNP26=1,PWP07=0,CAP06=0,CAP07=0,DBP02=3\r",
 	    resp.c_str());
 }
 
@@ -1712,6 +1717,25 @@ TEST(DTEHandler, PARMW_UNP22_SWSAnalogHysteresis) {
 	CHECK_TRUE(DTEAction::CONFIG_UPDATED == dte_handler->handle_dte_message(req, resp));
 	STRCMP_EQUAL("$O;PARMW#000;\r", resp.c_str());
 	CHECK_EQUAL(20U, configuration_store->read_param<unsigned int>(ParamID::SWS_ANALOG_HYSTERESIS));
+}
+
+// DBP02 (SYSTEM_LOG_LEVEL): INFO by default, as every earlier build wrote;
+// 0..3 accepted, anything above refused with its key.
+TEST(DTEHandler, PARMW_DBP02_SystemLogLevel) {
+	std::string resp;
+	std::string req = "$PARMR#005;DBP02\r";
+	CHECK_TRUE(DTEAction::NONE == dte_handler->handle_dte_message(req, resp));
+	STRCMP_EQUAL("$O;PARMR#007;DBP02=3\r", resp.c_str());
+
+	req = "$PARMW#007;DBP02=2\r";
+	CHECK_TRUE(DTEAction::CONFIG_UPDATED == dte_handler->handle_dte_message(req, resp));
+	STRCMP_EQUAL("$O;PARMW#000;\r", resp.c_str());
+	CHECK_EQUAL(2U, configuration_store->read_param<unsigned int>(ParamID::SYSTEM_LOG_LEVEL));
+
+	req = "$PARMW#007;DBP02=4\r";
+	CHECK_TRUE(DTEAction::CONFIG_UPDATED == dte_handler->handle_dte_message(req, resp));
+	STRCMP_EQUAL("$N;PARMW#005;DBP02\r", resp.c_str());
+	CHECK_EQUAL(2U, configuration_store->read_param<unsigned int>(ParamID::SYSTEM_LOG_LEVEL));
 }
 
 TEST(DTEHandler, PARMW_UNP22_SWSAnalogHysteresis_OutOfRange) {

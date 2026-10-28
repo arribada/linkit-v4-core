@@ -55,9 +55,9 @@ void LoRaTxScheduler::schedule_periodic(unsigned int period_ms, bool jitter_en, 
 	// and same reasoning as ArgosTxScheduler: transmitting on the nominal period
 	// is a configuration to correct, a mute sealed tag is a lost deployment.
 	if (duty_cycle == 0) {
-		DEBUG_ERROR("LoRaTxScheduler::schedule_periodic: duty-cycle mask is 0 — no hour is permitted. Check "
-		            "ARGOS_DUTY_CYCLE (or LB_ARGOS_DUTY_CYCLE). Falling back to the nominal period so the beacon "
-		            "still transmits.");
+		// Check ARGOS_DUTY_CYCLE (or LB_ARGOS_DUTY_CYCLE). The nominal period keeps
+		// the beacon transmitting meanwhile.
+		DEBUG_ERROR("LoRaTxScheduler: duty-cycle mask is 0 — no hour permitted, nominal period used instead");
 		duty_cycle = 0xFFFFFFu;  // all 24 hours
 	}
 

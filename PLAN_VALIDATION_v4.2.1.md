@@ -75,10 +75,11 @@ Exiger de voir `Verify successful` **et** `Run.` dans la sortie. Le hex **fusion
 jamais `app_settings` seul. Vérifier une chaîne dans l'ELF ne prouve rien sur ce qui
 tourne.
 
-**`--recover` efface le magasin de configuration.** Tout paramètre posé pour un essai
-est à réécrire après chaque flash. Et un `--chiperase` n'efface **pas** le magasin,
-qui vit sur la QSPI IS25 externe : les nouveaux défauts firmware ne s'appliquent donc
-qu'à une configuration **créée à neuf**, pas par un simple reflash.
+**Ni `--recover` ni `--chiperase` n'effacent le magasin de configuration**, qui vit sur
+la QSPI IS25 externe (vérifié les 10 et 27/10/2026 ; cette section disait le contraire
+pour `--recover`). Un paramètre posé pour un essai reste donc posé d'un flash à l'autre,
+et les nouveaux défauts firmware ne s'appliquent qu'à une configuration **créée à
+neuf**, pas par un simple reflash.
 
 **`BENCH_TEST` n'est pas neutre.** `PMU::powerdown()` retourne immédiatement, et sur
 RSPB le saut modulo du TPL5111 est désactivé. Toute mesure de stockage faite sur un

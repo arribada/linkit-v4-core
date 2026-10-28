@@ -41,11 +41,12 @@ void DepthPileManager::notify_peer_event(ServiceEvent &e) {
 			ArgosConfig cfg;
 			configuration_store->get_argos_configuration(cfg);
 			if (fastloc_mode != (unsigned int)BaseFastlocMode::OFF && cfg.mode == BaseArgosMode::SURFACING_BURST) {
-				DEBUG_INFO("DepthPileManager::notify_peer_event: skip NO_FIX (fastloc GNP45=%u + SURFACING_BURST)",
-				           fastloc_mode);
+				DEBUG_DETAIL("DepthPileManager::notify_peer_event: skip NO_FIX (fastloc GNP45=%u + SURFACING_BURST)",
+				             fastloc_mode);
 				return;  // Do NOT cache, do NOT mark ready — fastloc will handle fallback
 			}
-			DEBUG_WARN(
+			// Expected, not a fault: GPSService has logged the no-fix session.
+			DEBUG_DETAIL(
 			    "DepthPileManager::notify_peer_event: GNSS NO_FIX cached — will TX as 0xFF heartbeat (grid filler)");
 		} else {
 			DEBUG_TRACE("DepthPileManager::notify_peer_event: GNSS cache set");
@@ -133,43 +134,61 @@ void DepthPileManager::notify_peer_event(ServiceEvent &e) {
 			    m_sensor_tx_current, m_sensor_tx_enable);
 			m_timeout_task = system_scheduler->post_task_prio(
 			    [this]() {
-				    DEBUG_WARN("DepthPileManager: sensor timeout — filling missing sensor with 0xFF dummy values: "
-					           "curr=%08x enable=%08x",
-					           m_sensor_tx_current, m_sensor_tx_enable);
+				    // Only the sensors below are ever filled. When the GNSS bit is all
+				    // that is missing -- a NO_FIX left to fastloc, see above, after
+				    // every session without a fix -- there is nothing to fill and
+				    // nothing wrong: a WARN there was routine at every no-fix session.
+				    const unsigned int missing =
+				        m_sensor_tx_enable & ~m_sensor_tx_current & ~(1U << (int)ServiceIdentifier::GNSS_SENSOR);
+				    if (missing)
+					    DEBUG_WARN("DepthPileManager: sensor timeout — filling missing sensor with 0xFF dummy values: "
+						           "curr=%08x enable=%08x",
+						           m_sensor_tx_current, m_sensor_tx_enable);
+				    else
+					    DEBUG_DETAIL("DepthPileManager: GNSS gave no entry (curr=%08x enable=%08x) — nothing to fill",
+						             m_sensor_tx_current, m_sensor_tx_enable);
+				    // Every missing sensor, not the first one: this was an else-if
+				    // chain, so with two missing the entry stayed incomplete, was never
+				    // stored, and no new timeout followed (2026-10-28).
 				    if (((1 << (int)ServiceIdentifier::ALS_SENSOR) & m_sensor_tx_enable)
 				        && ((1 << (int)ServiceIdentifier::ALS_SENSOR) & m_sensor_tx_current) == 0) {
 					    m_als_cache.port[0] = 0xFFFFFFFF;
 					    m_sensor_tx_current |= (1 << (int)ServiceIdentifier::ALS_SENSOR);
-				    } else if (((1 << (int)ServiceIdentifier::PH_SENSOR) & m_sensor_tx_enable)
-				               && ((1 << (int)ServiceIdentifier::PH_SENSOR) & m_sensor_tx_current) == 0) {
+				    }
+				    if (((1 << (int)ServiceIdentifier::PH_SENSOR) & m_sensor_tx_enable)
+				        && ((1 << (int)ServiceIdentifier::PH_SENSOR) & m_sensor_tx_current) == 0) {
 					    m_ph_cache.port[0] = 0xFFFFFFFF;
 					    m_sensor_tx_current |= (1 << (int)ServiceIdentifier::PH_SENSOR);
-				    } else if (((1 << (int)ServiceIdentifier::PRESSURE_SENSOR) & m_sensor_tx_enable)
-				               && ((1 << (int)ServiceIdentifier::PRESSURE_SENSOR) & m_sensor_tx_current) == 0) {
+				    }
+				    if (((1 << (int)ServiceIdentifier::PRESSURE_SENSOR) & m_sensor_tx_enable)
+				        && ((1 << (int)ServiceIdentifier::PRESSURE_SENSOR) & m_sensor_tx_current) == 0) {
 					    m_pressure_cache.port[0] = 0xFFFFFFFF;
 					    m_pressure_cache.port[1] = 0xFFFFFFFF;
 					    m_sensor_tx_current |= (1 << (int)ServiceIdentifier::PRESSURE_SENSOR);
-				    } else if (((1 << (int)ServiceIdentifier::SEA_TEMP_SENSOR) & m_sensor_tx_enable)
-				               && ((1 << (int)ServiceIdentifier::SEA_TEMP_SENSOR) & m_sensor_tx_current) == 0) {
+				    }
+				    if (((1 << (int)ServiceIdentifier::SEA_TEMP_SENSOR) & m_sensor_tx_enable)
+				        && ((1 << (int)ServiceIdentifier::SEA_TEMP_SENSOR) & m_sensor_tx_current) == 0) {
 					    m_sea_temp_cache.port[0] = 0xFFFFFFFF;
 					    m_sensor_tx_current |= (1 << (int)ServiceIdentifier::SEA_TEMP_SENSOR);
+				    }
 #if ENABLE_THERMISTOR_SENSOR
-				    } else if (((1 << (int)ServiceIdentifier::THERMISTOR_SENSOR) & m_sensor_tx_enable)
-				               && ((1 << (int)ServiceIdentifier::THERMISTOR_SENSOR) & m_sensor_tx_current) == 0) {
+				    if (((1 << (int)ServiceIdentifier::THERMISTOR_SENSOR) & m_sensor_tx_enable)
+				        && ((1 << (int)ServiceIdentifier::THERMISTOR_SENSOR) & m_sensor_tx_current) == 0) {
 					    m_sea_temp_cache.port[0] = 0xFFFFFFFF;
 					    m_sensor_tx_current |= (1 << (int)ServiceIdentifier::THERMISTOR_SENSOR);
+				    }
 #endif
 #if ENABLE_AXL_SENSOR
-				    } else if (((1 << (int)ServiceIdentifier::AXL_SENSOR) & m_sensor_tx_enable)
-				               && ((1 << (int)ServiceIdentifier::AXL_SENSOR) & m_sensor_tx_current) == 0) {
+				    if (((1 << (int)ServiceIdentifier::AXL_SENSOR) & m_sensor_tx_enable)
+				        && ((1 << (int)ServiceIdentifier::AXL_SENSOR) & m_sensor_tx_current) == 0) {
 					    m_axl_cache.port[0] = 0xFFFFFFFF;
 					    m_axl_cache.port[1] = 0xFFFFFFFF;
 					    m_axl_cache.port[2] = 0xFFFFFFFF;
 					    m_axl_cache.port[3] = 0xFFFFFFFF;
 					    m_axl_cache.port[4] = 0xFF;
 					    m_sensor_tx_current |= (1 << (int)ServiceIdentifier::AXL_SENSOR);
-#endif
 				    }
+#endif
 				    update_depth_pile();
 			    },
 			    "DepthPileTimeout", Scheduler::DEFAULT_PRIORITY, 2000U);
@@ -250,12 +269,12 @@ void DepthPileManager::update_depth_pile() {
 					    return prev.info.event_type == GPSEventType::NO_FIX;
 				    });
 				if (replaced) {
-					DEBUG_INFO("DepthPileManager: NO_FIX dedup — replaced previous NO_FIX (heartbeat refreshed)");
+					DEBUG_DETAIL("DepthPileManager: NO_FIX dedup — replaced previous NO_FIX (heartbeat refreshed)");
 				}
 			} else {
 				m_gps_depth_pile.store(m_gps_cache, burst_counter);
-				DEBUG_INFO("DepthPileManager: GPS %s stored, burst_counter=%u (0xFFFFFFFF=unlimited)",
-				           m_gps_cache.info.valid ? "FIX" : "NO_FIX heartbeat", burst_counter);
+				DEBUG_DETAIL("DepthPileManager: GPS %s stored, burst_counter=%u (0xFFFFFFFF=unlimited)",
+				             m_gps_cache.info.valid ? "FIX" : "NO_FIX heartbeat", burst_counter);
 			}
 		}
 		if (m_sensor_tx_current & (1 << (int)ServiceIdentifier::ALS_SENSOR)) {

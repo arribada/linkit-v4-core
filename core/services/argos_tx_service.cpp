@@ -135,10 +135,10 @@ void ArgosTxService::service_init() {
 		const GPSLogEntry &last_gps = configuration_store->get_position_hint();
 		if (last_gps.info.valid) {
 			m_sched.set_last_location(last_gps.info.lon, last_gps.info.lat);
-			DEBUG_INFO("ArgosTxService: prepass position seeded from the persisted last fix (lon=%f lat=%f)",
-			           last_gps.info.lon, last_gps.info.lat);
+			DEBUG_DETAIL("ArgosTxService: prepass position seeded from the persisted last fix (lon=%f lat=%f)",
+			             last_gps.info.lon, last_gps.info.lat);
 		} else {
-			DEBUG_INFO("ArgosTxService: no persisted position — prepass unavailable until the first fix");
+			DEBUG_DETAIL("ArgosTxService: no persisted position — prepass unavailable until the first fix");
 		}
 	}
 
@@ -186,9 +186,8 @@ void ArgosTxService::service_init() {
 	// stayed mute, without the slightest trace. We flag it loudly here; the
 	// blocking is done upstream, on the configuration interface side.
 	if (argos_config.mode == BaseArgosMode::PASS_PREDICTION && !argos_config.gnss_en) {
-		DEBUG_ERROR("ArgosTxService: INCOMPATIBLE CONFIGURATION — PASS_PREDICTION requires GNSS_EN=1 "
-		            "(pass prediction is computed from a position). NO transmission will be "
-		            "scheduled while this combination is in place.");
+		// Pass prediction is computed from a position.
+		DEBUG_ERROR("ArgosTxService: INCOMPATIBLE CONFIGURATION — PASS_PREDICTION needs GNSS_EN=1, NO TX scheduled");
 		if (status_led) status_led->flash(RGBLedColor::RED, 200);
 	}
 
@@ -198,15 +197,14 @@ void ArgosTxService::service_init() {
 	// sequence's cadence, not ARP46.
 	if (configuration_store->read_param<bool>(ParamID::ARGOS_BLIND_EN)) {
 		if (argos_config.mode == BaseArgosMode::SURFACING_BURST) {
-			DEBUG_WARN("ArgosTxService: BLIND requested but REFUSED in SURFACING_BURST — that mode paces its own "
-			           "Doppler cascade and GNSS phase, so a module-owned burst would transmit every message "
-			           "twice. Transmitting in BASIC MAC.");
+			// That mode paces its own Doppler cascade and GNSS phase: a
+			// module-owned burst would transmit every message twice.
+			DEBUG_WARN("ArgosTxService: BLIND requested but REFUSED in SURFACING_BURST — transmitting in BASIC MAC");
 		} else if (argos_config.mode == BaseArgosMode::DOPPLER && !argos_config.blind_en) {
-			DEBUG_WARN("ArgosTxService: BLIND requested but REFUSED in DOPPLER — the sequence settles at "
-			           "SURFACING_BURST_MAX_S=%u s, below the %u s the module needs between two repeats. Raise "
-			           "SURFACING_BURST_MAX_S to at least %u s, or leave BLIND off. Transmitting in BASIC MAC.",
-			           argos_config.surfacing_burst_max_s, ArgosConfig::BLIND_MIN_RETX_PERIOD_S,
-			           ArgosConfig::BLIND_MIN_RETX_PERIOD_S);
+			// The sequence settles at SURFACING_BURST_MAX_S, below what the
+			// module needs between two repeats: raise it, or leave BLIND off.
+			DEBUG_WARN("ArgosTxService: BLIND REFUSED in DOPPLER — SURFACING_BURST_MAX_S=%u s < %u s; BASIC MAC",
+			           argos_config.surfacing_burst_max_s, ArgosConfig::BLIND_MIN_RETX_PERIOD_S);
 		} else if (argos_config.blind_en) {
 			// NTRY_PER_MESSAGE is the TOTAL number of frames wanted per position;
 			// the module now spends retx_nb of them in one burst. Asking for fewer
@@ -214,16 +212,16 @@ void ArgosTxService::service_init() {
 			// accounting can undo a frame already on air -- say so rather than let
 			// the budget drift silently. 0 = unlimited and is never short.
 			if (argos_config.ntry_per_message != 0 && argos_config.blind_retx_nb > argos_config.ntry_per_message) {
-				DEBUG_WARN("ArgosTxService: ARGOS_BLIND_RETX_NB=%u exceeds NTRY_PER_MESSAGE=%u — the first BLIND "
-				           "burst already sends more frames than the position asked for. Set NTRY_PER_MESSAGE to a "
-				           "multiple of ARGOS_BLIND_RETX_NB, or 0 for unlimited.",
+				// Set NTRY_PER_MESSAGE to a multiple of ARGOS_BLIND_RETX_NB, or 0.
+				DEBUG_WARN("ArgosTxService: ARGOS_BLIND_RETX_NB=%u exceeds NTRY_PER_MESSAGE=%u — 1st burst overshoots",
 				           argos_config.blind_retx_nb, argos_config.ntry_per_message);
 			}
 			DEBUG_INFO("ArgosTxService: BLIND active — retx_nb=%u period=%u s%s", argos_config.blind_retx_nb,
 			           argos_config.blind_retx_period_s,
 			           argos_config.mode == BaseArgosMode::DOPPLER
-			               ? " (aligned on SURFACING_BURST_MAX_S, not ARGOS_BLIND_RETX_PERIOD_S; the "
-			                 "Doppler sequence uses that same FIXED interval instead of ramping)"
+			               // The Doppler sequence then uses that same FIXED interval
+			               // instead of ramping, and ARGOS_BLIND_RETX_PERIOD_S is not used.
+			               ? " (DOPPLER: aligned on SURFACING_BURST_MAX_S)"
 						   : "");
 		}
 	}
@@ -663,8 +661,9 @@ ScheduleDecision ArgosTxService::schedule_doppler(ArgosConfig &argos_config, std
 /// nothing while the animal is actually diving, because
 /// notify_underwater_state(true) deschedules the service outright.
 ScheduleDecision ArgosTxService::schedule_surfacing_heartbeat(ArgosConfig &argos_config, std::time_t now) {
-	DEBUG_INFO("ArgosTxService: burst finished, waiting for the next surfacing — presence heartbeat at the nominal "
-	           "period meanwhile (not a fault).");
+	// Not a fault: the presence heartbeat at the nominal period until the next
+	// surfacing. Called at every scheduling pass of that wait, hence a detail.
+	DEBUG_DETAIL("ArgosTxService: burst finished, waiting for the next surfacing — heartbeat at the nominal period");
 	m_scheduled_task = [this]() { process_doppler_burst(); };
 	m_scheduled_mode =
 	    argos_config.adaptive_modulation ? adaptive_doppler_modulation() : resolve_non_adaptive_modulation();
@@ -778,7 +777,7 @@ ScheduleDecision ArgosTxService::schedule_surfacing_burst(ArgosConfig &argos_con
 		// Note: m_first_gnss_tx_sent is set in service_initiate(), not here,
 		// because scheduling can be called while a TX is still in progress.
 		if (!m_first_gnss_tx_sent) {
-			DEBUG_INFO("ArgosTxService::SURFACING_BURST: GNSS TX #1 (immediate after fix)");
+			DEBUG_DETAIL("ArgosTxService::SURFACING_BURST: GNSS TX #1 (immediate after fix)");
 			// Spacing guard (2026-05): if a Doppler TX just completed
 			// seconds ago and the GPS fix arrived right after, firing
 			// the first GNSS TX immediately would put 2 TX back-to-back
@@ -1417,7 +1416,7 @@ void ArgosTxService::notify_peer_event(ServiceEvent &e) {
 		if (entry.info.valid && entry.info.event_type != GPSEventType::FASTLOC
 		    && entry.info.event_type != GPSEventType::CLOUDLOCATE && !m_gps_fix_corrected_clock) {
 			m_gps_fix_corrected_clock = true;
-			DEBUG_INFO("ArgosTxService: first valid GPS fix this session — TX unlocked");
+			DEBUG_DETAIL("ArgosTxService: first valid GPS fix this session — TX unlocked");
 		}
 
 		// Update last known location (real fix only — fastloc is too inaccurate for scheduling)
@@ -1437,9 +1436,9 @@ void ArgosTxService::notify_peer_event(ServiceEvent &e) {
 				bool include_no_fix = (purge_cfg.mode == BaseArgosMode::SURFACING_BURST);
 				unsigned int purged = m_depth_pile_manager.purge_non_fix_entries(include_no_fix);
 				if (purged) {
-					DEBUG_INFO("ArgosTxService::notify_peer_event: purged %u degraded entr%s from depth pile "
-					           "(no_fix_included=%u)",
-					           purged, purged == 1 ? "y" : "ies", (unsigned int)include_no_fix);
+					DEBUG_DETAIL("ArgosTxService::notify_peer_event: purged %u degraded entr%s from depth pile "
+					             "(no_fix_included=%u)",
+					             purged, purged == 1 ? "y" : "ies", (unsigned int)include_no_fix);
 				}
 			}
 
@@ -1447,9 +1446,9 @@ void ArgosTxService::notify_peer_event(ServiceEvent &e) {
 			// Works during active burst OR after burst ended (awaiting surfacing):
 			// a real GPS fix always deserves to be transmitted.
 			if ((m_is_surfacing_burst || m_awaiting_surfacing) && !m_has_gnss_fix_since_surfacing) {
-				DEBUG_INFO("ArgosTxService::SURFACING_BURST: GNSS fix acquired after %u Doppler messages - switching "
-				           "to GNSS phase",
-				           m_doppler_burst_count);
+				DEBUG_DETAIL("ArgosTxService::SURFACING_BURST: GNSS fix acquired after %u Doppler messages - switching "
+				             "to GNSS phase",
+				             m_doppler_burst_count);
 				m_has_gnss_fix_since_surfacing = true;
 				m_awaiting_surfacing = false;
 
@@ -1658,8 +1657,7 @@ void ArgosTxService::notify_peer_event(ServiceEvent &e) {
 			// to the normal path instead; it still fires at the burst cadence
 			// once the hold lifts, and the CloudLocate stays in the pile.
 			if (m_device_error_hold_until != 0 && service_current_time() < m_device_error_hold_until) {
-				DEBUG_INFO("ArgosTxService::notify_peer_event: GNSS_CLOUDLOCATE_READY during a device-error hold — "
-				           "deferring to the normal schedule");
+				DEBUG_INFO("ArgosTxService: GNSS_CLOUDLOCATE_READY during a device-error hold — normal schedule");
 				return;
 			}
 			// 2026-10 — with adaptive OFF the CloudLocate goes on the live
@@ -1787,8 +1785,8 @@ KineisModulation ArgosTxService::resolve_non_adaptive_modulation() {
 void ArgosTxService::note_cloudlocate_unfit(const char *where, unsigned int size_bits, KineisModulation mode) {
 	if (!m_cl_unfit_noted) {
 		m_cl_unfit_noted = true;
-		DEBUG_INFO("ArgosTxService::%s: CloudLocate %u bits does not fit master mod %s (ARGOS_AD_MOD=0, LDA2 "
-		           "master required) — sending position/Doppler instead",
+		// ARGOS_AD_MOD=0 needs an LDA2 master for CloudLocate.
+		DEBUG_INFO("ArgosTxService::%s: CloudLocate %u bits does not fit master mod %s — position/Doppler instead",
 		           where, size_bits, argos_modulation_to_string((BaseArgosModulation)mode));
 	} else {
 		DEBUG_TRACE("ArgosTxService::%s: CloudLocate %u bits does not fit mod %d — fallback", where, size_bits,
@@ -1848,8 +1846,7 @@ void ArgosTxService::process_certification_burst() {
 	// Say what is wrong and transmit nothing -- and, crucially, take no strike
 	// for it, since this is a configuration error and not a device fault.
 	if (cert_mode == KineisModulation::VLDA4 && !VLDA4_PERMITTED) {
-		DEBUG_ERROR("ArgosTxService::process_certification_burst: CERT_TX_MODULATION is VLDA4, which this backend does "
-		            "not permit — TX aborted (pick LDK or LDA2)");
+		DEBUG_ERROR("ArgosTxService: CERT_TX_MODULATION=VLDA4 not permitted on this backend — TX aborted (LDK/LDA2)");
 		service_complete();
 		return;
 	}
@@ -2625,9 +2622,9 @@ void ArgosTxService::process_doppler_burst() {
 				prepared_bits =
 				    ArgosPacketBuilder::doppler_view(prepared, m_kineis.get_current_modulation(), prepared_bits, true);
 			}
-			DEBUG_INFO("ArgosTxService::process_doppler_burst: PREWARM mode=%s sz=%u age=%lu ms",
-			           argos_modulation_to_string((BaseArgosModulation)tx_mode), prepared_bits,
-			           static_cast<unsigned long>(prep_age_ms));
+			DEBUG_DETAIL("ArgosTxService::process_doppler_burst: PREWARM mode=%s sz=%u age=%lu ms",
+			             argos_modulation_to_string((BaseArgosModulation)tx_mode), prepared_bits,
+			             static_cast<unsigned long>(prep_age_ms));
 			m_last_tx_had_gps = false;
 			m_prepared_doppler_packet.clear();
 			m_prepared_doppler_size_bits = 0;
@@ -2681,8 +2678,7 @@ void ArgosTxService::process_doppler_burst() {
 			format_id = (uint8_t)BaseCloudLocateFormat::MEAS20;
 		}
 		if (!blob) {
-			DEBUG_WARN("ArgosTxService::process_doppler_burst: configured CloudLocate format %u not available "
-			           "(measc12=%u meas20=%u) — skipping CL TX",
+			DEBUG_WARN("ArgosTxService: CloudLocate format %u not available (measc12=%u meas20=%u) — no CL TX",
 			           cl_format, (unsigned)raw.has_measc12, (unsigned)raw.has_meas20);
 		}
 
@@ -2707,9 +2703,9 @@ void ArgosTxService::process_doppler_burst() {
 			bool undatable = (now_rtc < raw.capture_time)
 			                 || ((now_rtc - raw.capture_time) >= ArgosPacketBuilder::CLOUDLOCATE_AGE_MAX_S);
 			if (undatable) {
-				DEBUG_WARN("ArgosTxService::process_doppler_burst: CloudLocate snapshot no longer datable "
-				           "(capture=%u now=%u) — falling back to Doppler for this ping",
-				           (unsigned)raw.capture_time, (unsigned)now_rtc);
+				DEBUG_WARN(
+				    "ArgosTxService: CloudLocate snapshot no longer datable (capture=%u now=%u) — Doppler instead",
+				    (unsigned)raw.capture_time, (unsigned)now_rtc);
 				blob = nullptr;
 			}
 		}
@@ -2947,9 +2943,9 @@ void ArgosTxService::process_doppler_burst() {
 			} else {
 				cached_mode = resolve_non_adaptive_modulation();
 				if (!size_fits_modulation(cached_size_bits, cached_mode)) {
-					DEBUG_WARN("ArgosTxService::process_doppler_burst: cached-pos %u bits doesn't fit master mod %d "
-					           "(ARGOS_AD_MOD=0) — falling through to Doppler",
-					           cached_size_bits, (int)cached_mode);
+					DEBUG_WARN(
+					    "ArgosTxService: cached-pos %u bits doesn't fit master mod %d (ARGOS_AD_MOD=0) — Doppler",
+					    cached_size_bits, (int)cached_mode);
 					can_send = false;
 				}
 			}
@@ -3058,10 +3054,10 @@ void ArgosTxService::react(KineisEventTxStarted const &) {
 	// The frame is on the air: the try is genuinely used, nothing to give back.
 	m_inflight_reached_air = true;
 #if !defined(ARGOS_SMD) || (ARGOS_SMD != 1)
-	// KIM2 only: surface the burst type + modulation + running session TX count
-	// so the operator can see WHAT is being sent and HOW MANY this session.
-	DEBUG_INFO("ArgosTxService: TX START — type=%s mode=%d session_tx#=%u", m_last_val_tx_type,
-	           static_cast<int>(m_scheduled_mode), m_session_tx_count + 1);
+	// KIM2 only: the burst type + modulation + running session TX count, so the
+	// bench sees WHAT is being sent. A detail: TX SUCCESS concludes the step.
+	DEBUG_DETAIL("ArgosTxService: TX START — type=%s mode=%d session_tx#=%u", m_last_val_tx_type,
+	             static_cast<int>(m_scheduled_mode), m_session_tx_count + 1);
 #endif
 	service_active();
 }
@@ -3069,8 +3065,14 @@ void ArgosTxService::react(KineisEventTxStarted const &) {
 /// @brief TX complete event — update counters, manage surfacing burst, complete service.
 void ArgosTxService::react(KineisEventTxComplete const &) {
 	DEBUG_TRACE("ArgosTxService::react: KineisEventTxComplete");
-#if !defined(ARGOS_SMD) || (ARGOS_SMD != 1)
-	// KIM2 only: clear, visible confirmation that the Argos message went out.
+	// The step line of a transmission, and the only one a tag stores: the
+	// backend's own per-TX lines are details. log_harvest.py counts it, and the
+	// bench parses "TX SUCCESS — type=(\S+) mode=(\d+)", so the text stays.
+	// SMD builds lacked it until 2026-10, which left their journal with no
+	// trace of a transmission; their validation builds still go without, as
+	// "[VAL-TX] type=" already marks each completion there and the bench counts
+	// either one as a TX.
+#if !defined(ARGOS_SMD) || (ARGOS_SMD != 1) || !VALIDATION_LOG_ENABLE
 	DEBUG_INFO("ArgosTxService: TX SUCCESS — type=%s mode=%d session_tx#=%u", m_last_val_tx_type,
 	           static_cast<int>(m_scheduled_mode), m_session_tx_count + 1);
 #endif
@@ -3163,10 +3165,10 @@ void ArgosTxService::react(KineisEventTxComplete const &) {
 	// two apart on a recovered device.
 	if (argos_config.shutdown_ntime_sat > 0 && m_session_tx_count >= argos_config.shutdown_ntime_sat) {
 #if defined(BOARD_RSPB)
-		DEBUG_ERROR("ArgosTxService: session TX budget reached (%u/%u) — powering down ON PURPOSE "
-		            "(SHUTDOWN_NTIME_SAT / LB_SHUTDOWN_NTIME_SAT). The TPL5111 duty cycle restores power and the "
-		            "counter resets on the next boot.",
-		            m_session_tx_count, argos_config.shutdown_ntime_sat);
+		// SHUTDOWN_NTIME_SAT / LB_SHUTDOWN_NTIME_SAT: the TPL5111 duty cycle
+		// restores power, and the counter resets on the next boot.
+		DEBUG_ERROR("ArgosTxService: session TX budget reached (%u/%u) — powering down ON PURPOSE", m_session_tx_count,
+		            argos_config.shutdown_ntime_sat);
 		configuration_store->save_params();  // Flush before shutdown
 		PMU::powerdown();
 		return;
@@ -3181,9 +3183,9 @@ void ArgosTxService::react(KineisEventTxComplete const &) {
 		// ignore it where it does not, and say so once.
 		if (!m_ntime_sat_ignored_logged) {
 			m_ntime_sat_ignored_logged = true;
-			DEBUG_WARN("ArgosTxService: session TX budget reached (%u/%u) but SHUTDOWN_NTIME_SAT only applies to "
-			           "RSPB, whose duty cycle power-cycles the board. Ignored here — it would be a lifetime cap, "
-			           "not a per-session one. Transmission continues.",
+			// Only RSPB's duty cycle power-cycles the board: here it would be a
+			// lifetime cap, not a per-session one.
+			DEBUG_WARN("ArgosTxService: session TX budget reached (%u/%u), SHUTDOWN_NTIME_SAT is RSPB-only — ignored",
 			           m_session_tx_count, argos_config.shutdown_ntime_sat);
 		}
 #endif
@@ -3328,12 +3330,16 @@ void ArgosTxService::react(KineisEventDeviceError const &) {
 	}
 
 	m_consecutive_device_errors++;
-	DEBUG_WARN("ArgosTxService::react: KineisEventDeviceError (consecutive=%u/%u)", m_consecutive_device_errors,
-	           DEVICE_ERROR_MAX_CONSECUTIVE);
 #if !defined(ARGOS_SMD) || (ARGOS_SMD != 1)
-	// KIM2 only: surface the burst type + modulation on a TX failure.
+	// KIM2: TX FAILED says the same with the burst type and modulation, so the
+	// strike count stays on the console (the backoff bench reads it there).
+	DEBUG_DETAIL("ArgosTxService::react: KineisEventDeviceError (consecutive=%u/%u)", m_consecutive_device_errors,
+	             DEVICE_ERROR_MAX_CONSECUTIVE);
 	DEBUG_WARN("ArgosTxService: TX FAILED — type=%s mode=%d (consecutive=%u/%u, will backoff/retry)",
 	           m_last_val_tx_type, static_cast<int>(m_scheduled_mode), m_consecutive_device_errors,
+	           DEVICE_ERROR_MAX_CONSECUTIVE);
+#else
+	DEBUG_WARN("ArgosTxService::react: KineisEventDeviceError (consecutive=%u/%u)", m_consecutive_device_errors,
 	           DEVICE_ERROR_MAX_CONSECUTIVE);
 #endif
 
@@ -3379,8 +3385,8 @@ void ArgosTxService::react(KineisEventDeviceError const &) {
 			// once per service_next_timeout() that transmitted nothing and
 			// cost an LFS commit per pass.
 			m_device_error_hold_until = service_current_time() + (std::time_t)DEVICE_ERROR_PROBE_PERIOD_S;
-			DEBUG_ERROR("ArgosTxService: %u consecutive device errors — suspending TX for %u s, then one probe "
-			            "(a GPS session or a surface event clears it sooner)",
+			// A GPS session or a surface event clears the suspension sooner.
+			DEBUG_ERROR("ArgosTxService: %u consecutive device errors — suspending TX for %u s, then one probe",
 			            m_consecutive_device_errors, DEVICE_ERROR_PROBE_PERIOD_S);
 			// Sleep on the deadline instead of completing without a reschedule:
 			// see the note on DEVICE_ERROR_PROBE_PERIOD_S for what the latter
@@ -3449,8 +3455,8 @@ unsigned int ArgosTxService::apply_spacing_guard(unsigned int proposed_delay_ms,
 	uint64_t proposed_uptime_ms = now_uptime_ms + proposed_delay_ms;
 	if (proposed_uptime_ms >= earliest_ms) return proposed_delay_ms;  // OK as-is
 	unsigned int deferred_ms = (unsigned int)(earliest_ms - now_uptime_ms);
-	DEBUG_INFO("ArgosTxService: TX deferred %u ms (intra-burst spacing guard, last TX %u ms ago)", deferred_ms,
-	           (unsigned int)(now_uptime_ms - m_last_tx_uptime_ms));
+	DEBUG_DETAIL("ArgosTxService: TX deferred %u ms (intra-burst spacing guard, last TX %u ms ago)", deferred_ms,
+	             (unsigned int)(now_uptime_ms - m_last_tx_uptime_ms));
 	// Re-anchor scheduler at the deferred RTC time so the scheduler doesn't
 	// fire "early" relative to our spacing.
 	m_sched.schedule_at(now + (std::time_t)(deferred_ms / 1000) + 1);

@@ -10,6 +10,7 @@
 #include "state_machine_barrier.hpp"
 #include "gps.hpp"
 #include "scheduler.hpp"
+#include "dbd_save_schedule.hpp"
 
 class M10QAsyncReceiver : public UBXCommsEventListener, public GPSDevice {
 public:
@@ -402,18 +403,22 @@ private:
 	/// cut deep-idle short. Zero = never entered backupidle this session.
 	uint64_t m_backupidle_entered_ms = 0;
 	void dump_navigation_database(unsigned int);
-	void save_dbd_to_flash();
+	bool save_dbd_to_flash();
 	bool load_dbd_from_flash();
 	// The DBD reaches flash a while AFTER the session, not inside it: the write is
 	// a synchronous LittleFS commit of up to 16 KB (1.1-6.7 s measured) that froze
-	// the scheduler right when the fix triggers the GNSS transmission.
-	static constexpr unsigned int DBD_SAVE_DEFER_MS = 15000;
+	// the scheduler right when the fix triggers the GNSS transmission. When
+	// exactly: DbdSaveSchedule. The GNSS time commit keeps the minimum delay.
+	static constexpr unsigned int DBD_SAVE_DEFER_MS = DbdSaveSchedule::MIN_DELAY_MS;
 	bool m_dbd_save_pending = false;
+	DbdSaveSchedule m_dbd_save_schedule;
+	uint64_t m_dbd_fetched_ms = 0;  ///< uptime of the session whose dump is pending
 	/// The first GNSS time synchronisation of this boot has been committed to
 	/// flash (deliberately NOT reset per session: once per boot is the point).
 	bool m_time_sync_committed_this_boot = false;
 	Scheduler::TaskHandle m_dbd_save_task;
 	void defer_dbd_save();
+	void post_dbd_save(uint64_t delay_ms);
 	void flush_deferred_dbd_save();
 
 	// Power management
@@ -441,6 +446,7 @@ private:
 
 public:
 	void flush_pending_persistence() override { flush_deferred_dbd_save(); }
+	void persist_soon() override;
 	/// @brief Timestamp (GNSS time) at which the persisted DBD was written, 0 if
 	/// none. Read at boot, before any driver exists, as a floor for a restored clock.
 	static uint32_t persisted_dbd_time(FileSystem *fs);

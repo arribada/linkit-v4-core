@@ -19,6 +19,12 @@ extern "C" {
 #define ENABLE_CAM_SENSOR 0
 #endif
 
+// 1 = the camera is driven over its UART (CMake -DCAM_CONTROL=UART). CMake only
+// sets it on a camera build, so it implies ENABLE_CAM_SENSOR.
+#ifndef CAM_CONTROL_UART
+#define CAM_CONTROL_UART 0
+#endif
+
 #ifndef ENABLE_PRESSURE_SENSOR
 #define ENABLE_PRESSURE_SENSOR 0
 #endif
@@ -501,8 +507,28 @@ enum class ParamID {
 	ARGOS_MASTER_SYNC_ATTEMPT_FP             = 270,  // uint: fingerprint of the IDP14 for which an init-time SMD resync was last attempted
 	LAST_TIME_SYNC                           = 271,  // uint epoch: last time the RTC was set from a trusted source (GNSS fix or $RTCW); anchors the RSPB pseudo-RTC uncertainty
 	WAKEUP_PERIOD_MEASURED_MS                = 272,  // uint ms: TPL5111 period this board's resistor really gives, learnt from GNSS fixes (0 = not yet)
+
+	// === Camera over its UART (slots 273-280 always reserved) ===
+	// 2026-10 — appended: the camera block 166-171 is full. How the RunCam is told
+	// to record when CAM_CONTROL=UART (see core/hardware/runcam_uart_device.hpp).
+#if CAM_CONTROL_UART
+	CAM_REC_MODE                             = 273,  // uint: 0 TOGGLE (camera auto-record off, a power-button press starts and stops), 1 AUTO (camera auto-record on, a press stops), 2 COMMANDS (START/STOP_RECORDING)
+	CAM_RESOLUTION                           = 274,  // uint: resolution to apply, 0 keep the camera's own, 1 1080P60, 2 1080P50, 3 1080P30, 4 720P60
+	CAM_LAST_OUTCOME                         = 275,  // uint, status: how the last camera session ended, 0 OK .. 6 LINK_ERROR (CAMTST codes), 255 none yet
+	CAM_SD_FREE_MB                           = 276,  // uint, status: SD card free space at the last session, MB (0xFFFFFFFF unread)
+	CAM_SD_TOTAL_MB                          = 277,  // uint, status: SD card size, MB (0xFFFFFFFF unread)
+	CAM_REC_TIME_LEFT_S                      = 278,  // uint, status: recording time the camera gave its card, s (0xFFFFFFFF unread)
+	CAM_RESOLUTION_READ                      = 279,  // uint, status: the camera's resolution as last read, CAP07 code (0 unknown)
+	CAM_FEATURES                             = 280,  // uint, status: GET_DEVICE_INFO feature bits at the last session (0 no answer)
+#endif
+	// === Camera, both controls (slot 281 always reserved) ===
+#if ENABLE_CAM_SENSOR
+	CAM_CONTROL_MODE                         = 281,  // uint, status: how this build drives the camera, 1 BUTTON, 2 UART (refreshed at each STATR)
+#endif
+	// === Flash journal ===
+	SYSTEM_LOG_LEVEL                         = 282,  // uint 0..3: lowest level written to system.log after the boot record, 0 OFF 1 ERROR 2 WARN 3 INFO
 	// === Sentinel (fixed regardless of #ifdef combinations) ===
-	__PARAM_SIZE                             = 273,
+	__PARAM_SIZE                             = 283,
 	__NULL_PARAM                             = 0xFFFF
 };
 // clang-format on

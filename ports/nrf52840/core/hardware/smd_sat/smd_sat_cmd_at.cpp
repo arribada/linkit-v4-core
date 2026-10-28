@@ -766,9 +766,8 @@ bool SmdSatCmdAt::dfu_enter() {
 	// still answering AT+VERSION straight afterwards -- it never left the app.
 	if (!send_at("AT+BOOT=", 3000)) {
 		if (m_resp_error) {
-			DEBUG_ERROR("SmdSatCmdAt::%s: module refused AT+BOOT (+ERROR) — this module firmware has no AT "
-			            "DFU support; update it over SWD or SPI instead",
-			            __func__);
+			// This module firmware has no AT DFU support: update it over SWD or SPI.
+			DEBUG_ERROR("SmdSatCmdAt::%s: module refused AT+BOOT (+ERROR) — no AT DFU, use SWD or SPI", __func__);
 		} else {
 			DEBUG_ERROR("SmdSatCmdAt::%s: AT+BOOT got no answer at all (timeout)", __func__);
 		}

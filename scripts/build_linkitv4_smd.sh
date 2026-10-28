@@ -183,6 +183,15 @@ BATTERY_CHEMISTRY=${BATTERY_CHEMISTRY:-BATT_CHEM_LS17500_2P}
 #   Set to OFF for pure-FAST bench builds (no runtime branch, no persistence).
 SMDSAT_USE_SAFE_TIMINGS=${SMDSAT_USE_SAFE_TIMINGS:-OFF}
 SMDSAT_AUTOFALLBACK=${SMDSAT_AUTOFALLBACK:-ON}
+# Camera (RunCam). Off by default, like every other board script. A camera build
+# is an explicit choice:
+#   CAM_ENABLE=1 ./scripts/build_linkitv4_smd.sh          -> CAM_CONTROL=UART
+#   CAM_ENABLE=1 ./scripts/build_linkitv4_smd.sh --uart   -> CAM_CONTROL=BUTTON
+# The transport decides: SPI frees UARTE1 for the camera but takes P0.09, the
+# button driver's rail pin; SMD_UART keeps UARTE1 and leaves P0.09 free. CMake
+# refuses the other two combinations.
+CAM_ENABLE=${CAM_ENABLE:-0}
+if [ "$SMD_UART" = "ON" ]; then CAM_CONTROL=${CAM_CONTROL:-BUTTON}; else CAM_CONTROL=${CAM_CONTROL:-UART}; fi
 
 echo "Building LinkIt V4 SMD with configuration:"
 echo "  ARGOS_SMD=${ARGOS_SMD}"
@@ -192,6 +201,7 @@ echo "  GNSS_HAS_BACKUP_BATTERY=${GNSS_HAS_BACKUP_BATTERY}"
 echo "  BATTERY_CHEMISTRY=${BATTERY_CHEMISTRY}"
 echo "  SMDSAT_USE_SAFE_TIMINGS=${SMDSAT_USE_SAFE_TIMINGS}"
 echo "  SMDSAT_AUTOFALLBACK=${SMDSAT_AUTOFALLBACK}"
+echo "  CAM_ENABLE=${CAM_ENABLE}  CAM_CONTROL=${CAM_CONTROL}"
 if [ "$BENCH" = "ON" ]; then
     printf '\033[1;35m  BENCH_TEST=ON  ->  %% USB-CDC console (%%CFG/%%OP/%%GPS) + GPS injection active\033[0m\n'
 fi
@@ -211,6 +221,8 @@ cmake -DCMAKE_TOOLCHAIN_FILE=../../toolchain_arm_gcc_nrf52.cmake \
       -DSMD_FLASH_HOLD=${SMD_FLASH_HOLD:-OFF} \
       -DSMD_DIVE_STANDBY=${SMD_DIVE_STANDBY:-OFF} \
       -DSMD_UART=${SMD_UART} \
+      -DCAM_ENABLE=${CAM_ENABLE} \
+      -DCAM_CONTROL=${CAM_CONTROL} \
       -DSMDSAT_TXTRACE=${SMDSAT_TXTRACE:-OFF} \
       -DDEBUG_NO_SYSTEMLOG=${DEBUG_NO_SYSTEMLOG:-OFF} \
       -DMETRIC_LATENCY_LOG_ENABLE=$([ "$METRICS" = "ON" ] && echo 1 || echo 0) \

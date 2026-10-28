@@ -86,8 +86,8 @@ void HauledModeService::restore_state() {
 			clear_state();
 			return;
 		}
-		DEBUG_INFO("HauledModeService: restored from noinit (in_hauled=%u, last_uw=%u, returns=%u)", s_noinit.in_hauled,
-		           (unsigned int)s_noinit.last_uw_event_rtc, s_noinit.uw_events_since_hauled);
+		DEBUG_DETAIL("HauledModeService: restored from noinit (in_hauled=%u, last_uw=%u, returns=%u)",
+		             s_noinit.in_hauled, (unsigned int)s_noinit.last_uw_event_rtc, s_noinit.uw_events_since_hauled);
 		return;
 	}
 	DEBUG_TRACE("HauledModeService: noinit invalid, starting fresh (AT_SEA)");

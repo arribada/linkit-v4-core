@@ -39,7 +39,12 @@ void GenTracker::cancel_confirmation() {
 /// @brief Reed switch gesture handler — confirmation pattern: hold 3s/6s, release, re-engage within 3s.
 /// @param event  Gesture type (ENGAGE, SHORT_HOLD, LONG_HOLD, RELEASE).
 void GenTracker::react(ReedSwitchEvent const &event) {
-	DEBUG_INFO("react: ReedSwitchEvent: %u", (int)event.state);
+	static const char *const gesture_name[] = { "ENGAGE", "SHORT_HOLD", "LONG_HOLD", "RELEASE" };
+	const unsigned int g = static_cast<unsigned int>(event.state);
+	// Raw gestures are details; a CONFIRMED one is the step (see below). A reed
+	// that chatters -- the Q4 level shift under ~2.9 V VBAT does -- used to
+	// write a flash line per bounce.
+	DEBUG_DETAIL("Reed: %s", g < 4 ? gesture_name[g] : "?");
 
 	// During coin-cell backup charge: only ENGAGE stops the charge; all other
 	// reed events are ignored so nothing else happens while charging.
@@ -67,7 +72,10 @@ void GenTracker::react(ReedSwitchEvent const &event) {
 			m_confirmation_pending = ConfirmationPending::NONE;
 			m_awaiting_re_engage = false;
 
-			DEBUG_INFO("Reed confirmation accepted: %u", (int)pending);
+			DEBUG_INFO("Reed: gesture confirmed — %s",
+			           pending == ConfirmationPending::ENTER_CONFIG  ? "enter configuration"
+			           : pending == ConfirmationPending::EXIT_CONFIG ? "exit configuration"
+			                                                         : "power off");
 
 			if (pending == ConfirmationPending::ENTER_CONFIG) {
 				transit<ConfigurationState>();
@@ -526,9 +534,10 @@ void BootState::entry() {
 		// already yet exist
 		LoggerManager::create();
 		configuration_store->init();
-		DEBUG_INFO("Firmware Version: %s", FW_APP_VERSION_STR_C);
+		// kim_bench.py spots a reboot on "Firmware Version: ".
+		DEBUG_INFO("Firmware Version: %s, configuration valid=%u", FW_APP_VERSION_STR_C,
+		           (unsigned int)configuration_store->is_valid());
 		LoggerManager::show_info();
-		DEBUG_INFO("configuration_store: is_valid=%u", configuration_store->is_valid());
 		// Raw registers, not just the decoded enum: a field return is diagnosed
 		// by reading this line. Bit 16 = OFF (System OFF wake), 20 = VBUS,
 		// 18 = DIF (debugger), 3 = LOCKUP, 2 = SREQ, 1 = DOG, 0 = RESETPIN.
@@ -558,7 +567,9 @@ void BootState::entry() {
 }
 
 void BootState::exit() {
-	DEBUG_INFO("exit: BootState");
+	// Every state's exit is a detail: the "entry:" line of the next state, which
+	// the journal keeps, already says the transition happened.
+	DEBUG_DETAIL("exit: BootState");
 
 	// Turn status LED off to indicate exit from boot state
 	led_handle::dispatch<SetLEDOff>({});
@@ -579,7 +590,7 @@ void OffState::entry() {
 }
 
 void OffState::exit() {
-	DEBUG_INFO("exit: OffState");
+	DEBUG_DETAIL("exit: OffState");
 	system_scheduler->cancel_task(m_off_state_task);
 	led_handle::dispatch<SetLEDOff>({});
 }
@@ -610,8 +621,27 @@ void PreOperationalState::preop_transit_tick() {
 	transit<OperationalState>();
 }
 
+/// @brief SYSTEM_LOG_LEVEL (DBP02): the lowest level written to the flash
+/// journal from here on. Applied at every PreOperational entry -- after a boot,
+/// and after a configuration session, so a level written over DTE takes effect
+/// on leaving configuration. Everything logged before it, the boot record
+/// above all (version, reset cause, crash backtrace), is therefore always in
+/// the journal. Only the system log gets the level: the console is never
+/// filtered.
+static void apply_system_log_level() {
+	if (!DebugLogger::system_log) return;
+	try {
+		unsigned int level = configuration_store->read_param<unsigned int>(ParamID::SYSTEM_LOG_LEVEL);
+		if (level > LOG_LEVEL_INFO) level = LOG_LEVEL_INFO;
+		DebugLogger::system_log->set_log_level(static_cast<int>(level));
+	} catch (...) {
+		// Unreadable: the journal keeps the level it had, everything at boot.
+	}
+}
+
 void PreOperationalState::entry() {
 	DEBUG_INFO("entry: PreOperationalState");
+	apply_system_log_level();
 	if (configuration_store->is_valid()) {
 		// Force battery monitor to update its levels
 		try {
@@ -676,7 +706,7 @@ void PreOperationalState::entry() {
 }
 
 void PreOperationalState::exit() {
-	DEBUG_INFO("exit: PreOperationalState");
+	DEBUG_DETAIL("exit: PreOperationalState");
 	system_scheduler->cancel_task(m_preop_state_task);
 	led_handle::dispatch<SetLEDOff>({});
 }
@@ -807,7 +837,7 @@ void OperationalState::service_event_handler(ServiceEvent &e) {
 }
 
 void OperationalState::exit() {
-	DEBUG_INFO("exit: OperationalState");
+	DEBUG_DETAIL("exit: OperationalState");
 	// Stop periodic config flush and do a final save to persist counters.
 	// EVERY destructive step below is independently try/catched: a teardown
 	// exception (e.g. SMD SPI dies mid-service_term, BLE stop hits SoftDevice
@@ -902,7 +932,7 @@ void BatteryCriticalState::entry() {
 }
 
 void BatteryCriticalState::exit() {
-	DEBUG_INFO("exit: BatteryCriticalState");
+	DEBUG_DETAIL("exit: BatteryCriticalState");
 	system_scheduler->cancel_task(m_transit_task);
 	led_handle::dispatch<SetLEDOff>({});
 }
@@ -949,8 +979,8 @@ void ErrorState::entry() {
 		m_shutdown_task = system_scheduler->post_task_prio(
 		    []() { PMU::reset(false); }, "GenTrackerErrorStateRebootRetry", Scheduler::DEFAULT_PRIORITY, 5000);
 	} else {
-		DEBUG_ERROR("ErrorState: %u consecutive boot failures (max %u reached, factory_reset_attempted=%u) — falling "
-		            "through to OffState (real HW fault)",
+		// A real hardware fault: retries and the factory reset are spent.
+		DEBUG_ERROR("ErrorState: %u consecutive boot failures (max %u, factory_reset=%u) — OffState",
 		            s_bootfail_noinit.consecutive_failures, BOOT_RETRY_MAX, s_bootfail_noinit.factory_reset_attempted);
 		m_shutdown_task =
 		    system_scheduler->post_task_prio([this]() { transit<OffState>(); }, "GenTrackerErrorStateTransitOffState",
@@ -986,7 +1016,7 @@ void ErrorState::backoff_tick() {
 #endif
 
 void ErrorState::exit() {
-	DEBUG_INFO("exit: ErrorState");
+	DEBUG_DETAIL("exit: ErrorState");
 	system_scheduler->cancel_task(m_shutdown_task);
 	led_handle::dispatch<SetLEDOff>({});
 }

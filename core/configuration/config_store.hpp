@@ -200,6 +200,26 @@ protected:
 	// 0x20 KEPT for slot 272 (WAKEUP_PERIOD_MEASURED_MS, PWP08): pure append,
 	// __PARAM_SIZE 272 -> 273. 0 = not measured: the chain uses WAKEUP_PERIOD until
 	// two fixes have measured the resistor.
+	// 0x20 KEPT for slot 273 (CAM_REC_MODE, CAP06): pure append, __PARAM_SIZE
+	// 273 -> 274. An older file ends before it and comes back at TOGGLE, the
+	// default; only a CAM_CONTROL=UART build reads the slot.
+	// 0x20 KEPT for slots 274-280 (CAM_RESOLUTION CAP07, CAT01-CAT06): pure
+	// append, __PARAM_SIZE 274 -> 281. An older file comes back with "keep the
+	// camera's resolution" and every status unread; only a CAM_CONTROL=UART
+	// build reads the slots.
+	// 0x20 KEPT for slot 281 (CAM_CONTROL_MODE, CAT00): pure append,
+	// __PARAM_SIZE 281 -> 282. Read-only and rewritten from the build at each
+	// STATR, so whatever a file holds for it never shows.
+	// 0x20 KEPT for slot 282 (SYSTEM_LOG_LEVEL, DBP02): pure append,
+	// __PARAM_SIZE 282 -> 283. An older file comes back at INFO, which is what
+	// every earlier build wrote.
+	// 2026-10: deserialize_config() places each record by its KEY
+	// (config_store_fs.hpp). A slot removed, gated to some builds or moved no
+	// longer shifts the following ones, so "REMOVED or MOVED" above no longer
+	// needs a bump for a file this firmware or a later one reads. Two limits: a
+	// downgrade to a firmware older than this change still reads by position,
+	// and a slot that keeps its key but changes meaning (type, unit, scale)
+	// needs a NEW key -- a bump would reset everything but the credentials.
 	static inline const unsigned int m_config_version_code = 0x1c07e800 | 0x20;
 	static inline const unsigned int m_config_version_code_aop = 0x1c07e800 | 0x03;
 	// Board-conditional default for slot [240] GNSS_DEEP_IDLE_AFTER_OFF_S. Kept as a
@@ -516,6 +536,16 @@ protected:
 		/* [270] ARGOS_MASTER_SYNC_ATTEMPT_FP */ 0U,  // no init-time resync attempted yet
 		/* [271] LAST_TIME_SYNC */ 0U,                // never synchronised: the pseudo-RTC cannot be bounded
 		/* [272] WAKEUP_PERIOD_MEASURED_MS */ 0U,     // not measured yet: the chain uses WAKEUP_PERIOD
+		/* [273] CAM_REC_MODE */ 0U,                  // TOGGLE: the camera's auto-record off, a press starts and stops
+		/* [274] CAM_RESOLUTION */ 0U,                // keep the camera's own resolution
+		/* [275] CAM_LAST_OUTCOME */ 255U,            // no camera session yet
+		/* [276] CAM_SD_FREE_MB */ 0xFFFFFFFFU,       // never read
+		/* [277] CAM_SD_TOTAL_MB */ 0xFFFFFFFFU,      // never read
+		/* [278] CAM_REC_TIME_LEFT_S */ 0xFFFFFFFFU,  // never read
+		/* [279] CAM_RESOLUTION_READ */ 0U,           // unknown
+		/* [280] CAM_FEATURES */ 0U,                  // never answered
+		/* [281] CAM_CONTROL_MODE */ CAM_CONTROL_UART ? 2U : 1U,  // this build's; STATR rewrites it anyway
+		/* [282] SYSTEM_LOG_LEVEL */ 3U,              // INFO: one line per step, as every earlier build
 	};
 	// clang-format on
 
@@ -715,15 +745,14 @@ public:
 		if (lb > crit) return true;
 
 		if (lb < crit)
-			DEBUG_WARN("ConfigurationStore: LB_THRESHOLD (LBP02=%u%%) is BELOW "
-			           "LB_CRITICAL_THRESH (LBP12=%u%%) — the pre-transmission critical-battery "
-			           "guard only runs once the low-battery band is entered, so it will not "
-			           "fire until %u%% instead of %u%%",
-			           lb, crit, lb, crit);
+			// The pre-transmission critical-battery guard only runs once the
+			// low-battery band is entered: it fires at LBP02, not at LBP12.
+			DEBUG_WARN("ConfigurationStore: LB_THRESHOLD (LBP02=%u%%) is BELOW LB_CRITICAL_THRESH (LBP12=%u%%)", lb,
+			           crit);
 		else
-			DEBUG_WARN("ConfigurationStore: LB_THRESHOLD (LBP02) equals LB_CRITICAL_THRESH "
-			           "(LBP12=%u%%) — there is no low-battery band at all, so LB mode never "
-			           "takes effect before the critical shutdown",
+			// No low-battery band at all: LB mode never takes effect before the
+			// critical shutdown.
+			DEBUG_WARN("ConfigurationStore: LB_THRESHOLD (LBP02) equals LB_CRITICAL_THRESH (LBP12=%u%%) — no LB band",
 			           crit);
 		return false;
 	}
@@ -1432,10 +1461,9 @@ public:
 				// off, TX uses cache only". Fired once on HAULED entry only
 				// (gated by the !=HAULED check above) — no log spam.
 				if (strat != (unsigned int)BaseGnssStrategy::FRESH && read_param<bool>(ParamID::HAULED_GNSS_EN)) {
-					DEBUG_WARN("ConfigurationStore: HMP12=HAULED_GNSS_EN=true but HMP13=%s "
-					           "(non-FRESH) ignores it — GPS will stay OFF during HAULED. "
-					           "Set HMP13=FRESH if you want HMP12 to enable GPS, or set "
-					           "HMP12=false to remove this warning.",
+					// Set HMP13=FRESH for HMP12 to enable GPS, or HMP12=false to
+					// remove this warning.
+					DEBUG_WARN("ConfigurationStore: HMP12=HAULED_GNSS_EN=true ignored by HMP13=%s — GPS OFF in HAULED",
 					           strat == (unsigned int)BaseGnssStrategy::REUSE_LAST ? "REUSE_LAST" : "OFF");
 				}
 				m_last_config_mode = ConfigMode::HAULED;

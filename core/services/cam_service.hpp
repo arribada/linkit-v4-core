@@ -50,6 +50,13 @@ public:
 	}
 	void notify_peer_event(ServiceEvent &event) override;
 
+	/// @brief Safety-net timeout on a session (see service_next_timeout).
+#if defined(CAM_CONTROL_UART) && (CAM_CONTROL_UART == 1)
+	static constexpr unsigned int SEQUENCE_TIMEOUT_MS = 120000;
+#else
+	static constexpr unsigned int SEQUENCE_TIMEOUT_MS = 30000;
+#endif
+
 protected:
 	// Service interface methods
 	void service_init() override;
@@ -66,8 +73,6 @@ private:
 	/// @brief Delay before retrying a schedule after the completion path threw.
 	/// Same value as the framework's own Service::EXCEPTION_RETRY_MS.
 	static constexpr unsigned int RECOVERY_RETRY_MS = 5000;
-	/// @brief Safety-net timeout on a session (see service_next_timeout).
-	static constexpr unsigned int SEQUENCE_TIMEOUT_MS = 30000;
 
 	CAMDevice &m_device;
 	std::time_t m_next_schedule = 0;  ///< UTC instant of the toggle last armed (logged as schedTime)

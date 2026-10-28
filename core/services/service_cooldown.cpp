@@ -116,8 +116,8 @@ void ServiceManager::restore_cooldown_state() {
 		}
 		m_last_successful_cycle_time = s_cooldown_noinit.last_cycle_time;
 		m_passive_surfacing_count = s_cooldown_noinit.passive_count;
-		DEBUG_INFO("ServiceManager: cooldown restored from noinit (last_cycle=%u, passive=%u)",
-		           (unsigned int)m_last_successful_cycle_time, m_passive_surfacing_count);
+		DEBUG_DETAIL("ServiceManager: cooldown restored from noinit (last_cycle=%u, passive=%u)",
+		             (unsigned int)m_last_successful_cycle_time, m_passive_surfacing_count);
 
 		// FIX 2026-05-23 (audit cooldown finding 3): if we boot mid-cooldown
 		// (noinit restored a non-expired timestamp), the wake task MUST be
@@ -206,7 +206,13 @@ void ServiceManager::set_cycle_complete(std::time_t t) {
 	// is invisible, so the DX1 tracker marks the interval BLIND.
 	if (interval > 0) DiveBehaviourTracker::on_blind_start(PMU::get_timestamp_ms());
 #endif
-	DEBUG_INFO("ServiceManager: cycle complete at %u, cooldown started", (unsigned int)t);
+	// A step only when a cooldown actually starts. With no interval configured
+	// (the turtle default) it was "cooldown started" at every surfacing, false
+	// and in flash; the bench still reads it on the console.
+	if (interval > 0)
+		DEBUG_INFO("ServiceManager: cycle complete at %u, cooldown started (%u s)", (unsigned int)t, interval);
+	else
+		DEBUG_DETAIL("ServiceManager: cycle complete at %u, no cooldown configured", (unsigned int)t);
 #if VALIDATION_LOG_ENABLE
 	DEBUG_INFO("[VAL-COOLDOWN] enter t=%u interval_s=%u", (unsigned int)t, interval);
 #endif
@@ -264,10 +270,9 @@ unsigned int ServiceManager::get_cooldown_remaining_s(std::time_t now) {
 		static bool s_reported = false;
 		if (!s_reported) {
 			s_reported = true;
-			DEBUG_WARN("ServiceManager: MIN_SURFACE_CYCLE_INTERVAL_S=%u is set but UNDERWATER_EN=0. The surface-cycle "
-			           "cooldown only applies between two dives and needs the underwater sensor at both ends, so it "
-			           "is ignored here. No effect on transmission.",
-			           interval);
+			// The surface-cycle cooldown only applies between two dives and needs
+			// the underwater sensor at both ends. No effect on transmission.
+			DEBUG_WARN("ServiceManager: MIN_SURFACE_CYCLE_INTERVAL_S=%u ignored, UNDERWATER_EN=0", interval);
 		}
 		return 0;
 	}

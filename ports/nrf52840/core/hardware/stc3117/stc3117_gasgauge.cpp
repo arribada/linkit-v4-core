@@ -270,6 +270,7 @@ void GaugeBatteryMonitor::internal_update() {
 	int status = this->init();
 	if (status != STC3117_OK) {
 		DEBUG_ERROR("STC3117: Failed to init for reading");
+		m_sample_rejected = true;  // retried after REJECTED_RETRY_MS, not SAMPLE_MAX_AGE_MS
 		return;
 	}
 
@@ -301,6 +302,7 @@ void GaugeBatteryMonitor::internal_update() {
 #if !STC3117_MIXED_MODE
 		this->shutdown();  // voltage mode only — keep running in mixed mode
 #endif
+		m_sample_rejected = true;
 		return;
 	}
 
@@ -354,7 +356,7 @@ void GaugeBatteryMonitor::internal_update() {
 bool GaugeBatteryMonitor::update_forced() {
 	m_force_read = true;  // bypass the freshness cache for this call
 	m_is_init = false;    // force a full re-probe (STC31xx_CheckI2cDeviceId)
-	update();             // -> internal_update() -> sets m_last_read_ok
+	sample();             // not update(): that one reuses a sample younger than SAMPLE_MAX_AGE_MS
 	return m_last_read_ok;
 }
 

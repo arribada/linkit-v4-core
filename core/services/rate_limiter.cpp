@@ -114,7 +114,7 @@ void RateLimiter::restore_state() {
 				return;
 			}
 		}
-		DEBUG_INFO("RateLimiter: restored from noinit (count=%u, head=%u)", s_noinit.count, s_noinit.head);
+		DEBUG_DETAIL("RateLimiter: restored from noinit (count=%u, head=%u)", s_noinit.count, s_noinit.head);
 		return;
 	}
 	DEBUG_TRACE("RateLimiter: noinit invalid, starting fresh");

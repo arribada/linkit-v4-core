@@ -2269,6 +2269,50 @@ TEST(ArgosTxService, DepthPileManagerSensorTimeout) {
 	CHECK_TRUE(man.eligible());
 }
 
+// Two sensors missing at the timeout: both are filled with dummies and the fix is
+// stored. The timeout used to fill only the first of them (an else-if chain), so
+// the entry stayed incomplete, was never stored, and no new timeout followed.
+TEST(ArgosTxService, DepthPileManagerTimeoutFillsEveryMissingSensor) {
+	bool enable = true;
+	BaseSensorEnableTxMode mode = BaseSensorEnableTxMode::ONESHOT;
+	fake_config_store->write_param(ParamID::ALS_SENSOR_ENABLE, enable);
+	fake_config_store->write_param(ParamID::ALS_SENSOR_ENABLE_TX_MODE, mode);
+	fake_config_store->write_param(ParamID::PH_SENSOR_ENABLE, enable);
+	fake_config_store->write_param(ParamID::PH_SENSOR_ENABLE_TX_MODE, mode);
+
+	std::time_t t = 1652105502000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+
+	DepthPileManager man;
+
+	ServiceEvent e;
+	GPSLogEntry log;
+	log.info.valid = true;
+	e.event_source = ServiceIdentifier::GNSS_SENSOR;
+	e.event_type = ServiceEventType::SERVICE_ACTIVE;
+	man.notify_peer_event(e);
+
+	e.event_data = log;
+	e.event_type = ServiceEventType::SERVICE_LOG_UPDATED;
+	man.notify_peer_event(e);
+
+	e.event_type = ServiceEventType::SERVICE_INACTIVE;
+	man.notify_peer_event(e);
+	CHECK_FALSE(man.eligible());
+
+	t += 2000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	system_scheduler->run();
+
+	CHECK_TRUE(man.eligible());
+	ServiceSensorData *als = man.retrieve_sensor_single(1, ServiceIdentifier::ALS_SENSOR);
+	ServiceSensorData *ph = man.retrieve_sensor_single(1, ServiceIdentifier::PH_SENSOR);
+	CHECK_FALSE(nullptr == als);
+	CHECK_FALSE(nullptr == ph);
+}
+
 TEST(ArgosTxService, DepthPileManagerSensorRx) {
 	bool enable = true;
 	BaseSensorEnableTxMode mode = BaseSensorEnableTxMode::ONESHOT;

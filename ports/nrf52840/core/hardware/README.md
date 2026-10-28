@@ -41,7 +41,7 @@ Device drivers — both nRF peripheral wrappers and external sensor/module drive
 | `ad5933/` | Conductivity AFE | I2C |
 | `ltr_303/` | Ambient light | I2C |
 | `pressure_sensor/`, `cdt/` | Cross-driver wrappers (model selection) | — |
-| `run_cam/` | RunCam trigger | GPIO pulse |
+| `run_cam/` | RunCam camera: `runcam` (button), `runcam_uart_link` (UART, see `core/hardware/runcam_uart_device`) | GPIO pulse / UARTE1 |
 
 ## Comm-module driver pattern
 

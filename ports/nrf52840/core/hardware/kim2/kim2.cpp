@@ -845,7 +845,10 @@ bool KIM2Device::send_AT(ATCmd cmd, const std::optional<std::string> &params, ui
 static bool kim2_blind_active(unsigned int &retx_nb, unsigned int &retx_period_s) {
 	if (!configuration_store) return false;
 	// get_argos_configuration resolves the EFFECTIVE mode (LB/OoZ/HAULED) and
-	// clears blind_en for SURFACING_BURST/DOPPLER. evaluate() is cached (500 ms).
+	// clears blind_en for SURFACING_BURST/DOPPLER. Its hauled/moored evaluate()
+	// is cached (500 ms) and its battery refresh reuses a sample younger than
+	// BatteryMonitor::SAMPLE_MAX_AGE_MS -- before that, every call here cost a
+	// 500 ms busy-wait battery read on KIM, whatever this comment then claimed.
 	ArgosConfig cfg;
 	configuration_store->get_argos_configuration(cfg);
 	if (!cfg.blind_en) return false;
@@ -988,7 +991,7 @@ void KIM2Device::run_state_machine(uint16_t delay_ms) {
 
 /// @brief Power off: uninit UART, cut GPIO power, clear buffers.
 void KIM2Device::state_power_off_enter() {
-	DEBUG_INFO("KIM2Device::state_power_off_enter");
+	DEBUG_DETAIL("KIM2Device::state_power_off_enter");
 	m_kim2_comm.deinit();
 	GPIOPins::clear(SAT_EXTWAKEUP);
 	// Reset asserted BEFORE cutting the supply, and held low afterwards: a
@@ -1031,7 +1034,7 @@ void KIM2Device::state_power_on_enter() {
 }
 
 void KIM2Device::state_power_on() {
-	DEBUG_INFO("KIM2Device::state_power_on");
+	DEBUG_DETAIL("KIM2Device::state_power_on");
 	if (send_AT(AT_PING)) {
 		KIM2_STATE_CHANGE(power_on, init);
 	} else {
@@ -1096,7 +1099,7 @@ void KIM2Device::state_init() {
 	KineisModulation target_mode = m_current_rconf_mode;
 	std::string rconf = load_rconf_for_mode(target_mode);
 	if (adaptive) {
-		DEBUG_INFO("KIM2Device::state_init: adaptive ON, using RCONF for mode %d", static_cast<int>(target_mode));
+		DEBUG_DETAIL("KIM2Device::state_init: adaptive ON, using RCONF for mode %d", static_cast<int>(target_mode));
 	}
 	// The configured RCONF (master, adaptive off) is what gets programmed, unless
 	// it is empty and the built-in default stands in for it.
@@ -1285,8 +1288,13 @@ void KIM2Device::state_idle_exit() {
 // ============================================================================
 
 /// @brief Start TX: send AT+TX, set timeout, start polling for +TX= response.
+///
+/// The per-TX lines of this driver are details (console only): the journal's
+/// record of a transmission is ArgosTxService's TX SUCCESS / TX FAILED. They
+/// were six flash commits per frame, ~4000 a turtle day. Failures stay
+/// WARN/ERROR, with the module's own status code.
 void KIM2Device::state_transmit_enter() {
-	DEBUG_INFO("KIM2Device::state_transmit_enter: mode=%u", static_cast<unsigned int>(m_tx_mode));
+	DEBUG_DETAIL("KIM2Device::state_transmit_enter: mode=%u", static_cast<unsigned int>(m_tx_mode));
 
 	// Auto-recovery: if the module's RCONF doesn't match the requested TX
 	// modulation, rewrite it before AT+TX. Otherwise KIM rejects the TX with
@@ -1313,8 +1321,8 @@ void KIM2Device::state_transmit_enter() {
 			        ? std::nullopt
 			        : ModulationGuard::frame_for_modulation(m_raw_payload, m_raw_bits, m_current_rconf_mode);
 			if (!reframed.has_value()) {
-				DEBUG_ERROR("KIM2Device::state_transmit_enter: non-adaptive — %u-bit payload for mode %u does not fit "
-				            "the module's mode %u — aborting TX",
+				DEBUG_ERROR("KIM2Device: non-adaptive — %u-bit payload for mode %u does not fit the module mode %u — "
+				            "aborting TX",
 				            m_raw_bits, static_cast<unsigned int>(m_tx_mode),
 				            static_cast<unsigned int>(m_current_rconf_mode));
 				m_tx_buffer.clear();
@@ -1372,8 +1380,8 @@ void KIM2Device::state_transmit_enter() {
 		// frame and latching on repeated +ERROR=5.
 		KIM2::ModulationVerdict realign_v = KIM2::verify_modulation(m_tx_mode, realign_decoded.modulation);
 		if (realign_v.mismatch) {
-			DEBUG_ERROR("KIM2Device::state_transmit_enter: RCONF for mode %u physically encodes %s (mode %d) — "
-			            "aborting TX (check RCONF provisioning), caching actual modulation",
+			// Check the RCONF provisioning; the actual modulation is cached.
+			DEBUG_ERROR("KIM2Device: RCONF for mode %u physically encodes %s (mode %d) — aborting TX",
 			            static_cast<unsigned int>(m_tx_mode), realign_decoded.modulation.c_str(),
 			            static_cast<int>(realign_v.actual));
 			m_current_rconf_mode = realign_v.actual;
@@ -1399,10 +1407,10 @@ void KIM2Device::state_transmit_enter() {
 	m_tx_done = false;
 	m_is_error = false;
 	m_cmd_is_ok = false;  // phase-1 +OK ACK flag (reset like send_AT would)
-	DEBUG_INFO("KIM2Device::state_transmit_enter: TX START — RCONF=[%s] mode=%d, payload=%u bytes",
-	           m_kim2_comm.m_rconf_info.c_str(), static_cast<int>(m_tx_mode),
-	           static_cast<unsigned>(m_tx_buffer.size() / 2));
-	DEBUG_INFO("KIM2Device::state_transmit_enter: AT+TX=%s)", m_tx_buffer.c_str());
+	DEBUG_DETAIL("KIM2Device::state_transmit_enter: TX START — RCONF=[%s] mode=%d, payload=%u bytes",
+	             m_kim2_comm.m_rconf_info.c_str(), static_cast<int>(m_tx_mode),
+	             static_cast<unsigned>(m_tx_buffer.size() / 2));
+	DEBUG_DETAIL("KIM2Device::state_transmit_enter: AT+TX=%s)", m_tx_buffer.c_str());
 
 	// Fire AT+TX NON-BLOCKING, then poll the two AT+TX responses in state_transmit()
 	// instead of busy-waiting up to 5 s for the +OK (which froze the scheduler):
@@ -1431,7 +1439,7 @@ void KIM2Device::state_transmit_enter() {
 		uint64_t burst_ms = (uint64_t)rn * (uint64_t)period * 1000ULL;
 		if (burst_ms > 7200000ULL) burst_ms = 7200000ULL;
 		tx_timeout_ms += (uint32_t)burst_ms;
-		DEBUG_INFO("KIM2Device::state_transmit_enter: BLIND — TX window %u ms", tx_timeout_ms);
+		DEBUG_DETAIL("KIM2Device::state_transmit_enter: BLIND — TX window %u ms", tx_timeout_ms);
 	}
 	initiate_timeout(tx_timeout_ms);
 
@@ -1486,8 +1494,8 @@ void KIM2Device::state_transmit() {
 		if (m_tx_buffer.size()) {
 			m_tx_buffer.clear();
 			if (m_kim2_comm.m_tx_status == 0) {
-				DEBUG_INFO("KIM2Device::state_transmit: TX EMITTED OK — Argos message sent (mode=%d, RCONF=[%s])",
-				           static_cast<int>(m_tx_mode), m_kim2_comm.m_rconf_info.c_str());
+				DEBUG_DETAIL("KIM2Device::state_transmit: TX EMITTED OK — Argos message sent (mode=%d, RCONF=[%s])",
+				             static_cast<int>(m_tx_mode), m_kim2_comm.m_rconf_info.c_str());
 				notify(KineisEventTxComplete({}));
 			} else {
 				DEBUG_WARN("KIM2Device::state_transmit: TX failed status=%d", m_kim2_comm.m_tx_status);
@@ -1600,7 +1608,7 @@ void KIM2Device::state_receive_enter() {
 
 	m_rx_active = true;
 	m_rx_start_ms = PMU::get_timestamp_ms();
-	DEBUG_INFO("KIM2Device::state_receive_enter: reception started (safety window %us)", KIM2_RX_SAFETY_WINDOW_S);
+	DEBUG_DETAIL("KIM2Device::state_receive_enter: reception started (safety window %us)", KIM2_RX_SAFETY_WINDOW_S);
 	notify(KineisEventRxStarted({}));
 }
 
@@ -1614,7 +1622,7 @@ void KIM2Device::state_receive() {
 	// The module reports the real end of the window (explicit stop or safety
 	// window expiry) with an empty +RX= line.
 	if (m_rx_window_ended) {
-		DEBUG_INFO("KIM2Device::state_receive: RX window ended%s", m_rx_stop_requested ? " (stop confirmed)" : "");
+		DEBUG_DETAIL("KIM2Device::state_receive: RX window ended%s", m_rx_stop_requested ? " (stop confirmed)" : "");
 		m_rx_window_ended = false;
 		m_rx_stop_requested = false;
 		m_rx_requested = false;
@@ -1869,8 +1877,8 @@ bool KIM2Device::write_and_validate_rconf(const std::string &rconf_hex, KineisMo
 		return true;  // Non-VLDA4 path — accept even without verification
 	}
 
-	DEBUG_INFO("KIM2Device::write_and_validate_rconf: module RCONF=%s (expected mode=%d)",
-	           m_kim2_comm.m_rconf_info.c_str(), static_cast<int>(expected_mode));
+	DEBUG_DETAIL("KIM2Device::write_and_validate_rconf: module RCONF=%s (expected mode=%d)",
+	             m_kim2_comm.m_rconf_info.c_str(), static_cast<int>(expected_mode));
 
 	KIM2::RConfDecoded decoded = KIM2::parse_rconf_info(m_kim2_comm.m_rconf_info);
 	if (out_decoded) *out_decoded = decoded;

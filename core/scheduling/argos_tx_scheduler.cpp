@@ -90,9 +90,9 @@ void ArgosTxScheduler::schedule_periodic(unsigned int period_ms, bool jitter_en,
 	// beacon transmitting on its nominal period is a configuration to correct,
 	// a silent one on a potted tag is a lost deployment.
 	if (duty_cycle == 0) {
-		DEBUG_ERROR("ArgosTxScheduler::schedule_periodic: duty-cycle mask is 0 — no hour is permitted. Check "
-		            "ARGOS_DUTY_CYCLE (or LB_ARGOS_DUTY_CYCLE for the low-battery profile). Falling back to the "
-		            "nominal period so the beacon still transmits.");
+		// Check ARGOS_DUTY_CYCLE (LB_ARGOS_DUTY_CYCLE for the low-battery profile).
+		// The nominal period keeps the beacon transmitting meanwhile.
+		DEBUG_ERROR("ArgosTxScheduler: duty-cycle mask is 0 — no hour permitted, nominal period used instead");
 		duty_cycle = 0xFFFFFFu;  // all 24 hours
 	}
 
@@ -158,8 +158,8 @@ void ArgosTxScheduler::schedule_periodic(unsigned int period_ms, bool jitter_en,
 	uint64_t elapsed_time = 0;
 	while (elapsed_time <= (MSECS_PER_SECOND * SECONDS_PER_DAY)) {
 		if (is_in_duty_cycle(start_time, duty_cycle) && start_time >= now_ms) {
-			DEBUG_INFO("ArgosTxScheduler::schedule_periodic: TX scheduled @ %llu (in %llu ms)", start_time,
-			           start_time - now_ms);
+			DEBUG_DETAIL("ArgosTxScheduler::schedule_periodic: TX scheduled @ %llu (in %llu ms)", start_time,
+			             start_time - now_ms);
 			m_curr_schedule_abs = start_time;
 			return;
 		} else {
@@ -168,8 +168,7 @@ void ArgosTxScheduler::schedule_periodic(unsigned int period_ms, bool jitter_en,
 		}
 	}
 
-	DEBUG_ERROR("ArgosTxScheduler::schedule_periodic: no TX slot found in 24h search (duty_cycle=0x%06X period=%u ms) "
-	            "— TX schedule aborted",
+	DEBUG_ERROR("ArgosTxScheduler: no TX slot found in 24h search (duty_cycle=0x%06X period=%u ms) — aborted",
 	            duty_cycle, period_ms);
 	m_curr_schedule_abs.reset();
 	throw ErrorCode::RESOURCE_NOT_AVAILABLE;
@@ -319,8 +318,8 @@ unsigned int ArgosTxScheduler::schedule_prepass(ArgosConfig &config, BasePassPre
 		                    static_cast<uint8_t>(tm_start.tm_min),          static_cast<uint8_t>(tm_start.tm_sec) };
 	}
 
-	DEBUG_ERROR("ArgosTxScheduler::schedule_prepass: no satellite pass found in 24h window (stale AOP or elevation "
-	            "config?) — TX disabled until next GPS fix");
+	// Stale AOP, or the elevation configuration.
+	DEBUG_ERROR("ArgosTxScheduler: no satellite pass found in 24h window — TX disabled until next GPS fix");
 	return INVALID_SCHEDULE;
 }
 

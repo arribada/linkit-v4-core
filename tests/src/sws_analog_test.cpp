@@ -3189,6 +3189,131 @@ TEST(SWSAnalogFlash, QA20_CalibrationSurvivesServiceRestart) {
 	}
 }
 
+// --- Nothing touches the flash between the electrode going dry and the ping --
+//
+// A surfacing used to write twice before it was even broadcast: SWS.CAL in the
+// sample that detected it, then the journal line of the change. Both are
+// LittleFS commits, both sat in front of the first transmission of the
+// surfacing, and the bench never saw them: %SURFACE publishes the event itself
+// and skips the detector.
+
+namespace {
+/// Counts the console lines that contain a text (DEBUG_INFO reaches console_log).
+class LineCounter : public Logger {
+public:
+	explicit LineCounter(const char *needle) : Logger("LineCounter"), m_needle(needle) {}
+	unsigned int hits = 0;
+	void create() override {}
+	void truncate() override {}
+	bool is_ready() override { return true; }
+	unsigned int num_entries() override { return hits; }
+	void read(void *, int) override {}
+	void write(void *p) override {
+		const auto *e = static_cast<const LogEntry *>(p);
+		if (std::strstr(reinterpret_cast<const char *>(e->data), m_needle)) hits++;
+	}
+
+private:
+	const char *m_needle;
+};
+}  // namespace
+
+// SWS.CAL is written neither in the sample that surfaces, nor at the surface, nor
+// in the sample that dives: in a later underwater sample, once 30 s have passed.
+TEST(SWSAnalogFlash, CalibrationSaveWaitsForAQuietUnderwaterSample) {
+	SWSAnalogService s;
+	system_timer->start();
+	SAADC::set_adc_value(10000);  // boot in salt water
+	bool underwater = false;
+	s.start([&underwater](ServiceEvent &event) {
+		if (event.event_type == ServiceEventType::SERVICE_LOG_UPDATED) underwater = std::get<bool>(event.event_data);
+	});
+	for (int i = 0; i < 90; i++)  // past the 60 s debounce of the boot calibration save
+		run_one_sample();
+	CHECK_TRUE(underwater);
+	const uint64_t boot_save = SWSAnalogService::test_last_flash_save_time();
+
+	SAADC::set_adc_value(200);
+	for (int i = 0; i < 20 && underwater; i++)
+		run_one_sample();
+	CHECK_FALSE(underwater);
+	CHECK_EQUAL_TEXT(boot_save, SWSAnalogService::test_last_flash_save_time(), "no write in the surfacing sample");
+	for (int i = 0; i < 60; i++)
+		run_one_sample();
+	CHECK_EQUAL_TEXT(boot_save, SWSAnalogService::test_last_flash_save_time(), "no write at the surface");
+
+	SAADC::set_adc_value(10000);
+	for (int i = 0; i < 20 && !underwater; i++)
+		run_one_sample();
+	CHECK_TRUE(underwater);
+	const uint64_t dive_s = PMU::get_timestamp_ms() / 1000;
+	CHECK_EQUAL_TEXT(boot_save, SWSAnalogService::test_last_flash_save_time(), "no write in the dive sample");
+	while (PMU::get_timestamp_ms() / 1000 < dive_s + 25)
+		run_one_sample();
+	CHECK_EQUAL_TEXT(boot_save, SWSAnalogService::test_last_flash_save_time(), "not before 30 s underwater");
+	while (PMU::get_timestamp_ms() / 1000 < dive_s + 35)
+		run_one_sample();
+	CHECK_TRUE_TEXT(SWSAnalogService::test_last_flash_save_time() >= dive_s + 30, "written underwater after 30 s");
+	s.stop();
+}
+
+// Leaving Operational (configuration, OFF, power-down) commits a save the last
+// change armed: before it was deferred, the change itself wrote it.
+TEST(SWSAnalogFlash, ArmedCalibrationSaveIsCommittedOnStop) {
+	SWSAnalogService s;
+	system_timer->start();
+	SAADC::set_adc_value(10000);
+	bool underwater = false;
+	s.start([&underwater](ServiceEvent &event) {
+		if (event.event_type == ServiceEventType::SERVICE_LOG_UPDATED) underwater = std::get<bool>(event.event_data);
+	});
+	for (int i = 0; i < 90; i++)
+		run_one_sample();
+	const uint64_t boot_save = SWSAnalogService::test_last_flash_save_time();
+	SAADC::set_adc_value(200);
+	for (int i = 0; i < 20 && underwater; i++)
+		run_one_sample();
+	CHECK_FALSE(underwater);
+	CHECK_EQUAL(boot_save, SWSAnalogService::test_last_flash_save_time());
+
+	s.stop();
+	CHECK_TRUE_TEXT(SWSAnalogService::test_last_flash_save_time() > boot_save, "the stop wrote the armed save");
+}
+
+// The journal line of a change follows its broadcast: logged first, its flash
+// commit sat in front of the first ping, outside ArgosTxService's hold window
+// (which only opens when the broadcast reaches it).
+TEST(SWSAnalogFlash, StateChangeLineFollowsTheBroadcast) {
+	LineCounter lines("UWDetectorService: state changed");
+	Logger *saved_console = DebugLogger::console_log;
+	DebugLogger::console_log = &lines;
+	{
+		SWSAnalogService s;
+		system_timer->start();
+		SAADC::set_adc_value(10000);
+		bool underwater = false;
+		int lines_when_broadcast = -1;
+		s.start([&](ServiceEvent &event) {
+			if (event.event_type != ServiceEventType::SERVICE_LOG_UPDATED) return;
+			underwater = std::get<bool>(event.event_data);
+			lines_when_broadcast = (int)lines.hits;
+		});
+		for (int i = 0; i < 10; i++)
+			run_one_sample();
+		CHECK_TRUE(underwater);
+
+		const unsigned int before = lines.hits;
+		SAADC::set_adc_value(200);
+		for (int i = 0; i < 20 && underwater; i++)
+			run_one_sample();
+		CHECK_FALSE(underwater);
+		CHECK_EQUAL_TEXT((int)before, lines_when_broadcast, "the surfacing was broadcast before its line");
+		CHECK_EQUAL_TEXT(before + 1, lines.hits, "and its line followed");
+		s.stop();
+	}
+	DebugLogger::console_log = saved_console;
+}
+
 /**
  * Test P0-4 (R-TEST-04): Test mode auto-stop after configured timeout.
  *

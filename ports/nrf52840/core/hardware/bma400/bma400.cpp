@@ -474,7 +474,7 @@ void BMA400LL::set_range(unsigned int g_force) {
 }
 
 void BMA400LL::set_power_mode(unsigned int power_mode) {
-	DEBUG_INFO("BMA400LL::set_power_mode: %u (%s wakeup)", power_mode, power_mode == 0 ? "LOW_POWER" : "NORMAL");
+	DEBUG_DETAIL("BMA400LL::set_power_mode: %u (%s wakeup)", power_mode, power_mode == 0 ? "LOW_POWER" : "NORMAL");
 	m_power_mode = static_cast<uint8_t>(power_mode);
 }
 

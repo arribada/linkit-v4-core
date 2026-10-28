@@ -399,7 +399,7 @@ TEST(CAMService, LostSequenceIsRecoveredByTimeout) {
 	CHECK_EQUAL(1, drv.on_requests);
 
 	// Nothing arrives; the safety-net timeout cancels the session.
-	run_for(30000 - 1);
+	run_for(CAMService::SEQUENCE_TIMEOUT_MS - 1);
 	CHECK_EQUAL(0, drv.blocking_off_calls);
 	run_for(1);
 	CHECK_EQUAL(1, drv.blocking_off_calls);

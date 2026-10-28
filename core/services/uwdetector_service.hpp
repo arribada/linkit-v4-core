@@ -21,6 +21,11 @@ public:
 	/// that state. Without it the real (dry) electrode re-reported "surfaced"
 	/// ~6 s after a %DIVE, and the board transmitted during the simulated dive.
 	static int8_t bench_forced_state;
+	/// Bench only: -1 = the electrode; >= 0 = the raw ADC value every SWS analog
+	/// sample takes instead (%SWSRAW). Unlike %DIVE / %SURFACE, which publish the
+	/// event themselves, this goes through the whole real path: filters, levels,
+	/// calibration, this detector and its broadcast. A surfacing without water.
+	static int32_t bench_raw_override;
 #endif
 
 protected:
@@ -43,6 +48,12 @@ private:
 	unsigned int m_sample_gap = 0;
 	unsigned int m_min_dry_samples = 0;
 	unsigned int m_dry_count = 0;
+	uint64_t m_state_since_ms = 0;  ///< timer at the last change: how long the previous state lasted
+
+	bool sample_state();
+#ifdef BENCH_TEST
+	bool bench_adopt_forced_state();
+#endif
 
 protected:
 	unsigned int m_max_samples = 0;

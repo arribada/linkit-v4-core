@@ -99,6 +99,57 @@ TEST(DebugLogger, TraceNeverReachesTheSystemLog) {
 	CHECK_EQUAL(1, console->lines.size());
 }
 
+// A detail is the sub-step of a step DEBUG_INFO concludes: on the console,
+// tagged so the bench can tell it from a stored line, and never in flash.
+TEST(DebugLogger, DetailReachesOnlyTheConsoleTaggedDetail) {
+	DEBUG_DETAIL("detail %u", 4u);
+	CHECK_EQUAL(0, system->lines.size());
+	CHECK_EQUAL(1, console->lines.size());
+	CHECK_EQUAL(LOG_DETAIL, console->lines[0].type);
+	STRCMP_EQUAL("detail 4", console->lines[0].text.c_str());
+}
+
+// SYSTEM_LOG_LEVEL (DBP02) filters the flash half alone: at WARN an INFO line
+// still reaches the console and never the journal; WARN and ERROR still do.
+TEST(DebugLogger, SystemLogLevelFiltersTheJournalNotTheConsole) {
+	system->set_log_level(LOG_LEVEL_WARN);
+	DEBUG_INFO("routine %u", 1u);
+	DEBUG_WARN("fault %u", 2u);
+	DEBUG_ERROR("error %u", 3u);
+	CHECK_EQUAL(2, system->lines.size());
+	CHECK_EQUAL(LOG_WARN, system->lines[0].type);
+	CHECK_EQUAL(LOG_ERROR, system->lines[1].type);
+	CHECK_EQUAL(3, console->lines.size());
+}
+
+// A filtered line takes no hold slot: the replay writes what the level allows.
+TEST(DebugLogger, SystemLogLevelAppliesToTheHoldWindow) {
+	system->set_log_level(LOG_LEVEL_WARN);
+	DebugLogger::hold();
+	DEBUG_INFO("routine");
+	DEBUG_WARN("fault");
+	DebugLogger::release();
+	CHECK_EQUAL(1, system->lines.size());
+	STRCMP_EQUAL("fault", system->lines[0].text.c_str());
+}
+
+// OFF: the journal receives nothing, errors included; the console everything.
+TEST(DebugLogger, SystemLogLevelOffWritesNothing) {
+	system->set_log_level(LOG_LEVEL_OFF);
+	DEBUG_ERROR("error");
+	CHECK_EQUAL(0, system->lines.size());
+	CHECK_EQUAL(1, console->lines.size());
+}
+
+// Nor by the back door: the hold window replays system-log lines only.
+TEST(DebugLogger, DetailIsNeverReplayedByTheHoldWindow) {
+	DebugLogger::hold();
+	DEBUG_DETAIL("held %u", 5u);
+	DebugLogger::release();
+	CHECK_EQUAL(0, system->lines.size());
+	CHECK_EQUAL(1, console->lines.size());
+}
+
 // The system log stores what Logger itself would have stored, truncation included.
 TEST(DebugLogger, LongLineIsStoredExactlyAsLoggerWouldStoreIt) {
 	const std::string long_text(3 * MAX_LOG_PAYLOAD, 'x');

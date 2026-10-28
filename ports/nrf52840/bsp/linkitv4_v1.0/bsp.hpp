@@ -44,8 +44,17 @@
 // Camera pins (optional, conflicts with buzzer on GPIO5)
 // Configure via CMake option: -DEXT_GPIO5_DEVICE=CAM or -DEXT_GPIO5_DEVICE=BUZZER
 #if ENABLE_CAM_SENSOR
+#if defined(CAM_CONTROL_UART) && (CAM_CONTROL_UART == 1)
+// -DCAM_CONTROL=UART: RunCam Device Protocol over UARTE1, which CMake allows on
+// an SMD SPI build only. There P0.09 is the SMD chip-select, so the rail enable
+// moves to the pin the button used to take; the UART pins and baud rate are in
+// bsp.cpp (UARTAsync_Inits[CAM_UART_INSTANCE]).
+#define CAM_PWR_EN        BSP::GPIO::GPIO_EXT_GPIO5  // P0.16
+#define CAM_UART_INSTANCE 1                           // UARTAsync_Inits index (UARTE1)
+#else
 #define CAM_PWR_EN   BSP::GPIO::GPIO_EXT_GPIO4  // P0.9
 #define CAM_PWR_BUTT BSP::GPIO::GPIO_EXT_GPIO5  // P0.16
+#endif
 #endif
 #define EXT_I2C_BUS       BSP::I2C::I2C_0
 #define ONBOARD_I2C_BUS   BSP::I2C::I2C_1

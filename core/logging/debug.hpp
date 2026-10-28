@@ -131,6 +131,29 @@ template <typename... Args> inline void swallow(Args...) {}
 #define DEBUG_INFO(fmt, ...) DEBUG_NOOP(fmt, ##__VA_ARGS__)
 #endif
 
+// WHAT GOES TO THE FLASH JOURNAL. system.log is the record a tag brings back
+// from the field, and every line in it is a LittleFS commit (72-480 ms,
+// measured 2026-10-27) out of 8192 entries in all. So:
+//  - DEBUG_INFO: one line per STEP, saying how it ended -- a GNSS session, a
+//    transmission, a surfacing, a boot. A reader of the journal alone must be
+//    able to follow what the tag did.
+//  - DEBUG_WARN / DEBUG_ERROR: what went wrong, and why.
+//  - DEBUG_DETAIL: the sub-steps and intermediate values of a step that
+//    DEBUG_INFO already concludes. Console only: a tag has no console, so a
+//    detail costs it nothing, and the bench console still shows every one,
+//    tagged [DETAIL] so it is plain which lines a tag never stores.
+// One entry holds 118 bytes of text (MAX_LOG_PAYLOAD): the rest is cut, on the
+// console as in flash. The explanation belongs in a comment, the line states
+// the fact. tools/check_log_lines.py enforces the length.
+#if (DEBUG_LEVEL >= 3)
+#define DEBUG_DETAIL(fmt, ...)                                                              \
+	do {                                                                                    \
+		if (DebugLogger::console_log) DebugLogger::console_log->detail(fmt, ##__VA_ARGS__); \
+	} while (0)
+#else
+#define DEBUG_DETAIL(fmt, ...) DEBUG_NOOP(fmt, ##__VA_ARGS__)
+#endif
+
 // NOTE: Do not log TRACE level to system log as it can impact timing of some
 // time critical areas of code
 #if (DEBUG_LEVEL >= 4)
@@ -145,9 +168,10 @@ template <typename... Args> inline void swallow(Args...) {}
 
 #else
 
-#define DEBUG_ERROR(fmt, ...) DEBUG_NOOP(fmt, ##__VA_ARGS__)
-#define DEBUG_WARN(fmt, ...)  DEBUG_NOOP(fmt, ##__VA_ARGS__)
-#define DEBUG_INFO(fmt, ...)  DEBUG_NOOP(fmt, ##__VA_ARGS__)
-#define DEBUG_TRACE(fmt, ...) DEBUG_NOOP(fmt, ##__VA_ARGS__)
+#define DEBUG_ERROR(fmt, ...)  DEBUG_NOOP(fmt, ##__VA_ARGS__)
+#define DEBUG_WARN(fmt, ...)   DEBUG_NOOP(fmt, ##__VA_ARGS__)
+#define DEBUG_INFO(fmt, ...)   DEBUG_NOOP(fmt, ##__VA_ARGS__)
+#define DEBUG_DETAIL(fmt, ...) DEBUG_NOOP(fmt, ##__VA_ARGS__)
+#define DEBUG_TRACE(fmt, ...)  DEBUG_NOOP(fmt, ##__VA_ARGS__)
 
 #endif

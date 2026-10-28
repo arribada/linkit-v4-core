@@ -287,6 +287,7 @@ void NrfBatteryMonitor::internal_update() {
 		} else {
 			DEBUG_WARN("NrfBatteryMonitor: implausible sample rejected (%u mV)", mv);
 		}
+		m_sample_rejected = true;  // retried after REJECTED_RETRY_MS, not SAMPLE_MAX_AGE_MS
 		return;
 	}
 	m_consecutive_rejects = 0;

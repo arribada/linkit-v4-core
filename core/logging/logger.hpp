@@ -75,11 +75,15 @@ public:
 	virtual ~Logger();
 
 	void set_log_level(int level);
+	int get_log_level() const { return m_log_level; }
 	void set_log_formatter(LogFormatter *formatter);
 	LogFormatter *get_log_formatter();
 	void warn(const char *msg, ...);
 	void error(const char *msg, ...);
 	void info(const char *msg, ...);
+	/// @brief INFO-level line marked LOG_DETAIL. Only the console is ever
+	/// handed one (DEBUG_DETAIL); FsLog would store whatever it is given.
+	void detail(const char *msg, ...);
 	void trace(const char *msg, ...);
 	void show_info();
 	unsigned int get_unique_id();

@@ -95,6 +95,7 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
     ENABLE_AXL_SENSOR=1
     ENABLE_THERMISTOR_SENSOR=1
     ENABLE_CAM_SENSOR=1
+    CAM_CONTROL_UART=1          # camera driven over its UART: RunCamUartDevice + CAP06 under test
     ENABLE_MORTALITY_SENSOR=1
     ENABLE_SWS_LOG=1
     ENABLE_SWS_ANALOG=1
@@ -227,6 +228,8 @@ target_sources(${PROJECT_NAME} PRIVATE
     "${ROOT_DIR}/core/services/service_cooldown.cpp"
     "${ROOT_DIR}/core/services/mortality_service.cpp"
     "${ROOT_DIR}/core/services/cam_service.cpp"
+    "${ROOT_DIR}/core/hardware/runcam_uart_device.cpp"
+    "${ROOT_DIR}/core/protocol/runcam_protocol.cpp"
     "${ROOT_DIR}/core/filesystem/ota_flash_file_updater.cpp"
     "${ROOT_DIR}/core/services/uwdetector_service.cpp"
     "${ROOT_DIR}/core/services/sws_analog_service.cpp"
@@ -276,6 +279,9 @@ target_sources(${PROJECT_NAME} PRIVATE
     "src/nrf_switch_test.cpp"
     # "src/nrf_battery_test.cpp"  # Excluded: depends on NrfBatteryMonitor (needs Nordic SDK nrf_delay.h)
     "src/battery_critical_confirm_test.cpp"
+    "src/battery_sampling_test.cpp"
+    "src/smd_tcxo_register_test.cpp"
+    "src/dbd_save_schedule_test.cpp"
     "src/ph_sensor_test.cpp"
     "src/als_sensor_test.cpp"
     "src/sea_temp_sensor_test.cpp"
@@ -309,6 +315,8 @@ target_sources(${PROJECT_NAME} PRIVATE
     "src/moored_mode_test.cpp"
     "src/thermistor_test.cpp"
     "src/cam_service_test.cpp"
+    "src/runcam_protocol_test.cpp"
+    "src/runcam_uart_device_test.cpp"
     "src/gnss_short_window_sim_test.cpp"
     "src/main.cpp"
     "fakes/memmang.cpp"
@@ -372,6 +380,11 @@ set_property(TARGET ${TURTLE_SIM_NAME} PROPERTY CMAKE_CXX_STANDARD_REQUIRED ON)
 target_compile_definitions(${TURTLE_SIM_NAME} PRIVATE
     LFS_NO_DEBUG
     DEBUG_ENABLE
+    # As the firmware: every DEBUG_* line has its system-log half, so the
+    # journal budget counts what a tag stores (level, hold window and all).
+    # DebugLogger::system_log stays null, and the half inert, unless a test
+    # installs one.
+    DEBUG_TO_SYSTEMLOG
     CPPUTEST
     # Mirror TrackerTests: enables every sensor + selects the LoRa branch
     # in dte_handler.hpp (otherwise it falls through to kim2.hpp which

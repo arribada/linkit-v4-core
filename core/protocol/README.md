@@ -12,6 +12,7 @@ DTE (Data Terminal Equipment) protocol — the line-based command interface used
 | `base_types.hpp` | Type tags used by the param map (`BaseEncoding`, `BaseMap`) |
 | `base64.hpp` | Base64 encoding helper (vendor drop-in) |
 | `dte_protocol.hpp` | Encoder/decoder + the Argos allcast `PassPredictCodec` |
+| `runcam_protocol.{cpp,hpp}` | Not DTE: the RunCam Device Protocol (camera UART) — CRC-8/DVB-S2 frames and answer decoder, host-tested |
 
 ## Adding a new command
 

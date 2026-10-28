@@ -560,7 +560,7 @@ void M10QAsyncReceiver::power_off() {
 ///     here defensively in case a caller invokes this without subsequently
 ///     soft-resetting (e.g. ConfigurationState entry, BatteryCriticalState).
 void M10QAsyncReceiver::power_off_immediate() {
-	DEBUG_INFO("M10QAsyncReceiver::power_off_immediate: hard rail-cut (skip graceful FSM)");
+	DEBUG_DETAIL("M10QAsyncReceiver::power_off_immediate: hard rail-cut (skip graceful FSM)");
 	VAL_GNSS("power_off_immediate from_state=%d users=%u", (int)m_state, m_num_power_on);
 
 	// Cancel every pending scheduler-driven work item so no zombie task fires
@@ -576,7 +576,7 @@ void M10QAsyncReceiver::power_off_immediate() {
 	enter_shutdown();
 
 	// A DBD fetched at the end of the previous session may still be waiting for
-	// its deferred write (DBD_SAVE_DEFER_MS). This path leads to OffState, the
+	// its deferred write (DbdSaveSchedule). This path leads to OffState, the
 	// configuration mode, an OTA or a critical battery: commit it now rather than
 	// bet that the device survives the deferral window. Rail first, flash second
 	// -- the write touches neither the UART nor the receiver.
@@ -633,7 +633,7 @@ void M10QAsyncReceiver::poweroff_from_deep_idle() {
 		VAL_GNSS("poweroff_from_deep_idle skipped state=%d", (int)m_state);
 		return;
 	}
-	DEBUG_INFO("M10QAsyncReceiver::poweroff_from_deep_idle: cutting rail (state=%d)", (int)m_state);
+	DEBUG_DETAIL("M10QAsyncReceiver::poweroff_from_deep_idle: cutting rail (state=%d)", (int)m_state);
 	VAL_GNSS("poweroff_from_deep_idle cutting_rail state=%d", (int)m_state);
 
 	// Cancel any pending state-machine ticks. In backupidle there should be
@@ -1002,8 +1002,8 @@ void M10QAsyncReceiver::react(const UBXCommsEventSatReport &s) {
 			    if (!m_early_abort_notified && m_num_sat_samples >= EARLY_ABORT_SAT_REPORTS
 			        && e.bestSignalQuality == 0) {
 				    m_early_abort_notified = true;
-				    DEBUG_WARN("M10QAsyncReceiver: no satellite detected after %u sat reports | aborting",
-					           m_num_sat_samples);
+				    DEBUG_DETAIL("M10QAsyncReceiver: no satellite detected after %u sat reports | aborting",
+					             m_num_sat_samples);
 				    notify<GPSEventMaxSatSamples>({});
 				    return;
 			    }
@@ -1206,7 +1206,7 @@ void M10QAsyncReceiver::react(const UBXCommsEventNavReport &n) {
 					    InterruptLock lock;
 					    raw_copy = m_raw_measurement;
 				    }
-				    DEBUG_INFO("M10QAsyncReceiver: timeout with raw measurement (CloudLocate)");
+				    DEBUG_DETAIL("M10QAsyncReceiver: timeout with raw measurement (CloudLocate)");
 				    notify(GPSEventRawMeasurement(raw_copy));
 			    } else if (m_has_degraded_pvt) {
 				    // If we have a degraded fix (passed 2D/3D but failed quality filters), emit it
@@ -1222,7 +1222,7 @@ void M10QAsyncReceiver::react(const UBXCommsEventNavReport &n) {
 				    // in the surface window — the compact MEAS message stays empty.
 				    if (m_nav_settings.cloudlocate_enable) {
 					    DEBUG_WARN("M10QAsyncReceiver: timeout, CloudLocate ENABLED but NO raw measurement captured "
-						           "(insufficient SVs/C-N0 in window) — 0 frames");
+						           "(few SVs/C-N0)");
 					    VAL_GNSS("cloudlocate_no_capture timeout num_nav=%u", m_num_nav_samples);
 				    }
 				    notify<GPSEventMaxNavSamples>({});
@@ -1296,8 +1296,8 @@ void M10QAsyncReceiver::record_time_sync(std::time_t now) {
 		    "GnssTimeCommit", Scheduler::DEFAULT_PRIORITY, DBD_SAVE_DEFER_MS);
 	}
 	// Wording kept: the bench harness keys the fix on "GNSS time persisted".
-	DEBUG_INFO("M10QAsyncReceiver: GNSS time persisted (%u), measured drift %d ppm", (unsigned int)now,
-	           (int)rtc->drift_ppm());
+	DEBUG_DETAIL("M10QAsyncReceiver: GNSS time persisted (%u), measured drift %d ppm", (unsigned int)now,
+	             (int)rtc->drift_ppm());
 }
 
 /// @brief Measure how far off the TPL5111 pseudo-RTC really was, and learn from it
@@ -1328,9 +1328,10 @@ void M10QAsyncReceiver::learn_from_pseudo_rtc(std::time_t prev, std::time_t now,
 	const long err_s = static_cast<long>(prev - now);
 	const unsigned long abs_err_s = (err_s < 0) ? (unsigned long)(-err_s) : (unsigned long)err_s;
 	if (abs_err_s > announced_unc_s) {
-		DEBUG_WARN("M10QAsyncReceiver: pseudo-RTC was off by %ld s, beyond its announced +/-%u s (period measured "
-		           "%u ms, WAKEUP_PERIOD %u s) — check WAKEUP_PERIOD against the TPL5111 resistor",
-		           err_s, announced_unc_s, (unsigned)measured_ms, nominal_s);
+		// Beyond what the pseudo-RTC announced: check WAKEUP_PERIOD against the
+		// TPL5111 resistor (the measured period is the TPL's real one).
+		DEBUG_WARN("M10QAsyncReceiver: pseudo-RTC off by %ld s > +/-%u s (TPL %u ms, WAKEUP_PERIOD %u s)", err_s,
+		           announced_unc_s, (unsigned)measured_ms, nominal_s);
 	}
 	VAL_GNSS("pseudo_rtc_err s=%ld announced=%u tpl_measured_ms=%u tpl_calibration_ms=%u", err_s, announced_unc_s,
 	         (unsigned)measured_ms, (unsigned)updated_ms);
@@ -1394,10 +1395,10 @@ void M10QAsyncReceiver::react(const UBXCommsEventRawMeasurement &meas) {
 				    DEBUG_TRACE("M10QAsyncReceiver: CloudLocate-ready task cancelled (raw reset between ISR and task)");
 				    return;
 			    }
-			    DEBUG_INFO("M10QAsyncReceiver: first raw measurement available — emitting GPSEventCloudLocateReady "
-				           "(measc12=%u meas20=%u meas50=%u)",
-				           (unsigned)raw_copy.has_measc12, (unsigned)raw_copy.has_meas20,
-				           (unsigned)raw_copy.has_meas50);
+			    DEBUG_DETAIL("M10QAsyncReceiver: first raw measurement available — emitting GPSEventCloudLocateReady "
+				             "(measc12=%u meas20=%u meas50=%u)",
+				             (unsigned)raw_copy.has_measc12, (unsigned)raw_copy.has_meas20,
+				             (unsigned)raw_copy.has_meas50);
 			    VAL_GNSS("cloudlocate_ready measc12=%u meas20=%u meas50=%u", (unsigned)raw_copy.has_measc12,
 				         (unsigned)raw_copy.has_meas20, (unsigned)raw_copy.has_meas50);
 			    notify(GPSEventCloudLocateReady(raw_copy));
@@ -1475,6 +1476,12 @@ void M10QAsyncReceiver::react(const UBXCommsEventError &e) {
 	bool in_boot_window = STATE_EQUAL(poweron) || STATE_EQUAL(configure);
 
 	if (is_framing && in_boot_window) {
+		// A WARN, although expected at every power-up: its ~180 ms flash commit runs
+		// before the RX restart posted below, and that pause is what lets the receiver
+		// finish booting. Demoted to a console-only line (bench 2026-10-28), the errors
+		// came in bursts of ten within a millisecond, the four bauds were spent in
+		// ~1.5 s and the first session synced in 4 boots out of 5 (HEAD: 7 out of 7).
+		// Change this line only together with an explicit pause before restart_rx().
 		system_scheduler->post_task_prio(
 		    [this, e]() {
 			    DEBUG_WARN("UBXCommsEventError: type=%02x count=%u (boot transition, expected)", e.error_type,
@@ -1494,6 +1501,12 @@ void M10QAsyncReceiver::react(const UBXCommsEventError &e) {
 			system_scheduler->post_task_prio([this]() { m_ubx_comms.restart_rx(); }, "UBXRxRestart");
 		}
 	} else {
+		// error_type is the UARTE ERRORSRC: 0x0c = FRAMING | BREAK, seen at the first
+		// session after every power-up of the rail (the M10Q's TX still low). Do NOT
+		// demote this ERROR to a console-only line without re-measuring the first
+		// session's sync: on the bench 2026-10-28 that change alone took it from 4
+		// syncs in 5 boots to 1 in 5 -- this ERROR's ~180 ms flash commit is, by
+		// accident, the pause the retry needs while the module finishes booting.
 		system_scheduler->post_task_prio(
 		    [this, e]() { DEBUG_ERROR("UBXCommsEventError: type=%02x count=%u", e.error_type, m_uart_error_count); },
 		    "Debug");
@@ -1813,7 +1826,7 @@ void M10QAsyncReceiver::state_enterbackup_enter() {
 #ifdef BENCH_TEST
 	bench_pmreq_seq++;
 #endif
-	DEBUG_INFO("M10QAsyncReceiver::state_enterbackup_enter");
+	DEBUG_DETAIL("M10QAsyncReceiver::state_enterbackup_enter");
 
 	// HIGH GNSS-AUDIT #1 fix: two entry paths reach enterbackup:
 	//   (a) WARM — from `state_poweroff()` rerouting via `m_deep_idle_pending`
@@ -2028,8 +2041,8 @@ void M10QAsyncReceiver::state_enterbackup() {
 					// year-long sealed deployment cannot tolerate the cumulative
 					// 2-mA leak. STATE_CHANGE follows the same shape as the
 					// baud-sync failure bail at the bottom of this function.
-					DEBUG_ERROR("M10QAsyncReceiver: M10Q refusing PMREQ-backup after %u attempts — "
-					            "cutting rail (true poweroff, BBR lost) instead of leaking ~2 mA for the GNP52 window",
+					// A true poweroff (BBR lost) rather than ~2 mA for the GNP52 window.
+					DEBUG_ERROR("M10QAsyncReceiver: M10Q refusing PMREQ-backup after %u attempts — rail cut, BBR lost",
 					            (unsigned)PMREQ_VERIFY_RETRIES);
 					VAL_GNSS("pmreq_verify_giveup_rail_cycle");
 #ifdef BENCH_TEST
@@ -2058,7 +2071,7 @@ void M10QAsyncReceiver::state_enterbackup() {
 				// Aucun retry consomme => le TOUT PREMIER probe a vu le module muet.
 				if (m_pmreq_verify_retries == PMREQ_VERIFY_RETRIES) bench_pmreq_first_ok++;
 #endif
-				DEBUG_INFO("M10QAsyncReceiver: PMREQ-backup verified (M10Q silent to probe)");
+				DEBUG_DETAIL("M10QAsyncReceiver: PMREQ-backup verified (M10Q silent to probe)");
 				VAL_GNSS("pmreq_verify_ok");
 				m_step++;
 				m_retries = DEFAULT_RETRIES;
@@ -2094,8 +2107,8 @@ void M10QAsyncReceiver::state_enterbackup() {
 					//       +200 ms settling) should make sync succeed reliably.
 					//       If it still fails despite that, accept the missed
 					//       recharge as a ~1 mAh penalty — next interval retries.
-					DEBUG_ERROR("M10QAsyncReceiver: state_enterbackup sync failed (step %u) — "
-					            "bailing to poweroff (recharge skipped, will retry next cycle)",
+					DEBUG_ERROR("M10QAsyncReceiver: state_enterbackup sync failed (step %u) — poweroff, recharge "
+					            "next cycle",
 					            m_step);
 					m_powering_off = true;
 					m_num_power_on = 0;
@@ -2442,9 +2455,9 @@ void M10QAsyncReceiver::state_configure() {
 				// but the escape hatch for the CONFIGURATION layer is not available on
 				// this module: if an exotic rate is persisted there, only the multi-rate
 				// probe will recover it. That is field information, not a detail.
-				DEBUG_ERROR("M10QAsyncReceiver: BBR config erase NOT ACKNOWLEDGED — "
-				            "CFG-CFG unavailable on this receiver firmware (see SPG 5.20). "
-				            "The cold start continues, but the BBR config layer is NOT erased");
+				// CFG-CFG is unavailable on this receiver firmware (SPG 5.20).
+				DEBUG_ERROR("M10QAsyncReceiver: BBR config erase NOT ACKNOWLEDGED — cold start goes on, config layer "
+				            "kept");
 				VAL_GNSS("clear_bbr_config_unsupported");
 				m_bbr_config_cleared = true;  // ne pas boucler
 				m_step = ConfigStep::NORMAL_AFTER_ERASE;
@@ -2592,8 +2605,8 @@ void M10QAsyncReceiver::state_startreceive() {
 				// 2026-10: only the configured format is enabled now, so this is
 				// the one that matters — there are no "others" left to keep.
 				if (m_step >= 4 && m_step <= 6 && m_nav_settings.cloudlocate_enable) {
-					DEBUG_WARN("M10QAsyncReceiver::state_start_receive: CloudLocate format step %u enable FAILED — "
-					           "continuing without a raw-measurement stream",
+					DEBUG_WARN("M10QAsyncReceiver: CloudLocate format step %u enable FAILED — no raw-measurement "
+					           "stream",
 					           m_step);
 					VAL_GNSS("cloudlocate_format_skip step=%u", m_step);
 					m_step++;  // skip ONLY this format, keep CloudLocate enabled
@@ -2685,7 +2698,7 @@ bool M10QAsyncReceiver::aop_wait_should_continue() {
 	if (m_aop_busy_seen) {
 		// Rare and worth a production line: the orbits now in the DBD dump are
 		// the ones this wait exists to save.
-		DEBUG_INFO("M10QAsyncReceiver: AssistNow Autonomous finished after %u ms — orbits kept", (unsigned)waited_ms);
+		DEBUG_DETAIL("M10QAsyncReceiver: AssistNow Autonomous finished after %u ms — orbits kept", (unsigned)waited_ms);
 	}
 	VAL_GNSS("aop_wait idle waited_ms=%u busy_seen=%u", (unsigned)waited_ms, (unsigned)m_aop_busy_seen);
 	return false;
@@ -2803,11 +2816,23 @@ void M10QAsyncReceiver::state_stopreceive_exit() {}
 /// 177 ms in every slow case). The RAM copy is what the next session replays
 /// anyway; flash is only the copy that survives a reset.
 ///
+/// Since 2026-10-28 the write no longer lands 15 s after every fix, which on a
+/// turtle was the middle of the surfacing burst: it waits for a dive
+/// (persist_soon(), from GPSService) or for its deadline, bounded by
+/// DbdSaveSchedule. On RSPB, which does not dive, that is the deadline or the
+/// power-down at the end of the TPL cycle (flush_pending_persistence()).
+///
 /// Trade-off: a reset inside the window loses this DBD and the previous file
 /// stays (age-capped at load). The buffer is shared with the ANO upload, so every
 /// path that is about to reuse it flushes a pending save first.
 void M10QAsyncReceiver::defer_dbd_save() {
 	m_dbd_save_pending = true;
+	const uint64_t now_ms = PMU::get_timestamp_ms();
+	m_dbd_fetched_ms = now_ms;
+	post_dbd_save(m_dbd_save_schedule.on_fetched(now_ms) - now_ms);
+}
+
+void M10QAsyncReceiver::post_dbd_save(uint64_t delay_ms) {
 	system_scheduler->cancel_task(m_dbd_save_task);
 	m_dbd_save_task = system_scheduler->post_task_prio(
 	    [this]() {
@@ -2816,12 +2841,18 @@ void M10QAsyncReceiver::defer_dbd_save() {
 		    // points below, and a 1-7 s commit during receive outlasts the 5 s NAV
 		    // watchdog (audit 2026-10-12). Try again once the receiver is quiet.
 		    if (m_state != State::idle && m_state != State::backupidle && m_state != State::poweroff) {
-			    defer_dbd_save();
+			    post_dbd_save(DbdSaveSchedule::RETRY_MS);
 			    return;
 		    }
 		    flush_deferred_dbd_save();
 	    },
-	    "GnssDbdSave", Scheduler::DEFAULT_PRIORITY, DBD_SAVE_DEFER_MS);
+	    "GnssDbdSave", Scheduler::DEFAULT_PRIORITY, (unsigned int)delay_ms);
+}
+
+/// @brief GPSService says the tag has been underwater a while: write now, through
+/// the same idle-receiver guard as the deadline. No-op when nothing is pending.
+void M10QAsyncReceiver::persist_soon() {
+	if (m_dbd_save_pending) post_dbd_save(0);
 }
 
 void M10QAsyncReceiver::flush_deferred_dbd_save() {
@@ -2829,11 +2860,14 @@ void M10QAsyncReceiver::flush_deferred_dbd_save() {
 	m_dbd_save_pending = false;
 	system_scheduler->cancel_task(m_dbd_save_task);
 	VAL_GNSS("dbd_save_deferred bytes=%u", m_ana_database_len);
-	save_dbd_to_flash();
+	if (save_dbd_to_flash()) m_dbd_save_schedule.saved();
 }
 
-void M10QAsyncReceiver::save_dbd_to_flash() {
-	if (!main_filesystem || m_ana_database_len == 0) return;
+/// @return false when the dump could not be written (no filesystem, write error):
+/// the deadline of the fix it carries then stays, for the next fix to honour.
+bool M10QAsyncReceiver::save_dbd_to_flash() {
+	if (!main_filesystem) return false;
+	if (m_ana_database_len == 0) return true;  // nothing to persist
 
 	try {
 		LFSFile file(main_filesystem, "gnss_dbd.dat", LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC);
@@ -2841,9 +2875,14 @@ void M10QAsyncReceiver::save_dbd_to_flash() {
 		uint32_t save_time = rtc->is_set() ? (uint32_t)rtc->gettime() : 0;
 		file.write(&save_time, sizeof(save_time));
 		file.write(m_navigation_database, m_ana_database_len);
-		DEBUG_TRACE("M10QAsyncReceiver::save_dbd_to_flash: saved %u bytes (t=%u)", m_ana_database_len, save_time);
+		// DETAIL, console only: the bench reads WHEN the dump reached flash (a dive, the
+		// deadline, a power-down), which no other trace shows.
+		DEBUG_DETAIL("M10QAsyncReceiver: DBD written, %u bytes, %u s after its session (t=%u)", m_ana_database_len,
+		             (unsigned int)((PMU::get_timestamp_ms() - m_dbd_fetched_ms) / 1000U), save_time);
+		return true;
 	} catch (...) {
 		DEBUG_WARN("M10QAsyncReceiver::save_dbd_to_flash: write failed");
+		return false;
 	}
 }
 
@@ -2884,7 +2923,7 @@ bool M10QAsyncReceiver::load_dbd_from_flash() {
 				// LAST_KNOWN_RTC earlier than the last GPS synchronisation — observed on
 				// the bench, where the clock had gone 53 days backwards and the day's
 				// DBD was thrown away without a word.
-				DEBUG_INFO(
+				DEBUG_DETAIL(
 				    "M10QAsyncReceiver::load_dbd_from_flash: RTC went backwards (%u < %u) — assistance discarded",
 				    now_t, save_time);
 				return false;
@@ -2892,13 +2931,13 @@ bool M10QAsyncReceiver::load_dbd_from_flash() {
 			uint32_t age_s = now_t - save_time;
 			const uint32_t max_age = m_bbr_retained ? DBD_MAX_AGE_BBR_S : DBD_MAX_AGE_NO_BBR_S;
 			if (age_s > max_age) {
-				DEBUG_INFO("M10QAsyncReceiver::load_dbd_from_flash: expired (%u s > %u s, BBR %s)", age_s, max_age,
-				           m_bbr_retained ? "retained" : "lost");
+				DEBUG_DETAIL("M10QAsyncReceiver::load_dbd_from_flash: expired (%u s > %u s, BBR %s)", age_s, max_age,
+				             m_bbr_retained ? "retained" : "lost");
 				return false;
 			}
-			DEBUG_INFO("M10QAsyncReceiver::load_dbd_from_flash: %u bytes, age %u s (cap %u s, BBR %s)",
-			           (unsigned int)(file.size() - sizeof(uint32_t)), age_s, max_age,
-			           m_bbr_retained ? "retained" : "lost");
+			DEBUG_DETAIL("M10QAsyncReceiver::load_dbd_from_flash: %u bytes, age %u s (cap %u s, BBR %s)",
+			             (unsigned int)(file.size() - sizeof(uint32_t)), age_s, max_age,
+			             m_bbr_retained ? "retained" : "lost");
 		}
 
 		unsigned int data_len = (unsigned int)(file.size() - sizeof(uint32_t));
@@ -3217,13 +3256,21 @@ void M10QAsyncReceiver::state_sendofflinedatabase_enter() {
 		// present but has no record matching the current date within the stale
 		// window (wrong/old RTC, file doesn't cover today, or file truncated) →
 		// the receiver gets NO offline aiding this session despite ANO "enabled".
-		DEBUG_INFO(
+		DEBUG_DETAIL(
 		    "M10QAsyncReceiver::sendofflinedatabase: ANO file=%uB -> selected %u msgs / %u bytes for today (t=%u)",
 		    file_sz, m_expected_dbd_messages, m_ano_database_len, (unsigned)rtc->gettime());
 		VAL_GNSS("ano_sent file=%uB msgs=%u bytes=%u t=%u", file_sz, m_expected_dbd_messages, m_ano_database_len,
 		         (unsigned)rtc->gettime());
 	} catch (...) {
-		DEBUG_ERROR("M10QAsyncReceiver::state_sendofflinedatabase: error opening MGA ANO file");
+		// AssistNow Offline enabled with no file: a configuration fault that
+		// repeats at every cold session. Reported once a boot, then a detail.
+		static bool s_reported_this_boot = false;
+		if (!s_reported_this_boot) {
+			s_reported_this_boot = true;
+			DEBUG_ERROR("M10QAsyncReceiver::state_sendofflinedatabase: error opening MGA ANO file");
+		} else {
+			DEBUG_DETAIL("M10QAsyncReceiver::state_sendofflinedatabase: error opening MGA ANO file");
+		}
 		VAL_GNSS("ano_skip reason=file_error");
 		m_op_state = OpState::ERROR;
 	}

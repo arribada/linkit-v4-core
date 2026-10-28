@@ -71,6 +71,7 @@ public:
 		case LOG_WARN:
 		case LOG_INFO:
 		case LOG_TRACE:
+		case LOG_DETAIL:
 			debug_formatter(log_type_name[p->header.log_type], &p->header, reinterpret_cast<const char *>(p->data));
 			break;
 		case LOG_GPS: gps_formatter(static_cast<const GPSLogEntry *>(entry)); break;

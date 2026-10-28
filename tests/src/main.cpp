@@ -61,6 +61,9 @@ MemoryAccess *memory_access;
 RTC *rtc;
 BatteryMonitor *battery_monitor;
 GPSDevice *gps_device;
+#if defined(CAM_CONTROL_UART) && (CAM_CONTROL_UART == 1)
+RunCamUartDevice *runcam_uart_device = nullptr;
+#endif
 GPSService *gps_service = nullptr;
 KineisDevice *kineis_device_instance = nullptr;
 LoRaDevice *lora_device_instance = nullptr;

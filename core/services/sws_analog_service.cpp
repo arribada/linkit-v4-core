@@ -106,11 +106,11 @@ void SWSAnalogService::validate_diagnostics() {
 		update_diagnostics_crc();
 		DEBUG_INFO("SWSAnalog: Diagnostics CRC invalid — cleared");
 	} else {
-		DEBUG_INFO("SWSAnalog: Diagnostics restored from noinit "
-		           "stuck=%u coh=%u div=%u force=%u spike=%u peak=%u saadc=%u",
-		           m_diag.stuck_recovery_count, m_diag.coherence_recalib_count, m_diag.dive_timeout_count,
-		           m_diag.force_surface_count, m_diag.spike_reject_count, m_diag.peak_incoherent_count,
-		           m_diag.saadc_init_retry_count);
+		DEBUG_DETAIL("SWSAnalog: Diagnostics restored from noinit "
+		             "stuck=%u coh=%u div=%u force=%u spike=%u peak=%u saadc=%u",
+		             m_diag.stuck_recovery_count, m_diag.coherence_recalib_count, m_diag.dive_timeout_count,
+		             m_diag.force_surface_count, m_diag.spike_reject_count, m_diag.peak_incoherent_count,
+		             m_diag.saadc_init_retry_count);
 	}
 }
 
@@ -284,6 +284,18 @@ static void nrfx_saadc_event_handler_sws(nrfx_saadc_evt_t const *p_event) {
 // ═══════════════════════════════════════════════════════
 
 
+/// @brief Stop: commit the SWS.CAL save the last state change armed.
+///
+/// Leaving Operational (configuration, OFF, power-down) must not drop it: before the
+/// save was deferred to a quiet sample, the change itself wrote it.
+void SWSAnalogService::service_term() {
+	if (m_calib_save_due_sec != 0) {
+		m_calib_save_due_sec = 0;
+		save_calibration_to_flash_debounced();
+	}
+	UWDetectorService::service_term();
+}
+
 /// @brief Init: load config params, validate/restore calibration, set adaptive delay.
 void SWSAnalogService::service_init() {
 	UWDetectorService::service_init();
@@ -356,12 +368,12 @@ void SWSAnalogService::service_init() {
 	if (delay_crc == m_sample_delay_us_crc && m_sample_delay_us_noinit >= m_delay_min_us
 	    && m_sample_delay_us_noinit <= m_delay_max_us) {
 		m_sample_delay_us = m_sample_delay_us_noinit;
-		DEBUG_INFO("SWSAnalog: sample delay restored from noinit = %u µs", m_sample_delay_us);
+		DEBUG_DETAIL("SWSAnalog: sample delay restored from noinit = %u µs", m_sample_delay_us);
 	} else {
 		m_sample_delay_us = m_enable_sample_delay;
 		if (m_sample_delay_us < m_delay_min_us) m_sample_delay_us = m_delay_min_us;
 		if (m_sample_delay_us > m_delay_max_us) m_sample_delay_us = m_delay_max_us;
-		DEBUG_INFO("SWSAnalog: sample delay from UNP08 = %u µs (noinit invalid)", m_sample_delay_us);
+		DEBUG_DETAIL("SWSAnalog: sample delay from UNP08 = %u µs (noinit invalid)", m_sample_delay_us);
 	}
 
 	// Validate observed peak ADC from noinit RAM
@@ -370,7 +382,7 @@ void SWSAnalogService::service_init() {
 		m_observed_peak_adc = 0;  // Will be learned from live readings
 		DEBUG_INFO("SWSAnalog: Observed peak ADC reset (invalid noinit)");
 	} else {
-		DEBUG_INFO("SWSAnalog: Observed peak ADC=%u (from noinit)", m_observed_peak_adc);
+		DEBUG_DETAIL("SWSAnalog: Observed peak ADC=%u (from noinit)", m_observed_peak_adc);
 	}
 
 	// Validate persistent diagnostic counters (audit 2026-05 R-MON-01)
@@ -427,7 +439,7 @@ void SWSAnalogService::service_init() {
 	m_coherence_high_count = 0;
 	m_air_collapse_count = 0;
 
-	DEBUG_INFO("SWSAnalog: Init - hyst=%u%% ratio=%u%%", m_hysteresis_percent, m_threshold_ratio_percent);
+	DEBUG_DETAIL("SWSAnalog: Init - hyst=%u%% ratio=%u%%", m_hysteresis_percent, m_threshold_ratio_percent);
 }
 
 /// @brief Enabled if UNDERWATER_EN=true and source is SWS, or test mode active.

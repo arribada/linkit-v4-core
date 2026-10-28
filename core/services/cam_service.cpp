@@ -117,8 +117,13 @@ bool CAMService::service_cancel() {
 /// A power sequence is two scheduler tasks; if one is ever dropped (queue
 /// saturation) the session would otherwise stay initiated for good with the
 /// camera possibly left ON. The framework then runs service_cancel(). Far
-/// longer than the 2.1 s sequence on purpose: a scheduler busy with a blocking
-/// modem or flash operation must not trip it.
+/// longer than the sequences on purpose, so that a scheduler busy with a
+/// blocking modem or flash operation does not trip it: 30 s against 2.1 s with
+/// the button. With CAM_CONTROL=UART, 120 s against up to ~100 s to report ON
+/// or a failure when CAP07 costs the camera a restart (~44 s without: 15 s boot
+/// timeout, the card check and the clock, then two starts each verified on the
+/// card, every read repeated once) and up to ~35 s to report OFF (three stops,
+/// each verified). Typical: ~13 s (~35 s with the restart) and ~6 s.
 /// @return Timeout in ms.
 unsigned int CAMService::service_next_timeout() {
 	return SEQUENCE_TIMEOUT_MS;

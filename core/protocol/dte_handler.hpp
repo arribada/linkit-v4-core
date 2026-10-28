@@ -26,6 +26,10 @@
 #endif
 #include "gps.hpp"
 #include "rtc.hpp"
+#include "cam.hpp"
+#if defined(CAM_CONTROL_UART) && (CAM_CONTROL_UART == 1)
+#include "runcam_uart_device.hpp"
+#endif
 
 #if defined(ARGOS_SMD) && (ARGOS_SMD == 1)
 #include "smd_sat.hpp"
@@ -46,6 +50,9 @@ extern KIM2Device *kim2_device_instance;
 // External sensor access for SENSR command
 extern BatteryMonitor *battery_monitor;
 extern GPSDevice *gps_device;
+#if defined(CAM_CONTROL_UART) && (CAM_CONTROL_UART == 1)
+extern RunCamUartDevice *runcam_uart_device;
+#endif
 extern RTC *rtc;
 class GPSService;  // forward decl — full definition included in gps_service.hpp where needed
 extern GPSService *gps_service;
@@ -86,7 +93,7 @@ enum class DTEError {
 extern ConfigurationStore *configuration_store;
 extern MemoryAccess *memory_access;
 
-class DTEHandler : public KineisEventListener, public GPSEventListener {
+class DTEHandler : public KineisEventListener, public GPSEventListener, public CAMEventListener {
 private:
 	// Tables
 	static inline std::map<unsigned int, std::string> m_logger_dump = {
@@ -136,6 +143,17 @@ private:
 	Scheduler::TaskHandle m_gnssi_timeout;                   ///< Deadline for that wait — see GNSSI_REQ
 	static constexpr unsigned int GNSSI_TIMEOUT_MS = 90000;  ///< Cold boot + version poll, generously
 	bool m_gps_subscribed = false;                           ///< Subscribed to GPS events
+#if defined(CAM_CONTROL_UART) && (CAM_CONTROL_UART == 1)
+	bool m_camtst_pending = false;  ///< A camera test is running — see CAMTST_REQ
+	bool m_cam_subscribed = false;
+	uint64_t m_camtst_start_ms = 0;
+	Scheduler::TaskHandle m_camtst_timeout;
+	/// Past the camera's own worst cases: ~100 s to ON or a failure when CAP07
+	/// costs a restart (~44 s without), ~35 s to OFF.
+	static constexpr unsigned int CAMTST_TIMEOUT_MS = 180000;
+	std::string camtst_response(CamTestStatus status) const;
+	void finish_camtst();
+#endif
 	std::function<void(const std::string &)> m_async_write;
 
 	void schedule_doppler_cal_tx();
@@ -217,4 +235,14 @@ public:
 	void react(const GPSEventDeviceInfoReady &) override;
 	void react(const GPSEventError &) override;
 	void finish_gnssi(bool ok);  // main-loop half of the async GNSSI reply
+
+#if defined(CAM_CONTROL_UART) && (CAM_CONTROL_UART == 1)
+	std::string CAMTST_REQ(int error_code);
+	// CAMEventListener overrides: the camera test's progress
+	void react(const CAMEventPowerOn &) override;
+	void react(const CAMEventPowerOff &) override;
+	void react(const CAMEventError &) override;
+	/// @brief Leaving configuration: a camera test still running is ended, camera cut.
+	void abort_camera_test();
+#endif
 };

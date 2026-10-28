@@ -299,9 +299,7 @@ private:
 			 */
 			if (tracking->counter != counter) {
 				if (tracking->counter != 0) {
-					DEBUG_INFO("allcast_constellation_status_decode: constellation "
-					           "status set changed (%u -> %u), dropping the previous "
-					           "%u satellite status entries",
+					DEBUG_INFO("allcast_constellation_status_decode: status set changed (%u -> %u), %u entries dropped",
 					           tracking->counter, counter, (unsigned int)constellation_params.size());
 					constellation_params.clear();
 				}

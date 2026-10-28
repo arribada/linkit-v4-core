@@ -16,6 +16,16 @@
 
 extern Timer *system_timer;
 
+#ifdef BENCH_TEST
+/// Bench only (%GPIOTE): GPIOTE edges the switch ISR received, debounce windows it opened.
+unsigned int g_bench_switch_edges = 0;
+unsigned int g_bench_switch_debounces = 0;
+/// Delay from the last re-enable to the next edge (ms): ~0 every time = the re-enable makes the edge.
+uint64_t g_bench_switch_reenable_ms = 0;
+unsigned int g_bench_switch_gap_min_ms = 0xFFFFFFFFu, g_bench_switch_gap_max_ms = 0, g_bench_switch_gap_n = 0;
+uint64_t g_bench_switch_gap_sum_ms = 0;
+#endif
+
 // ═══════════════════════════════════════════════════════
 //  Pin → NrfSwitch lookup (replaces std::map — ISR-safe, no heap)
 // ═══════════════════════════════════════════════════════
@@ -101,10 +111,29 @@ void NrfSwitch::update_state(bool state) {
 }
 
 /// @brief ISR entry — disable GPIOTE (suppress bounces) and schedule a readback after debounce.
+///
+/// Bench 2026-10-28, LinkIt SMD bench board on USB, no magnet: this ran 3.64 times
+/// a second, in Operational and in configuration alike -- short edges on P1.03, the
+/// settled readback always 0, so never a false gesture. Cause not established (the
+/// Q4 level shifter misbehaves below ~2.9 V VBAT, but VBAT read 4.28 V). %GPIOTE in
+/// a bench build counts the edges; compare on a sound board before blaming the code.
 void NrfSwitch::process_event(bool /* state */) {
+#ifdef BENCH_TEST
+	g_bench_switch_edges++;
+#endif
 	// On first edge: disable GPIOTE to suppress all bounce interrupts,
 	// then schedule a single readback after the hysteresis period.
 	if (m_debouncing) return;
+#ifdef BENCH_TEST
+	g_bench_switch_debounces++;
+	if (g_bench_switch_reenable_ms) {
+		const unsigned int gap = (unsigned int)(system_timer->get_counter() - g_bench_switch_reenable_ms);
+		if (gap < g_bench_switch_gap_min_ms) g_bench_switch_gap_min_ms = gap;
+		if (gap > g_bench_switch_gap_max_ms) g_bench_switch_gap_max_ms = gap;
+		g_bench_switch_gap_sum_ms += gap;
+		g_bench_switch_gap_n++;
+	}
+#endif
 
 	m_debouncing = true;
 	nrfx_gpiote_in_event_disable(BSP::GPIO_Inits[m_pin].pin_number);
@@ -117,6 +146,9 @@ void NrfSwitch::process_event(bool /* state */) {
 		    update_state(settled);
 		    // Re-enable GPIOTE for next edge
 		    m_debouncing = false;
+#ifdef BENCH_TEST
+		    g_bench_switch_reenable_ms = system_timer->get_counter();
+#endif
 		    nrfx_gpiote_in_event_enable(BSP::GPIO_Inits[m_pin].pin_number, true);
 	    },
 	    now + m_hysteresis_time_ms);

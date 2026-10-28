@@ -345,8 +345,9 @@ void M10QAsyncReceiver::supply_time_assistance() {
 	// A receiver that kept its BBR has its own GNSS time base, necessarily better
 	// than ours. We teach it nothing, and risk only constraining it wrongly.
 	if (m_bbr_retained) {
-		DEBUG_INFO("M10QAsyncReceiver::supply_time_assistance: BBR retained — the receiver has its own time, injection "
-		           "unnecessary");
+		DEBUG_DETAIL(
+		    "M10QAsyncReceiver::supply_time_assistance: BBR retained — the receiver has its own time, injection "
+		    "unnecessary");
 		m_step++;
 		m_op_state = OpState::IDLE;
 		run_state_machine();
@@ -359,16 +360,17 @@ void M10QAsyncReceiver::supply_time_assistance() {
 	// time at all -- it narrows the receiver's search window around a wrong value.
 	const unsigned int tacc = rtc->time_accuracy_s();
 	if (tacc == 0) {
-		DEBUG_INFO("M10QAsyncReceiver::supply_time_assistance: time source accuracy not boundable (%s) — no injection",
-		           rtc->source() == RtcSource::RESTORED ? "restored from flash" : "never synchronised");
+		DEBUG_DETAIL(
+		    "M10QAsyncReceiver::supply_time_assistance: time source accuracy not boundable (%s) — no injection",
+		    rtc->source() == RtcSource::RESTORED ? "restored from flash" : "never synchronised");
 		m_step++;
 		m_op_state = OpState::IDLE;
 		run_state_machine();
 		return;
 	}
 
-	DEBUG_INFO("M10QAsyncReceiver::supply_time_assistance: MGA-INI-TIME tAccS=%u s (age %u s, drift %d ppm)", tacc,
-	           rtc->age_s(), (int)rtc->drift_ppm());
+	DEBUG_DETAIL("M10QAsyncReceiver::supply_time_assistance: MGA-INI-TIME tAccS=%u s (age %u s, drift %d ppm)", tacc,
+	             rtc->age_s(), (int)rtc->drift_ppm());
 	uint16_t year;
 	uint8_t month, day, hour, min, sec;
 
@@ -433,8 +435,7 @@ void M10QAsyncReceiver::supply_position_assistance() {
 	// sautait deja l'heure dans ce cas mais on poussait quand meme la position :
 	// un aller-retour UBX pour rien, et une incoherence entre les deux etapes.
 	if (m_bbr_retained) {
-		DEBUG_INFO("M10QAsyncReceiver::supply_position_assistance: BBR retained — the receiver has its own position, "
-		           "injection unnecessary");
+		DEBUG_DETAIL("M10QAsyncReceiver::supply_position_assistance: BBR retained — own position, no injection");
 		m_step++;
 		m_op_state = OpState::IDLE;
 		run_state_machine();
@@ -454,8 +455,8 @@ void M10QAsyncReceiver::supply_position_assistance() {
 	// With a time restored from flash the gap can be weeks, and the age would be a
 	// fiction -- better to inject nothing.
 	if (rtc->time_accuracy_s() == 0) {
-		DEBUG_INFO("M10QAsyncReceiver::supply_position_assistance: time unreliable — position age not computable, "
-		           "no injection");
+		DEBUG_DETAIL("M10QAsyncReceiver::supply_position_assistance: time unreliable — position age not computable, "
+		             "no injection");
 		m_step++;
 		m_op_state = OpState::IDLE;
 		run_state_machine();
@@ -484,16 +485,16 @@ void M10QAsyncReceiver::supply_position_assistance() {
 	// instant of the fix -- a false constraint it uses to narrow its search.
 	const unsigned long acc_cm = (unsigned long)last_gps.info.hAcc / 10UL + 100UL + age_s * speed_cm_s;
 	if (acc_cm > POS_ACC_MAX_CM) {
-		DEBUG_INFO("M10QAsyncReceiver::supply_position_assistance: position too old (age %lu s, radius %lu km) — "
-		           "no injection",
-		           age_s, acc_cm / 100000UL);
+		DEBUG_DETAIL("M10QAsyncReceiver::supply_position_assistance: position too old (age %lu s, radius %lu km) — "
+		             "no injection",
+		             age_s, acc_cm / 100000UL);
 		m_step++;
 		m_op_state = OpState::IDLE;
 		run_state_machine();
 		return;
 	}
 
-	DEBUG_INFO(
+	DEBUG_DETAIL(
 	    "M10QAsyncReceiver::supply_position_assistance: MGA-INI-POS lat=%f lon=%f radius=%lu m (age %lu s, %lu cm/s)",
 	    last_gps.info.lat, last_gps.info.lon, acc_cm / 100UL, age_s, speed_cm_s);
 

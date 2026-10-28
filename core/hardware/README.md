@@ -14,6 +14,7 @@ Pure-virtual hardware abstractions. **No platform-specific code** — every head
 | `switch.hpp`, `reed.{cpp,hpp}` | Reed switch / saltwater switch input |
 | `dfu.hpp` | DFU bootloader entry |
 | `cam.hpp` | Camera trigger |
+| `runcam_uart_device.{cpp,hpp}` | RunCam over its UART: `RunCamLink` (rail + byte link, implemented by the port) and the portable session logic behind `CAMDevice` |
 | `events.hpp` | `EventEmitter<Listener>` template — used everywhere for async notifications |
 | `gpio_buzzer.hpp`, `gpio_led.hpp`, `rgb_led.hpp` | Output device interfaces |
 | `kineis_device.hpp` | Common interface implemented by KIM2, SMD and LoRa devices |

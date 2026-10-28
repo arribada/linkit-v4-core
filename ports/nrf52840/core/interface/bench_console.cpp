@@ -52,6 +52,11 @@ extern Is25Flash *bench_flash;
 #include "smd_sat.hpp"
 extern SmdSat *smd_sat_instance;
 #endif
+#if ENABLE_CAM_SENSOR && defined(CAM_CONTROL_UART) && (CAM_CONTROL_UART == 1)
+#include "binascii.hpp"
+#include "runcam_uart_device.hpp"
+extern RunCamUartDevice *runcam_uart_device;
+#endif
 
 #include <cstdio>
 #include <cstdlib>
@@ -62,6 +67,8 @@ extern GPSService *gps_service;
 extern RTC *rtc;
 #ifdef BENCH_TEST
 void bench_bootfail_read(unsigned int &, unsigned int &);
+extern uint32_t g_bench_vsys_restore_settled;  // nrf_pmu.cpp
+extern uint32_t g_bench_vsys_restore_skipped;
 #endif
 extern BLEService *ble_service;
 
@@ -74,11 +81,15 @@ void reply(const std::string &s) {
 	UsbInterface::get_instance().write(s + "\r\n");
 }
 
+#ifndef BOARD_RSPB
 /// @brief Stream the satellite-slot UART to the console — the SMD module's own
 /// debug log.
 ///
 /// On a SPI build nothing opens UART instance 1, so its peripheral is free and
-/// its pins are parked (nrf_gpio.cpp releases both to default). The slot is the
+/// its pins are parked (nrf_gpio.cpp releases both to default) -- except the
+/// camera of a CAM_CONTROL=UART build, which is why the probe refuses to run
+/// while the camera rail is on. With the camera off it listens on the camera's
+/// RX line, P0.26 there: anything heard is the SMD still wired to it. The slot is the
 /// one the KIM2 uses for AT, and on the SMD variant the nRF RECEIVES on P0.14
 /// (bsp.cpp) — which is where the module's LPUART1 TX (PA2) lands.
 ///
@@ -179,6 +190,7 @@ static void cmd_satlog(const std::string &line) {
 	reply("");
 	reply("%SATLOG done bytes=" + std::to_string(total));
 }
+#endif  // !BOARD_RSPB: LinkIt's UARTE1 slot; RSPB has one async UART, and this probe kept its bench build from compiling
 
 
 const char *state_name() {
@@ -373,8 +385,15 @@ static void bench_ota(const std::string &line) {
 /// ACKs its address answers, everything else is skipped. Reserved ranges
 /// (0x00-0x07, 0x78-0x7F) are not probed.
 static void bench_i2c_scan(const std::string &line) {
-	unsigned int bus =
-	    (line.find(" EXT") != std::string::npos) ? (unsigned int)EXT_I2C_BUS : (unsigned int)ONBOARD_I2C_BUS;
+	// RSPB has a single bus and no EXT_I2C_BUS: since 8f72340f this line stopped
+	// every RSPB bench build from compiling.
+#ifdef EXT_I2C_BUS
+	const bool ext = line.find(" EXT") != std::string::npos;
+	unsigned int bus = ext ? (unsigned int)EXT_I2C_BUS : (unsigned int)ONBOARD_I2C_BUS;
+#else
+	const bool ext = false;
+	unsigned int bus = (unsigned int)ONBOARD_I2C_BUS;
+#endif
 	std::string found;
 	char tmp[8];
 	unsigned int n = 0;
@@ -396,8 +415,7 @@ static void bench_i2c_scan(const std::string &line) {
 	}
 	DebugLogger::console_log = saved_log;
 	char buf[160];
-	snprintf(buf, sizeof(buf), "%%I2C bus=%s found=%u addrs=%s", bus == (unsigned int)EXT_I2C_BUS ? "EXT" : "ONBOARD",
-	         n, n ? found.c_str() : "-");
+	snprintf(buf, sizeof(buf), "%%I2C bus=%s found=%u addrs=%s", ext ? "EXT" : "ONBOARD", n, n ? found.c_str() : "-");
 	reply(buf);
 }
 
@@ -732,12 +750,265 @@ static bool handle_argos_cmd(const std::string &cmd, const std::string &line) {
 	return true;
 }
 
+/// @name %PULLAB -- A/B probe of a pull-down on GPS_PWR_EN (audit point 1, 2026-10-27)
+/// GPS_PWR_EN is a push-pull output, driven HIGH while the GNSS rail is on, and
+/// a pull-down there conducts VDD over ~13 kOhm (the BSP used to configure one).
+/// This alternates the pin between pull-down and no pull every period, from the
+/// BSP setting and leaving the level alone, so a PPK on the battery input shows
+/// what the pull-down costs as a square wave -- with no debugger (APPROTECT
+/// re-arms at every reset on these boards) and no USB (it would supply the
+/// board). Started over USB, it keeps running once unplugged.
+/// @{
+static Scheduler::TaskHandle s_pullab_task;
+static unsigned int s_pullab_left = 0;
+static unsigned int s_pullab_period_ms = 0;
+static bool s_pullab_pulldown = true;
+
+static void pullab_apply(bool pulldown) {
+	const auto &g = BSP::GPIO_Inits[BSP::GPIO::GPIO_GPS_PWR_EN];
+	nrf_gpio_cfg(g.pin_number, g.dir, g.input, pulldown ? NRF_GPIO_PIN_PULLDOWN : NRF_GPIO_PIN_NOPULL, g.drive,
+	             g.sense);
+	s_pullab_pulldown = pulldown;
+}
+
+static void pullab_tick() {
+	if (s_pullab_left == 0) {
+		GPIOPins::init_pin(BSP::GPIO::GPIO_GPS_PWR_EN);  // back to the BSP pull
+		return;
+	}
+	s_pullab_left--;
+	pullab_apply(!s_pullab_pulldown);
+	s_pullab_task =
+	    system_scheduler->post_task_prio(pullab_tick, "PullAB", Scheduler::DEFAULT_PRIORITY, s_pullab_period_ms);
+}
+/// @}
+
+/// @name %GPIOTEAB -- A/B probe of the GPIOTE IN channels (audit point 9, 2026-10-28)
+/// The reed and the accelerometer interrupt are GPIOTE inputs in IN (event)
+/// mode, "hi_accuracy" in the BSP. Nordic documents that mode as keeping a
+/// clock that costs sleep current while any IN channel is on, from ~20 uA to
+/// ~250 uA depending on the source; PORT (SENSE) events cost ~1 uA. This
+/// alternates every IN channel between event mode and disabled, straight in
+/// the GPIOTE registers so it catches every driver's channel at once (one left
+/// on would keep the clock requested and hide the difference), and restores
+/// them at the end. Edges are missed while disabled: bench only. Started over
+/// USB, it keeps running once unplugged, like %PULLAB.
+/// @{
+static Scheduler::TaskHandle s_gpioteab_task;
+static unsigned int s_gpioteab_left = 0;
+static unsigned int s_gpioteab_period_ms = 0;
+static bool s_gpioteab_off = false;
+static uint32_t s_gpioteab_mask = 0;  ///< channels found in event mode at the start
+
+static uint32_t gpiote_event_channels() {
+	uint32_t mask = 0;
+	for (unsigned int i = 0; i < GPIOTE_CH_NUM; i++)
+		if ((NRF_GPIOTE->CONFIG[i] & GPIOTE_CONFIG_MODE_Msk) == (GPIOTE_CONFIG_MODE_Event << GPIOTE_CONFIG_MODE_Pos))
+			mask |= 1U << i;
+	return mask;
+}
+
+static void gpioteab_apply(bool off) {
+	for (unsigned int i = 0; i < GPIOTE_CH_NUM; i++) {
+		if (!(s_gpioteab_mask & (1U << i))) continue;
+		const uint32_t config = NRF_GPIOTE->CONFIG[i] & ~GPIOTE_CONFIG_MODE_Msk;  // a register: no compound assignment
+		NRF_GPIOTE->CONFIG[i] = off ? config : (config | (GPIOTE_CONFIG_MODE_Event << GPIOTE_CONFIG_MODE_Pos));
+	}
+	s_gpioteab_off = off;
+}
+
+static void gpioteab_tick() {
+	if (s_gpioteab_left == 0) {
+		gpioteab_apply(false);  // every channel back in event mode
+		return;
+	}
+	s_gpioteab_left--;
+	gpioteab_apply(!s_gpioteab_off);
+	s_gpioteab_task =
+	    system_scheduler->post_task_prio(gpioteab_tick, "GpioteAB", Scheduler::DEFAULT_PRIORITY, s_gpioteab_period_ms);
+}
+/// @}
+
+/// @name The cost audit's probes (2026-10), one function per command
+/// @{
+#ifdef VSYS_SEL
+static void bench_rails() {
+	// Main-loop rail restores since boot: "settled" found VSYS at 2.3 V and
+	// waited 2 ms, "skipped" found it at 3.3 V -- GNSS rail up, LED lit, flash
+	// busy -- and did nothing. vsys_sel is the OUT latch now. LinkIt only:
+	// RSPB has no VSYS_SEL.
+	char buf[96];
+	snprintf(buf, sizeof(buf), "%%RAILS settled=%lu skipped=%lu vsys_sel=%u",
+	         (unsigned long)g_bench_vsys_restore_settled, (unsigned long)g_bench_vsys_restore_skipped,
+	         (unsigned int)nrf_gpio_pin_out_read(BSP::GPIO_Inits[VSYS_SEL].pin_number));
+	reply(buf);
+}
+#endif
+
+static void bench_satrst(const std::string &line) {
+	// The satellite module's NRST, by hand: 0 holds it in reset (the boot
+	// state), Z releases it to the module-side pull-up (what SmdSat leaves
+	// after a shutdown). Bench diagnostics for a module still wired to the
+	// camera's UART lines and back-powered through them.
+	char arg[4] = { 0 };
+	sscanf(line.c_str(), "%%SATRST %3s", arg);
+	const uint32_t pin = BSP::GPIO_Inits[SAT_RESET].pin_number;
+	if (arg[0] == '0') {
+		nrf_gpio_pin_clear(pin);
+		nrf_gpio_cfg(pin, NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_NOPULL,
+		             NRF_GPIO_PIN_S0D1, NRF_GPIO_PIN_NOSENSE);
+		reply("%SATRST OK low");
+	} else if (arg[0] == 'Z' || arg[0] == 'z') {
+		nrf_gpio_cfg_default(pin);
+		reply("%SATRST OK high-z");
+	} else {
+		reply("%SATRST ERR usage: %SATRST <0|Z>");
+	}
+}
+
+static void bench_pullab(const std::string &line) {
+	unsigned int period_s = 0, toggles = 0;
+	system_scheduler->cancel_task(s_pullab_task);
+	if (line.find("STOP") != std::string::npos) {
+		s_pullab_left = 0;
+		GPIOPins::init_pin(BSP::GPIO::GPIO_GPS_PWR_EN);
+		reply("%PULLAB OK stopped (BSP pull restored)");
+	} else if (sscanf(line.c_str(), "%%PULLAB %u %u", &period_s, &toggles) == 2 && period_s >= 5 && toggles >= 1
+	           && toggles <= 200) {
+		GPIOPins::init_pin(BSP::GPIO::GPIO_GPS_PWR_EN);
+		s_pullab_pulldown = BSP::GPIO_Inits[BSP::GPIO::GPIO_GPS_PWR_EN].pull == NRF_GPIO_PIN_PULLDOWN;
+		s_pullab_left = toggles;
+		s_pullab_period_ms = period_s * 1000U;
+		s_pullab_task =
+		    system_scheduler->post_task_prio(pullab_tick, "PullAB", Scheduler::DEFAULT_PRIORITY, s_pullab_period_ms);
+		char buf[112];
+		snprintf(buf, sizeof(buf), "%%PULLAB OK period_s=%u toggles=%u bsp_pull=%s rail=%u t0_ms=%llu", period_s,
+		         toggles, s_pullab_pulldown ? "down" : "none", GPIOPins::is_gnss_rail_active() ? 1U : 0U,
+		         (unsigned long long)PMU::get_timestamp_ms());
+		reply(buf);
+	} else {
+		reply("%PULLAB ERR usage: %PULLAB <period_s 5..> <toggles 1..200> | %PULLAB STOP");
+	}
+}
+
+static void bench_gpiote() {
+	// The raw GPIOTE state behind %GPIOTEAB: every channel's CONFIG, the
+	// interrupt enables, the reed pin's PIN_CNF (SENSE = PORT mode), and how
+	// many edges the reed ISR got since boot.
+	extern unsigned int g_bench_switch_edges, g_bench_switch_debounces;
+	extern unsigned int g_bench_switch_gap_min_ms, g_bench_switch_gap_max_ms, g_bench_switch_gap_n;
+	extern uint64_t g_bench_switch_gap_sum_ms;
+	char buf[112];
+	snprintf(buf, sizeof(buf), "%%GPIOTE reed_edges=%u debounces=%u uptime_ms=%llu", g_bench_switch_edges,
+	         g_bench_switch_debounces, (unsigned long long)PMU::get_timestamp_ms());
+	reply(buf);
+	snprintf(buf, sizeof(buf), "%%GPIOTE reenable_to_edge n=%u min_ms=%u max_ms=%u mean_ms=%llu", g_bench_switch_gap_n,
+	         g_bench_switch_gap_n ? g_bench_switch_gap_min_ms : 0U, g_bench_switch_gap_max_ms,
+	         (unsigned long long)(g_bench_switch_gap_n ? g_bench_switch_gap_sum_ms / g_bench_switch_gap_n : 0U));
+	reply(buf);
+	const uint32_t reed = BSP::GPIO_Inits[BSP::GPIO::GPIO_REED_SW].pin_number;
+	NRF_GPIO_Type *port = (reed < 32) ? NRF_P0 : NRF_P1;
+	snprintf(buf, sizeof(buf), "%%GPIOTE intenset=0x%08lx reed=P%u.%02u pin_cnf=0x%08lx in=%lu latch=0x%08lx",
+	         (unsigned long)NRF_GPIOTE->INTENSET, reed < 32 ? 0U : 1U, (unsigned int)(reed & 31),
+	         (unsigned long)port->PIN_CNF[reed & 31], (unsigned long)((port->IN >> (reed & 31)) & 1U),
+	         (unsigned long)port->LATCH);
+	reply(buf);
+	for (unsigned int i = 0; i < GPIOTE_CH_NUM; i++) {
+		snprintf(buf, sizeof(buf), "%%GPIOTE ch=%u config=0x%08lx", i, (unsigned long)NRF_GPIOTE->CONFIG[i]);
+		reply(buf);
+	}
+}
+
+static void bench_gpioteab(const std::string &line) {
+	unsigned int period_s = 0, toggles = 0;
+	system_scheduler->cancel_task(s_gpioteab_task);
+	if (line.find("STOP") != std::string::npos) {
+		s_gpioteab_left = 0;
+		if (s_gpioteab_off) gpioteab_apply(false);
+		reply("%GPIOTEAB OK stopped (IN channels back in event mode)");
+	} else if (sscanf(line.c_str(), "%%GPIOTEAB %u %u", &period_s, &toggles) == 2 && period_s >= 5 && toggles >= 1
+	           && toggles <= 200) {
+		if (s_gpioteab_off) gpioteab_apply(false);
+		s_gpioteab_mask = gpiote_event_channels();
+		s_gpioteab_left = toggles;
+		s_gpioteab_period_ms = period_s * 1000U;
+		s_gpioteab_task = system_scheduler->post_task_prio(gpioteab_tick, "GpioteAB", Scheduler::DEFAULT_PRIORITY,
+		                                                   s_gpioteab_period_ms);
+		char buf[112];
+		snprintf(buf, sizeof(buf), "%%GPIOTEAB OK period_s=%u toggles=%u in_channels=0x%02x t0_ms=%llu", period_s,
+		         toggles, (unsigned int)s_gpioteab_mask, (unsigned long long)PMU::get_timestamp_ms());
+		reply(buf);
+	} else {
+		reply("%GPIOTEAB ERR usage: %GPIOTEAB <period_s 5..> <toggles 1..200> | %GPIOTEAB STOP");
+	}
+}
+
+static void bench_swsraw(const std::string &line) {
+	// Feed the SWS analog detector a raw reading of our choice. It goes through
+	// the whole real path -- filters, levels, calibration, the UW detector and
+	// its broadcast -- which %DIVE / %SURFACE skip: a surfacing without water.
+	// The detector decides again (%DIVE / %SURFACE hold released).
+	unsigned int v = 0;
+	char buf[48];
+	if (line.find("OFF") != std::string::npos) {
+		UWDetectorService::bench_raw_override = -1;
+		reply("%SWSRAW OK off (electrode)");
+	} else if (sscanf(line.c_str(), "%%SWSRAW %u", &v) == 1 && v <= 16383) {
+		UWDetectorService::bench_forced_state = -1;
+		UWDetectorService::bench_raw_override = (int32_t)v;
+		snprintf(buf, sizeof(buf), "%%SWSRAW OK raw=%u", v);
+		reply(buf);
+	} else {
+		reply("%SWSRAW ERR usage: %SWSRAW <0..16383> | %SWSRAW OFF");
+	}
+}
+
+/// @brief rails, pull-downs, GPIOTE, the satellite reset line, a raw SWS reading
+static bool handle_probe_cmd(const std::string &cmd, const std::string &line) {
+	if (cmd == "%SATRST") {
+		bench_satrst(line);
+	} else if (cmd == "%PULLAB") {
+		bench_pullab(line);
+	} else if (cmd == "%GPIOTE") {
+		bench_gpiote();
+	} else if (cmd == "%GPIOTEAB") {
+		bench_gpioteab(line);
+	} else if (cmd == "%SWSRAW") {
+		bench_swsraw(line);
+#ifdef VSYS_SEL
+	} else if (cmd == "%RAILS") {
+		bench_rails();
+#endif
+	} else {
+		return false;
+	}
+	return true;
+}
+/// @}
+
+static void bench_satlog(const std::string &line) {
+#if ENABLE_CAM_SENSOR && defined(CAM_CONTROL_UART) && (CAM_CONTROL_UART == 1)
+	// UARTE1 is the camera's on this build, and the probe drives its
+	// registers directly: never under a link that may be open.
+	if (GPIOPins::is_cam_rail_active()) {
+		reply("%SATLOG ERR uarte1-in-use-by-camera (%CAM OFF or %CAM PWR 0 first)");
+		return;
+	}
+#endif
+#ifndef BOARD_RSPB
+	cmd_satlog(line);
+#else
+	(void)line;
+	reply("%SATLOG ERR not-on-rspb (no satellite-slot UART)");
+#endif
+}
+
 /// @brief OTA, satellite log, battery, scheduling, moored and hauled modes
 static bool handle_services_cmd(const std::string &cmd, const std::string &line) {
 	if (cmd == "%OTA") {
 		bench_ota(line);
 	} else if (cmd == "%SATLOG") {
-		cmd_satlog(line);
+		bench_satlog(line);
 	} else if (cmd == "%LB") {
 		// Consistency of the two battery thresholds. The matching DEBUG_WARN goes
 		// to system.log (console logs are deliberately silent during a DTE
@@ -984,6 +1255,240 @@ static bool handle_sensors_cmd(const std::string &cmd, const std::string &line) 
 	}
 	return true;
 }
+
+#if ENABLE_CAM_SENSOR && defined(CAM_CONTROL_UART) && (CAM_CONTROL_UART == 1)
+static std::string cam_hex(const uint8_t *data, size_t len) {
+	return Binascii::hexlify(std::string((const char *)data, len));
+}
+
+/// @brief "features=0x0077 names=POWER,WIFI,..." -- one token per value, the
+/// way the bench harness splits every % reply.
+static std::string cam_features(uint16_t features) {
+	char names[96];
+	runcam::describe_features(features, names, sizeof(names));
+	for (char *c = names; *c; c++)
+		if (*c == ' ') *c = ',';
+	char buf[128];
+	snprintf(buf, sizeof(buf), "features=0x%04X names=%s", (unsigned int)features, names[0] ? names : "-");
+	return buf;
+}
+
+/// @brief Send one frame and report it, the raw bytes that came back and, when
+/// they decode as the answer to @p command, that answer.
+static void cam_exchange(const char *tag, runcam::Command command, const uint8_t *frame, size_t len,
+                         unsigned int window_ms) {
+	uint8_t rx[runcam::MAX_FRAME];
+	const int n = runcam_uart_device->bench_exchange(frame, len, rx, sizeof(rx), window_ms);
+	if (n < 0) {
+		reply(std::string("%CAM ") + tag + " ERR link-unavailable state=" + runcam_uart_device->state_name()
+		      + " (%CAM PWR 1, or %CAM ON and wait for ON)");
+		return;
+	}
+	std::string out = std::string("%CAM ") + tag + " tx=" + cam_hex(frame, len)
+	                  + " rx=" + (n ? cam_hex(rx, (size_t)n) : std::string("none"));
+	runcam::ResponseDecoder decoder;
+	if (decoder.expect(command)) {
+		std::string verdict = " answer=none";
+		for (int i = 0; i < n; i++) {
+			const runcam::ResponseDecoder::Status st = decoder.feed(rx[i]);
+			if (st == runcam::ResponseDecoder::Status::CORRUPT) {
+				verdict = " answer=corrupt";
+				break;
+			}
+			if (st != runcam::ResponseDecoder::Status::COMPLETE) continue;
+			verdict = " answer=ok";
+			runcam::DeviceInfo info;
+			if (command == runcam::Command::GET_DEVICE_INFO
+			    && runcam::parse_device_info(decoder.frame(), decoder.length(), info))
+				verdict += " proto=" + std::to_string(info.protocol_version) + " " + cam_features(info.features);
+			break;
+		}
+		out += verdict;
+	}
+	reply(out);
+}
+
+/// @brief %CAM — the UART-driven camera (CAM_CONTROL=UART builds).
+///
+///   %CAM [STATE]      driver state, what the camera answered, CAP06, the
+///                     recording the driver believes in and whether the card
+///                     confirmed it, the card last read (-1: never this
+///                     session), the clock set, the resolution read (CAP07
+///                     codes) and whether CAP07 restarted the camera, captures,
+///                     CRC errors
+///   %CAM LINK         the UART link's driver and peripheral state, raw
+///   %CAM ON | OFF     the real sequences (power_on / power_off), CAP06 included
+///   %CAM PWR 1 | 0    rail only, no recording command: manual exploration. 0
+///                     cuts without a stop -- a recording in progress is lost
+///   %CAM INFO         GET_DEVICE_INFO, decoded
+///   %CAM CTRL <0..4>  CAMERA_CONTROL: 0 Wi-Fi/Mode (x3 in 2 s in standby =
+///                     FACTORY RESET), 1 Power (record toggle), 2 change mode,
+///                     3 START_RECORDING, 4 STOP_RECORDING
+///   %CAM RAW <cmd> [byte..]  hex; header and CRC are added, 1 s of answer kept
+///
+/// INFO, CTRL and RAW need the camera ON or held by PWR 1, where the driver
+/// leaves the link alone. Set CAP01=0 first for manual work: an enabled
+/// CAMService would otherwise run its own sessions underneath.
+///
+/// One function per subcommand below, bench_cam() only dispatches.
+static void cam_state() {
+	const runcam::DeviceInfo &info = runcam_uart_device->device_info();
+	char buf[320];
+	snprintf(buf, sizeof(buf),
+	         "%%CAM state=%s rail=%u answered=%u proto=%u %s mode=%u rec=%u verified=%u "
+	         "free_mb=%d remaining_s=%d clock=%u res=%u restarted=%u captures=%u corrupt=%u rx_errors=%u",
+	         runcam_uart_device->state_name(), GPIOPins::is_cam_rail_active() ? 1u : 0u,
+	         runcam_uart_device->has_answered() ? 1u : 0u, (unsigned int)info.protocol_version,
+	         cam_features(info.features).c_str(), (unsigned int)runcam_uart_device->record_mode(),
+	         runcam_uart_device->is_recording_assumed() ? 1u : 0u,
+	         runcam_uart_device->is_recording_verified() ? 1u : 0u, runcam_uart_device->last_free_mb(),
+	         runcam_uart_device->last_remaining_s(), runcam_uart_device->is_clock_set() ? 1u : 0u,
+	         (unsigned int)runcam_uart_device->resolution_read(), runcam_uart_device->was_restarted() ? 1u : 0u,
+	         runcam_uart_device->get_num_captures(), runcam_uart_device->corrupt_answers(),
+	         runcam_uart_device->link_errors());
+	reply(buf);
+}
+
+static void cam_sniff() {
+	// GET_DEVICE_INFO through the driver's link, then both lines watched at
+	// the GPIO level for 60 ms, edges counted: whether our TX moved and the
+	// camera answered, whatever libuarte makes of it. Bench diagnostics.
+	uint8_t frame[3];
+	const size_t len = runcam::encode(runcam::Command::GET_DEVICE_INFO, nullptr, 0, frame, sizeof(frame));
+	const uint32_t rx = BSP::UARTAsync_Inits[1].config.rx_pin & 0x1F;
+	const uint32_t tx = BSP::UARTAsync_Inits[1].config.tx_pin & 0x1F;
+	const uint32_t tx_cnf = NRF_P0->PIN_CNF[tx];
+	NRF_P0->PIN_CNF[tx] = tx_cnf & ~GPIO_PIN_CNF_INPUT_Msk;  // connect its input buffer: read what is driven
+	uint8_t sink[runcam::MAX_FRAME];
+	if (runcam_uart_device->bench_exchange(frame, len, sink, sizeof(sink), 0) < 0) {
+		NRF_P0->PIN_CNF[tx] = tx_cnf;
+		reply("%CAM SNIFF ERR link-unavailable (%CAM PWR 1 first)");
+		return;
+	}
+	unsigned int rx_edges = 0, tx_edges = 0, rx_low = 0;
+	uint32_t last = NRF_P0->IN;
+	const uint64_t end = PMU::get_timestamp_ms() + 60;
+	while (PMU::get_timestamp_ms() < end) {
+		const uint32_t in = NRF_P0->IN;
+		const uint32_t diff = in ^ last;
+		if (diff & (1u << rx)) rx_edges++;
+		if (diff & (1u << tx)) tx_edges++;
+		if (!(in & (1u << rx))) rx_low++;
+		last = in;
+	}
+	NRF_P0->PIN_CNF[tx] = tx_cnf;
+	const int got = runcam_uart_device->bench_receive(sink, sizeof(sink));
+	reply("%CAM SNIFF tx_edges=" + std::to_string(tx_edges) + " rx_edges=" + std::to_string(rx_edges)
+	      + " rx_low_samples=" + std::to_string(rx_low) + " libuarte_bytes=" + std::to_string(got < 0 ? 0 : got));
+}
+
+static void cam_pwr(const char *args) {
+	unsigned int on = 2;
+	sscanf(args, "%u", &on);
+	if (on > 1) {
+		reply("%CAM ERR usage: %CAM PWR <1|0>");
+	} else if (!runcam_uart_device->bench_power(on == 1)) {
+		reply(std::string("%CAM PWR ERR state=") + runcam_uart_device->state_name());
+	} else {
+		reply(std::string("%CAM PWR OK state=") + runcam_uart_device->state_name());
+	}
+}
+
+static void cam_ctrl(const char *args) {
+	unsigned int action = 99;
+	sscanf(args, "%u", &action);
+	if (action > static_cast<unsigned int>(runcam::ControlAction::STOP_RECORDING)) {
+		reply("%CAM ERR usage: %CAM CTRL <0..4>");
+		return;
+	}
+	uint8_t frame[4];
+	const size_t len = runcam::encode_control(static_cast<runcam::ControlAction>(action), frame, sizeof(frame));
+	cam_exchange("CTRL", runcam::Command::CAMERA_CONTROL, frame, len, 300);
+}
+
+static void cam_raw(const char *args) {
+	// Every token must be one byte, or nothing is sent: a frame cut short at a
+	// typo would still go out with a valid CRC -- a WRITE_SETTING missing its
+	// value, say.
+	uint8_t bytes[runcam::MAX_FRAME];
+	size_t count = 0;
+	const char *p = args;
+	bool bad = false;
+	while (*p) {
+		while (*p == ' ')
+			p++;
+		if (!*p) break;
+		char *end = nullptr;
+		const unsigned long v = strtoul(p, &end, 16);
+		if (end == p || v > 0xFF || (*end && *end != ' ') || count == sizeof(bytes)) {
+			bad = true;
+			break;
+		}
+		bytes[count++] = (uint8_t)v;
+		p = end;
+	}
+	const runcam::Command command = static_cast<runcam::Command>(count ? bytes[0] : 0);
+	uint8_t frame[runcam::MAX_FRAME];
+	const size_t len = (count && !bad) ? runcam::encode(command, bytes + 1, count - 1, frame, sizeof(frame)) : 0;
+	if (len == 0) {
+		reply("%CAM ERR usage: %CAM RAW <cmd> [byte..] (hex, at most 61 payload bytes)");
+		return;
+	}
+	cam_exchange("RAW", command, frame, len, 1000);
+}
+
+static void bench_cam(const std::string &line) {
+	if (!runcam_uart_device) {
+		reply("%CAM ERR no-camera");
+		return;
+	}
+	char sub[8] = { 0 };
+	sscanf(line.c_str(), "%%CAM %7s", sub);
+	const std::string s(sub);
+	const size_t sub_at = s.empty() ? std::string::npos : line.find(s, 4);
+	const char *args = line.c_str() + ((sub_at == std::string::npos) ? line.size() : sub_at + s.size());
+
+	if (s.empty() || s == "STATE") {
+		cam_state();
+	} else if (s == "SNIFF") {
+		cam_sniff();
+	} else if (s == "LINK") {
+		char buf[480];
+		runcam_uart_device->describe_link(buf, sizeof(buf));
+		reply(std::string("%CAM LINK ") + buf);
+	} else if (s == "ON") {
+		runcam_uart_device->power_on();
+		reply(std::string("%CAM OK on-requested state=") + runcam_uart_device->state_name());
+	} else if (s == "OFF") {
+		runcam_uart_device->power_off();
+		reply(std::string("%CAM OK off-requested state=") + runcam_uart_device->state_name());
+	} else if (s == "PWR") {
+		cam_pwr(args);
+	} else if (s == "INFO") {
+		uint8_t frame[3];
+		const size_t len = runcam::encode(runcam::Command::GET_DEVICE_INFO, nullptr, 0, frame, sizeof(frame));
+		cam_exchange("INFO", runcam::Command::GET_DEVICE_INFO, frame, len, 500);
+	} else if (s == "CTRL") {
+		cam_ctrl(args);
+	} else if (s == "RAW") {
+		cam_raw(args);
+	} else {
+		reply("%CAM ERR usage: %CAM [STATE|LINK|ON|OFF|PWR <1|0>|INFO|CTRL <0..4>|RAW <cmd> [byte..]]");
+	}
+}
+#endif
+
+/// @brief the UART-driven camera (CAM_CONTROL=UART builds only)
+static bool handle_camera_cmd(const std::string &cmd, const std::string &line) {
+	if (cmd != "%CAM") return false;
+#if ENABLE_CAM_SENSOR && defined(CAM_CONTROL_UART) && (CAM_CONTROL_UART == 1)
+	bench_cam(line);
+#else
+	(void)line;
+	reply("%CAM ERR not-a-camera-uart-build");
+#endif
+	return true;
+}
 /// @}
 
 bool bench::handle_line(const std::string &raw) {
@@ -1001,6 +1506,8 @@ bool bench::handle_line(const std::string &raw) {
 	if (handle_services_cmd(cmd, line)) return true;
 	if (handle_gps_cmd(cmd, line)) return true;
 	if (handle_sensors_cmd(cmd, line)) return true;
+	if (handle_camera_cmd(cmd, line)) return true;
+	if (handle_probe_cmd(cmd, line)) return true;
 
 	reply(std::string("%ERR unknown-cmd ") + cmd);
 	return true;

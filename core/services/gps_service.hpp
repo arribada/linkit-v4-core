@@ -126,6 +126,12 @@ private:
 	// Backup-cell (V_BCKP) charge mode bookkeeping (independent of m_is_active).
 	bool m_backup_active = false;
 	bool m_underwater = false;
+	/// @brief A dive is the quiet window the driver's deferred flash writes wait
+	/// for (the M10Q's MGA-DBD dump): no transmission, no GNSS session. Fired this
+	/// long into a dive, and only if the tag is still underwater, so a wave over
+	/// the electrodes at the surface never triggers a write. Cancelled on surfacing.
+	static constexpr unsigned int PERSIST_AFTER_DIVE_MS = 30000;
+	Scheduler::TaskHandle m_persist_on_dive_task;
 #if defined(ARGOS_SMD) && (ARGOS_SMD == 1)
 	/// Gate: after surfacing, defer GNSS power-on until ArgosTxService completes
 	/// its first satellite TX. Reduces CPU contention during the burst sequence.

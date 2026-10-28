@@ -24,6 +24,12 @@ static bool in_interrupt() {
 void DebugLogger::syslog(char level, const char *fmt, ...) {
 	if (!system_log || !system_log->is_ready()) return;
 
+	// SYSTEM_LOG_LEVEL (DBP02), applied to the system log at each PreOperational
+	// entry: a line below it costs nothing -- no formatting, no hold slot, no
+	// flash. Logger::info() would drop it too, but only after all of that.
+	const int needed = (level == 'E') ? LOG_LEVEL_ERROR : (level == 'W') ? LOG_LEVEL_WARN : LOG_LEVEL_INFO;
+	if (system_log->get_log_level() < needed) return;
+
 	// Flash is never written from an interrupt, and neither is the hold
 	// buffer, which only thread code may touch.
 	if (in_interrupt()) {

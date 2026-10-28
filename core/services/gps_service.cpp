@@ -245,8 +245,8 @@ void GPSService::arm_health_wdt() {
 			    GNSSConfig gnss_config;
 			    configuration_store->get_gnss_configuration(gnss_config);
 			    if (!gnss_config.enable) {
-				    DEBUG_INFO("GPS Health WDT: no GPS event in %u h, and GNSS_EN=0 — expected, not a fault. No reset; "
-					           "re-arming. Clears by itself if GNSS is re-enabled.",
+				    // Re-arms, and clears by itself once GNSS is re-enabled.
+				    DEBUG_INFO("GPS Health WDT: no GPS event in %u h, GNSS_EN=0 — expected, no reset",
 					           HEALTH_WDT_HOURS);
 				    arm_health_wdt();
 				    return;
@@ -269,14 +269,13 @@ void GPSService::arm_health_wdt() {
 				    if (!m_wdt_cold_start_tried) {
 					    m_wdt_cold_start_tried = true;
 					    m_force_cold_start = true;
-					    DEBUG_WARN("GPS Health WDT: no GPS event in %u h, but the beacon transmitted within that "
-						           "window — it is working. No reset; forcing ONE cold start on the next "
-						           "acquisition and re-arming.",
-						           HEALTH_WDT_HOURS);
+					    DEBUG_WARN(
+					        "GPS Health WDT: no GPS event in %u h, beacon still TX — no reset, ONE cold start next",
+					        HEALTH_WDT_HOURS);
 				    } else {
-					    DEBUG_WARN("GPS Health WDT: no GPS event in %u h, beacon still transmitting, and a cold "
-						           "start has already been tried since the last GPS event — no reset and no "
-						           "further action; re-arming. Clears on any GPS event.",
+					    // Re-arms; clears on any GPS event.
+					    DEBUG_WARN("GPS Health WDT: no GPS event in %u h, beacon still TX, cold start already tried — "
+						           "no action",
 						           HEALTH_WDT_HOURS);
 				    }
 				    arm_health_wdt();
@@ -327,8 +326,7 @@ void GPSService::arm_no_pvt_wdt() {
 			    GNSSConfig gnss_config;
 			    configuration_store->get_gnss_configuration(gnss_config);
 			    if (!gnss_config.enable) {
-				    DEBUG_INFO("GPS No-PVT WDT: no real PVT in %u days, and GNSS is disabled — expected, not a "
-					           "fault. No reset; re-arming.",
+				    DEBUG_INFO("GPS No-PVT WDT: no real PVT in %u days, GNSS disabled — expected, no reset",
 					           NO_PVT_WDT_DAYS);
 				    arm_no_pvt_wdt();
 				    return;
@@ -348,10 +346,9 @@ void GPSService::arm_no_pvt_wdt() {
 			                                  == (unsigned int)BaseFastlocMode::CLOUDLOCATE;
 			    const bool cloudlocate_only = configuration_store->read_param<bool>(ParamID::GNSS_CLOUDLOCATE_ONLY);
 			    if (cloudlocate_mode || cloudlocate_only) {
-				    DEBUG_INFO("GPS No-PVT WDT: no real PVT in %u days, but this is a CloudLocate deployment "
-					           "(FASTLOC_MODE=CLOUDLOCATE:%u CLOUDLOCATE_ONLY:%u) — expected, not a fault. No reset; "
-					           "re-arming.",
-					           NO_PVT_WDT_DAYS, (unsigned int)cloudlocate_mode, (unsigned int)cloudlocate_only);
+				    DEBUG_INFO(
+				        "GPS No-PVT WDT: no real PVT in %u days, CloudLocate (mode=%u only=%u) — expected, no reset",
+				        NO_PVT_WDT_DAYS, (unsigned int)cloudlocate_mode, (unsigned int)cloudlocate_only);
 				    arm_no_pvt_wdt();
 				    return;
 			    }
@@ -366,14 +363,14 @@ void GPSService::arm_no_pvt_wdt() {
 				    if (!m_wdt_cold_start_tried) {
 					    m_wdt_cold_start_tried = true;
 					    m_force_cold_start = true;
-					    DEBUG_WARN("GPS No-PVT WDT: no real PVT in %u days, but the beacon is still transmitting. "
-						           "No reset; forcing ONE cold start on the next acquisition and re-arming.",
-						           NO_PVT_WDT_DAYS);
+					    DEBUG_WARN(
+					        "GPS No-PVT WDT: no real PVT in %u days, beacon still TX — no reset, ONE cold start next",
+					        NO_PVT_WDT_DAYS);
 				    } else {
-					    DEBUG_WARN("GPS No-PVT WDT: no real PVT in %u days, beacon still transmitting, and a cold "
-						           "start has already been tried since the last GPS event — no reset and no "
-						           "further action; re-arming.",
-						           NO_PVT_WDT_DAYS);
+					    DEBUG_WARN(
+					        "GPS No-PVT WDT: no real PVT in %u days, beacon still TX, cold start already tried — "
+					        "no action",
+					        NO_PVT_WDT_DAYS);
 				    }
 				    arm_no_pvt_wdt();
 				    return;
@@ -494,15 +491,14 @@ void GPSService::try_enter_deep_idle_or_poweroff() {
 	// 0xFFFFFFFF and anything above ~4.29e6 s would overflow the multiply.
 	unsigned int auto_off_s = (deep_idle_s > DEEP_IDLE_HARD_CAP_S) ? DEEP_IDLE_HARD_CAP_S : deep_idle_s;
 
+	// The rail line of a session: what the receiver costs until the next one.
+	// The bench keys on "never-poweroff (rail stays on" and "deep-idle for <n> s".
 	if (m_deep_idle_is_sentinel) {
-		DEBUG_INFO("GPSService::try_enter_deep_idle_or_poweroff: never-poweroff (rail stays on, M10Q in PMREQ-backup, "
-		           "scheduler re-opens in %u s)",
+		DEBUG_INFO("GPSService: never-poweroff (rail stays on, M10Q in PMREQ-backup, gate re-opens in %u s)",
 		           auto_off_s);
 		VAL_GNSS("dispatch=never_off GNP52=sentinel gate_reopen_s=%u", auto_off_s);
 	} else {
-		DEBUG_INFO("GPSService::try_enter_deep_idle_or_poweroff: deep-idle for %u s (rail on, M10Q in PMREQ-backup, "
-		           "auto-off timer armed)",
-		           auto_off_s);
+		DEBUG_INFO("GPSService: deep-idle for %u s (rail on, M10Q in PMREQ-backup, then rail off)", auto_off_s);
 		VAL_GNSS("dispatch=deep_idle_engaged duration_s=%u", auto_off_s);
 	}
 	m_deep_idle_auto_off_task = system_scheduler->post_task_prio(
@@ -516,7 +512,7 @@ void GPSService::try_enter_deep_idle_or_poweroff() {
 			    // rather than a rail cycle, keeping the warm start
 			    // (m10qasync.cpp, power_on() backupidle branch). An M10Q that has
 			    // genuinely wedged is already caught by WAKE_FAIL_FAST_FALLBACK.
-			    DEBUG_INFO("GPSService: sentinel deep-idle — re-opening scheduler, rail left on");
+			    DEBUG_DETAIL("GPSService: sentinel deep-idle — re-opening scheduler, rail left on");
 			    VAL_GNSS("sentinel_gate_reopened");
 			    m_deep_idle_started_at_ms = 0;
 		    } else {
@@ -555,6 +551,8 @@ void GPSService::service_term() {
 	system_scheduler->cancel_task(m_backup_exit_task);
 	system_scheduler->cancel_task(m_backup_retry_task);
 	system_scheduler->cancel_task(m_deep_idle_auto_off_task);
+	// The teardown paths commit the deferred write themselves (power_off_immediate).
+	system_scheduler->cancel_task(m_persist_on_dive_task);
 	// Safety-net 3.2: cancel any in-flight stuck-recovery tasks. If the service
 	// is being torn down (OffState, ConfigurationState, OTA, BatteryCritical),
 	// a pending power_off_immediate or service_reschedule could conflict with
@@ -769,7 +767,7 @@ ScheduleDecision GPSService::service_next_schedule() {
 
 	// Single fix mode: don't reschedule GNSS after first successful fix
 	if (m_is_first_fix_found && configuration_store->read_param<bool>(ParamID::GNSS_SESSION_SINGLE_FIX)) {
-		DEBUG_INFO("GPSService: GNSS_SESSION_SINGLE_FIX enabled | not rescheduling after first fix");
+		DEBUG_DETAIL("GPSService: GNSS_SESSION_SINGLE_FIX enabled | not rescheduling after first fix");
 		return ScheduleDecision::off("GNSS_SESSION_SINGLE_FIX, fix already obtained");
 	}
 
@@ -781,8 +779,8 @@ ScheduleDecision GPSService::service_next_schedule() {
 	unsigned int gnss_ntry = configuration_store->read_param<unsigned int>(ParamID::GNSS_NTRY);
 	bool ntry_exhausted = (gnss_ntry > 0 && m_cold_start_ntry >= gnss_ntry);
 	if (ntry_exhausted) {
-		DEBUG_INFO("GPSService::retry_counter: NTRY limit reached (%u/%u) | back-off to dloc_arg_nom",
-		           m_cold_start_ntry, gnss_ntry);
+		DEBUG_DETAIL("GPSService::retry_counter: NTRY limit reached (%u/%u) | back-off to dloc_arg_nom",
+		             m_cold_start_ntry, gnss_ntry);
 	}
 
 	std::time_t now = service_current_time();
@@ -801,8 +799,8 @@ ScheduleDecision GPSService::service_next_schedule() {
 	                           : m_is_first_fix_found ? "GNSS_DELTATIME_ACQ"
 	                                                  : "cold-start retry";
 
-	DEBUG_INFO("GPSService::retry_counter: ntry=%u limit=%u exhausted=%u aq_period=%us (%s)", m_cold_start_ntry,
-	           gnss_ntry, (unsigned)ntry_exhausted, (unsigned)aq_period, aq_why);
+	DEBUG_DETAIL("GPSService::retry_counter: ntry=%u limit=%u exhausted=%u aq_period=%us (%s)", m_cold_start_ntry,
+	             gnss_ntry, (unsigned)ntry_exhausted, (unsigned)aq_period, aq_why);
 
 	if (aq_period == 0) {
 		DEBUG_INFO("GPSService: aq_period=0 (config) — GNSS periodic scheduling disabled");
@@ -817,8 +815,10 @@ ScheduleDecision GPSService::service_next_schedule() {
 	            (unsigned int)gnss_config.cold_start_retry_period, (unsigned int)aq_period, (unsigned int)now,
 	            (unsigned int)next_schedule);
 
-	DEBUG_INFO("GPSService: next GNSS acquisition in %u s (UTC-aligned, period=%u s)",
-	           (unsigned int)(next_schedule - now), (unsigned int)aq_period);
+	// The scheduling step of the journal: when, at which period (UTC-aligned),
+	// and why that period -- the retry_counter detail above is the breakdown.
+	DEBUG_INFO("GPSService: next GNSS acquisition in %u s (period=%u s, %s, ntry=%u)",
+	           (unsigned int)(next_schedule - now), (unsigned int)aq_period, aq_why, m_cold_start_ntry);
 
 	// Find the time in milliseconds until this schedule (cast to uint64_t to prevent
 	// overflow when aq_period > 4294 seconds, since the result is truncated to unsigned int)
@@ -883,8 +883,10 @@ void GPSService::service_initiate() {
 	system_scheduler->cancel_task(m_deep_idle_auto_off_task);
 	m_deep_idle_started_at_ms = 0;  // R5: leaving deep-idle (entering acquisition)
 
-	// Per-session GNSS diagnostic (2026-06) — one consolidated field-visible line
-	// to root-cause the "fixes die after ~2 days" issue without device access.
+	// Per-session GNSS diagnostic (2026-06), to root-cause the "fixes die after
+	// ~2 days" issue without device access. The journal gets these fields on the
+	// "M10Q on" line below, the step that starts the session; SESSION_DIAG keeps
+	// them all on the bench console (gnss_bench.py reads it).
 	//   - rtc_set / rtc : injected time validity & value. ANO/AssistNow are useless
 	//     with a wrong time; comparing rtc vs real elapsed across sessions reveals a
 	//     drifting / non-syncing host clock (hypothesis H1).
@@ -894,20 +896,20 @@ void GPSService::service_initiate() {
 	//     `ano_sent msgs=..` line from the M10Q driver to confirm ANO is applied.
 	//   - first_fix / ntry / dead : a rising dead-session count = receiver stuck on
 	//     stale assistance (H2), the trigger for GNSS_COLD_START_AFTER_NTRY.
+	const bool diag_rtc_set = (rtc && rtc->is_set());
+	service_update_battery();
+	const unsigned int diag_batt_mv = service_get_voltage();
+	const bool diag_lb = service_is_battery_level_low();
 	{
-		bool rtc_set = (rtc && rtc->is_set());
-		unsigned int rtc_now = rtc_set ? (unsigned int)rtc->gettime() : 0;
-		service_update_battery();
-		unsigned int batt_mv = service_get_voltage();
-		bool lb = service_is_battery_level_low();
+		unsigned int rtc_now = diag_rtc_set ? (unsigned int)rtc->gettime() : 0;
 		bool anow = configuration_store->read_param<bool>(ParamID::GNSS_ASSISTNOW_EN);
 		bool ano = configuration_store->read_param<bool>(ParamID::GNSS_ASSISTNOW_OFFLINE_EN);
-		DEBUG_INFO(
+		DEBUG_DETAIL(
 		    "GPSService: SESSION_DIAG rtc_set=%u rtc=%u batt_mv=%u lb=%u anow=%u ano=%u first_fix=%u ntry=%u dead=%u",
-		    (unsigned)rtc_set, rtc_now, batt_mv, (unsigned)lb, (unsigned)anow, (unsigned)ano,
+		    (unsigned)diag_rtc_set, rtc_now, diag_batt_mv, (unsigned)diag_lb, (unsigned)anow, (unsigned)ano,
 		    (unsigned)m_is_first_fix_found, m_cold_start_ntry, m_consecutive_dead_sessions);
 		VAL_GNSS("session_diag rtc_set=%u rtc=%u batt_mv=%u lb=%u anow=%u ano=%u first_fix=%u ntry=%u dead=%u",
-		         (unsigned)rtc_set, rtc_now, batt_mv, (unsigned)lb, (unsigned)anow, (unsigned)ano,
+		         (unsigned)diag_rtc_set, rtc_now, diag_batt_mv, (unsigned)diag_lb, (unsigned)anow, (unsigned)ano,
 		         (unsigned)m_is_first_fix_found, m_cold_start_ntry, m_consecutive_dead_sessions);
 	}
 
@@ -967,8 +969,8 @@ void GPSService::service_initiate() {
 	// service_is_triggered_on_surfaced.)
 	unsigned int gnss_ntry = configuration_store->read_param<unsigned int>(ParamID::GNSS_NTRY);
 	if (gnss_ntry > 0 && m_cold_start_ntry >= gnss_ntry) {
-		DEBUG_INFO("GPSService::retry_counter: reset ntry=%u->0 (end of GNSS_DELTATIME_ACQ back-off)",
-		           m_cold_start_ntry);
+		DEBUG_DETAIL("GPSService::retry_counter: reset ntry=%u->0 (end of GNSS_DELTATIME_ACQ back-off)",
+		             m_cold_start_ntry);
 		m_cold_start_ntry = 0;
 	}
 
@@ -1071,9 +1073,14 @@ void GPSService::service_initiate() {
 	m_wakeup_time = service_current_timer();
 	m_is_active = true;
 	m_session_device_error = false;
-	DEBUG_INFO("GPSService: M10Q on — nav_max=%u cold=%u cl=%u const=0x%02x",
+	// The step that starts a session, with the SESSION_DIAG fields that matter
+	// in a recovered journal. log_harvest.py counts sessions on "M10Q on —".
+	DEBUG_INFO("GPSService: M10Q on — nav_max=%u cold=%u cl=%u const=0x%02x ntry=%u dead=%u first_fix=%u batt=%u "
+	           "lb=%u rtc=%u",
 	           (unsigned int)nav_settings.max_nav_samples, (unsigned int)force_cold,
-	           (unsigned int)nav_settings.cloudlocate_enable, (unsigned int)nav_settings.constellation_mask);
+	           (unsigned int)nav_settings.cloudlocate_enable, (unsigned int)nav_settings.constellation_mask,
+	           m_cold_start_ntry, m_consecutive_dead_sessions, (unsigned int)m_is_first_fix_found, diag_batt_mv,
+	           (unsigned int)diag_lb, (unsigned int)diag_rtc_set);
 	m_device.power_on(nav_settings);
 }
 
@@ -1084,8 +1091,18 @@ bool GPSService::service_cancel() {
 	DEBUG_TRACE("GPSService::service_cancel");
 
 	if (m_is_active) {
-		DEBUG_WARN("GPSService::service_cancel: active acquisition force-cancelled (safety timeout or teardown) — "
-		           "logging NO_FIX");
+		// Why the session ends early decides its weight. Service::stop() clears
+		// m_is_started and notify_underwater_state() sets the underwater flag
+		// before calling here; only the safety-net timeout leaves both alone. A
+		// dive cutting a turtle's session is routine, and a WARN must mean a
+		// fault: at SYSTEM_LOG_LEVEL=WARN it is all the journal keeps.
+		if (!is_started())
+			DEBUG_INFO("GPSService::service_cancel: acquisition stopped (leaving Operational) — logging NO_FIX");
+		else if (is_underwater_deferred())
+			DEBUG_INFO("GPSService::service_cancel: acquisition cut by a dive — logging NO_FIX");
+		else
+			DEBUG_WARN("GPSService::service_cancel: active acquisition force-cancelled (safety timeout) — logging "
+			           "NO_FIX");
 		m_is_active = false;
 		try_enter_deep_idle_or_poweroff();  // 2026-05 deep-idle dispatch
 		GPSLogEntry log_entry = invalid_log_entry();
@@ -1163,8 +1180,8 @@ GPSLogEntry GPSService::invalid_log_entry() {
 	DEBUG_TRACE("GPSService::invalid_log_entry");
 	m_cold_start_ntry++;
 	unsigned int ntry_limit = configuration_store->read_param<unsigned int>(ParamID::GNSS_NTRY);
-	DEBUG_INFO("GPSService::retry_counter: NO_FIX | ntry=%u/%s", m_cold_start_ntry,
-	           ntry_limit == 0 ? "unlimited" : std::to_string(ntry_limit).c_str());
+	DEBUG_DETAIL("GPSService::retry_counter: NO_FIX | ntry=%u/%s", m_cold_start_ntry,
+	             ntry_limit == 0 ? "unlimited" : std::to_string(ntry_limit).c_str());
 
 	// Safety-net 3.5: a NO_FIX path is still a GPS event — re-arm health WDT.
 	// NOT 3.6 — NO_FIX is the opposite of a real PVT, so we don't want to
@@ -1312,7 +1329,7 @@ GPSLogEntry GPSService::invalid_log_entry() {
 void GPSService::task_process_gnss_data() {
 	DEBUG_TRACE("GPSService::task_process_gnss_data");
 	if (m_cold_start_ntry != 0) {
-		DEBUG_INFO("GPSService::retry_counter: reset ntry=%u->0 (PVT fix)", m_cold_start_ntry);
+		DEBUG_DETAIL("GPSService::retry_counter: reset ntry=%u->0 (PVT fix)", m_cold_start_ntry);
 	}
 	m_cold_start_ntry = 0;
 
@@ -1338,13 +1355,17 @@ void GPSService::task_process_gnss_data() {
 	gps_entry.info.event_type = GPSEventType::FIX;
 	gps_entry.info.valid = true;
 
-	// Demoted to TRACE: per-fix payload dump (~50-300 ms LFS commit). The
-	// GPSLogEntry itself is persisted via the log queue, so the lat/lon are
-	// already retrievable. retry_counter reset (line above) marks the event.
-	DEBUG_TRACE("GPSService::task_process_gnss_data: lat=%lf lon=%lf hDOP=%lf hAcc=%lf numSV=%u batt=%lfV ",
-	            gps_entry.info.lat, gps_entry.info.lon, static_cast<double>(gps_entry.info.hDOP),
-	            static_cast<double>(gps_entry.info.hAcc), gps_entry.info.numSV,
-	            (double)gps_entry.info.batt_voltage / 1000);
+	// The step that ends a session on a fix. The position goes to the GNSS
+	// sensor log (GPSLogEntry, via the log queue), not here; log_harvest.py
+	// counts fixes on "task_process_gnss_data". Until 2026-10 the journal had
+	// no fix line at all: the retry_counter reset only shows after a failure.
+	DEBUG_INFO("GPSService::task_process_gnss_data: fix in %u s, hAcc=%u m, numSV=%u",
+	           (unsigned int)(gps_entry.info.onTime / MS_PER_SEC), (unsigned int)(gps_entry.info.hAcc / 1000),
+	           (unsigned int)gps_entry.info.numSV);
+	DEBUG_DETAIL("GPSService::task_process_gnss_data: lat=%lf lon=%lf hDOP=%lf hAcc=%lf numSV=%u batt=%lfV ",
+	             gps_entry.info.lat, gps_entry.info.lon, static_cast<double>(gps_entry.info.hDOP),
+	             static_cast<double>(gps_entry.info.hAcc), gps_entry.info.numSV,
+	             (double)gps_entry.info.batt_voltage / 1000);
 
 	// Notify configuration store that we have a new valid GPS fix
 	configuration_store->notify_gps_location(gps_entry);
@@ -1386,7 +1407,7 @@ void GPSService::task_process_gnss_data() {
 /// @brief Process degraded GNSS fix (fastloc) — log entry with FASTLOC event type.
 void GPSService::task_process_degraded_gnss_data() {
 	DEBUG_TRACE("GPSService::task_process_degraded_gnss_data");
-	DEBUG_INFO("GPSService::retry_counter: reset ntry=%u->0 (DEGRADED_PVT success)", m_cold_start_ntry);
+	DEBUG_DETAIL("GPSService::retry_counter: reset ntry=%u->0 (DEGRADED_PVT success)", m_cold_start_ntry);
 	m_cold_start_ntry = 0;
 
 	GPSLogEntry gps_entry{};
@@ -1431,7 +1452,7 @@ void GPSService::task_process_cloudlocate_data() {
 	// therefore never trigger the NTRY back-off to dloc_arg_nom. This is
 	// intentional: CloudLocate is the deployed fallback strategy, so we should
 	// keep trying every cold_start_retry_period rather than giving up.
-	DEBUG_INFO("GPSService::retry_counter: reset ntry=%u->0 (CLOUDLOCATE success)", m_cold_start_ntry);
+	DEBUG_DETAIL("GPSService::retry_counter: reset ntry=%u->0 (CLOUDLOCATE success)", m_cold_start_ntry);
 	m_cold_start_ntry = 0;
 
 	GPSLogEntry gps_entry{};
@@ -1472,8 +1493,8 @@ void GPSService::task_process_cloudlocate_data() {
 		DEBUG_INFO("GPSService::task_process_cloudlocate_data: stored MEAS20 (20 bytes)");
 	} else {
 		overlay[0] = 0xFF;  // sentinel: configured format not produced this session
-		DEBUG_WARN("GPSService::task_process_cloudlocate_data: configured format %u UNAVAILABLE (have measc12=%u "
-		           "meas20=%u) — no CloudLocate TX",
+		DEBUG_WARN("GPSService::task_process_cloudlocate_data: configured format %u UNAVAILABLE (measc12=%u meas20=%u) "
+		           "— no CL TX",
 		           cl_format, (unsigned)m_raw_measurement.has_measc12, (unsigned)m_raw_measurement.has_meas20);
 		VAL_GNSS("cloudlocate_format_unavailable want=%u measc12=%u meas20=%u", cl_format,
 		         (unsigned)m_raw_measurement.has_measc12, (unsigned)m_raw_measurement.has_meas20);
@@ -1869,6 +1890,17 @@ void GPSService::notify_peer_event(ServiceEvent &e) {
 	if (e.event_source == ServiceIdentifier::UW_SENSOR && e.event_type == ServiceEventType::SERVICE_LOG_UPDATED) {
 		bool now_underwater = std::get<bool>(e.event_data);
 		m_underwater = now_underwater;
+		// The driver's deferred flash write waits for a quiet moment: a dive
+		// that lasted PERSIST_AFTER_DIVE_MS. A task, never a write here: this is
+		// the dive broadcast, which ArgosTxService must get through at once.
+		system_scheduler->cancel_task(m_persist_on_dive_task);
+		if (now_underwater) {
+			m_persist_on_dive_task = system_scheduler->post_task_prio(
+			    [this]() {
+				    if (m_underwater) m_device.persist_soon();
+			    },
+			    "GnssPersistOnDive", Scheduler::DEFAULT_PRIORITY, PERSIST_AFTER_DIVE_MS);
+		}
 		// Check for surfacing condition
 		if (!now_underwater) {
 			// Check if we need to trigger a cold start
@@ -1908,9 +1940,9 @@ void GPSService::notify_peer_event(ServiceEvent &e) {
 					m_defer_gnss_timeout_task = system_scheduler->post_task_prio(
 					    [this]() {
 						    if (!m_defer_gnss_until_argos_first_tx) return;
-						    DEBUG_WARN("GPSService: no Argos TX within %u s of surfacing — lifting the GNSS deferral "
-							           "and acquiring. The gate is armed on the TX mode, not on the TX service "
-							           "having anything to send.",
+						    // The gate is armed on the TX mode, not on the TX service
+						    // having anything to send: nothing may ever come.
+						    DEBUG_WARN("GPSService: no Argos TX within %u s of surfacing — GNSS deferral lifted",
 							           DEFER_GNSS_MAX_S);
 						    m_defer_gnss_until_argos_first_tx = false;
 						    if (is_started()) service_reschedule(false);
@@ -1939,7 +1971,7 @@ void GPSService::notify_peer_event(ServiceEvent &e) {
 					// a new one. The ArgosTx SERVICE_INACTIVE handler below
 					// reschedules properly once TX is done (or has errored out).
 					service_reschedule(false);
-					DEBUG_INFO("GPSService: surfaced — GNSS deferred until first Argos TX completes");
+					DEBUG_DETAIL("GPSService: surfaced — GNSS deferred until first Argos TX completes");
 				}
 			}
 #endif
@@ -1959,7 +1991,7 @@ void GPSService::notify_peer_event(ServiceEvent &e) {
 	    && m_defer_gnss_until_argos_first_tx && !m_underwater) {
 		m_defer_gnss_until_argos_first_tx = false;
 		system_scheduler->cancel_task(m_defer_gnss_timeout_task);
-		DEBUG_INFO("GPSService: first Argos TX done — releasing GNSS gate, rescheduling now");
+		DEBUG_DETAIL("GPSService: first Argos TX done — releasing GNSS gate, rescheduling now");
 		Service::notify_peer_event(e);  // let base process the event normally
 		bool immediate;
 		if (service_is_triggered_on_surfaced(immediate)) {

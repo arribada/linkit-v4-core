@@ -250,6 +250,8 @@ public:
 		if (s_instance) s_instance->m_consecutive_invalid_adc = n;
 	}
 	static constexpr uint16_t test_max_consecutive_invalid_adc() { return MAX_CONSECUTIVE_INVALID_ADC; }
+	/// Test-only: uptime (s) of the live instance's last SWS.CAL write, 0 = none.
+	static uint64_t test_last_flash_save_time() { return s_instance ? s_instance->m_last_flash_save_time : 0; }
 	static void test_set_diagnostics(const Diagnostics &d) {
 		m_diag = d;
 		update_diagnostics_crc();
@@ -451,6 +453,11 @@ private:
 	uint64_t m_time_in_current_state;
 	uint64_t m_last_flash_save_time = 0;
 	static constexpr uint64_t FLASH_SAVE_MIN_INTERVAL_SEC = 60;
+	// A state change only ARMS the SWS.CAL save; save_calibration_when_quiet()
+	// performs it in a later underwater sample, at least this long after the
+	// last change. 0 = nothing armed.
+	static constexpr uint64_t CALIB_SAVE_AFTER_TRANSITION_SEC = 30;
+	uint64_t m_calib_save_due_sec = 0;
 
 	// Sample-cadence instrumentation (2026-05 investigation: real vs test-mode
 	// detection latency). m_last_sample_ms = timestamp of previous detector_state()
@@ -616,6 +623,7 @@ private:
      */
 	void save_calibration_to_flash();
 	void save_calibration_to_flash_debounced();
+	void save_calibration_when_quiet(bool underwater, bool state_changed);
 
 	/**
      * @brief Load calibration data from flash
@@ -645,4 +653,9 @@ protected:
      * @brief Service initialization - load config and validate calibration
      */
 	void service_init() override;
+
+	/**
+     * @brief Service stop - commit a calibration save the last state change armed
+     */
+	void service_term() override;
 };

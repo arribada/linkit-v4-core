@@ -16,6 +16,7 @@ bool GPIOPins::m_gnss_uart_active = false;
 bool GPIOPins::m_flash_busy = false;
 bool GPIOPins::m_config_mode_active = false;
 bool GPIOPins::m_gnss_rail_active = false;
+bool GPIOPins::m_cam_rail_active = false;
 
 // Build-time flag (build_rspb.sh: RSPB_VSENSORS_FLOOR, default 1).
 //   1 = keep the RSPB VSENSORS refcount floor: never cut VSENSORS, since the I2C
@@ -119,6 +120,7 @@ void GPIOPins::initialise() {
 #endif
 
 #if ENABLE_CAM_SENSOR
+#if !(defined(CAM_CONTROL_UART) && (CAM_CONTROL_UART == 1))
 	DEBUG_TRACE("Initializing CAM pins: CAM_PWR_EN=%u (P%u.%u) | CAM_PWR_BUTT=%u (P%u.%u)", CAM_PWR_EN,
 	            (BSP::GPIO_Inits[CAM_PWR_EN].pin_number >> 5), (BSP::GPIO_Inits[CAM_PWR_EN].pin_number & 0x1F),
 	            CAM_PWR_BUTT, (BSP::GPIO_Inits[CAM_PWR_BUTT].pin_number >> 5),
@@ -130,6 +132,17 @@ void GPIOPins::initialise() {
 	enable(CAM_PWR_BUTT);
 	clear(CAM_PWR_EN);
 	clear(CAM_PWR_BUTT);
+#else
+	// CAM_CONTROL=UART: the rail only. Its UART pins were released to high-Z
+	// above with the rest of UARTAsync_Inits[1] -- nothing drives an unpowered
+	// camera until RunCamUartDevice opens the link.
+	DEBUG_TRACE("Initializing CAM pins: CAM_PWR_EN=%u (P%u.%u), UART%u", CAM_PWR_EN,
+	            (BSP::GPIO_Inits[CAM_PWR_EN].pin_number >> 5), (BSP::GPIO_Inits[CAM_PWR_EN].pin_number & 0x1F),
+	            static_cast<unsigned int>(CAM_UART_INSTANCE));
+	clear(CAM_PWR_EN);
+	enable(CAM_PWR_EN);
+	clear(CAM_PWR_EN);
+#endif
 	DEBUG_TRACE("CAM pins cleared and configured");
 #endif
 
@@ -152,10 +165,19 @@ void GPIOPins::init_pin(uint32_t pin) {
 #ifdef GPS_POWER
 #define GNSS_RAIL_PIN_INDEX ((uint32_t)GPS_POWER)
 #endif
+// Same single point for the camera rail, CAM_CONTROL=UART only (see
+// GPIOPins::is_cam_rail_active). It is commanded from the driver and from the
+// PMU::powerdown() backstop.
+#if ENABLE_CAM_SENSOR && defined(CAM_CONTROL_UART) && (CAM_CONTROL_UART == 1)
+#define CAM_RAIL_PIN_INDEX ((uint32_t)CAM_PWR_EN)
+#endif
 
 void GPIOPins::set(uint32_t pin) {
 #ifdef GNSS_RAIL_PIN_INDEX
 	if (pin == GNSS_RAIL_PIN_INDEX) m_gnss_rail_active = true;
+#endif
+#ifdef CAM_RAIL_PIN_INDEX
+	if (pin == CAM_RAIL_PIN_INDEX) m_cam_rail_active = true;
 #endif
 	nrf_gpio_pin_set(BSP::GPIO_Inits[pin].pin_number);
 }
@@ -163,6 +185,9 @@ void GPIOPins::set(uint32_t pin) {
 void GPIOPins::clear(uint32_t pin) {
 #ifdef GNSS_RAIL_PIN_INDEX
 	if (pin == GNSS_RAIL_PIN_INDEX) m_gnss_rail_active = false;
+#endif
+#ifdef CAM_RAIL_PIN_INDEX
+	if (pin == CAM_RAIL_PIN_INDEX) m_cam_rail_active = false;
 #endif
 	nrf_gpio_pin_clear(BSP::GPIO_Inits[pin].pin_number);
 }
@@ -362,6 +387,10 @@ bool GPIOPins::is_config_mode_active() {
 
 bool GPIOPins::is_gnss_rail_active() {
 	return m_gnss_rail_active;
+}
+
+bool GPIOPins::is_cam_rail_active() {
+	return m_cam_rail_active;
 }
 
 bool GPIOPins::get_sensors_pwr_state() {

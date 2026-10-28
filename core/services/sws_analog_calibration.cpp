@@ -72,6 +72,21 @@ void SWSAnalogService::save_calibration_to_flash_debounced() {
 	}
 }
 
+/// @brief Perform the save a state change armed, in a sample where it costs nothing.
+///
+/// Underwater, in a sample that changes nothing, once CALIB_SAVE_AFTER_TRANSITION_SEC
+/// has passed: no transmission, no GNSS session and no state change waits on the
+/// flash then. A save armed at the surface therefore waits for the next dive. That
+/// loses nothing on a software reset (m_calib lives in .noinit), and on a power cut
+/// only what the surface taught since the last dive. Debounced like the old save at
+/// the transition was.
+void SWSAnalogService::save_calibration_when_quiet(bool underwater, bool state_changed) {
+	if (m_calib_save_due_sec == 0 || !underwater || state_changed) return;
+	if (PMU::get_timestamp_ms() / 1000 < m_calib_save_due_sec) return;
+	m_calib_save_due_sec = 0;
+	save_calibration_to_flash_debounced();
+}
+
 /// @brief Load running calibration from flash (SWS.CAL offsets 2-4).
 /// @return true if valid calibration was restored from flash.
 bool SWSAnalogService::load_calibration_from_flash() {
@@ -417,8 +432,21 @@ bool SWSAnalogService::is_value_valid(uint16_t value) const {
 	return (value <= ADC_INVALID_MAX);
 }
 
-/// @brief Adjust RC charge delay based on water/air contrast ratio.
-/// Low contrast (biofouling) → increase delay. High contrast (clean) → decrease delay.
+/// @brief Adjust the RC charge delay from the water/air contrast.
+///
+/// What the code below does (this comment used to state the reverse):
+///  - air baseline under AIR_BASELINE_RECOVER: +10 %, the circuit may not be
+///    charging enough;
+///  - contrast under CONTRAST_LOW_THRESHOLD (biofouling): -25 %, which keeps a
+///    conductive film's slower charge apart from seawater's;
+///  - contrast over CONTRAST_HIGH_THRESHOLD: +10 %.
+/// On clean electrodes the first and last rules both hold -- the air baseline
+/// rests on its AIR_BASELINE_FLOOR of 50, under the recovery level of 150 -- so
+/// the delay climbs to SWS_DELAY_MAX_US and stays there: a 10 ms busy-wait per
+/// sample with the default bounds. The deployment that proved this loop in the
+/// field (WWF-YanaRiba 2026, 3 to 4 months on 7 tags) ran it between 200 and
+/// 1000 µs, bounds set by its configuration. The air and water references are
+/// not renormalised when the delay changes (R-T2 of that analysis).
 ///
 /// Frozen during guided-calibration sampling phases so all CALIB_NUM_SAMPLES
 /// readings averaged into the air/water result use the same RC charge time.

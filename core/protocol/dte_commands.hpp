@@ -53,6 +53,9 @@ enum class DTECommand {
 #if !(defined(LORA_RAK3172) && (LORA_RAK3172 == 1)) && !(defined(ARGOS_SMD) && (ARGOS_SMD == 1))
 	KIMBR_REQ,  // KIM2 UART bridge/passthrough (raw AT command access)
 #endif
+#if defined(CAM_CONTROL_UART) && (CAM_CONTROL_UART == 1)
+	CAMTST_REQ,  // Camera test: a real session, each step checked on the camera's SD card
+#endif
 	__NUM_REQ,
 	PARML_RESP = RESP_CMD_BASE,
 	PARMR_RESP,
@@ -96,6 +99,9 @@ enum class DTECommand {
 #if !(defined(LORA_RAK3172) && (LORA_RAK3172 == 1)) && !(defined(ARGOS_SMD) && (ARGOS_SMD == 1))
 	KIMBR_RESP,  // KIM2 UART bridge/passthrough response
 #endif
+#if defined(CAM_CONTROL_UART) && (CAM_CONTROL_UART == 1)
+	CAMTST_RESP,  // Camera test response
+#endif
 	__NUM_RESP
 };
 
@@ -116,6 +122,20 @@ enum class ComponentPower {
 	SENSORS = 2,    // Sensors power
 	SATELLITE = 3,  // Satellite module
 	OFF = 4         // Power off all components
+};
+
+// CAMTST outcome, the first field of its answer. What was measured comes with it
+// whatever the outcome: a camera that fails its test still says how far it got.
+enum class CamTestStatus : unsigned int {
+	OK = 0,             // the recording, then its stop, both seen on the SD card
+	NO_ANSWER = 1,      // no answer to GET_DEVICE_INFO: camera absent, unpowered or miswired
+	NO_SPACE = 2,       // the camera gives its card no recording time: full, missing or unusable
+	NOT_RECORDING = 3,  // the card did not fill, even after a second start
+	UNVERIFIED = 4,     // the session ran, but the card could not be read to check it
+	STOP_FAILED = 5,    // still recording after every stop: the rail was cut on a recording
+	LINK_ERROR = 6,     // the UART would not open, or refused the start
+	BUSY = 7,           // the camera is in a session already, or held by the bench console
+	TIMEOUT = 8,        // no outcome in time: a sequence was lost, the camera was cut
 };
 
 // SMD DFU action types (for SMDDFU command)

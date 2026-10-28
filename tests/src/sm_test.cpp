@@ -228,6 +228,40 @@ TEST(Sm, CheckTransitionToPreOperationalState) {
 	CHECK_FALSE(fake_saltwater_switch->is_started());
 }
 
+namespace {
+/// A journal that only keeps the level it is given.
+class JournalLevelProbe : public Logger {
+public:
+	JournalLevelProbe() : Logger("JournalLevelProbe") {}
+	void create() override {}
+	void write(void *) override {}
+	void read(void *, int) override {}
+	unsigned int num_entries() override { return 0; }
+	bool is_ready() override { return true; }
+	void truncate() override {}
+};
+}  // namespace
+
+// SYSTEM_LOG_LEVEL (DBP02) reaches the journal at PreOperational entry: the
+// value the store holds then -- written over DTE during a configuration session,
+// here between boot and PreOperational -- is the level the system log filters at.
+TEST(Sm, PreOperationalAppliesSystemLogLevel) {
+	mock().disable();
+	JournalLevelProbe journal;
+	Logger *const saved = DebugLogger::system_log;
+	DebugLogger::system_log = &journal;
+	fsm_handle::start();
+	mock_config_store->write_param(ParamID::SYSTEM_LOG_LEVEL, (unsigned int)LOG_LEVEL_WARN);
+	CHECK_EQUAL(LOG_LEVEL_DEBUG, journal.get_log_level());  // the boot record is written whatever the level
+
+	fake_timer->set_counter(1000);
+	system_scheduler->run();
+	CHECK_TRUE(fsm_handle::is_in_state<PreOperationalState>());
+	CHECK_EQUAL(LOG_LEVEL_WARN, journal.get_log_level());
+	DebugLogger::system_log = saved;
+	mock().enable();
+}
+
 TEST(Sm, CheckTransitionToOperationalConfigValid) {
 	mock().disable();
 	fsm_handle::start();

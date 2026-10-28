@@ -300,6 +300,14 @@ void NrfUartAsync::process_rx() {
 	if (m_isr_error) {
 		unsigned int err_type = m_isr_error_type;
 		m_isr_error = false;
+		// Reception is stopped (isr_handle_error), so the ISR buffer is still.
+		uint8_t kept[ISR_BUF_SIZE];
+		uint16_t kept_len = 0;
+		if (keeps_rx_data_on_error()) {
+			InterruptLock lock;
+			kept_len = m_isr_buf_len;
+			memcpy(kept, m_isr_buf, kept_len);
+		}
 		m_rx_buffer.clear();
 		m_isr_buf_len = 0;
 
@@ -315,6 +323,7 @@ void NrfUartAsync::process_rx() {
 			m_is_rx_started = true;
 		}
 
+		if (kept_len) on_rx_data(kept, kept_len);
 		on_rx_error(err_type);
 		return;
 	}
@@ -338,15 +347,20 @@ void NrfUartAsync::process_rx() {
 		m_isr_buf_len = 0;
 	}
 
+	on_rx_data(local_buf, local_len);
+}
+
+/// @brief Default framing: lines. See the declaration for the binary case.
+void NrfUartAsync::on_rx_data(const uint8_t *data, size_t len) {
 	// Guard against unbounded growth if data arrives without line terminators
-	if (m_rx_buffer.size() + local_len > MAX_RX_BUFFER_SIZE) {
+	if (m_rx_buffer.size() + len > MAX_RX_BUFFER_SIZE) {
 		DEBUG_ERROR("NrfUartAsync: UART%u RX buffer overflow (%u bytes) — flushing", m_uart_instance,
-		            static_cast<unsigned>(m_rx_buffer.size() + local_len));
+		            static_cast<unsigned>(m_rx_buffer.size() + len));
 		m_rx_buffer.clear();
 	}
 
 	// Append to line accumulator and process complete lines
-	m_rx_buffer.append(reinterpret_cast<const char *>(local_buf), local_len);
+	m_rx_buffer.append(reinterpret_cast<const char *>(data), len);
 	process_rx_lines();
 }
 

@@ -1242,8 +1242,7 @@ SmdDfuResponse SmdSatCmdSpi::dfu_send_command(uint8_t cmd, const uint8_t *data, 
 		// update on the first command. The transfer is still protected end-to-end by
 		// dfu_verify() (CRC32 over the flashed image), which gates the jump to the app
 		// — so accept the frame using its real status rather than failing the update.
-		DEBUG_WARN("SmdSatCmdSpi::%s: DFU response CRC mismatch tolerated (status=0x%02X len=%u) "
-		           "— end-to-end CRC32 verify still gates the jump",
+		DEBUG_WARN("SmdSatCmdSpi::%s: DFU response CRC mismatch tolerated (status=0x%02X len=%u), CRC32 gates jump",
 		           __func__, response.raw_status, response.data_len);
 		response.status = static_cast<SpiAplusStatus>(response.raw_status);
 	}

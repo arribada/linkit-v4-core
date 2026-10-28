@@ -141,8 +141,8 @@ constexpr std::time_t MOTION_BURST_WINDOW_S = 600;
 
 void MooredModeService::restore_state() {
 	if (s_noinit.crc == noinit_crc() && s_noinit.in_moored <= 1 && s_noinit.has_ref <= 1) {
-		DEBUG_INFO("MooredModeService: restored from noinit (moored=%u, has_ref=%u, still=%u, motion=%u)",
-		           s_noinit.in_moored, s_noinit.has_ref, s_noinit.stationary_fixes, s_noinit.motion_events);
+		DEBUG_DETAIL("MooredModeService: restored from noinit (moored=%u, has_ref=%u, still=%u, motion=%u)",
+		             s_noinit.in_moored, s_noinit.has_ref, s_noinit.stationary_fixes, s_noinit.motion_events);
 		publish_state(s_noinit.in_moored);
 		return;
 	}

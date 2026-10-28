@@ -85,7 +85,13 @@ public:
 	/// Test helper: force the modelled state, for tests that start mid-window.
 	void set_in_deep_idle(bool v) { m_in_deep_idle = v; }
 
+	/// Counted, not mocked: a mock().actualCall would fail every strict test that
+	/// happens to send a dive.
+	void persist_soon() override { m_persist_soon_calls++; }
+	unsigned int persist_soon_calls() const { return m_persist_soon_calls; }
+
 private:
+	unsigned int m_persist_soon_calls = 0;
 	GPSNavSettings m_last_nav_settings{};
 	bool m_deep_idle_requested = false;
 	bool m_in_deep_idle = false;

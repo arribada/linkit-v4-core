@@ -77,6 +77,7 @@ DERIVES = {
 DEFAUTS = {
     "LORA_RAK3172": "0",   # base_types.hpp
     "ARGOS_SMD": "0",      # dte_params.cpp
+    "CAM_CONTROL_UART": "0",  # base_types.hpp; CMake passes it on every firmware build
 }
 
 

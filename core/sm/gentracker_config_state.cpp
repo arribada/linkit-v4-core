@@ -104,8 +104,23 @@ void ConfigurationState::entry() {
 static void sync_bridge_log_silencing();  // Forward decl — defined near process_usb_data
 #endif
 
+/// @brief End a CAMTST still running, camera stopped and cut. Leaving the state
+/// and the DTE's own resets (FACTW / RSTBW, which reset the board without going
+/// through exit()) both call it: either way a camera mid-session must not be
+/// handed over, or cut by the reset, while it records. A no-op on builds without
+/// the UART camera, or with no test running.
+static void end_camera_test() {
+#if defined(CAM_CONTROL_UART) && (CAM_CONTROL_UART == 1)
+	try {
+		dte_handler->abort_camera_test();
+	} catch (...) {
+		DEBUG_ERROR("ConfigurationState: camera test abort failed");
+	}
+#endif
+}
+
 void ConfigurationState::exit() {
-	DEBUG_INFO("exit: ConfigurationState");
+	DEBUG_DETAIL("exit: ConfigurationState");
 
 	// Released FIRST, so the rail is freed even if the shutdown below throws.
 	GPIOPins::set_config_mode_active(false);
@@ -120,6 +135,9 @@ void ConfigurationState::exit() {
 		DEBUG_ERROR("exit: ConfigurationState: SWS test stop failed");
 	}
 #endif
+	// A CAMTST left running would hand the camera, mid-session, to an
+	// Operational state whose CAMService thinks it off.
+	end_camera_test();
 	// Shut the BLE down FIRST, and under protection. This call used to be the LAST
 	// instruction of exit() and had no try/catch: if stop_bridge() or
 	// power_off_immediate() threw, we never got there and the beacon went back to
@@ -414,6 +432,11 @@ void ConfigurationState::process_received_data() {
 				restart_inactivity_timeout();
 			}
 
+			if (action == DTEAction::FACTR || action == DTEAction::RESET) {
+				// A reset skips exit(): a camera test still running must be
+				// stopped first, or its recording is cut by the reset.
+				end_camera_test();
+			}
 			if (action == DTEAction::FACTR) {
 				DEBUG_INFO("Perform factory reset of configuration store");
 				configuration_store->factory_reset();
@@ -620,6 +643,7 @@ void ConfigurationState::process_usb_data() {
 					restart_inactivity_timeout();
 				}
 
+				if (action == DTEAction::FACTR || action == DTEAction::RESET) end_camera_test();
 				if (action == DTEAction::FACTR) {
 					DEBUG_INFO("Perform factory reset of configuration store (USB)");
 					configuration_store->factory_reset();

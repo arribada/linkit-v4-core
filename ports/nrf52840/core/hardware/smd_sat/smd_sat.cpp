@@ -34,8 +34,10 @@ extern ConfigurationStore *configuration_store;
 static bool smd_blind_active(unsigned int &retx_nb, unsigned int &retx_period_s) {
 	if (!configuration_store) return false;
 	// get_argos_configuration resolves the EFFECTIVE mode (LB/OoZ/HAULED) and
-	// clears blind_en for SURFACING_BURST/DOPPLER. evaluate() inside is cached
-	// (500 ms) and already runs many times per second, so this is cheap.
+	// clears blind_en for SURFACING_BURST/DOPPLER. Its hauled/moored evaluate()
+	// is cached (500 ms) and its battery refresh reuses a sample younger than
+	// BatteryMonitor::SAMPLE_MAX_AGE_MS. Until that rule, "cheap" was wrong: every
+	// call took a 100 ms busy-wait battery read on SMD.
 	ArgosConfig cfg;
 	configuration_store->get_argos_configuration(cfg);
 	if (!cfg.blind_en) return false;
@@ -174,6 +176,7 @@ SmdSat::SmdSat(SmdSatCmd &cmd, unsigned int idle_shutdown_ms) : m_cmd(cmd) {
 	this->shutdown();
 	is_kmac_profil_loaded = false;
 	m_kmac_pushed_this_session = false;
+	m_module_tcxo.forget();
 }
 
 SmdSat::~SmdSat() {
@@ -385,6 +388,7 @@ void SmdSat::state_starting() {
 	m_is_first_tx = true;
 	is_kmac_profil_loaded = false;  // Force entry to state_load_kmac for boot config (TCXO, LPM)
 	m_kmac_pushed_this_session = false;
+	m_module_tcxo.forget();
 	// m_needs_explicit_kmac_load is NOT reset here — it persists across power cycles.
 	// Only set true when RCONF/credentials actually change (steps 1a/1b in load_kmac).
 	// When false, STM32 auto-initializes MAC from flash at POR — no SPI command needed.
@@ -404,6 +408,7 @@ void SmdSat::state_error_enter() {
 	// (INVALID_CMD cascade). Any command would fail and waste time.
 	is_kmac_profil_loaded = false;
 	m_kmac_pushed_this_session = false;
+	m_module_tcxo.forget();
 
 	// A module busy finishing its own burst is not a failing module. Counting it
 	// toward the cooldown / autofallback thresholds turns one overrun into a
@@ -598,6 +603,7 @@ void SmdSat::state_stopped_enter() {
 	// (m_needs_explicit_kmac_load) — otherwise STM32 auto-inits MAC from flash at POR.
 	is_kmac_profil_loaded = false;
 	m_kmac_pushed_this_session = false;
+	m_module_tcxo.forget();
 
 	m_packet_buffer.clear();
 
@@ -873,26 +879,17 @@ void SmdSat::state_load_kmac() {
 		LATMARK();
 		DEBUG_TRACE("SmdSat::%s: MAC ready (mac=%u, explicit_load=%u)", __func__, mac_st, m_needs_explicit_kmac_load);
 
-		// Step 4: Write TCXO warmup — RAM register on STM32, lost on power cycle.
-		// The value is the service's (0 for the first TX after a dive, the configured
-		// warmup otherwise), with the cold-die fallback: see effective_tcxo_warmup_s().
-		int die_temp_c = PMU::get_die_temperature_c();
-		uint32_t warmup_ms = effective_tcxo_warmup_s() * 1000;
-		if (m_tcxo_warmup_time == 0 && warmup_ms != 0) {
-			DEBUG_INFO("SmdSat::%s: cold die temp (%d °C < %d) — keeping TCXO warmup", __func__, die_temp_c,
-			           TCXO_SKIP_TEMP_THRESHOLD_C);
+		// Step 4: TCXO warm-up -- a RAM register on the STM32. The module has just
+		// booted, so it holds its own default and the write always happens here.
+		// The value is the service's (0 for the first TX after a dive, the
+		// configured warm-up otherwise), with the cold-die fallback: see
+		// effective_tcxo_warmup_s().
+		if (m_tcxo_warmup_time == 0 && effective_tcxo_warmup_s() != 0) {
+			DEBUG_INFO("SmdSat::%s: cold die temp (%d °C < %d) — keeping TCXO warmup", __func__,
+			           PMU::get_die_temperature_c(), TCXO_SKIP_TEMP_THRESHOLD_C);
 		}
 		try {
-			m_cmd.write_tcxo_warmup(warmup_ms);
-			DEBUG_TRACE("SmdSat::%s: TCXO warmup written: %u ms (first_tx=%u)", __func__, warmup_ms, m_is_first_tx);
-#ifdef BENCH_TEST
-			// The warmup runs INSIDE the module, after AT+TX is accepted -- so it
-			// delays the RF, not the command, and no host-side stopwatch that
-			// stops at "accepted" can see it. Make the value that actually went
-			// out visible: 0 only on the first TX of a power-on and only above
-			// TCXO_SKIP_TEMP_THRESHOLD_C, the configured value on every other.
-			DEBUG_INFO("SmdSat: TCXO=%u ms first_tx=%u die=%d C", warmup_ms, m_is_first_tx, die_temp_c);
-#endif
+			ensure_tcxo_warmup();
 		} catch (...) {
 			DEBUG_WARN("SmdSat::%s: failed to write TCXO warmup", __func__);
 		}
@@ -946,6 +943,7 @@ void SmdSat::state_load_kmac() {
 					m_needs_explicit_kmac_load = true;  // Force KMAC reload after recovery
 					is_kmac_profil_loaded = false;
 					m_kmac_pushed_this_session = false;
+					m_module_tcxo.forget();
 					m_state_counter = 10;               // Reset poll counter for MAC_OK after recovery
 					m_rconf_recovery_attempted = true;  // mark done only on success
 					DEBUG_INFO("SmdSat::%s: RCONF recovery written — retrying KMAC", __func__);
@@ -1061,8 +1059,9 @@ void SmdSat::write_lpm_if_needed() {
 	// and what to use instead, rather than leaving a bare error to decode later.
 	// The cumulative mask means the module still has STANDBY to fall back on.
 	if (m_lpm_mode & 0x10) {
-		DEBUG_WARN("SmdSat::%s: LPM asks for SHUTDOWN — the module refuses it unless its firmware is built "
-		           "with LPM_SHUTDOWN_ENABLED. STANDBY (ARP60=0x08) is the deepest mode this module can enter",
+		// The module refuses it unless its firmware is built with
+		// LPM_SHUTDOWN_ENABLED; STANDBY (ARP60=0x08) is the deepest it can enter.
+		DEBUG_WARN("SmdSat::%s: LPM asks for SHUTDOWN — refused by this module, STANDBY (0x08) is its deepest",
 		           __func__);
 	}
 
@@ -1159,6 +1158,7 @@ void SmdSat::state_idle() {
 			DEBUG_INFO("SmdSat::%s: module was in LPM — cold boot on wake, re-running boot config", __func__);
 			is_kmac_profil_loaded = false;
 			m_kmac_pushed_this_session = false;
+			m_module_tcxo.forget();
 			SMD_STATE_CHANGE(idle, idle_pending);
 			return;
 		}
@@ -1169,6 +1169,13 @@ void SmdSat::state_idle() {
 			m_next_delay = SMDSAT_DELAY_TICK_INTERRUPT_MS;
 		} else {
 			TXTRACE("state_idle: packet pending -> transmit_pending");
+			// The module stayed powered since load_kmac: write the warm-up only if
+			// this TX needs another one than it holds (SmdTcxoRegister).
+			try {
+				ensure_tcxo_warmup();
+			} catch (...) {
+				DEBUG_WARN("SmdSat::%s: failed to write TCXO warmup", __func__);
+			}
 			m_tx_buffer = m_packet_buffer;
 			m_packet_buffer.clear();
 			SMD_STATE_CHANGE(idle, transmit_pending);
@@ -1404,37 +1411,17 @@ void SmdSat::state_transmitting_enter() {
 }
 
 void SmdSat::state_transmitting_exit() {
-	// First TX done: restore configured TCXO warmup on STM32 for subsequent TX
-	// in THIS session (RAM register, lost on power cycle). This does NOT touch the
-	// fast first-TX path (state_load_kmac forces warmup=0 when the TCXO is already
-	// warm) — it only makes sure every *subsequent* in-session TX gets the real
-	// warmup, so the carrier doesn't drift off-frequency and lose the Argos pass.
+	// No TCXO write here any more. Until 2026-10 this restored the configured
+	// warm-up after the first TX of each power-up -- a 50 ms busy-wait and an SPI
+	// write, retried up to three times -- right before the rail cut that erases
+	// it. The next TX now writes what it needs, if the module does not already
+	// hold it: after a power-up in state_load_kmac, on a powered module in
+	// state_idle (SmdTcxoRegister). That also replaces the settle window this
+	// restore needed: the STM32WL is not ready for a fresh SPI command in the few
+	// ms right after MAC_TX_DONE, and the next TX is seconds away.
 	//
-	// The STM32WL is not ready for a fresh SPI command in the few ms right after
-	// MAC_TX_DONE: the field log showed REQ 0x29 → "IDLE pattern, no response
-	// ready" on all 3 instant auto-retries, leaving the warmup stuck at 0 for the
-	// rest of the burst. Give it a settle window and a few spaced attempts so the
-	// restore actually lands.
-	if (m_is_first_tx && m_tcxo_warmup_time > 0) {
-		static constexpr uint8_t TCXO_RESTORE_ATTEMPTS = 3;
-		static constexpr uint32_t TCXO_RESTORE_SETTLE_MS = 50;  // STM32WL post-TX settle
-		bool restored = false;
-		for (uint8_t attempt = 0; attempt < TCXO_RESTORE_ATTEMPTS && !restored; attempt++) {
-			nrf_delay_ms(TCXO_RESTORE_SETTLE_MS);
-			try {
-				m_cmd.write_tcxo_warmup(m_tcxo_warmup_time * 1000);
-				DEBUG_TRACE("SmdSat::%s: restored TCXO warmup: %u s (attempt %u)", __func__, m_tcxo_warmup_time,
-				            attempt + 1);
-				restored = true;
-			} catch (...) {
-				DEBUG_WARN("SmdSat::%s: TCXO warmup restore attempt %u/%u failed", __func__, attempt + 1,
-				           TCXO_RESTORE_ATTEMPTS);
-			}
-		}
-	}
-	// Clear unconditionally: the first TX of every session is re-armed by
-	// state_starting() (m_is_first_tx=true on each power_on), so this never
-	// affects the fast first-TX path — it only governs in-session subsequent TX.
+	// Cleared unconditionally: the first TX of every power-up is re-armed by
+	// state_starting() (m_is_first_tx=true on each power_on).
 	m_is_first_tx = false;
 	// Drive VPA LOW after TX — PA regulator no longer needed
 #ifdef SMD_VPA_PIN
@@ -1637,6 +1624,26 @@ void SmdSat::send(const KineisModulation mode, const KineisPacket &user_payload,
 uint32_t SmdSat::effective_tcxo_warmup_s() const {
 	if (m_tcxo_warmup_time > 0) return m_tcxo_warmup_time;
 	return (PMU::get_die_temperature_c() >= TCXO_SKIP_TEMP_THRESHOLD_C) ? 0 : m_tcxo_configured_s;
+}
+
+void SmdSat::ensure_tcxo_warmup() {
+	const uint32_t want_ms = effective_tcxo_warmup_s() * 1000;
+	if (!m_module_tcxo.needs(want_ms)) {
+#ifdef BENCH_TEST
+		DEBUG_DETAIL("SmdSat: TCXO=%u ms kept (module holds it) first_tx=%u", want_ms, m_is_first_tx);
+#endif
+		return;
+	}
+	m_cmd.write_tcxo_warmup(want_ms);
+	m_module_tcxo.written(want_ms);
+#ifdef BENCH_TEST
+	// The warm-up runs INSIDE the module, after AT+TX is accepted -- so it delays
+	// the RF, not the command, and no host-side stopwatch that stops at
+	// "accepted" can see it. Make the value that actually went out visible: 0 on
+	// the first TX after a dive above TCXO_SKIP_TEMP_THRESHOLD_C, the configured
+	// value otherwise.
+	DEBUG_DETAIL("SmdSat: TCXO=%u ms first_tx=%u die=%d C", want_ms, m_is_first_tx, PMU::get_die_temperature_c());
+#endif
 }
 
 void SmdSat::set_tcxo_warmup_time(unsigned int time_s) {
@@ -2345,6 +2352,7 @@ bool SmdSat::switch_modulation(KineisModulation mode, const std::string &rconf_h
 		// Without this, idle_pending skips to idle and the RCONF is never written.
 		is_kmac_profil_loaded = false;
 		m_kmac_pushed_this_session = false;
+		m_module_tcxo.forget();
 		return true;
 	}
 

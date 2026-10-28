@@ -20,8 +20,10 @@
 
 class Is25Flash : public FlashInterface {
 public:
+	// FlashInterface takes (block_size, blocks, page_size). The two were passed the
+	// other way round until 2026-10-28, which only worked because both are 4096.
 	Is25Flash()
-	    : FlashInterface(IS25_BLOCK_COUNT, IS25_BLOCK_SIZE, IS25_PAGE_SIZE),
+	    : FlashInterface(IS25_BLOCK_SIZE, IS25_BLOCK_COUNT, IS25_PAGE_SIZE),
 	      m_is_init(false),
 	      m_power_ref_count(0) {}
 

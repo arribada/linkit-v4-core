@@ -21,11 +21,21 @@ void PMU::powerdown() {
 	mock().actualCall("powerdown");
 }
 
+// Busy-wait requested through PMU::delay_ms / delay_us since the process
+// started, in microseconds. On the target both are nrf_delay_*: the CPU spins
+// and the cooperative main loop stops. A simulation adds them up to hold a
+// budget (tests/src/turtle_mission_sim.cpp), because a busy-wait is invisible
+// in every functional assertion -- the frames still go out, just later and
+// dearer.
+uint64_t g_pmu_busy_wait_us = 0;
+
 void PMU::delay_ms(unsigned ms) {
+	g_pmu_busy_wait_us += static_cast<uint64_t>(ms) * 1000U;
 	mock().actualCall("delay_ms").withParameter("ms", ms);
 }
 
 void PMU::delay_us(unsigned us) {
+	g_pmu_busy_wait_us += us;
 	mock().actualCall("delay_us").withParameter("us", us);
 }
 

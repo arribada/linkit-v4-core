@@ -27,7 +27,8 @@ static constexpr const char *log_type_name[16] = {
 	"WARN",
 	"INFO",
 	"TRACE",
-	"MORTALITY"
+	"MORTALITY",
+	"DETAIL"
 };
 
 enum LogType : uint8_t {
@@ -45,7 +46,8 @@ enum LogType : uint8_t {
 	LOG_WARN,
 	LOG_INFO,
 	LOG_TRACE,
-	LOG_MORTALITY
+	LOG_MORTALITY,
+	LOG_DETAIL  ///< console only (DEBUG_DETAIL), never stored: see debug.hpp
 };
 
 struct __attribute__((packed)) LogHeader {

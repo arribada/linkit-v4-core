@@ -374,7 +374,7 @@ void LoRaDevice::warm_up_for_tx() {
 		// re-tick the FSM.
 		return;
 	}
-	DEBUG_INFO("LoRaDevice::warm_up_for_tx: pre-booting module for next surface TX");
+	DEBUG_DETAIL("LoRaDevice::warm_up_for_tx: pre-booting module for next surface TX");
 	LORA_STATE_CHANGE(power_off, power_on);
 }
 
@@ -450,7 +450,7 @@ void LoRaDevice::run_state_machine(uint16_t delay_ms) {
 // ========================================================================
 
 void LoRaDevice::state_power_off_enter() {
-	DEBUG_INFO("LoRaDevice::state_power_off_enter");
+	DEBUG_DETAIL("LoRaDevice::state_power_off_enter");
 	m_lora_comm.deinit();
 	GPIOPins::clear(SAT_PWR_EN);
 	// Park all non-essential nRF pins that touch (or might touch) the LoRa
@@ -667,8 +667,7 @@ void LoRaDevice::state_configure() {
 				// Same silent-skip trap as APPEUI, and the more damaging of
 				// the two: a wrong AppKey fails the server-side MIC check,
 				// so the JoinRequest is discarded without any reply at all.
-				DEBUG_ERROR("LoRaDevice: LORA_APPKEY (LRP03) is UNSET — module keeps its stored AppKey; "
-				            "the server will drop the JoinRequest on MIC");
+				DEBUG_ERROR("LoRaDevice: LORA_APPKEY (LRP03) UNSET — stored AppKey kept, JoinRequest dropped on MIC");
 				break;
 			}
 			if (m_config.appkey.size() != 32) {
@@ -912,8 +911,8 @@ void LoRaDevice::state_joining_enter() {
 	// keys were left in the module's own flash. The server drops those on MIC
 	// and the only symptom is a join that never completes.
 	if (otaa_credentials_missing()) {
-		DEBUG_ERROR("LoRaDevice: OTAA join refused — LORA_APPEUI(LRP02)=%s LORA_APPKEY(LRP03)=%s; "
-		            "provision them (PARMW) then force a write (SATVF force=1)",
+		// Provision them (PARMW), then force a write (SATVF force=1).
+		DEBUG_ERROR("LoRaDevice: OTAA join refused — LORA_APPEUI(LRP02)=%s LORA_APPKEY(LRP03)=%s",
 		            m_config.appeui.empty() ? "UNSET" : "set", m_config.appkey.empty() ? "UNSET" : "set");
 		m_is_error = true;
 		return;
@@ -1723,7 +1722,7 @@ bool LoRaDevice::ensure_module_awake(unsigned int timeout_ms) {
 		// was deinit'd by state_standby_enter for power savings. Sending on
 		// an unclocked UARTE peripheral causes a bus fault (HARDFAULT / MCU
 		// reboot). Re-init the UART and send an AT ping to wake the module.
-		DEBUG_INFO("LoRaDevice::ensure_module_awake: module standby — reinit UART + wake ping");
+		DEBUG_DETAIL("LoRaDevice::ensure_module_awake: module standby — reinit UART + wake ping");
 		m_lora_comm.init();
 		bool wake_ok = false;
 		for (int attempt = 0; attempt < 3 && !wake_ok; attempt++) {
@@ -1743,7 +1742,7 @@ bool LoRaDevice::ensure_module_awake(unsigned int timeout_ms) {
 		return true;  // Already powered (idle, configure, joining, transmit)
 	}
 
-	DEBUG_INFO("LoRaDevice::ensure_module_awake: module off — booting");
+	DEBUG_DETAIL("LoRaDevice::ensure_module_awake: module off — booting");
 
 	// Kick off the state machine (power_off → power_on). The async state machine
 	// will run configure + join in the background after we return.
@@ -1769,7 +1768,7 @@ bool LoRaDevice::ensure_module_awake(unsigned int timeout_ms) {
 		if (send_AT(AT_TEST, std::nullopt, 500)) {
 			// Transition the driver state to idle so the normal FSM path resumes.
 			// configure/join will run asynchronously on the next scheduler tick.
-			DEBUG_INFO("LoRaDevice::ensure_module_awake: module responded in < %ums", 3500 - timeout_ms);
+			DEBUG_DETAIL("LoRaDevice::ensure_module_awake: module responded in < %ums", 3500 - timeout_ms);
 			m_state = State::idle;
 			run_state_machine(50);
 			return true;

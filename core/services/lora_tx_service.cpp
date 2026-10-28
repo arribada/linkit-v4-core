@@ -97,8 +97,8 @@ static ScheduleDecision from_scheduler(unsigned int ms, const char *ran_why, con
 /// @brief Burst over, still no surfacing: presence heartbeat at the nominal rate.
 /// Mirror of ArgosTxService::schedule_surfacing_heartbeat.
 ScheduleDecision LoRaTxService::schedule_surfacing_heartbeat(ArgosConfig &argos_config, std::time_t now) {
-	DEBUG_INFO("LoRaTxService: burst finished, waiting for the next surfacing — status heartbeat at the "
-	           "nominal period meanwhile (not a fault).");
+	// Not a fault, and called at every scheduling pass of that wait: a detail.
+	DEBUG_DETAIL("LoRaTxService: burst finished, waiting for the next surfacing — heartbeat at the nominal period");
 	m_scheduled_task = [this]() { process_status_burst(); };
 	return from_scheduler(m_sched.schedule_legacy(argos_config, now), "surfacing heartbeat",
 	                      "surfacing heartbeat: no slot computable");
@@ -151,8 +151,8 @@ ScheduleDecision LoRaTxService::service_next_schedule() {
 	// all, and is therefore correct on any clock.
 	const bool clock_unset = argos_config.gnss_en && !service_is_time_known();
 	if (clock_unset) {
-		DEBUG_INFO("LoRaTxService: clock not set yet — sending the status heartbeat instead of holding TX back "
-		           "(depth-pile entries carry their own timestamps and are kept for later).");
+		// Depth-pile entries carry their own timestamps and are kept for later.
+		DEBUG_INFO("LoRaTxService: clock not set yet — status heartbeat sent instead of holding TX back");
 	}
 
 	// If depth pile has eligible entries, schedule GPS or sensor burst
@@ -188,8 +188,8 @@ ScheduleDecision LoRaTxService::service_next_schedule() {
 			unsigned int burst_max_msg =
 			    configuration_store->read_param<unsigned int>(ParamID::SURFACING_BURST_MAX_MSG);
 			if (burst_max_msg > 0 && m_status_burst_count >= burst_max_msg) {
-				DEBUG_INFO("LoRaTxService::SURFACING_BURST: max status messages reached (%u/%u)", m_status_burst_count,
-				           burst_max_msg);
+				DEBUG_DETAIL("LoRaTxService::SURFACING_BURST: max status messages reached (%u/%u)",
+				             m_status_burst_count, burst_max_msg);
 				// Arm cooldown if trigger mode is END_OF_DOPPLER (status burst ends
 				// because max_msg reached without GNSS fix) — parity with Argos.
 				unsigned int trigger = configuration_store->read_param<unsigned int>(ParamID::COOLDOWN_TRIGGER_MODE);
@@ -230,7 +230,7 @@ ScheduleDecision LoRaTxService::service_next_schedule() {
 				    || (cached_fl.info.valid && cached_fl.info.event_type == GPSEventType::FASTLOC);
 
 				if (have_cached_position) {
-					DEBUG_INFO("LoRaTxService::SURFACING_BURST: status #1 immediate (cached position available)");
+					DEBUG_DETAIL("LoRaTxService::SURFACING_BURST: status #1 immediate (cached position available)");
 					return schedule_at_decision(now, now, "surfacing burst: status #1, cached position");
 				}
 
@@ -244,13 +244,13 @@ ScheduleDecision LoRaTxService::service_next_schedule() {
 				if (fastloc_mode == (unsigned int)BaseFastlocMode::CLOUDLOCATE && argos_config.gnss_en) {
 					unsigned int wait_s = configuration_store->read_param<unsigned int>(ParamID::GNSS_ACQ_TIMEOUT);
 					if (wait_s == 0) wait_s = 30;  // Safety floor — should never fire (param min is 10)
-					DEBUG_INFO(
+					DEBUG_DETAIL(
 					    "LoRaTxService::SURFACING_BURST: status #1 deferred up to %u s waiting for CloudLocate raw",
 					    wait_s);
 					return schedule_at_decision(now, now + wait_s, "surfacing burst: waiting for a CloudLocate raw");
 				}
-				DEBUG_INFO("LoRaTxService::SURFACING_BURST: status #%u (immediate, no cache)",
-				           m_status_burst_count + 1);
+				DEBUG_DETAIL("LoRaTxService::SURFACING_BURST: status #%u (immediate, no cache)",
+				             m_status_burst_count + 1);
 				return schedule_at_decision(now, now, "surfacing burst: status #1");
 			}
 
@@ -285,7 +285,7 @@ ScheduleDecision LoRaTxService::service_next_schedule() {
 			// First GNSS TX is immediate after fix, then use tx_interval_s
 			// Note: m_first_gnss_tx_sent is set in service_initiate(), not here.
 			if (!m_first_gnss_tx_sent) {
-				DEBUG_INFO("LoRaTxService::SURFACING_BURST: GNSS fix — TX immediate");
+				DEBUG_DETAIL("LoRaTxService::SURFACING_BURST: GNSS fix — TX immediate");
 				return schedule_at_decision(now, now, "surfacing burst: first TX after fix");
 			}
 			return from_scheduler(m_sched.schedule_legacy(argos_config, now), "surfacing burst: GNSS phase",
@@ -515,12 +515,12 @@ void LoRaTxService::notify_peer_event(ServiceEvent &e) {
 		if (entry.info.valid && entry.info.event_type != GPSEventType::FASTLOC) {
 			unsigned int purged = m_depth_pile_manager.purge_non_fix_entries();
 			if (purged) {
-				DEBUG_INFO("LoRaTxService::notify_peer_event: purged %u non-fix entries from depth pile", purged);
+				DEBUG_DETAIL("LoRaTxService::notify_peer_event: purged %u non-fix entries from depth pile", purged);
 			}
 
 			if (argos_config.mode == BaseArgosMode::SURFACING_BURST) {
 				if ((m_is_surfacing_burst || m_awaiting_surfacing) && !m_has_gnss_fix_since_surfacing) {
-					DEBUG_INFO(
+					DEBUG_DETAIL(
 					    "LoRaTxService::SURFACING_BURST: GNSS fix after %u status messages — switching to GPS phase",
 					    m_status_burst_count);
 					m_has_gnss_fix_since_surfacing = true;
@@ -543,7 +543,7 @@ void LoRaTxService::notify_peer_event(ServiceEvent &e) {
 				}
 			} else {
 				// LEGACY / DUTY_CYCLE: GNSS fix → TX immediately, reset TR_NOM timer
-				DEBUG_INFO("LoRaTxService: GNSS fix — reschedule for immediate TX");
+				DEBUG_DETAIL("LoRaTxService: GNSS fix — reschedule for immediate TX");
 				m_is_first_tx = true;
 				service_reschedule();
 			}
@@ -595,7 +595,7 @@ void LoRaTxService::notify_peer_event(ServiceEvent &e) {
 				// whether the previous cycle left a cooldown active.
 				reschedule_cooldown_warm_up();
 			} else {
-				DEBUG_INFO("LoRaTxService: dive, no cooldown — warming up module for next surface");
+				DEBUG_DETAIL("LoRaTxService: dive, no cooldown — warming up module for next surface");
 				m_device.warm_up_for_tx();
 			}
 		} else {
@@ -664,7 +664,7 @@ void LoRaTxService::notify_peer_event(ServiceEvent &e) {
 				// `service_initiate()` doesn't call an empty std::function and
 				// throw `bad_function_call`.
 				m_scheduled_task = [this]() { process_status_burst(); };
-				DEBUG_INFO("LoRaTxService::SURFACING_BURST: surface detected — starting status burst");
+				DEBUG_DETAIL("LoRaTxService::SURFACING_BURST: surface detected — starting status burst");
 			}
 		}
 	}
@@ -940,8 +940,7 @@ void LoRaTxService::process_status_burst() {
 			format_id = (uint8_t)BaseCloudLocateFormat::MEASC12;
 		}
 		if (!blob) {
-			DEBUG_WARN("LoRaTxService::process_status_burst: configured CloudLocate format %u not available "
-			           "(measc12=%u meas20=%u meas50=%u) — skipping CL TX",
+			DEBUG_WARN("LoRaTxService: CloudLocate format %u not available (measc12=%u meas20=%u meas50=%u) — no CL TX",
 			           cl_format, (unsigned)raw.has_measc12, (unsigned)raw.has_meas20, (unsigned)raw.has_meas50);
 		}
 
@@ -1150,9 +1149,9 @@ void LoRaTxService::react([[maybe_unused]] KineisEventTxComplete const &e) {
 	configuration_store->get_argos_configuration(argos_config);
 	if (argos_config.shutdown_ntime_sat > 0 && m_session_tx_count >= argos_config.shutdown_ntime_sat) {
 #if defined(BOARD_RSPB)
-		DEBUG_ERROR("LoRaTxService: session TX budget reached (%u/%u) — powering down ON PURPOSE. The TPL5111 duty "
-		            "cycle restores power and the counter resets on the next boot.",
-		            m_session_tx_count, argos_config.shutdown_ntime_sat);
+		// The TPL5111 duty cycle restores power; the counter resets on the next boot.
+		DEBUG_ERROR("LoRaTxService: session TX budget reached (%u/%u) — powering down ON PURPOSE", m_session_tx_count,
+		            argos_config.shutdown_ntime_sat);
 		configuration_store->save_params();  // Flush before shutdown
 		PMU::powerdown();
 		return;
@@ -1162,8 +1161,7 @@ void LoRaTxService::react([[maybe_unused]] KineisEventTxComplete const &e) {
 		// powered a per-session budget silently becomes a one-shot lifetime cap.
 		if (!m_ntime_sat_ignored_logged) {
 			m_ntime_sat_ignored_logged = true;
-			DEBUG_WARN("LoRaTxService: session TX budget reached (%u/%u) but SHUTDOWN_NTIME_SAT only applies to RSPB, "
-			           "whose duty cycle power-cycles the board. Ignored here. Transmission continues.",
+			DEBUG_WARN("LoRaTxService: session TX budget reached (%u/%u), SHUTDOWN_NTIME_SAT is RSPB-only — ignored",
 			           m_session_tx_count, argos_config.shutdown_ntime_sat);
 		}
 #endif
@@ -1224,10 +1222,10 @@ void LoRaTxService::react([[maybe_unused]] KineisEventTxComplete const &e) {
 	// walk; from standby, power_off_immediate cleanly moves the state to
 	// power_off and the subsequent warm-up/dive paths see the correct state.
 	if (m_awaiting_surfacing) {
-		DEBUG_INFO("LoRaTxService: burst complete — scheduling LoRa module power-off (surface idle)");
+		DEBUG_DETAIL("LoRaTxService: burst complete — scheduling LoRa module power-off (surface idle)");
 		system_scheduler->post_task_prio(
 		    [this]() {
-			    DEBUG_INFO("LoRaTxService: powering off LoRa module (post-burst, deferred)");
+			    DEBUG_DETAIL("LoRaTxService: powering off LoRa module (post-burst, deferred)");
 			    m_device.power_off_immediate();
 		    },
 		    "LoRaPostBurstOff", Scheduler::DEFAULT_PRIORITY, 500);
@@ -1325,11 +1323,11 @@ void LoRaTxService::schedule_burst_prewarm() {
 	}
 
 	unsigned int prewarm_delay_ms = interval_ms - BURST_PRE_WARM_DURATION_MS;
-	DEBUG_INFO("LoRaTxService: scheduling pre-warm in %u ms (next TX in %u s, budget %u ms)", prewarm_delay_ms,
-	           interval_s, BURST_PRE_WARM_DURATION_MS);
+	DEBUG_DETAIL("LoRaTxService: scheduling pre-warm in %u ms (next TX in %u s, budget %u ms)", prewarm_delay_ms,
+	             interval_s, BURST_PRE_WARM_DURATION_MS);
 	m_burst_prewarm_task = system_scheduler->post_task_prio(
 	    [this]() {
-		    DEBUG_INFO("LoRaTxService: pre-warm — booting LoRa module for next burst TX");
+		    DEBUG_DETAIL("LoRaTxService: pre-warm — booting LoRa module for next burst TX");
 		    m_device.warm_up_for_tx();
 	    },
 	    "LoRaBurstPreWarm", Scheduler::DEFAULT_PRIORITY, prewarm_delay_ms);
@@ -1353,8 +1351,8 @@ void LoRaTxService::react(KineisEventDeviceError const &) {
 	{
 		if (DEVICE_ERROR_PROBE_PERIOD_S && m_consecutive_device_errors >= DEVICE_ERROR_MAX_CONSECUTIVE) {
 			m_device_error_suspend_until = service_current_time() + DEVICE_ERROR_PROBE_PERIOD_S;
-			DEBUG_ERROR("LoRaTxService: %u consecutive device errors — suspending TX for %u s, "
-			            "then one probe (a surface event clears it sooner)",
+			// A surface event clears the suspension sooner.
+			DEBUG_ERROR("LoRaTxService: %u consecutive device errors — suspending TX for %u s, then one probe",
 			            m_consecutive_device_errors, DEVICE_ERROR_PROBE_PERIOD_S);
 			service_complete(nullptr, nullptr, false);  // no reschedule
 		} else {

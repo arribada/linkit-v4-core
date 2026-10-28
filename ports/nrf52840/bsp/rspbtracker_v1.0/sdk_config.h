@@ -1422,6 +1422,8 @@
 #ifndef GPIOTE_ENABLED
 #define GPIOTE_ENABLED 1
 #endif
+// Audit point 9 (2026-10-28): 1 = at most ONE GPIOTE input in PORT (low-power) mode.
+// Read the note above GPIO_REED_SW in bsp.cpp before moving inputs to PORT.
 // <o> GPIOTE_CONFIG_NUM_OF_LOW_POWER_EVENTS - Number of lower power input pins 
 #ifndef GPIOTE_CONFIG_NUM_OF_LOW_POWER_EVENTS
 #define GPIOTE_CONFIG_NUM_OF_LOW_POWER_EVENTS 1
@@ -1952,6 +1954,8 @@
 #ifndef NRFX_GPIOTE_ENABLED
 #define NRFX_GPIOTE_ENABLED 1
 #endif
+// Audit point 9 (2026-10-28): 1 = at most ONE GPIOTE input in PORT (low-power) mode.
+// Read the note above GPIO_REED_SW in bsp.cpp before moving inputs to PORT.
 // <o> NRFX_GPIOTE_CONFIG_NUM_OF_LOW_POWER_EVENTS - Number of lower power input pins 
 #ifndef NRFX_GPIOTE_CONFIG_NUM_OF_LOW_POWER_EVENTS
 #define NRFX_GPIOTE_CONFIG_NUM_OF_LOW_POWER_EVENTS 1
