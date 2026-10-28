@@ -53,6 +53,10 @@ extern "C" {
 #define ENABLE_AXL_SENSOR 1
 #endif
 
+#ifndef ENABLE_BARO_SENSOR
+#define ENABLE_BARO_SENSOR 0
+#endif
+
 #ifndef ENABLE_MORTALITY_SENSOR
 #define ENABLE_MORTALITY_SENSOR 0
 #endif
@@ -527,8 +531,18 @@ enum class ParamID {
 #endif
 	// === Flash journal ===
 	SYSTEM_LOG_LEVEL                         = 282,  // uint 0..3: lowest level written to system.log after the boot record, 0 OFF 1 ERROR 2 WARN 3 INFO
+	// === External barometer (slots 283-287 always reserved) ===
+	// 2026-10 — CLS woodbuoy (Vaisala PTB110 through an ADS1115), merged from
+	// dev/cls_102026, where they sat at 266-270: those slots were taken here by
+	// UNP26..DBP02 in the meantime. config.dat is read by KEY, so a woodbuoy's
+	// file keeps its BAP values across the move. Live on ENABLE_BARO_SENSOR builds.
+	BARO_SENSOR_ENABLE                       = 283,  // bool: the barometer service runs
+	BARO_SENSOR_PERIODIC                     = 284,  // uint s: periodic logging interval, 0 = off
+	BARO_SENSOR_ENABLE_TX_MODE               = 285,  // sensor TX mode: OFF / ONESHOT / MEAN / MEDIAN
+	BARO_SENSOR_ENABLE_TX_MAX_SAMPLES        = 286,  // uint: samples taken for a transmission
+	BARO_SENSOR_ENABLE_TX_SAMPLE_PERIOD      = 287,  // uint ms: interval between those samples
 	// === Sentinel (fixed regardless of #ifdef combinations) ===
-	__PARAM_SIZE                             = 283,
+	__PARAM_SIZE                             = 288,
 	__NULL_PARAM                             = 0xFFFF
 };
 // clang-format on

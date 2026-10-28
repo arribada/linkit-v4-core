@@ -928,8 +928,8 @@ ScheduleDecision ArgosTxService::schedule_with_gnss(ArgosConfig &argos_config, s
 		return ScheduleDecision::run(0, "time-sync burst");
 	}
 	if (m_depth_pile_manager.eligible() == 0) {
-		DEBUG_INFO("ArgosTxService: depth pile has no eligible entries (NTRY exhausted or empty) — TX disabled "
-		           "until next GPS entry");
+		DEBUG_DETAIL("ArgosTxService: depth pile has no eligible entries (NTRY exhausted or empty) — TX disabled "
+		             "until next GPS entry");
 		// The pile is RAM-only, so it is empty at every boot. Answering Off here
 		// is what deadlocked a tag whose only filler -- the GNSS service -- was
 		// itself waiting on a transmission that could then never happen.
@@ -2105,6 +2105,22 @@ void ArgosTxService::process_sensor_burst() {
 				}
 			}
 		}
+#elif defined(WOODBUOY_SENSOR_MSG)
+		// Uses shorter sensor packet format (LDK modulation, with sea temp and pressure optional)
+		DEBUG_TRACE("TX_RAW: SENS lat=%.6f lon=%.6f hAcc=%u nSV=%u hDOP=%.1f batt=%umV", gps->info.lat, gps->info.lon,
+		            gps->info.hAcc, gps->info.numSV, (double)gps->info.hDOP, (unsigned)gps->info.batt_voltage);
+		m_scheduled_mode = KineisModulation::LDK;
+		packet = ArgosPacketBuilder::build_sensor_packet(
+		    gps,
+		    nullptr,  // ALS_SENSOR
+		    nullptr,  // PH_SENSOR
+		    nullptr,  // PRESSURE_SENSOR
+		    m_depth_pile_manager.retrieve_sensor_single((unsigned int)argos_config.depth_pile,
+			                                            ServiceIdentifier::SEA_TEMP_SENSOR),
+		    nullptr,  // AXL_SENSOR
+		    m_depth_pile_manager.retrieve_sensor_single((unsigned int)argos_config.depth_pile,
+			                                            ServiceIdentifier::BARO_SENSOR),
+		    argos_config.is_out_of_zone, argos_config.is_lb, size_bits);
 #else
 		// Generic sensor packet for LinkIt V4 (all sensors, no RSPB-specific packing)
 		// Demoted to TRACE: per-TX payload dump on hot path.
@@ -2127,6 +2143,7 @@ void ArgosTxService::process_sensor_burst() {
 #else
 		    nullptr,
 #endif
+		    nullptr,  // BARO SENSOR
 		    argos_config.is_out_of_zone, argos_config.is_lb, size_bits);
 
 		// Adaptive modulation for generic sensor packet

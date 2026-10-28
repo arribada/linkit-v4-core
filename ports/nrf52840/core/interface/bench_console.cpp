@@ -44,6 +44,7 @@ extern LoRaTxService *lora_tx_service_instance;
 #include "bsp.hpp"
 #include "gpio.hpp"
 #include "nrf_gpio.h"
+#include "memmang.hpp"
 
 extern OTAFileUpdater *ota_updater;
 
@@ -943,6 +944,20 @@ static void bench_gpioteab(const std::string &line) {
 	}
 }
 
+static void bench_mem() {
+	// The two watermarks MemoryMonitorService only journals every 12 h, on demand:
+	// the stack peak since boot (stack painting) against the reserved size, and
+	// the heap's lowest free since boot. To check a __STACK_SIZE or
+	// configTOTAL_HEAP_SIZE change after a session that exercised the board.
+	const HeapStats_t heap = MEMMANG::heap_stats();
+	char buf[112];
+	snprintf(buf, sizeof(buf), "%%MEM stack_max=%lu stack_size=%u heap_min_free=%u heap_free=%u heap_size=%u",
+	         (unsigned long)MEMMANG::max_stack_usage(), (unsigned int)__STACK_SIZE,
+	         (unsigned int)heap.xMinimumEverFreeBytesRemaining, (unsigned int)heap.xAvailableHeapSpaceInBytes,
+	         (unsigned int)configTOTAL_HEAP_SIZE);
+	reply(buf);
+}
+
 static void bench_swsraw(const std::string &line) {
 	// Feed the SWS analog detector a raw reading of our choice. It goes through
 	// the whole real path -- filters, levels, calibration, the UW detector and
@@ -963,7 +978,7 @@ static void bench_swsraw(const std::string &line) {
 	}
 }
 
-/// @brief rails, pull-downs, GPIOTE, the satellite reset line, a raw SWS reading
+/// @brief rails, pull-downs, GPIOTE, the satellite reset line, a raw SWS reading, memory
 static bool handle_probe_cmd(const std::string &cmd, const std::string &line) {
 	if (cmd == "%SATRST") {
 		bench_satrst(line);
@@ -975,6 +990,8 @@ static bool handle_probe_cmd(const std::string &cmd, const std::string &line) {
 		bench_gpioteab(line);
 	} else if (cmd == "%SWSRAW") {
 		bench_swsraw(line);
+	} else if (cmd == "%MEM") {
+		bench_mem();
 #ifdef VSYS_SEL
 	} else if (cmd == "%RAILS") {
 		bench_rails();

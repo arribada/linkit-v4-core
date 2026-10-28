@@ -203,6 +203,12 @@ public:
 	static constexpr unsigned int RSPB_SHORT_PACKET_BITS = 122;
 	static constexpr unsigned int RSPB_SHORT_PACKET_BYTES = 16;
 
+	// WOODBUOY sensor packet
+	static constexpr unsigned int WOODBUOY_SENSOR_PACKET_BYTES = 16;
+	static constexpr unsigned int WOODBUOY_SENSOR_PACKET_MAX_BITS = WOODBUOY_SENSOR_PACKET_BYTES * 8;
+	static constexpr unsigned int SENSOR_TEMP_PACKET_HEADER = 0b001;       // Type 5 (001) for temperature
+	static constexpr unsigned int SENSOR_TEMP_BARO_PACKET_HEADER = 0b101;  // Type 5 (101) for temperature + barometer
+
 	// === Encoding constants ===
 
 	static constexpr unsigned int FIXTYPE_3D = 3;
@@ -282,8 +288,8 @@ public:
 	/// @brief Build sensor packet (GPS + optional ALS/PH/pressure/temp/AXL).
 	static KineisPacket build_sensor_packet(GPSLogEntry *v, ServiceSensorData *als_sensor, ServiceSensorData *ph_sensor,
 	                                        ServiceSensorData *pressure_sensor, ServiceSensorData *sea_temp_sensor,
-	                                        ServiceSensorData *axl_sensor, bool is_out_of_zone, bool is_low_battery,
-	                                        unsigned int &size_bits);
+	                                        ServiceSensorData *axl_sensor, ServiceSensorData *baro_sensor,
+	                                        bool is_out_of_zone, bool is_low_battery, unsigned int &size_bits);
 
 	/// @brief Build RSPB long packet (LDA2, bird tracker with mortality).
 	static KineisPacket build_rspb_long_packet(GPSLogEntry *gps, ServiceSensorData *pressure_sensor,

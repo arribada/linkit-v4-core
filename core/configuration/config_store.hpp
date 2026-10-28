@@ -546,6 +546,11 @@ protected:
 		/* [280] CAM_FEATURES */ 0U,                  // never answered
 		/* [281] CAM_CONTROL_MODE */ CAM_CONTROL_UART ? 2U : 1U,  // this build's; STATR rewrites it anyway
 		/* [282] SYSTEM_LOG_LEVEL */ 3U,              // INFO: one line per step, as every earlier build
+		/* [283] BARO_SENSOR_ENABLE */ (bool)false,                       // CLS woodbuoy barometer, off
+		/* [284] BARO_SENSOR_PERIODIC */ 0U,                              // no periodic logging
+		/* [285] BARO_SENSOR_ENABLE_TX_MODE */ BaseSensorEnableTxMode::OFF,
+		/* [286] BARO_SENSOR_ENABLE_TX_MAX_SAMPLES */ 1U,
+		/* [287] BARO_SENSOR_ENABLE_TX_SAMPLE_PERIOD */ 1000U,            // ms
 	};
 	// clang-format on
 
@@ -1601,6 +1606,13 @@ public:
 			          && read_param<BaseSensorEnableTxMode>(ParamID::THERMISTOR_SENSOR_ENABLE_TX_MODE)
 			                 != BaseSensorEnableTxMode::OFF)
 			    << (int)ServiceIdentifier::THERMISTOR_SENSOR;
+#endif
+#if ENABLE_BARO_SENSOR
+			argos_config.sensor_tx_enable |=
+			    (int)(read_param<bool>(ParamID::BARO_SENSOR_ENABLE)
+			          && read_param<BaseSensorEnableTxMode>(ParamID::BARO_SENSOR_ENABLE_TX_MODE)
+			                 != BaseSensorEnableTxMode::OFF)
+			    << (int)ServiceIdentifier::BARO_SENSOR;
 #endif
 		}
 	}

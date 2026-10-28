@@ -66,7 +66,7 @@ double TSYS01::read(unsigned int port) {
 	     | received_bytes[2];
 
 	calculate();
-	DEBUG_TRACE("TSYS01: temp=%.3f °C", static_cast<double>(TEMP));
+	DEBUG_TRACE("TSYS01: temp=%.3f C", static_cast<double>(TEMP));
 
 	return static_cast<double>(TEMP);
 }

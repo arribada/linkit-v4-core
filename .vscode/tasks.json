@@ -32,7 +32,21 @@
 			],
 			"group": {
 				"kind": "build",
-				"isDefault": true
+			}
+		},
+		{
+			"type": "shell",
+			"label": "LINKIT: build (Debug)",
+			"command": "./scripts/build_linkitv4_kim.sh --debug",
+			"args": [],
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"problemMatcher": [
+				"$gcc"
+			],
+			"group": {
+				"kind": "build",
 			}
 		},
 		{
@@ -208,6 +222,65 @@
 			"label": "RSPB: flash (app only)",
 			"detail": "Flash application without bootloader - use for development when bootloader is already on device",
 			"command": "nrfjprog -f nrf52 --program ports/nrf52840/build/RSPB/LinkIt_RSPB_board-*.hex --sectorerase && nrfjprog -f nrf52 --reset",
+			"args": [],
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"problemMatcher": [
+				"$gcc"
+			],
+			"group": "build"
+		},
+		// =====================================================================
+		// LINKIT Board Tasks for Buoys application
+		// =====================================================================
+		{
+			"type": "shell",
+			"label": "WOODBUOY: build",
+			"command": "./scripts/build_woodbuoy.sh",
+			"args": [],
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"problemMatcher": [
+				"$gcc"
+			],
+			"group": {
+				"kind": "build",
+			}
+		},
+		{
+			"type": "shell",
+			"label": "WOODBUOY: build (Debug)",
+			"command": "./scripts/build_woodbuoy.sh --debug",
+			"args": [],
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"problemMatcher": [
+				"$gcc"
+			],
+			"group": {
+				"kind": "build",
+			}
+		},
+		{
+			"type": "shell",
+			"label": "WOODBUOY: clean build",
+			"command": "rm -rf ports/nrf52840/build/WOODBUOY && ./scripts/build_woodbuoy.sh",
+			"args": [],
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"problemMatcher": [
+				"$gcc"
+			],
+			"group": "build"
+		},
+		{
+			"type": "shell",
+			"label": "WOODBUOY: flash",
+			"command": "nrfjprog --recover && nrfjprog -f nrf52 --program ports/nrf52840/build/WOODBUOY/LinkIt_board_merged-*.hex --sectorerase && nrfjprog -f nrf52 --reset",
 			"args": [],
 			"options": {
 				"cwd": "${workspaceFolder}"

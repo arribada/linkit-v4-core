@@ -617,6 +617,15 @@ const BaseMap param_map[] = {
 	// there; the console is never filtered. A tag nobody will read again can
 	// run at WARN and write only what went wrong.
 	{ "SYSTEM_LOG_LEVEL", "DBP02", BaseEncoding::UINT, 0U, 3U, {}, true, true },
+	// [283-287] BAP01-BAP05: external barometer, a Vaisala PTB110 (0-2.5 V for
+	// 800-1060 hPa) read through an ADS1115, ENABLE_BARO_SENSOR builds only (CLS
+	// woodbuoy). Moved here from 266-270 by the dev/cls_102026 merge; config.dat
+	// is read by key, so a woodbuoy's stored values follow.
+	{ "BARO_SENSOR_ENABLE", "BAP01", BaseEncoding::BOOLEAN, 0, 0, {}, ENABLE_BARO_SENSOR, true },
+	{ "BARO_SENSOR_PERIODIC", "BAP02", BaseEncoding::UINT, 0U, 0U, {}, ENABLE_BARO_SENSOR, true },
+	{ "BARO_SENSOR_ENABLE_TX_MODE", "BAP03", BaseEncoding::SENSORENABLETXMODE, 0, 0, {}, ENABLE_BARO_SENSOR, true },
+	{ "BARO_SENSOR_ENABLE_TX_MAX_SAMPLES", "BAP04", BaseEncoding::UINT, 1U, 0xFFFFFFFFU, {}, ENABLE_BARO_SENSOR, true },
+	{ "BARO_SENSOR_ENABLE_TX_SAMPLE_PERIOD", "BAP05", BaseEncoding::UINT, 1U, 0xFFFFFFFFU, {}, ENABLE_BARO_SENSOR, true },
 };
 // clang-format on
 

@@ -74,7 +74,7 @@ GNP01, GNP52, ARP01, CAP01 et GNP25 n'ont pas changé (1, 4294967295, 0, 0, 1).
 | 1.7 | `python3 tools/check_cached_modulation_writes.py`, `scripts/check_doc_links.py`, `tools/check_battery_guard_callers.py` | OK |
 | 1.8 | `python3 tools/check_gpio_output_pulls.py` (nouveau) | OK |
 | 1.9 | clang-format sur les fichiers modifiés (commande du `CLAUDE.md`, section CI) | aucune violation |
-| 1.10 | Matrice firmware : KIM, SMD SPI, SMD UART, LoRa, SMD SPI + caméra UART, RSPB (tension et mixte), et le build de banc | compile, 0 avertissement |
+| 1.10 | Matrice firmware : KIM, SMD SPI, SMD UART, LoRa, SMD SPI + caméra UART, RSPB (tension et mixte), le woodbuoy de CLS (`scripts/build_woodbuoy.sh`), et les builds de banc, caméra UART comprise | compile, 0 avertissement, et une marge RAM positive : `arm-none-eabi-size -A`, `.data + .bss + .noinit` plus la pile sous 250 240 o (2.14) |
 | 1.11 | `python3 tools/check_log_lines.py` (nouveau) | OK : aucune ligne de journal ne dépasse 118 octets |
 | 1.12 | `python3 tools/check_bench_log_patterns.py` | « toutes presentes » : chaque texte attendu par le banc existe dans le firmware |
 
@@ -559,6 +559,89 @@ Chaque ligne renvoie à sa section, qui donne le protocole et le résultat atten
 | **Ancien firmware** | 2.4 mise à jour depuis un firmware sans DBP02 (lu à 3) ; 2.8 mise à jour depuis la release v4.2.0 (configuration intacte) |
 | **Caméra** | 2.3 build `CAM_CONTROL=BUTTON`, `CAP06=AUTO`, alimentation par `CAM_PWR_EN` |
 | **Sans condition** (carte du banc) | 2.1 valeurs batterie, `STATR` répété, `SENSR`, seuil `LBP02`, 1re mesure au démarrage ; 2.4 une vague courte de `gnss_bench.py` ou `dte_campaign.py` sans émission |
+| **Carte KIM2** (suite) | 2.14 identité lue au démarrage, puis 1re session |
+| **Matériel CLS** (woodbuoy) | 2.14 trame woodbuoy reçue et décodée, baromètre et alimentation, buzzer |
+
+### 2.14 Fusion de `dev/cls_102026` (CLS, 28/10)
+
+**Ce que c'est.** 12 commits de Susanna Polino (CLS) du 9/09 au 21/10, partis du
+1/09 (`ccf65628`), pendant que cette branche en faisait 206. Ils servent surtout un
+produit CLS, le **woodbuoy** : une bouée KIM2 avec buzzer, piles alcalines,
+température de mer et un baromètre Vaisala PTB110 lu par un ADS1115, sans capteur
+d'eau salée. Fusion faite le 28/10, chaque commit relu contre l'état de cette branche.
+
+| Commit CLS | Décision | Pourquoi |
+|---|---|---|
+| `4f157cf7` script KIM | pris en partie | Caméra à 0 par défaut : déjà fait ici. Mise en forme de la commande cmake : prise, avec nos options (`DEBUG_LEVEL`, `BENCH_ALLOW_POWERDOWN`). **`ENABLE_SWS_ANALOG` à 0 par défaut : refusé** : ce script construit la tortue, qui n'aurait plus ni plongée ni remontée. Le woodbuoy a son propre script, qui pose 0 |
+| `d8348a47`, `4484d227`, `650170e2` script, trame et baromètre woodbuoy | pris, corrigés | Voir ci-dessous. Les paramètres BAP01-BAP05 passent de 266-270 à **283-287** : ces emplacements étaient pris ici par UNP26..DBP02. La relecture de `config.dat` par clé (2.8) les replace sur une balise CLS déjà configurée |
+| `832b9a0f` compilation de la température de mer | pris | |
+| `4579d432` température de mer × 1000 | déjà fait | Même formule que `0b7ac2ee` (10/09), qui garde en plus la division par 10 côté LoRa |
+| `c01c1ccf` lignes de journal en TRACE | **refusé, remplacé** | Même but que le point 2 (2.4), mais TRACE est retiré du binaire au niveau 3 : ces lignes disparaissaient aussi de la console de banc, et `M10Q on`, `boot sync at`, `next GNSS acquisition`, `TX SUCCESS` sont des lignes d'étape que le banc et `log_harvest.py` lisent. Les lignes qu'ils étaient seuls à toucher passent en DETAIL |
+| `2b9279c4` cause de reset « pseudo power-on » | déjà fait | Couvert ici, avec des marqueurs explicites dans GPREGRET (0x80, 0x81) |
+| `98fafb92` buzzer et geste aimant | pris | Carillon au démarrage, phases sonores du geste d'extinction, coupure de sécurité à 30 s. Builds `BUZZER_ENABLE` seulement |
+| `4caeb8e4` TX du KIM2 à l'extinction | **refusé, remplacé** | Même fuite que `34ebb4a1` (19/09, PPK : 70 → 27 µA). Leur `park_tx_for_power_off()` doublait le nôtre sous le même nom (haute impédance, instance UART 1 en dur) : un seul mécanisme gardé. Pris : le désabonnement du module éteint |
+| `f0136b9c` identité du KIM2 au démarrage | pris, corrigé | ID, ADDR et version lus à la construction (≈ 550 ms, **aucune émission**). `sync_power_up()` et `sync_power_down()` factorisent quatre copies ; la coupure passe par `cut_module_rail()`, TX tirée bas d'abord, sans quoi la fuite de 43 µA revenait |
+| `c93ce7fd` batterie lue seulement à la demande | **refusé** | Sans lecture DTE ni GNSS, la batterie n'était plus jamais mesurée : sur une configuration sans GNSS (`turtle_doppler_only`), plus de garde batterie critique. La règle de 2.1 (mesure réutilisée au plus 30 min) couvre leur besoin |
+
+**Corrigé dans leur code en fusionnant** (rien de cela ne compile hors woodbuoy) :
+- trame woodbuoy : le champ baromètre déréférençait un pointeur nul dans une trame
+  « température seule » ;
+- encodage `(hPa − 800) × 100` borné aux 15 bits. Hors plage, il était indéfini sous
+  800 hPa, et `PACK_BITS` repliait en silence une pression plausible et fausse
+  au-delà de 1127 hPa ;
+- ADS1115 : lecture en entier signé, sinon un capteur éteint lisait 1652 hPa ;
+- alimentation du baromètre coupée aussi après une mesure **périodique** (BAP02 > 0) :
+  elle restait allumée pour toujours ;
+- export du journal BARO : `%d` sur un `double` ;
+- pile et cache du baromètre sous `#if ENABLE_BARO_SENSOR`, comme les autres capteurs ;
+- CMake refuse le baromètre hors LinkIt et sur un SMD SPI (P0.06 est aussi le MOSI du
+  module) ;
+- paramètres de capteur non utilisés selon le format marqués `[[maybe_unused]]` : les
+  tests PC ne compilaient plus.
+
+**La RAM manquait, et pas à cause de CLS seulement.** Avec la section `.noinit`, la marge
+RAM d'avant la fusion était de 1212 o sur la tortue KIM, 920 o sur son banc, 1024 o sur le
+banc SMD UART, 376 o sur la caméra UART et **52 o** sur son banc. La fusion ajoute
+environ 1,1 Ko à chaque build, et quatre variantes ne se liaient plus. La cause est la
+table des paramètres : chaque paramètre coûte environ 216 o de RAM sur **tous** les builds,
+implémenté ou non (`param_map` garde des chaînes, environ 134 o par entrée, soit 38 Ko au
+total, plus deux emplacements de 40 o dans le magasin). Correctif : la pile réservée passe
+de 32 à **28 Ko** (`__STACK_SIZE`). Le pic mesuré par le firmware lui-même (pile remplie au
+démarrage, ligne « STACK: N max » de MemoryMonitorService) est de 4,2 à 4,5 Ko sur les
+journaux du banc : 28 Ko en laissent six fois plus. Le tas (64 Ko, au plus bas 13 Ko
+libres) n'est pas touché. **Proposé, non traité** : sortir `param_map` de la RAM, ce qui
+libérerait environ 38 Ko. Nouvelle commande de banc `%MEM` : pic de pile et minimum de
+tas libre depuis le démarrage.
+
+**À transmettre à CLS, non changé faute de matériel :**
+- **Modulation.** La trame woodbuoy est forcée en LDK (128 bits). Avec
+  `ARGOS_ADAPTIVE_MODULATION=0` et un RCONF maître d'une autre modulation, leur branche
+  **abandonnait l'émission** à chaque fois (DeviceError, puis report) : la trame ne
+  partait jamais. Ici, la garde de modulation la ré-encapsule dans la modulation du
+  maître et elle part, mais en LDA2 sur un maître LDA2. Pour recevoir la trame telle
+  qu'elle est conçue, il faut un maître LDK, ou la modulation adaptative.
+- **ADS1115 en conversion continue** (`0xE2`, MODE = 0, alors que le commentaire dit
+  « single ») : environ 150 µA permanents s'il est sur un rail toujours alimenté. En
+  conversion unique, déclenchée à chaque lecture, il tombe à environ 0,5 µA.
+- **Attente active de 2 s** à chaque mise sous tension du baromètre : l'ordonnanceur
+  est bloqué pendant ce temps.
+- **Retour à un firmware CLS** après celui-ci : leur relecture de `config.dat` est
+  encore positionnelle, donc les paramètres après l'emplacement 265 seraient décalés.
+  Fusionner cette branche chez eux corrige ce point.
+- Le segment sol doit décoder les en-têtes `001` et `101` en LDK (16 octets, sans CRC).
+  L'en-tête `001` est aussi celui de la trame capteur générique LDA2 (24 octets).
+
+| Vérification | Comment | Fait |
+|---|---|---|
+| Tests PC | `-p -xg SWS` 1055/1055, Cyprus 1073/1073, SWSAnalog 65, SWSAnalogFlash 30, TurtleSimulation 11/11, RSPBSimulation 10/10 : mêmes effectifs qu'avant la fusion | ✅ 28/10 |
+| Contrôles | tables de paramètres (288 emplacements), lignes de journal, textes du banc, sorties sans tirage, garde batterie, cliquet de complexité, liens de doc ; clang-format sur les lignes fusionnées | ✅ 28/10 |
+| Compilation | 14 variantes : les 8 de la matrice, la caméra UART et son banc, les bancs SMD UART et RSPB, le woodbuoy et son banc | ✅ 28/10 : toutes compilent, 0 avertissement, marge RAM de 3036 à 13616 o avec la pile à 28 Ko. Avec 32 Ko, quatre ne se liaient plus (ci-dessus) |
+| Gardes CMake | baromètre sur SMD SPI, puis sur RSPB : refusés, avec le message | ✅ 28/10 |
+| Carte du banc (SMD UART) | la fusion touche du code commun : relecture complète de la configuration identique, commandes de banc, plongée et remontée par `%SWSRAW` | ✅ 28/10 : 34 contrôles sur 34, configuration identique (161 clés, PWP06 à part), publication de l'émersion en 1 ms, 1re session GNSS synchronisée, aucune émission |
+| Pile à 28 Ko | build de banc, après une session complète (DTE, GNSS, plongée et remontée, commandes de banc) : `%MEM`, `stack_max` loin sous `stack_size` | ✅ 28/10 : `stack_max=4220` sur 28672 ; même contrôle carte que ci-dessus, 36 sur 36. Au passage, `heap_min_free=9968` sur 65536 après des lectures complètes des paramètres : le tas est la ressource la plus serrée, d'où le choix de ne pas y toucher |
+| Pile à 28 Ko, longue durée | sur carte saine et sur le terrain, les lignes « STACK: N max » du journal (toutes les 12 h) restent loin sous 28 Ko | ⬜ |
+| Carte KIM2 | au démarrage, une seule mise sous tension du module, `ARGOS_DECID` / `ARGOS_HEXID` lus et sauvés une fois, aucune émission ; puis une session normale | ⬜ |
+| Woodbuoy (CLS) | trame reçue et décodée, pression plausible, alimentation du baromètre coupée après chaque mesure, buzzer | ⬜ CLS |
 
 ---
 

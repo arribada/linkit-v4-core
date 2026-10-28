@@ -72,6 +72,7 @@ protected:
 					sensor_populate_log_entry(&e, m_ready_value);
 					service_log(&data, &e);
 					m_sensor_background_active = false;
+					sensor_service_terminate();
 				}
 			} else {
 				// Not in TX background mode — periodic log acquisition
@@ -82,10 +83,15 @@ protected:
 				ServiceEventData data = sensor;
 				sensor_populate_log_entry(&e, sensor);
 				service_log(&data, &e);
+				// Same as the end of a TX sampling run: release what the sample took.
+				// Without it the barometer's supply stayed on after the first
+				// periodic sample, for good.
+				sensor_service_terminate();
 				service_complete(nullptr, nullptr, reschedule);
 			}
 		} catch (ErrorCode e) {
 			DEBUG_ERROR("SensorService: %s: Failed to read sensor [%04X]", get_name(), (unsigned int)e);
+			sensor_service_terminate();
 			if (!m_sensor_background_active) {
 				service_complete(nullptr, nullptr, reschedule);
 			} else {
@@ -241,4 +247,5 @@ private:
 		return (n > MAX_SENSOR_CHANNELS) ? MAX_SENSOR_CHANNELS : n;
 	}
 	virtual bool sensor_is_usable_underwater() { return true; }
+	virtual void sensor_service_terminate() {}  // Optional override for sensor-specific termination logic
 };

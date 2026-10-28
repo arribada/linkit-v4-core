@@ -185,6 +185,10 @@ GNSS_HAS_BACKUP_BATTERY=${GNSS_HAS_BACKUP_BATTERY:-0}
 # 0/1 (consumed as `#if ENABLE_SWS_ANALOG` in C — ON/OFF would both evaluate to 0).
 # Runtime detection is still gated by UNDERWATER_EN (UNP01); this flag only controls
 # whether the service is compiled/instantiated at all.
+# 1 by default: this is the turtle build, and without the service a tag has no
+# dive or surfacing at all. A build with no saltwater switch sets it to 0, as
+# scripts/build_woodbuoy.sh does (dev/cls_102026 turned this default to 0 before
+# that script existed; not taken in the merge).
 ENABLE_SWS_ANALOG=${ENABLE_SWS_ANALOG:-1}
 
 echo "  CAM_ENABLE=${CAM_ENABLE}  BUZZER_ENABLE=${BUZZER_ENABLE}"
@@ -193,7 +197,20 @@ echo "  GNSS_HAS_BACKUP_BATTERY=${GNSS_HAS_BACKUP_BATTERY}"
 echo "  ENABLE_SWS_ANALOG=${ENABLE_SWS_ANALOG}"
 echo "  METRIC_LATENCY=${METRICS}  VALIDATION=${VALIDATION}"
 
-cmake -DCMAKE_TOOLCHAIN_FILE=../../toolchain_arm_gcc_nrf52.cmake -DDEBUG_LEVEL=${DEBUG_LEVEL:-3} -DBOARD=LINKIT -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DCAM_ENABLE=${CAM_ENABLE} -DBUZZER_ENABLE=${BUZZER_ENABLE} -DGNSS_HAS_BACKUP_BATTERY=${GNSS_HAS_BACKUP_BATTERY} -DBATTERY_CHEMISTRY=${BATTERY_CHEMISTRY} -DENABLE_SWS_ANALOG=${ENABLE_SWS_ANALOG} -DMETRIC_LATENCY_LOG_ENABLE=$([ "$METRICS" = "ON" ] && echo 1 || echo 0) -DVALIDATION_LOG_ENABLE=$([ "$VALIDATION" = "ON" ] && echo 1 || echo 0) -DBENCH_TEST=${BENCH} -DBENCH_ALLOW_POWERDOWN=${BENCH_PWRDN} -DARGOS_TX_ERROR_SUSPEND_S=${ARGOS_TX_ERROR_SUSPEND_S} -DKIM2_BLIND_WKUP_RELEASE=${WKUP_RELEASE} ../..
+cmake -DCMAKE_TOOLCHAIN_FILE=../../toolchain_arm_gcc_nrf52.cmake \
+    -DDEBUG_LEVEL=${DEBUG_LEVEL:-3} -DBOARD=LINKIT \
+    -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
+    -DCAM_ENABLE=${CAM_ENABLE} \
+    -DBUZZER_ENABLE=${BUZZER_ENABLE} \
+    -DGNSS_HAS_BACKUP_BATTERY=${GNSS_HAS_BACKUP_BATTERY} \
+    -DBATTERY_CHEMISTRY=${BATTERY_CHEMISTRY} \
+    -DENABLE_SWS_ANALOG=${ENABLE_SWS_ANALOG} \
+    -DMETRIC_LATENCY_LOG_ENABLE=$([ "$METRICS" = "ON" ] && echo 1 || echo 0) \
+    -DVALIDATION_LOG_ENABLE=$([ "$VALIDATION" = "ON" ] && echo 1 || echo 0) \
+    -DBENCH_TEST=${BENCH} \
+    -DBENCH_ALLOW_POWERDOWN=${BENCH_PWRDN} \
+    -DARGOS_TX_ERROR_SUSPEND_S=${ARGOS_TX_ERROR_SUSPEND_S} \
+    -DKIM2_BLIND_WKUP_RELEASE=${WKUP_RELEASE} ../..
 make -j 20
 # GARDE-FOU (2026-08): sans ce controle, un echec de compilation laissait le
 # script continuer, re-fusionner le HEX de la build PRECEDENTE et afficher des

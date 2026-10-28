@@ -324,8 +324,8 @@ TEST(SeaTempEncoding, ArgosKeepsTheFullThousandthScale) {
 	st.port[0] = (20.0 + 126.0) * 1000.0;
 
 	unsigned int size_bits = 0;
-	KineisPacket pkt =
-	    ArgosPacketBuilder::build_sensor_packet(&e, nullptr, nullptr, nullptr, &st, nullptr, false, false, size_bits);
+	KineisPacket pkt = ArgosPacketBuilder::build_sensor_packet(&e, nullptr, nullptr, nullptr, &st, nullptr, nullptr,
+	                                                           false, false, size_bits);
 
 	// Prefixe fixe du paquet capteur Argos : en-tete 3 + date 16 + position 51
 	// + batterie 8 + masque 5 = 83 bits, puis la mer sur 21 bits (ni ALS, ni pH,

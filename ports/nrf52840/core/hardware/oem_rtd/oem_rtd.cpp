@@ -58,8 +58,7 @@ double OEM_RTD_Sensor::read(unsigned int) {
 	writeReg(RegAddr::ACTIVE_HIBERNATE, static_cast<uint8_t>(0x01));
 
 	// Check calibration status for debug purposes
-	uint8_t cnf = readReg<uint8_t>(RegAddr::CALIBRATION_CONFIRMATION);
-	DEBUG_TRACE("CALIBRATION_CONFIRMATION: %02x", cnf);
+	DEBUG_TRACE("CALIBRATION_CONFIRMATION: %02x", readReg<uint8_t>(RegAddr::CALIBRATION_CONFIRMATION));
 
 	// Poll the device waiting for a new reading (timeout: 5 seconds)
 	{

@@ -711,21 +711,35 @@ KineisPacket ArgosPacketBuilder::build_rspb_doppler_packet(unsigned int battery_
 	return packet;
 }
 
-KineisPacket ArgosPacketBuilder::build_sensor_packet(GPSLogEntry *gps_entry, ServiceSensorData *als_sensor,
-                                                     ServiceSensorData *ph_sensor, ServiceSensorData *pressure_sensor,
-                                                     ServiceSensorData *sea_temp_sensor, ServiceSensorData *axl_sensor,
-                                                     bool is_out_of_zone, bool is_low_battery,
-                                                     unsigned int &size_bits) {
+// [[maybe_unused]]: the generic frame carries ALS/PH/pressure/AXL and no
+// barometer, the woodbuoy frame (WOODBUOY_SENSOR_MSG) the reverse.
+KineisPacket ArgosPacketBuilder::build_sensor_packet(
+    GPSLogEntry *gps_entry, [[maybe_unused]] ServiceSensorData *als_sensor,
+    [[maybe_unused]] ServiceSensorData *ph_sensor, [[maybe_unused]] ServiceSensorData *pressure_sensor,
+    ServiceSensorData *sea_temp_sensor, [[maybe_unused]] ServiceSensorData *axl_sensor,
+    [[maybe_unused]] ServiceSensorData *baro_sensor, bool is_out_of_zone, bool is_low_battery,
+    unsigned int &size_bits) {
 	DEBUG_TRACE("ArgosPacketBuilder::build_sensor_packet");
 	unsigned int base_pos = 0;
 	KineisPacket packet;
 
+#ifdef WOODBUOY_SENSOR_MSG
+	// Reserve required number of bytes
+	packet.assign(WOODBUOY_SENSOR_PACKET_BYTES, 0);
+
+	// 3-bit type header — Type 1 (001) for temperature only
+	if (baro_sensor != nullptr)
+		PACK_BITS(SENSOR_TEMP_BARO_PACKET_HEADER, packet, base_pos, 3);
+	else
+		PACK_BITS(SENSOR_TEMP_PACKET_HEADER, packet, base_pos, 3);
+#else
 	// Reserve required number of bytes
 	packet.assign(SENSOR_PACKET_BYTES, 0);
 
 	// 3-bit type header — Type 1 (001) discriminates sensor packets from long packets
 	// (both are 24-byte LDA2 frames).
 	PACK_BITS(SENSOR_PACKET_HEADER, packet, base_pos, 3);
+#endif
 
 	// Use scheduled GPS time as day/hour/min
 	uint16_t year;
@@ -773,6 +787,27 @@ KineisPacket ArgosPacketBuilder::build_sensor_packet(GPSLogEntry *gps_entry, Ser
 	PACK_BITS(is_low_battery, packet, base_pos, 1);
 	DEBUG_TRACE("ArgosPacketBuilder::build_sensor_packet: is_lb=%u", is_low_battery);
 
+#ifdef WOODBUOY_SENSOR_MSG
+	double current_sensor = 0;
+
+	// SEA TEMPERATURE sensor data
+	if (sea_temp_sensor != nullptr)
+		current_sensor = sea_temp_sensor->port[0];
+	else
+		current_sensor = 0xFFFFFFFF;
+	DEBUG_TRACE("ArgosPacketBuilder::build_sensor_packet: sea_temp=%06X", (unsigned int)current_sensor);
+	PACK_BITS((unsigned int)current_sensor, packet, base_pos, 21);
+
+	// BARO sensor data, in a temperature + barometer frame only (header 101): a
+	// temperature-only frame (001) leaves these 15 bits at 0. It dereferenced the
+	// null pointer here, which on the nRF reads the vector table at address 0.
+	if (baro_sensor != nullptr) {
+		DEBUG_TRACE("ArgosPacketBuilder::build_sensor_packet: baro=%06X", (unsigned int)baro_sensor->port[0]);
+		PACK_BITS((unsigned int)baro_sensor->port[0], packet, base_pos, 15);
+	}
+
+	size_bits = WOODBUOY_SENSOR_PACKET_MAX_BITS;
+#else
 	// 5-bit sensor mask describing which sensors are present (decoder reads this to know
 	// which fields follow). MSB-first: ALS, PH, Pressure, SeaTemp, AXL.
 	unsigned int sensor_mask = 0;
@@ -856,6 +891,7 @@ KineisPacket ArgosPacketBuilder::build_sensor_packet(GPSLogEntry *gps_entry, Ser
 	// Always emit a full 24-byte LDA2 frame and embed CRC8 at byte 23.
 	apply_lda2_crc8(packet);
 	size_bits = LDA2_FRAME_BITS;
+#endif
 
 	return packet;
 }

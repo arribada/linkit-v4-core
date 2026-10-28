@@ -57,6 +57,7 @@ Use the build scripts (they source `build_config.sh` automatically):
 | `./scripts/build_linkitv4_smd.sh` | LinkIt V4 SMD | `build/LINKIT_SMD/` |
 | `./scripts/build_linkitv4_lora.sh` | LinkIt V4 LoRa | `build/LINKIT_LORA/` |
 | `./scripts/build_rspb.sh` | RSPB | `build/RSPB/` |
+| `./scripts/build_woodbuoy.sh` | LinkIt V4 KIM, CLS woodbuoy (buzzer, sea temperature, barometer, no SWS) | `build/WOODBUOY/` |
 | **`./scripts/build_with_bootloader.sh <target>`** | **Any** | **Merged hex (app+bootloader+SD)** |
 
 Build with bootloader for deployment:
@@ -160,6 +161,7 @@ See [Wiki: CI Workflows](https://github.com/arribada/linkit-v4-core/wiki/17-%E2%
 | `ENABLE_SEA_TEMP_SENSOR` | 0 | RTD / TSYS01 sea temperature |
 | `ENABLE_ALS_SENSOR` | 0 | LTR-303 ambient light |
 | `ENABLE_CDT_SENSOR` | 0 | Conductivity-Depth-Temperature |
+| `ENABLE_BARO_SENSOR` | 0 | VAISALA PTB110-2.5V with ADC read |
 | `CAM_ENABLE` | 0 | RunCam camera trigger |
 | `CAM_CONTROL` | BUTTON | Camera control: `BUTTON` (press simulated on P0.16, KIM2 / SMD UART) or `UART` (RunCam Device Protocol on UARTE1, SMD SPI only) |
 

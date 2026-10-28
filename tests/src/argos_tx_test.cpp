@@ -2460,25 +2460,28 @@ TEST(ArgosTxService, BuildSensorPacketAll) {
 	// LDA2 sensor packets are now always 24 bytes (192-bit frame) with header 001 (Type 1)
 	// at bit 0, 5-bit sensor mask at bit 78, then sensor data, then CRC8 at byte 23.
 	// Mask bits (MSB-first): ALS, PH, Pressure, SeaTemp, AXL.
-	x = ArgosPacketBuilder::build_sensor_packet(&e, nullptr, nullptr, nullptr, nullptr, nullptr, false, false,
+	x = ArgosPacketBuilder::build_sensor_packet(&e, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, false, false,
 	                                            size_bits);
 	CHECK_EQUAL(ArgosPacketBuilder::LDA2_FRAME_BITS, size_bits);
 	check_lda2_sensor_packet(x, "297166C6600781E00258");  // mask=00000
-	x = ArgosPacketBuilder::build_sensor_packet(&e, &als, &ph, &pressure, &sea_temp, nullptr, false, false, size_bits);
+	x = ArgosPacketBuilder::build_sensor_packet(&e, &als, &ph, &pressure, &sea_temp, nullptr, nullptr, false, false,
+	                                            size_bits);
 	CHECK_EQUAL(ArgosPacketBuilder::LDA2_FRAME_BITS, size_bits);
 	check_lda2_sensor_packet(x, "297166C6600781E0025BC27106D601F41F401EC3");  // mask=11110 (all 4 non-AXL)
-	x = ArgosPacketBuilder::build_sensor_packet(&e, nullptr, &ph, &pressure, &sea_temp, nullptr, false, false,
+	x = ArgosPacketBuilder::build_sensor_packet(&e, nullptr, &ph, &pressure, &sea_temp, nullptr, nullptr, false, false,
 	                                            size_bits);
 	CHECK_EQUAL(ArgosPacketBuilder::LDA2_FRAME_BITS, size_bits);
 	check_lda2_sensor_packet(x, "297166C6600781E00259CDAC03E83E803D86");  // mask=01110 (no ALS)
-	x = ArgosPacketBuilder::build_sensor_packet(&e, &als, nullptr, &pressure, &sea_temp, nullptr, false, false,
+	x = ArgosPacketBuilder::build_sensor_packet(&e, &als, nullptr, &pressure, &sea_temp, nullptr, nullptr, false, false,
 	                                            size_bits);
 	CHECK_EQUAL(ArgosPacketBuilder::LDA2_FRAME_BITS, size_bits);
 	check_lda2_sensor_packet(x, "297166C6600781E0025AC271007D07D007B0C0");  // mask=10110 (no PH)
-	x = ArgosPacketBuilder::build_sensor_packet(&e, &als, &ph, nullptr, &sea_temp, nullptr, false, false, size_bits);
+	x = ArgosPacketBuilder::build_sensor_packet(&e, &als, &ph, nullptr, &sea_temp, nullptr, nullptr, false, false,
+	                                            size_bits);
 	CHECK_EQUAL(ArgosPacketBuilder::LDA2_FRAME_BITS, size_bits);
 	check_lda2_sensor_packet(x, "297166C6600781E0025B427106D603D860");  // mask=11010 (no Pressure)
-	x = ArgosPacketBuilder::build_sensor_packet(&e, &als, &ph, &pressure, nullptr, nullptr, false, false, size_bits);
+	x = ArgosPacketBuilder::build_sensor_packet(&e, &als, &ph, &pressure, nullptr, nullptr, nullptr, false, false,
+	                                            size_bits);
 	CHECK_EQUAL(ArgosPacketBuilder::LDA2_FRAME_BITS, size_bits);
 	check_lda2_sensor_packet(x, "297166C6600781E0025B827106D601F41F40");  // mask=11100 (no SeaTemp)
 }
@@ -2491,8 +2494,8 @@ TEST(ArgosTxService, BuildSensorPacketSeaTemp) {
 
 	sea_temp.port[0] = 147100;  // 21.1C
 
-	x = ArgosPacketBuilder::build_sensor_packet(&e, nullptr, nullptr, nullptr, &sea_temp, nullptr, false, false,
-	                                            size_bits);
+	x = ArgosPacketBuilder::build_sensor_packet(&e, nullptr, nullptr, nullptr, &sea_temp, nullptr, nullptr, false,
+	                                            false, size_bits);
 	CHECK_EQUAL(ArgosPacketBuilder::LDA2_FRAME_BITS, size_bits);
 	check_lda2_sensor_packet(x, "297166C6600781E00258423E9C");  // mask=00010 (SeaTemp only)
 }
@@ -2556,7 +2559,8 @@ TEST(ArgosTxService, BuildSensorPacketWithAXL) {
 	axl.port[3] = 17000;
 	axl.port[4] = 5;
 
-	x = ArgosPacketBuilder::build_sensor_packet(&e, nullptr, nullptr, nullptr, nullptr, &axl, false, false, size_bits);
+	x = ArgosPacketBuilder::build_sensor_packet(&e, nullptr, nullptr, nullptr, nullptr, &axl, nullptr, false, false,
+	                                            size_bits);
 	// Should include GPS + AXL data (temp 14 bits + X 15 bits + Y 15 bits + Z 15 bits + Activity 8 bits = 67 bits)
 	CHECK_TRUE(size_bits > 83);  // Must be larger than GPS-only (83 bits)
 }
@@ -2567,12 +2571,12 @@ TEST(ArgosTxService, BuildSensorPacketOutOfZone) {
 	std::string x;
 
 	// LDA2 sensor packets are always emitted as 192-bit frames since CRC8 lives at byte 23.
-	x = ArgosPacketBuilder::build_sensor_packet(&e, nullptr, nullptr, nullptr, nullptr, nullptr, true, false,
+	x = ArgosPacketBuilder::build_sensor_packet(&e, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, true, false,
 	                                            size_bits);
 	CHECK_EQUAL(ArgosPacketBuilder::LDA2_FRAME_BITS, size_bits);
 	CHECK_EQUAL(ArgosPacketBuilder::LDA2_FRAME_BYTES, x.size());
 
-	x = ArgosPacketBuilder::build_sensor_packet(&e, nullptr, nullptr, nullptr, nullptr, nullptr, false, true,
+	x = ArgosPacketBuilder::build_sensor_packet(&e, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, false, true,
 	                                            size_bits);
 	CHECK_EQUAL(ArgosPacketBuilder::LDA2_FRAME_BITS, size_bits);
 	CHECK_EQUAL(ArgosPacketBuilder::LDA2_FRAME_BYTES, x.size());

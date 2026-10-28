@@ -64,7 +64,7 @@ set(BOOL_BUILD_FLAGS
     BENCH_TEST BENCH_ALLOW_POWERDOWN BENCH_FORCE_LPM_NONE SMD_FLASH_HOLD SMD_UART KIM2_BLIND_WKUP_RELEASE
     SMD_DIVE_STANDBY
     DX1_GROUND_DECODER_READY
-    CAM_ENABLE BUZZER_ENABLE CAM_CONTROL_UART
+    CAM_ENABLE BUZZER_ENABLE CAM_CONTROL_UART ENABLE_BARO_SENSOR
     METRIC_LATENCY_LOG_ENABLE VALIDATION_LOG_ENABLE RSPB_VSENSORS_FLOOR)
 
 # Idempotent : appelé une première fois dès que les valeurs utilisateur sont
@@ -240,6 +240,9 @@ endif()
 if(NOT DEFINED GNSS_HAS_BACKUP_BATTERY)
     set(GNSS_HAS_BACKUP_BATTERY 0)
 endif()
+if(NOT DEFINED ENABLE_BARO_SENSOR)
+    set(ENABLE_BARO_SENSOR 0)
+endif()
 
 # Passage 1 : tout ce que l'utilisateur a pu passer en -D est maintenant connu.
 # Doit précéder les gardes `if(A AND NOT B)` et les tests `if(X EQUAL 1)`, qui
@@ -336,7 +339,7 @@ endif()
 message(STATUS "Battery monitor type: ${BATTERY_MONITOR_TYPE}")
 message(STATUS "STC3117 mixed mode: ${STC3117_MIXED_MODE}")
 message(STATUS "Battery chemistry: ${BATTERY_CHEMISTRY} (ADC high range: ${BATTERY_ADC_HIGH_RANGE})")
-message(STATUS "Sensors: AXL=${ENABLE_AXL_SENSOR} PRESSURE=${ENABLE_PRESSURE_SENSOR} THERMISTOR=${ENABLE_THERMISTOR_SENSOR} SEA_TEMP=${ENABLE_SEA_TEMP_SENSOR} ALS=${ENABLE_ALS_SENSOR} CDT=${ENABLE_CDT_SENSOR} PH=${ENABLE_PH_SENSOR} MORTALITY=${ENABLE_MORTALITY_SENSOR}")
+message(STATUS "Sensors: AXL=${ENABLE_AXL_SENSOR} PRESSURE=${ENABLE_PRESSURE_SENSOR} THERMISTOR=${ENABLE_THERMISTOR_SENSOR} SEA_TEMP=${ENABLE_SEA_TEMP_SENSOR} ALS=${ENABLE_ALS_SENSOR} CDT=${ENABLE_CDT_SENSOR} PH=${ENABLE_PH_SENSOR} MORTALITY=${ENABLE_MORTALITY_SENSOR} BARO=${ENABLE_BARO_SENSOR}")
 message(STATUS "GNSS: BBR=${GNSS_HAS_BACKUP_BATTERY} SWS_LOG=${ENABLE_SWS_LOG}")
 
 
@@ -571,6 +574,7 @@ target_include_directories(${TARGET_NAME} SYSTEM PRIVATE
     ${PROJ_DIR}/core/hardware/run_cam
     $<$<BOOL:${ENABLE_PRESSURE_SENSOR}>:${CMAKE_CURRENT_SOURCE_DIR}/core/hardware/lps28dfw>
     $<$<STREQUAL:${BATTERY_MONITOR_TYPE},STC3117>:${CMAKE_CURRENT_SOURCE_DIR}/core/hardware/stc3117>
+    $<$<BOOL:${ENABLE_BARO_SENSOR}>:${CMAKE_CURRENT_SOURCE_DIR}/core/hardware/ads1115>
 )
 
 target_sources(${TARGET_NAME} PRIVATE
@@ -683,6 +687,7 @@ target_sources(${TARGET_NAME} PRIVATE
     $<$<BOOL:${ENABLE_SEA_TEMP_SENSOR}>:${CMAKE_CURRENT_SOURCE_DIR}/core/hardware/oem_rtd/oem_rtd.cpp>
     $<$<BOOL:${ENABLE_SEA_TEMP_SENSOR}>:${CMAKE_CURRENT_SOURCE_DIR}/core/hardware/ezo_rtd/ezo_rtd.cpp>
     $<$<BOOL:${ENABLE_SEA_TEMP_SENSOR}>:${CMAKE_CURRENT_SOURCE_DIR}/core/hardware/tsys01/TSYS01.cpp>
+    $<$<BOOL:${ENABLE_BARO_SENSOR}>:${CMAKE_CURRENT_SOURCE_DIR}/core/hardware/ads1115/ads1115.cpp>
     $<$<AND:$<NOT:$<BOOL:${ARGOS_SMD_ENABLED}>>,$<NOT:$<BOOL:${LORA_RAK3172_ENABLED}>>>:${CMAKE_CURRENT_SOURCE_DIR}/core/hardware/kim2/kim2.cpp>
     $<$<AND:$<NOT:$<BOOL:${ARGOS_SMD_ENABLED}>>,$<NOT:$<BOOL:${LORA_RAK3172_ENABLED}>>>:${CMAKE_CURRENT_SOURCE_DIR}/core/hardware/kim2/kim2_comm.cpp>
     ${PROJ_DIR}/core/hardware/nrf_timer.cpp
@@ -727,6 +732,20 @@ endif()
 # Check that both CAM and BUZZER are not enabled simultaneously
 if(CAM_ENABLE AND BUZZER_ENABLE)
     message(FATAL_ERROR "CAM_ENABLE and BUZZER_ENABLE cannot both be set to 1 (they share GPIO5)")
+endif()
+
+# External barometer (CLS woodbuoy, 2026-10): its supply switch BARO_PWR_EN is
+# GPIO_EXT_GPIO1 = P0.06, which only the LinkIt BSP names -- and which an SMD SPI
+# build uses as the module's MOSI.
+if(ENABLE_BARO_SENSOR)
+    if(NOT BOARD STREQUAL "LINKIT")
+        message(FATAL_ERROR "ENABLE_BARO_SENSOR needs BOARD=LINKIT: BARO_PWR_EN (GPIO_EXT_GPIO1) is a LinkIt pin.")
+    endif()
+    if(ARGOS_SMD AND NOT SMD_UART AND NOT LORA_RAK3172)
+        message(FATAL_ERROR
+            "ENABLE_BARO_SENSOR cannot go on an SMD SPI build: P0.06 is both BARO_PWR_EN and the SMD's SPI "
+            "MOSI. Build it on KIM2 (scripts/build_woodbuoy.sh) or with SMD_UART=ON.")
+    endif()
 endif()
 
 # Camera control, CAM_ENABLE builds only (2026-10):
@@ -884,10 +903,12 @@ target_compile_definitions(${TARGET_NAME} PRIVATE
     ENABLE_AXL_SENSOR=${ENABLE_AXL_SENSOR}
     ENABLE_THERMISTOR_SENSOR=${ENABLE_THERMISTOR_SENSOR}
     ENABLE_MORTALITY_SENSOR=${ENABLE_MORTALITY_SENSOR}
+    ENABLE_BARO_SENSOR=${ENABLE_BARO_SENSOR}
     ENABLE_SWS_LOG=${ENABLE_SWS_LOG}
     ENABLE_SWS_ANALOG=${ENABLE_SWS_ANALOG}
     GNSS_HAS_BACKUP_BATTERY=${GNSS_HAS_BACKUP_BATTERY}
     STC3117_MIXED_MODE=${STC3117_MIXED_MODE}
+    $<$<BOOL:${WOODBUOY_SENSOR_MSG}>:WOODBUOY_SENSOR_MSG=1>
     ARGOS_SMD=${ARGOS_SMD_ENABLED}
     SMDSAT_USE_SAFE_TIMINGS=${SMDSAT_USE_SAFE_TIMINGS_VAL}
     SMDSAT_AUTOFALLBACK_ENABLED=${SMDSAT_AUTOFALLBACK_VAL}
@@ -954,7 +975,14 @@ target_compile_definitions(${TARGET_NAME} PRIVATE
     S140
     SOFTDEVICE_PRESENT
     __HEAP_SIZE=0 # Use configTOTAL_HEAP_SIZE instead
-    __STACK_SIZE=32768
+    # 28 KB, was 32 (2026-10-28). The peak the firmware itself measures (stack
+    # painting, MemoryMonitorService "STACK: N max", 12 h samples on the bench
+    # boards) is 4.2-4.5 KB: still six times over. The 4 KB went back to .bss,
+    # which had 52 B to spare on the camera-UART bench build and ran out with
+    # the dev/cls_102026 merge -- every parameter costs ~216 B of RAM (param_map
+    # holds strings, ~134 B an entry, plus two 40 B slots in the store), on
+    # every build, implemented or not.
+    __STACK_SIZE=28672
     configTOTAL_HEAP_SIZE=65536
     DEVICE_MODEL_NAME=std::string\("${DEVICE_MODEL}"\)
     #LFS_YES_TRACE
