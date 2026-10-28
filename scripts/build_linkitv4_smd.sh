@@ -205,6 +205,9 @@ echo "  CAM_ENABLE=${CAM_ENABLE}  CAM_CONTROL=${CAM_CONTROL}"
 if [ "$BENCH" = "ON" ]; then
     printf '\033[1;35m  BENCH_TEST=ON  ->  %% USB-CDC console (%%CFG/%%OP/%%GPS) + GPS injection active\033[0m\n'
 fi
+if [ "${FAULT_INJECT:-0}" != "0" ]; then
+    printf '\033[1;31m  FAULT_INJECT=%s  ->  VALIDATION FIRMWARE, fails at every boot on purpose: never ship\033[0m\n' "$FAULT_INJECT"
+fi
 echo ""
 
 cmake -DCMAKE_TOOLCHAIN_FILE=../../toolchain_arm_gcc_nrf52.cmake \
@@ -229,6 +232,7 @@ cmake -DCMAKE_TOOLCHAIN_FILE=../../toolchain_arm_gcc_nrf52.cmake \
       -DVALIDATION_LOG_ENABLE=$([ "$VALIDATION" = "ON" ] && echo 1 || echo 0) \
       -DBENCH_TEST=${BENCH} \
       -DBENCH_ALLOW_POWERDOWN=${BENCH_PWRDN} \
+      -DFAULT_INJECT=${FAULT_INJECT:-0} \
       ../..
 
 make -j 20

@@ -65,8 +65,8 @@ GNP01, GNP52, ARP01, CAP01 et GNP25 n'ont pas changé (1, 4294967295, 0, 0, 1).
 
 | # | Commande | Attendu |
 |---|---|---|
-| 1.1 | `cd tests && ./build/TrackerTests -p -xg SWS` | tout passe (1055/1055 au 28/10, après les petits points) |
-| 1.2 | `cd tests && ./build/TrackerTestsCyprus -p -xg SWS` | tout passe (1073/1073 au 28/10, après les petits points) |
+| 1.1 | `cd tests && ./build/TrackerTests -p -xg SWS` | tout passe (1060/1060 au 28/10, après P3 de 2.15) |
+| 1.2 | `cd tests && ./build/TrackerTestsCyprus -p -xg SWS` | tout passe (1078/1078 au 28/10, après P3 de 2.15) |
 | 1.3 | `cd tests && ./build/TrackerTests -p -g SWSAnalog`, puis `-g SWSAnalogFlash`, puis `-sg SWSLongRun -sn H45_FixedDelayClean_ControlDetectsSurfacings` | tout passe |
 | 1.4 | `cd tests && ./build/TurtleSimulation -v` | 11/11, dont les tests budget `BatteryAndBusyWaitWithinBudget` et `JournalAtWarnHoldsOnlyFaults` |
 | 1.5 | `cd tests && ./build/RSPBSimulation -v` | 10/10 |
@@ -552,14 +552,15 @@ Chaque ligne renvoie à sa section, qui donne le protocole et le résultat atten
 | **Module SMD en firmware SPI** | 2.2 session SMD complète sans émission ; 2.3 caméra avec le SMD en SPI ; 2.6 trois émissions SMD SPI (accord RF) |
 | **Eau salée** | 2.9 trempage réel des électrodes (même relevé que `%SWSRAW`) |
 | **Carte KIM2** | 2.2 réveil par `SAT_WKUP` en mode BLIND et émission (accord RF) ; 2.8 changement de variante |
-| **Carte RSPB** | 2.1 jauge sur un cycle TPL ; 2.2 GNSS et SMD sur un cycle TPL ; 2.8 changement de variante ; 2.9 DBD à l'extinction de fin de cycle ; 2.12 synchro GNSS au réveil TPL |
+| **Carte RSPB** | 2.1 jauge sur un cycle TPL ; 2.2 GNSS et SMD sur un cycle TPL ; 2.8 changement de variante ; 2.9 DBD à l'extinction de fin de cycle ; 2.12 synchro GNSS au réveil TPL ; 2.15 P1, P3 (coupures), P4 (`FAULT_INJECT` 1 à 4, PPK pour la coupure) |
+| **Carte du banc, builds de validation** | 2.15 P4 : `FAULT_INJECT=2`, `=3`, `=4` sur la LinkIt SMD, puis reflash du build normal |
 | **Carte saine, PPK seule alimentation** | 2.2 courant absolu de veille GNSS |
 | **Carte saine** (reed sans rebonds) | 2.11 fronts du reed et mesure du coût ; 2.12 synchro du 1er allumage, HEAD puis arbre final |
 | **Oscilloscope** | 2.11 ligne du reed (P1.03) sur la carte du banc, sans aimant |
 | **Ancien firmware** | 2.4 mise à jour depuis un firmware sans DBP02 (lu à 3) ; 2.8 mise à jour depuis la release v4.2.0 (configuration intacte) |
 | **Caméra** | 2.3 build `CAM_CONTROL=BUTTON`, `CAP06=AUTO`, alimentation par `CAM_PWR_EN` |
 | **Sans condition** (carte du banc) | 2.1 valeurs batterie, `STATR` répété, `SENSR`, seuil `LBP02`, 1re mesure au démarrage ; 2.4 une vague courte de `gnss_bench.py` ou `dte_campaign.py` sans émission |
-| **Carte KIM2** (suite) | 2.14 identité lue au démarrage, puis 1re session |
+| **Carte KIM2** (suite) | 2.14 identité lue au démarrage, puis 1re session ; 2.15 P1 (compteur d'échecs après 60 s) |
 | **Matériel CLS** (woodbuoy) | 2.14 trame woodbuoy reçue et décodée, baromètre et alimentation, buzzer |
 
 ### 2.14 Fusion de `dev/cls_102026` (CLS, 28/10)
@@ -638,8 +639,9 @@ tas libre depuis le démarrage.
   ajouté 2 s d'attente active à chaque mesure périodique et changé le préchauffage, un
   changement de comportement non vérifiable sans leur matériel.
 - **Retour à un firmware CLS** après celui-ci : leur relecture de `config.dat` est
-  encore positionnelle, donc les paramètres après l'emplacement 265 seraient décalés.
-  Fusionner cette branche chez eux corrige ce point.
+  encore positionnelle. Elle attend BAP01 à l'emplacement 266 et y trouve UNP26 : elle
+  remet donc BAP01 à BAP05 à leur défaut (baromètre désactivé), les emplacements 0 à
+  265 restent intacts. Fusionner cette branche chez eux corrige ce point.
 - Le segment sol doit décoder les en-têtes `001` et `101` en LDK (16 octets, sans CRC).
   L'en-tête `001` est aussi celui de la trame capteur générique LDA2 (24 octets).
 
@@ -654,6 +656,46 @@ tas libre depuis le démarrage.
 | Pile à 28 Ko, longue durée | sur carte saine et sur le terrain, les lignes « STACK: N max » du journal (toutes les 12 h) restent loin sous 28 Ko | ⬜ |
 | Carte KIM2 | au démarrage, une seule mise sous tension du module, `ARGOS_DECID` / `ARGOS_HEXID` lus et sauvés une fois, aucune émission ; puis une session normale | ⬜ |
 | Woodbuoy (CLS) | la liste de `NOTES_FUSION_CLS_102026.md` §6 : mise à jour depuis leur firmware (BAP intacts), trame `001`/`101` décodée, mesure batterie à chaque session GNSS, alimentation du PTB110 coupée après l'échantillonnage pour l'émission, buzzer, veille du KIM2 | ⬜ CLS |
+
+### 2.15 Audit de juillet : les correctifs de `fix-investigation` enfin portés
+
+**Ce que c'est.** La branche `fix-investigation` (18-19/07) porte trois commits d'audit,
+`0899f57b`, `3a562b38` et `e713ca66`, jamais intégrés : seules la mortalité, l'I2C du
+RSPB, le correctif M10Q et les tests sont revenus le 21/08, et `a8b96b87` donnait le
+reste pour « remplacé », à tort. L'inventaire du 28/10 (cinq vérifications, correctif par
+correctif) en a trouvé une trentaine absents ; ils sont portés un par un, P1 à P10, dans
+cet ordre. Les mécanismes de récupération (P4) et les décisions de batterie ou de
+mortalité (P5 à P8) changent un comportement : chacun est soumis à l'utilisateur avant
+d'être écrit, puis validé sur la carte concernée.
+
+**Builds de validation, `FAULT_INJECT`.** Pour voir une échelle de récupération sur une
+vraie carte, `FAULT_INJECT=<n>` provoque la panne à chaque démarrage : 1 une faute
+processeur pendant l'init, 2 une exception pendant l'init, 3 l'échec de l'init de la flash
+IS25, 4 une exception juste après le démarrage de la machine à états. CMake refuse toute
+autre valeur et avertit dès qu'elle n'est pas 0. **Firmware de validation : il ne
+démarre jamais, reflasher un build normal ensuite.**
+- LinkIt SMD UART : `FAULT_INJECT=2 ./scripts/build_linkitv4_smd.sh --bench --uart`, console USB.
+- RSPB : `FAULT_INJECT=3 ./scripts/build_rspb.sh --bench`, journaux sur l'UART de débogage
+  (921600, émission seule). La faute processeur (1) ne passe par le nouveau compteur
+  qu'en build release, sans console : `FAULT_INJECT=1 ./scripts/build_rspb.sh`, et
+  l'observation se fait au PPK.
+
+| Correctif | Carte | Comment | Attendu | Fait |
+|---|---|---|---|---|
+| P1 `21a0e18b` : le compteur d'échecs de démarrage n'est effacé qu'après 60 s en fonctionnement | PC | `Sm.CrashInTheFirstMinuteOfOperationalBacksOff`, `Sm.FaultBeforeTheMinuteKeepsTheBootFailCount` | passent, échouent sans le correctif | ✅ 28/10 |
+| | LinkIt SMD (banc) | après un flash, sans entrer en configuration : `%BOOTFAIL` dans la 1re minute, puis jusqu'au 0 | 1, puis 0 vers 60 s, et `BootFail: clearing` à la console | ✅ 28/10 : 1 à 3 s, 0 à 65 s, ligne vue ; 36 sur 36 |
+| | KIM2, RSPB | même relevé | idem | ⬜ |
+| P2 `5d6fcac6` : un morceau de journal illisible ne laisse plus de pointeur vers un handle libéré | PC | `Logger.UnreadableChunkLeavesNoDanglingReadHandle` | passe ; sans le correctif, le processus meurt (signal 11) | ✅ 28/10 |
+| | LinkIt SMD (banc) | régression : contrôle carte complet | 36 sur 36, `DUMPD` complet | ⬜ (au prochain passage carte) |
+| P3 `c66d73a4` : une sauvegarde qui échoue n'empêche plus la coupure | PC | `BatteryCriticalGuard.a_failed_save_before_the_cut_still_powers_down` | passe ; sans le correctif, l'exception sort et `powerdown()` n'est pas appelé | ✅ 28/10 |
+| | RSPB | build release normal : un réveil qui n'est pas son tour, un réveil complet jusqu'au budget d'émission, puis la coupure (PPK) | coupure comme avant ; journal sans `config save failed` | ⬜ |
+| P4 : mécanismes de récupération (choix de l'utilisateur : les quatre) | PC | aucun test possible : code cible, fautes réelles | compilation de 10 variantes, dont les builds de validation | voir ci-dessous |
+| | LinkIt SMD (banc) | `FAULT_INJECT=2`, puis `=4` | 5 × `init threw (n/5) — reset to retry` ; puis `sleeping until the watchdog`, 60 s de rouge, et un redémarrage par le chien de garde au bout de 15 min | ⬜ |
+| | LinkIt SMD (banc) | `FAULT_INJECT=3` | 5 × `IS25 flash init failed (n/5)`, puis `deferring to the watchdog` : inchangé sur LinkIt | ⬜ |
+| | RSPB | `FAULT_INJECT=2`, `=3`, `=4` (build de banc) | 5 resets, puis `asking the TPL5111 to cut the power` et la coupure : courant au niveau TPL éteint, UART muette jusqu'à la période suivante, qui recommence | ⬜ |
+| | RSPB | `FAULT_INJECT=1` (build release) | au PPK : 4 démarrages brefs, la coupure à la 5e faute, puis le même cycle à la période suivante | ⬜ |
+| | LinkIt release | `FAULT_INJECT=1` | inchangé : resets en boucle, comme avant (le compteur n'existe que sur RSPB) | ⬜ |
+| | toutes | build normal reflashé après chaque essai | démarrage normal, configuration identique | ⬜ |
 
 ---
 

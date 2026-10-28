@@ -132,7 +132,7 @@
   "ports/nrf52840/core/hardware/m10qasync/m10qasync_config.cpp::M10QAsyncReceiver::get_almanac_status/1": 23,
   "ports/nrf52840/core/hardware/m10qasync/ubx_comms.cpp::UBXComms::run_expect_filter/1": 11,
   "ports/nrf52840/core/hardware/m10qasync/ubx_comms.cpp::UBXComms::run_nav_filter/1": 16,
-  "ports/nrf52840/core/hardware/nrf_pmu.cpp::PMU::powerdown/0": 22,
+  "ports/nrf52840/core/hardware/nrf_pmu.cpp::PMU::powerdown/0": 19,
   "ports/nrf52840/core/hardware/nrf_pmu.cpp::PMU::reduce_power_rails/0": 16,
   "ports/nrf52840/core/hardware/nrf_pmu.cpp::PMU::storage_off_check/0": 15,
   "ports/nrf52840/core/hardware/smd_sat/smd_sat.cpp::SmdSat::bench_parallel_probe/5": 31,
@@ -169,7 +169,7 @@
   "ports/nrf52840/main.cpp::init_peripherals/0": 18,
   "ports/nrf52840/main.cpp::init_power_on_check/1": 18,
   "ports/nrf52840/main.cpp::init_sensors/1": 43,
-  "ports/nrf52840/main.cpp::init_storage/2": 27,
+  "ports/nrf52840/main.cpp::init_storage/2": 26,
   "ports/nrf52840/main.cpp::main/0": 23
  }
 }

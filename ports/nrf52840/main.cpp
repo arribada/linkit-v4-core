@@ -389,6 +389,25 @@ static void blink_bounded(RGBLedColor color, unsigned int total_ms, unsigned int
 #endif
 }
 
+#if defined(EXTERNAL_WAKEUP) && defined(MCU_DONE_PIN)
+/// @brief Have the TPL5111 cut the power now.
+///
+/// On RSPB a reset keeps the power on, so a board that resets cannot cure loops at
+/// active current until the battery is flat. The cut is the clean retry: the next
+/// wake boots cold, flash and sensors included, and the .noinit counts start over.
+/// Needless, it costs one wake. Raw GPIO from the BSP table and no flash write: this
+/// runs in fault handlers and before GPIOPins::initialise(). Returns only if the
+/// power is still there 2 s later; the caller then falls back to what it did before.
+static void tpl_cut_power_now() {
+	const auto &done = BSP::GPIO_Inits[MCU_DONE_PIN];
+	nrf_gpio_cfg(done.pin_number, done.dir, done.input, done.pull, done.drive, done.sense);
+	nrf_gpio_pin_set(done.pin_number);
+	nrf_delay_ms(100);
+	nrf_gpio_pin_clear(done.pin_number);
+	nrf_delay_ms(2000);
+}
+#endif
+
 /// @brief Consecutive IS25 bring-up failures, kept in .noinit RAM.
 ///
 /// Survives the explicit resets issued by flash_init_failed() and any watchdog
@@ -462,6 +481,13 @@ LoRaTxService *lora_tx_service_instance = nullptr;
 		for (;;) {}  // PMU::reset does not return
 	}
 
+#if defined(EXTERNAL_WAKEUP) && defined(MCU_DONE_PIN)
+	// RSPB: the watchdog reset below keeps the power on, and a flash left wedged
+	// may need the power cycle only the TPL5111 gives (0899f57b, July audit).
+	DEBUG_ERROR("%s failed (%lu) — unrecoverable, asking the TPL5111 to cut the power", what, (unsigned long)fails);
+	blink_bounded(RGBLedColor::RED, 2000, 100, true);
+	tpl_cut_power_now();
+#endif
 	DEBUG_ERROR("%s failed (%lu) — unrecoverable, deferring to the watchdog", what, (unsigned long)fails);
 #ifdef DEBUG_NO_WATCHDOG
 	// No watchdog to reclaim us on this build: keep rebooting on our own, slowly.
@@ -476,12 +502,122 @@ LoRaTxService *lora_tx_service_instance = nullptr;
 #endif
 }
 
-extern "C" void HardFault_Handler() {
-#ifdef NDEBUG
+/// @brief Consecutive boots whose init phases or FSM start threw, in .noinit RAM.
+///
+/// Its own count, not s_flashfail's: that one is cleared as soon as the IS25 comes
+/// up, so a failure later in init would read 1 at every boot and never escalate.
+/// init_guarded() clears it once init and the FSM start went through.
+struct InitFailNoinit {
+	uint32_t magic;
+	uint32_t count;
+};
+static __attribute__((section(".noinit"))) volatile InitFailNoinit s_initfail;
+static constexpr uint32_t INITFAIL_MAGIC = 0x1417FA11;
+static constexpr uint32_t INIT_FAIL_MAX_RESETS = 5;
+
+/// @brief An exception escaped the init phases or the FSM start.
+///
+/// It reached std::terminate: a hang until the watchdog at every boot, with no
+/// escalation, and on RSPB no power cut (0899f57b, July audit). storage_unusable()'s
+/// ladder instead. A few resets, which cure a transient. Then, on RSPB, the TPL5111
+/// cut; on LinkIt, a sleep the watchdog ends every 15 min -- only if it runs: a cold
+/// boot can fail before start_watchdog(), and a sleep nothing ends would be the end
+/// of a glued tag. Without a watchdog, it keeps resetting, as before.
+[[noreturn]] static void init_unusable(const char *what) {
+	if (s_initfail.magic != INITFAIL_MAGIC) {
+		s_initfail.magic = INITFAIL_MAGIC;
+		s_initfail.count = 0;
+	}
+	s_initfail.count = s_initfail.count + 1;
+	const uint32_t fails = s_initfail.count;
+	// The watchdog may not have been started yet: feed it only if it runs.
+	const bool watchdog_running = (NRF_WDT->RUNSTATUS & WDT_RUNSTATUS_RUNSTATUS_Msk) != 0;
+
+	if (fails <= INIT_FAIL_MAX_RESETS) {
+		DEBUG_ERROR("%s threw (%lu/%lu) — reset to retry", what, (unsigned long)fails,
+		            (unsigned long)INIT_FAIL_MAX_RESETS);
+		blink_bounded(RGBLedColor::RED, 2000, 100, watchdog_running);
+		PMU::reset(false);
+		for (;;) {}  // PMU::reset does not return
+	}
+#if defined(EXTERNAL_WAKEUP) && defined(MCU_DONE_PIN)
+	DEBUG_ERROR("%s threw (%lu) — asking the TPL5111 to cut the power", what, (unsigned long)fails);
+	blink_bounded(RGBLedColor::RED, 2000, 100, watchdog_running);
+	tpl_cut_power_now();
+#endif
+	if (watchdog_running) {
+		DEBUG_ERROR("%s threw (%lu) — sleeping until the watchdog", what, (unsigned long)fails);
+		blink_bounded(RGBLedColor::RED, 60000, 100, false);
+		for (;;) {
+			__WFI();
+		}  // the watchdog (15 min) reboots us and we try again
+	}
+	DEBUG_ERROR("%s threw (%lu) — no watchdog running, reset", what, (unsigned long)fails);
 	for (;;) {
-		PMU::save_stack(PMULogType::HARDFAULT);
 		PMU::reset(false);
 	}
+}
+
+#ifndef FAULT_INJECT
+#define FAULT_INJECT 0
+#endif
+/// @brief VALIDATION FIRMWARE ONLY (CMake FAULT_INJECT, never in a shipped build):
+/// make one failure happen at every boot, to watch its recovery ladder on a board.
+/// 1 a CPU fault during init, 2 an exception during init, 3 the IS25 flash init
+/// failing (in init_peripherals()), 4 an exception right after the FSM start.
+static void fault_inject(int at) {
+	if (FAULT_INJECT != at) return;
+	DEBUG_WARN("FAULT_INJECT=%d: failing on purpose", at);
+	if (at == 1) __builtin_trap();  // UDF: a HardFault
+	throw ErrorCode::RESOURCE_NOT_AVAILABLE;
+}
+
+/// @brief The IS25 init, failed on purpose by FAULT_INJECT=3.
+static bool is25_init_ok(Is25Flash &flash) {
+	const bool ok = flash.init();
+	return ok && FAULT_INJECT != 3;
+}
+
+#ifdef NDEBUG
+#if defined(EXTERNAL_WAKEUP) && defined(MCU_DONE_PIN)
+/// @brief CPU fault resets of this power-on, kept in .noinit RAM.
+///
+/// A fault that comes back at every boot looped through resets for ever at active
+/// current, since a reset keeps the power on here: before the FSM, nothing counts
+/// it, and after, a fault resets without going through ErrorState, the only way to
+/// OffState (3a562b38, July audit). Never cleared: the TPL5111 cut wipes the RAM, so
+/// this counts the faults of one wake, and FAULT_RESET_MAX of them in one wake is a
+/// board to power down, not to reset once more.
+struct FaultResetNoinit {
+	uint32_t magic;
+	uint32_t count;
+};
+static __attribute__((section(".noinit"))) volatile FaultResetNoinit s_faultreset;
+static constexpr uint32_t FAULTRESET_MAGIC = 0xFA017C0D;
+static constexpr uint32_t FAULT_RESET_MAX = 5;
+#endif
+
+/// @brief End of every CPU fault handler of a release build: the crash record, a
+/// reset, and on RSPB, at the FAULT_RESET_MAX-th fault of a wake, the power cut.
+[[noreturn]] static void fault_reset(PMULogType type) {
+	PMU::save_stack(type);
+#if defined(EXTERNAL_WAKEUP) && defined(MCU_DONE_PIN)
+	if (s_faultreset.magic != FAULTRESET_MAGIC) {
+		s_faultreset.magic = FAULTRESET_MAGIC;
+		s_faultreset.count = 0;
+	}
+	s_faultreset.count = s_faultreset.count + 1;
+	if (s_faultreset.count >= FAULT_RESET_MAX) tpl_cut_power_now();
+#endif
+	for (;;) {
+		PMU::reset(false);
+	}
+}
+#endif  // NDEBUG
+
+extern "C" void HardFault_Handler() {
+#ifdef NDEBUG
+	fault_reset(PMULogType::HARDFAULT);
 #else
 	PMU::save_stack(PMULogType::HARDFAULT);
 	fault_blink_loop(1);  // HardFault
@@ -490,10 +626,7 @@ extern "C" void HardFault_Handler() {
 
 extern "C" void MemoryManagement_Handler(void) {
 #ifdef NDEBUG
-	for (;;) {
-		PMU::save_stack(PMULogType::MMAN);
-		PMU::reset(false);
-	}
+	fault_reset(PMULogType::MMAN);
 #else
 	PMU::save_stack(PMULogType::MMAN);
 	fault_blink_loop(2);  // MemManagement
@@ -506,8 +639,7 @@ void *__stack_check_guard = (void *)0xDEADBEEF;
 /// @brief Called by -fstack-protector when the canary is corrupted.
 void __wrap___stack_chk_fail(void) {
 #ifdef NDEBUG
-	PMU::save_stack(PMULogType::STACK);
-	PMU::reset(false);
+	fault_reset(PMULogType::STACK);
 #else
 	PMU::save_stack(PMULogType::STACK);
 	fault_blink_loop(3);  // Stack overflow
@@ -517,10 +649,7 @@ void __wrap___stack_chk_fail(void) {
 
 extern "C" void vApplicationMallocFailedHook() {
 #ifdef NDEBUG
-	for (;;) {
-		PMU::save_stack(PMULogType::MALLOC);
-		PMU::reset(false);
-	}
+	fault_reset(PMULogType::MALLOC);
 #else
 	PMU::save_stack(PMULogType::MALLOC);
 	fault_blink_loop(4);  // Malloc failure
@@ -533,10 +662,7 @@ extern "C" void vApplicationMallocFailedHook() {
 void etl_error_handler(const etl::exception &e) {
 	DEBUG_TRACE("ETL error: %s in %s : %u", e.what(), e.file_name(), e.line_number());
 #ifdef NDEBUG
-	for (;;) {
-		PMU::save_stack(PMULogType::ETL);
-		PMU::reset(false);
-	}
+	fault_reset(PMULogType::ETL);
 #else
 	PMU::save_stack(PMULogType::ETL);
 	fault_blink_loop(5);  // ETL assertion
@@ -735,7 +861,7 @@ static InitContext init_peripherals() {
 
 	DEBUG_TRACE("IS25 flash...");
 	static Is25Flash is25_flash;
-	if (!is25_flash.init()) storage_unusable("IS25 flash init");  // never returns
+	if (!is25_init_ok(is25_flash)) storage_unusable("IS25 flash init");  // never returns
 
 	// The flash is up: forget any past bring-up failures so a transient fault
 	// months from now gets the full retry budget again rather than dropping
@@ -1646,6 +1772,39 @@ static void init_runtime(NrfSwitch &nrf_reed_switch) {
 }
 
 
+/// @brief Every init phase, then the FSM start.
+static void init_and_start() {
+	auto [reed, flash] = init_peripherals();
+	init_power_on_check(reed);
+
+	auto &lfs = init_storage(reed, flash);
+	fault_inject(1);
+	fault_inject(2);
+	init_battery();
+	init_core_services(lfs, flash);
+	init_communication(lfs);
+	init_sensors(lfs);
+	init_runtime(reed);
+
+	DEBUG_TRACE("Entering main SM...");
+	GenTracker::start();
+	fault_inject(4);
+}
+
+/// @brief init_and_start() behind a barrier. Both run before the boot-fail counter
+/// of the FSM can help, and an exception out of them reached std::terminate: they
+/// take init_unusable()'s ladder instead.
+static void init_guarded() {
+	try {
+		init_and_start();
+	} catch (...) {
+		init_unusable("init");
+	}
+	// Through: past failures no longer count.
+	s_initfail.magic = INITFAIL_MAGIC;
+	s_initfail.count = 0;
+}
+
 /**
  * @brief Application entry point.
  *
@@ -1674,18 +1833,7 @@ int main() {
 		nrf_gpio_cfg_default(ext_int.pin_number);  // high-Z input
 	}
 
-	auto [reed, flash] = init_peripherals();
-	init_power_on_check(reed);
-
-	auto &lfs = init_storage(reed, flash);
-	init_battery();
-	init_core_services(lfs, flash);
-	init_communication(lfs);
-	init_sensors(lfs);
-	init_runtime(reed);
-
-	DEBUG_TRACE("Entering main SM...");
-	GenTracker::start();
+	init_guarded();
 
 #ifdef BENCH_TEST
 	// Bench-test hooks (debug/bench builds only).

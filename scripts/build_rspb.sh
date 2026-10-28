@@ -119,6 +119,9 @@ else
     printf '\033[0m'
 fi
 printf '\033[1;36m   Optional log flags:  METRIC_LATENCY=%s   VALIDATION=%s\033[0m\n' "$METRICS" "$VALIDATION"
+if [ "${FAULT_INJECT:-0}" != "0" ]; then
+    printf '\033[1;31m   FAULT_INJECT=%s  ->  VALIDATION FIRMWARE, fails at every boot on purpose: never ship\033[0m\n' "$FAULT_INJECT"
+fi
 echo ""
 
 cd "$PROJECT_ROOT"
@@ -212,6 +215,7 @@ cmake -DCMAKE_TOOLCHAIN_FILE=../../toolchain_arm_gcc_nrf52.cmake \
       -DVALIDATION_LOG_ENABLE=$([ "$VALIDATION" = "ON" ] && echo 1 || echo 0) \
       -DBENCH_TEST=${BENCH} \
       -DBENCH_FORCE_LPM_NONE=${BENCH_FORCE_LPM_NONE:-OFF} \
+      -DFAULT_INJECT=${FAULT_INJECT:-0} \
       ../..
 
 make -j 20
