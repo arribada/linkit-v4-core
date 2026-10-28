@@ -349,7 +349,8 @@ static void bootfail_factory_reset_and_reboot() {
 	// chain could exhaust it mid-reset, on the very path meant to recover.
 	PMU::kick_watchdog();
 	try {
-		if (configuration_store) configuration_store->factory_reset();
+		// Nobody asked for this one: keep the battery and duty-cycle safety too.
+		if (configuration_store) configuration_store->factory_reset_for_recovery();
 	} catch (...) {
 		DEBUG_ERROR("BootFail: factory_reset itself threw — proceeding to reboot anyway");
 	}

@@ -603,6 +603,24 @@ std::optional<ScheduleDecision> Service::shutdown_if_battery_critical(bool in_lo
 	return ScheduleDecision::off("battery critical — powering down");
 }
 
+void Service::power_down_if_tx_failures_end_the_wake(unsigned int consecutive_failures, unsigned int max_consecutive) {
+#if defined(BOARD_RSPB)
+	ArgosConfig argos_config;
+	configuration_store->get_argos_configuration(argos_config);
+	const unsigned int shutdown_timer = configuration_store->read_param<unsigned int>(ParamID::SHUTDOWN_TIMER);
+	if (!tx_failures_end_the_wake(consecutive_failures, max_consecutive, shutdown_timer,
+	                              argos_config.shutdown_ntime_sat))
+		return;
+	DEBUG_ERROR("%s: %u TX failures in a row, no SHUTDOWN_TIMER — powering down until the next wake", m_name,
+	            consecutive_failures);
+	configuration_store->save_params_before_power_cut(m_name);
+	PMU::powerdown();
+#else
+	(void)consecutive_failures;
+	(void)max_consecutive;
+#endif
+}
+
 #ifdef BENCH_TEST
 /// Record the scheduling decision for the bench console. Deliberately placed on
 /// EVERY branch of reschedule(), including those that plan nothing: a test that

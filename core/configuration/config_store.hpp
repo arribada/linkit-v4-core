@@ -703,6 +703,13 @@ public:
 	/// @brief Factory reset — reformat flash, preserve protected params (DECID, HEXID).
 	virtual void factory_reset() = 0;
 
+	/// @brief The factory reset of the boot-fail recovery, which nobody asked for:
+	/// it also keeps the battery and duty-cycle safety parameters. Back at their
+	/// defaults (no shutdown timer, no session TX budget, modulo 2, no low-battery
+	/// mode) a recovered RSPB never powered itself down again (H6, July audit).
+	/// FACTR, which an operator asks for, stays a full reset.
+	virtual void factory_reset_for_recovery() { factory_reset(); }
+
 	/// @brief Read Argos pass prediction data from flash.
 	virtual BasePassPredict &read_pass_predict() = 0;
 
@@ -1674,11 +1681,13 @@ public:
 	bool boot_count_check_modulo(unsigned int boot_counter) {
 		unsigned int modulo = read_param<unsigned int>(ParamID::BOOT_COUNTER_MODULO);
 
-		// Protection: modulo must be >= 2 to avoid running every boot (modulo=1)
-		// or division by zero (modulo=0). If misconfigured, always allow boot.
+		// Below 2 there is no duty cycle: every wake runs. DTE refuses it (PWP03 is
+		// 2 at least), so only a corrupted store gets here. This said "allowing
+		// boot" and returned false, which powered the board down: with the counter
+		// wrap, modulo 0 or 1 ran one wake in 3 or 4 (C2b, July audit).
 		if (modulo < 2) {
-			DEBUG_WARN("BOOT_COUNTER_MODULO=%u invalid (must be >=2) | allowing boot", modulo);
-			return false;
+			DEBUG_WARN("BOOT_COUNTER_MODULO=%u: no duty cycle, running every wake", modulo);
+			return true;
 		}
 
 		if (boot_counter % modulo == 0) {

@@ -317,6 +317,27 @@ protected:
 	///         path PMU::powerdown() has already been called by the time this
 	///         returns -- on a sealed tag that is the end of the mission.
 	std::optional<ScheduleDecision> shutdown_if_battery_critical(bool in_low_battery_mode);
+
+	/// @brief RSPB: power down when a run of failed transmissions should end the wake.
+	///
+	/// SHUTDOWN_NTIME_SAT ends a wake after that many transmissions, but counts only
+	/// those that went through: with a module that kept failing it was never
+	/// reached, and the board stayed awake through the TX suspension and its
+	/// probes until the battery went critical. Decided with the user (2026-10-28):
+	/// when a budget is set and SHUTDOWN_TIMER is not (that timer is the time limit),
+	/// the failure that reaches @p max_consecutive powers the board down, and the
+	/// TPL5111 retries at its next period. Returns when the power stays on: other
+	/// boards, conditions not met, or a bench build, where powerdown() is suppressed.
+	void power_down_if_tx_failures_end_the_wake(unsigned int consecutive_failures, unsigned int max_consecutive);
+
+public:
+	/// @brief The decision of power_down_if_tx_failures_end_the_wake(), testable.
+	static bool tx_failures_end_the_wake(unsigned int consecutive_failures, unsigned int max_consecutive,
+	                                     unsigned int shutdown_timer_s, unsigned int session_tx_budget) {
+		return shutdown_timer_s == 0 && session_tx_budget > 0 && consecutive_failures >= max_consecutive;
+	}
+
+protected:
 	/// @brief Get current hardware timer counter (ms).
 	uint64_t service_current_timer();
 	template <typename T> T &service_read_param(ParamID param_id) {

@@ -346,7 +346,7 @@ TEST(Sm, RepeatedBootFailuresBackOffForEverAndNeverPowerOff) {
 	gentracker_test_bootfail_set({ 0, false, 0, false });
 	mock().ignoreOtherCalls();
 	mock().expectNoCall("powerdown");
-	mock().expectOneCall("factory_reset").onObject(configuration_store);
+	mock().expectOneCall("factory_reset_for_recovery").onObject(configuration_store);
 
 	// ErrorState wait of each failed boot, 0 for the one that goes into the
 	// factory reset instead: the sixth, whose failure outlived 72 min of
@@ -374,7 +374,7 @@ TEST(Sm, CrashLoopIsSpacedOutWithoutFactoryReset) {
 	// Seven boots in a row died (crash, watchdog) without reaching ErrorState:
 	// quick ones, with no time spent waiting.
 	gentracker_test_bootfail_set({ 7, false, 0, false });
-	mock().expectNoCall("factory_reset");
+	mock().expectNoCall("factory_reset_for_recovery");
 	mock().expectNoCall("is_mounted");  // waits before touching the flash
 	mock().expectNoCall("mount");
 	mock().ignoreOtherCalls();
@@ -456,7 +456,7 @@ TEST(Sm, CrashLoopThatOutlivesTheWaitsGetsTheFactoryReset) {
 	// An hour of waits behind it, and the last attempt crashed again.
 	gentracker_test_bootfail_set({ 9, false, 3600, false });
 	mock().ignoreOtherCalls();
-	mock().expectOneCall("factory_reset").onObject(configuration_store);
+	mock().expectOneCall("factory_reset_for_recovery").onObject(configuration_store);
 	mock().expectOneCall("reset").withParameter("dfu_mode", false);
 	mock().expectNoCall("powerdown");
 
@@ -469,7 +469,7 @@ TEST(Sm, CrashLoopThatOutlivesTheWaitsGetsTheFactoryReset) {
 TEST(Sm, FactoryResetNeedsFailuresAndTimeSpentFailing) {
 	gentracker_test_bootfail_keep(true);
 	mock().ignoreOtherCalls();
-	mock().expectNoCall("factory_reset");
+	mock().expectNoCall("factory_reset_for_recovery");
 
 	// Many quick failures, 1 s short of 30 min of waits.
 	gentracker_test_bootfail_set({ 20, false, 30 * 60 - 1, true });
@@ -485,7 +485,7 @@ TEST(Sm, FactoryResetNeedsFailuresAndTimeSpentFailing) {
 
 	// Fifth failed boot after 30 min of waits: the factory reset, then a reset.
 	mock().ignoreOtherCalls();
-	mock().expectOneCall("factory_reset").onObject(configuration_store);
+	mock().expectOneCall("factory_reset_for_recovery").onObject(configuration_store);
 	mock().expectOneCall("reset").withParameter("dfu_mode", false);
 	gentracker_test_bootfail_set({ 4, false, 30 * 60, true });
 	boot_into_error();
@@ -498,7 +498,7 @@ TEST(Sm, FactoryResetNeedsFailuresAndTimeSpentFailing) {
 
 	// Only once until a good boot clears the record.
 	mock().ignoreOtherCalls();
-	mock().expectNoCall("factory_reset");
+	mock().expectNoCall("factory_reset_for_recovery");
 	gentracker_test_bootfail_set({ 10, true, 10 * 3600, true });
 	boot_into_error();
 	CHECK_TRUE(gentracker_test_bootfail_get().factory_reset_attempted);

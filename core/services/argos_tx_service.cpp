@@ -3359,6 +3359,8 @@ void ArgosTxService::react(KineisEventDeviceError const &) {
 	DEBUG_WARN("ArgosTxService::react: KineisEventDeviceError (consecutive=%u/%u)", m_consecutive_device_errors,
 	           DEVICE_ERROR_MAX_CONSECUTIVE);
 #endif
+	// RSPB, no SHUTDOWN_TIMER: the third failure in a row ends the wake (returns otherwise).
+	power_down_if_tx_failures_end_the_wake(m_consecutive_device_errors, DEVICE_ERROR_MAX_CONSECUTIVE);
 
 	// Restore TCXO warmup if it was skipped
 	if (m_tcxo_skip_on_next_tx) {

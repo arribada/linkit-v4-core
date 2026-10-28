@@ -690,12 +690,17 @@ démarre jamais, reflasher un build normal ensuite.**
 | P3 `c66d73a4` : une sauvegarde qui échoue n'empêche plus la coupure | PC | `BatteryCriticalGuard.a_failed_save_before_the_cut_still_powers_down` | passe ; sans le correctif, l'exception sort et `powerdown()` n'est pas appelé | ✅ 28/10 |
 | | RSPB | build release normal : un réveil qui n'est pas son tour, un réveil complet jusqu'au budget d'émission, puis la coupure (PPK) | coupure comme avant ; journal sans `config save failed` | ⬜ |
 | P4 : mécanismes de récupération (choix de l'utilisateur : les quatre) | PC | aucun test possible : code cible, fautes réelles | compilation de 10 variantes, dont les builds de validation | voir ci-dessous |
-| | LinkIt SMD (banc) | `FAULT_INJECT=2`, puis `=4` | 5 × `init threw (n/5) — reset to retry` ; puis `sleeping until the watchdog`, 60 s de rouge, et un redémarrage par le chien de garde au bout de 15 min | ⬜ |
+| | LinkIt SMD (banc) | `FAULT_INJECT=2`, puis `=4` | 5 × `init threw (n/5) — reset to retry` ; puis `sleeping until the watchdog`, 60 s de rouge, et un redémarrage par le chien de garde au bout de 15 min | ⬜ 28/10, **non concluant** : avant la machine à états, ni la console USB (jamais énumérée, la boucle principale ne tourne pas) ni le journal flash (ouvert dans `BootState`) ne voient ces lignes ; et au PPK, USB branché, la carte du banc ne montre qu'un palier plat (10,5 puis 27,8 mA). À refaire en regardant la LED (5 × 2 s de rouge, 60 s de rouge, noir ~15 min, de nouveau 60 s), ou au PPK seul sur une carte saine. `=4` écrit dans le journal flash pour les deux premiers démarrages (`BootState` a ouvert le journal) |
 | | LinkIt SMD (banc) | `FAULT_INJECT=3` | 5 × `IS25 flash init failed (n/5)`, puis `deferring to the watchdog` : inchangé sur LinkIt | ⬜ |
 | | RSPB | `FAULT_INJECT=2`, `=3`, `=4` (build de banc) | 5 resets, puis `asking the TPL5111 to cut the power` et la coupure : courant au niveau TPL éteint, UART muette jusqu'à la période suivante, qui recommence | ⬜ |
 | | RSPB | `FAULT_INJECT=1` (build release) | au PPK : 4 démarrages brefs, la coupure à la 5e faute, puis le même cycle à la période suivante | ⬜ |
 | | LinkIt release | `FAULT_INJECT=1` | inchangé : resets en boucle, comme avant (le compteur n'existe que sur RSPB) | ⬜ |
 | | toutes | build normal reflashé après chaque essai | démarrage normal, configuration identique | ⬜ |
+| P5 : le reset de récupération garde la sécurité (H6) ; 3 échecs d'émission consécutifs coupent (RSPB, budget réglé, `SHUTDOWN_TIMER=0`) ; modulo < 2 = chaque réveil (C2b) | PC | `ConfigStore.RecoveryResetKeepsTheSafetyParamsAndFactrDoesNot`, `TxFailuresEndTheWake` (3), `RSPBRecovery` (2, dans RSPBSimulation) | passent ; les nouveaux échouent sans leur correctif | ✅ 28/10 |
+| | RSPB | `SHUTDOWN_TIMER=0`, `SHUTDOWN_NTIME_SAT=3`, module satellite débranché ou sans réponse : un réveil | `TX failures in a row, no SHUTDOWN_TIMER` au 3e échec, puis la coupure (PPK) au lieu d'une heure de suspension | ⬜ |
+| | RSPB | même essai avec `SHUTDOWN_TIMER=600` | inchangé : la suspension, puis la coupure par le minuteur | ⬜ |
+| | RSPB | récupération automatique (5 démarrages ratés, `FAULT_INJECT=4`), puis un build normal : `PARMR` | `PWP01`, `PWP03`, `PWP04`, `PWP05`, `LBP01/02/12/14` gardés, les modes revenus aux défauts | ⬜ |
+| | LinkIt | `FACTR` | reset complet : `LBP01/02/12` reviennent aussi aux défauts | ⬜ |
 
 ---
 

@@ -691,6 +691,7 @@ target_sources(${RSPB_SIM_NAME} PRIVATE
     "${NRF_DIR}/core/hardware/lora_rak3172/lora_rak3172_comm.cpp"
     "${NRF_DIR}/core/hardware/cdt/cdt.cpp"
     "src/rspb_simulation.cpp"
+    "src/rspb_recovery_test.cpp"
     "src/rspb_main.cpp"
     "fakes/memmang.cpp"
     "fakes/fake_bsp.cpp"

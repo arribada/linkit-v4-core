@@ -498,6 +498,42 @@ TEST(ConfigStore, CheckFactoryResetRetainsProtectedParams) {
 	CHECK_EQUAL(hex_id, store->read_param<unsigned int>(ParamID::ARGOS_HEXID));
 }
 
+// The boot-fail recovery's reset keeps the battery and duty-cycle safety on top
+// of the identifiers (H6, July audit); FACTR, asked for by an operator, does not.
+TEST(ConfigStore, RecoveryResetKeepsTheSafetyParamsAndFactrDoesNot) {
+	store = new LFSConfigurationStore(*main_filesystem);
+	store->init();  // a fresh filesystem: every parameter at its default
+	const unsigned int def_threshold = store->read_param<unsigned int>(ParamID::LB_THRESHOLD);
+	const unsigned int def_critical = store->read_param<unsigned int>(ParamID::LB_CRITICAL_THRESH);
+	const unsigned int def_tr_nom = store->read_param<unsigned int>(ParamID::TR_NOM);
+	CHECK_FALSE(store->read_param<bool>(ParamID::LB_EN));
+	const bool lb_en = true;
+	const unsigned int lb_threshold = def_threshold + 7U, lb_critical = def_critical + 3U, tr_nom = def_tr_nom + 60U;
+
+	for (int recovery = 1; recovery >= 0; recovery--) {
+		store->write_param(ParamID::LB_EN, lb_en);
+		store->write_param(ParamID::LB_THRESHOLD, lb_threshold);
+		store->write_param(ParamID::LB_CRITICAL_THRESH, lb_critical);
+		store->write_param(ParamID::TR_NOM, tr_nom);  // a mission setting
+		store->save_params();
+
+		if (recovery)
+			store->factory_reset_for_recovery();
+		else
+			store->factory_reset();
+		delete store;
+		store = new LFSConfigurationStore(*main_filesystem);
+		store->init();
+
+		const bool kept = recovery != 0;
+		CHECK_EQUAL(kept, store->read_param<bool>(ParamID::LB_EN));
+		CHECK_EQUAL(kept ? lb_threshold : def_threshold, store->read_param<unsigned int>(ParamID::LB_THRESHOLD));
+		CHECK_EQUAL(kept ? lb_critical : def_critical, store->read_param<unsigned int>(ParamID::LB_CRITICAL_THRESH));
+		// The mission configuration goes back to its default either way.
+		CHECK_EQUAL(def_tr_nom, store->read_param<unsigned int>(ParamID::TR_NOM));
+	}
+}
+
 // factory_reset is reached automatically after repeated failed boots. The
 // provisioning secrets it promises to keep (PROTECTED_PARAMS) must come back on
 // the next boot, or the recovered tag can no longer transmit. Only DECID/HEXID

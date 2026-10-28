@@ -1348,6 +1348,8 @@ void LoRaTxService::react(KineisEventDeviceError const &) {
 	m_consecutive_device_errors++;
 	DEBUG_WARN("LoRaTxService::react: KineisEventDeviceError (consecutive=%u/%u)", m_consecutive_device_errors,
 	           DEVICE_ERROR_MAX_CONSECUTIVE);
+	// RSPB, no SHUTDOWN_TIMER: the third failure in a row ends the wake (returns otherwise).
+	power_down_if_tx_failures_end_the_wake(m_consecutive_device_errors, DEVICE_ERROR_MAX_CONSECUTIVE);
 	{
 		if (DEVICE_ERROR_PROBE_PERIOD_S && m_consecutive_device_errors >= DEVICE_ERROR_MAX_CONSECUTIVE) {
 			m_device_error_suspend_until = service_current_time() + DEVICE_ERROR_PROBE_PERIOD_S;

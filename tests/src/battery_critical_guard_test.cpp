@@ -154,3 +154,22 @@ TEST(BatteryCriticalGuard, the_threshold_is_read_fresh_each_time) {
 	configuration_store->write_param(ParamID::LB_CRITICAL_THRESH, raised);
 	CHECK_TRUE(probe->shutdown_if_battery_critical(true).has_value());
 }
+
+// The decision behind Service::power_down_if_tx_failures_end_the_wake(): on RSPB,
+// with a session TX budget set and no SHUTDOWN_TIMER, the failure that reaches the
+// strike limit ends the wake. Decided with the user on 2026-10-28.
+TEST_GROUP(TxFailuresEndTheWake){};
+
+TEST(TxFailuresEndTheWake, the_third_failure_in_a_row_ends_it) {
+	CHECK_FALSE(Service::tx_failures_end_the_wake(2, 3, 0, 5));
+	CHECK_TRUE(Service::tx_failures_end_the_wake(3, 3, 0, 5));
+	CHECK_TRUE(Service::tx_failures_end_the_wake(4, 3, 0, 5));
+}
+
+TEST(TxFailuresEndTheWake, a_shutdown_timer_keeps_the_time_limit) {
+	CHECK_FALSE(Service::tx_failures_end_the_wake(3, 3, 600, 5));
+}
+
+TEST(TxFailuresEndTheWake, without_a_budget_nothing_changes) {
+	CHECK_FALSE(Service::tx_failures_end_the_wake(3, 3, 0, 0));
+}

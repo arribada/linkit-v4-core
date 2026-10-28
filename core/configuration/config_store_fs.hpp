@@ -587,6 +587,33 @@ private:
 		return false;
 	}
 
+	/// @brief What the boot-fail recovery keeps on top of PROTECTED_PARAMS: the
+	/// battery and duty-cycle safety. At their defaults a recovered RSPB had no
+	/// shutdown timer and no session TX budget, so nothing ended a wake, woke on
+	/// modulo 2 whatever it was set to, and had no low-battery mode (H6, July
+	/// audit). The session TX budgets are implemented on RSPB only and never reach
+	/// the file elsewhere; the TPL5111 ones exist on EXTERNAL_WAKEUP builds only.
+	/// FACTR still resets them.
+	static constexpr ParamID SAFETY_PARAMS[] = {
+		ParamID::LB_EN,
+		ParamID::LB_THRESHOLD,
+		ParamID::LB_CRITICAL_THRESH,
+		ParamID::LB_SHUTDOWN_NTIME_SAT,
+		ParamID::SHUTDOWN_NTIME_SAT,
+#ifdef EXTERNAL_WAKEUP
+		ParamID::SHUTDOWN_TIMER,
+		ParamID::BOOT_COUNTER_MODULO,
+		ParamID::WAKEUP_PERIOD,
+		ParamID::WAKEUP_PERIOD_MEASURED_MS,
+#endif
+	};
+
+	static bool is_safety_param(unsigned int index) {
+		for (ParamID id : SAFETY_PARAMS)
+			if ((unsigned int)id == index) return true;
+		return false;
+	}
+
 	/// @brief Write config.dat for factory_reset: every parameter back to its default
 	/// except the identifiers and the provisioning secrets.
 	///
@@ -597,11 +624,12 @@ private:
 	/// boot-fail path could no longer join or build a frame. The reader now places
 	/// records by key; a full file still reads on its fast path, and still reads on
 	/// a firmware older than that after a downgrade.
-	/// Power is left to the caller (factory_reset brackets it).
-	void serialize_protected_config() {
+	/// Power is left to the caller (factory_reset brackets it). @p keep_safety:
+	/// SAFETY_PARAMS are kept too (the boot-fail recovery).
+	void serialize_protected_config(bool keep_safety) {
 		for (unsigned int i = 0; i < MAX_CONFIG_ITEMS; i++) {
-			if (!is_protected_param(i) || m_params.at(i).index() != default_params[i].index())
-				m_params.at(i) = default_params[i];
+			const bool kept = is_protected_param(i) || (keep_safety && is_safety_param(i));
+			if (!kept || m_params.at(i).index() != default_params[i].index()) m_params.at(i) = default_params[i];
 		}
 
 		LFSFile f(&m_filesystem, "config.dat", LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC);
@@ -617,6 +645,7 @@ private:
 
 		DEBUG_INFO("ConfigurationStoreLFS::serialize_protected_config: identifiers and provisioning secrets kept "
 		           "across the factory reset");
+		if (keep_safety) DEBUG_INFO("ConfigurationStoreLFS: battery and duty-cycle safety parameters kept as well");
 	}
 
 	/// @brief Persist all sensor calibration data to flash.
@@ -670,17 +699,25 @@ public:
 	bool is_valid() override { return m_is_config_valid; }
 
 	/// @brief Factory reset: format flash, preserve DECID/HEXID + calibration data.
-	void factory_reset() override {
+	void factory_reset() override { format_and_restore(false); }
+
+	/// @brief The boot-fail recovery's factory reset: SAFETY_PARAMS kept as well.
+	void factory_reset_for_recovery() override { format_and_restore(true); }
+
+private:
+	void format_and_restore(bool keep_safety) {
 		m_filesystem.power_up();
 		m_filesystem.umount();
 		m_filesystem.format();
 		m_filesystem.mount();
-		serialize_protected_config();  // Recover "protected" parameters
+		serialize_protected_config(keep_safety);  // Recover "protected" parameters
 		save_calibration_data();
 		m_is_config_valid = false;
 		m_is_pass_predict_valid = false;
 		m_filesystem.power_down();
 	}
+
+public:
 
 	BasePassPredict &read_pass_predict() override {
 		if (m_is_pass_predict_valid) {

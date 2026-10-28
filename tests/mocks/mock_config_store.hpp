@@ -23,6 +23,7 @@ public:
 	bool is_valid() { return m_is_valid; }
 	bool is_zone_valid() { return mock().actualCall("is_zone_valid").onObject(this).returnBoolValue(); }
 	void factory_reset() { mock().actualCall("factory_reset").onObject(this); }
+	void factory_reset_for_recovery() { mock().actualCall("factory_reset_for_recovery").onObject(this); }
 	BasePassPredict &read_pass_predict() {
 		mock().actualCall("read").onObject(this);
 		return m_pass_predict;
