@@ -66,8 +66,8 @@ GNP01, GNP52, ARP01, CAP01 et GNP25 n'ont pas changé (1, 4294967295, 0, 0, 1).
 
 | # | Commande | Attendu |
 |---|---|---|
-| 1.1 | `cd tests && ./build/TrackerTests -p -xg SWS` | tout passe (1074/1074 au 29/10, après P9-L10 de 2.15 ; aussi en un seul processus, sans `-p`) |
-| 1.2 | `cd tests && ./build/TrackerTestsCyprus -p -xg SWS` | tout passe (1092/1092 au 29/10, après P9-L10 de 2.15) |
+| 1.1 | `cd tests && ./build/TrackerTests -p -xg SWS` | tout passe (1077/1077 au 29/10, après Argos C+D de 2.15 ; aussi en un seul processus, sans `-p`) |
+| 1.2 | `cd tests && ./build/TrackerTestsCyprus -p -xg SWS` | tout passe (1095/1095 au 29/10, après Argos C+D de 2.15) |
 | 1.3 | `cd tests && ./build/TrackerTests -p -g SWSAnalog`, puis `-g SWSAnalogFlash`, puis `-sg SWSLongRun -sn H45_FixedDelayClean_ControlDetectsSurfacings` | tout passe |
 | 1.4 | `cd tests && ./build/TurtleSimulation -v` | 11/11, dont les tests budget `BatteryAndBusyWaitWithinBudget` et `JournalAtWarnHoldsOnlyFaults` |
 | 1.5 | `cd tests && ./build/RSPBSimulation -v` | 15/15 au 29/10, après P6 de 2.15 |
@@ -715,6 +715,8 @@ démarre jamais, reflasher un build normal ensuite.**
 | | SMD SPI | 6b : un défaut SPI pendant le sondage d'émission n'est pas provocable sans injection | revue de code ; l'émission elle-même reste couverte par 2.6 | — |
 | P9-L10 : un démarrage GNSS refusé par le limiteur laisse la veille profonde en place (avant : plus de coupure du rail jusqu'à la levée du limiteur) | PC | `GPSShortSurface.RateLimitedStartLeavesTheDeepIdleWindowArmed` | passe ; échoue sans le correctif (le rail reste allumé après la fenêtre de 600 s) | ✅ 29/10 |
 | | LinkIt SMD (banc) | `RLP01=1`, `RLP03=1`, `GNP52=600`, une session, une émission… | sans émission au banc, le limiteur ne se remplit pas : non jouable ici, à faire pendant la campagne RF | ⬜ |
+| Argos C+D (de `robust/argos`) : la position de prépasse semée au démarrage n'est plus effacée par la remise à zéro du planificateur (C) ; un magasin de passes illisible (après une écriture d'AOP ratée) se lit « pas d'AOP » au lieu d'empêcher le service Argos de démarrer, et la réception descendante ne planifie rien au lieu de lever (D) | PC | `ArgosTxService.PrepassStartsFromThePersistedFixAfterAReset`, `ArgosTxService.AnUnreadablePassPredictStoreReadsAsNoAopRecord`, `ArgosRxService.AnUnreadablePassPredictStoreSchedulesNoReception` | passent ; les trois échouent sur HEAD | ✅ 29/10 |
+| | LinkIt (prépasse) | `PPP07=1` avec un AOP à jour et une position connue, redémarrage (`RSTBW`), puis `STATR` | `PPT0x` donne la prochaine passe dès le démarrage (avant : rien jusqu'au premier fix) ; aucune émission nécessaire pour le lire | ⬜ |
 | Banc, LED-03 | carte saine | rejouer `dte_campaign --cases LED-03` | rouge pour une session sans position ; sur la carte du banc le reed rebondit sans aimant (110 fronts en 30 s), d'où le blanc « aimant présent » | ⬜ |
 
 ---

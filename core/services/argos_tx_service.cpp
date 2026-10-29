@@ -116,6 +116,16 @@ void ArgosTxService::service_init() {
 	m_kineis.subscribe(*this);
 	m_kineis.set_tcxo_warmup_time(argos_config.argos_tcxo_warmup_time);
 
+	// Jitter seed: shared derivation with LoRaTxService (see
+	// ConfigurationStore::get_tx_jitter_seed) so both services jitter off the
+	// same per-unit value, and a build that provisions no Argos ID still gets
+	// a unique one instead of mt19937(0).
+	//
+	// BEFORE the location seed below: reset() empties the scheduler's location,
+	// and it used to run a hundred lines after the seed, so every start threw the
+	// persisted position away and the prepass waited for a live fix (2026-07 audit).
+	m_sched.reset(configuration_store->get_tx_jitter_seed());
+
 	// 2026-08 — seed the scheduler's location from the last PERSISTED fix,
 	// instead of waiting for the next one.
 	//
@@ -227,11 +237,6 @@ void ArgosTxService::service_init() {
 	}
 
 	DEBUG_INFO("ArgosTxService::service_init: Argos ID=%u", (unsigned int)argos_config.argos_id);
-	// Jitter seed: shared derivation with LoRaTxService (see
-	// ConfigurationStore::get_tx_jitter_seed) so both services jitter off the
-	// same per-unit value, and a build that provisions no Argos ID still gets
-	// a unique one instead of mt19937(0).
-	m_sched.reset(configuration_store->get_tx_jitter_seed());
 	m_depth_pile_manager.clear();
 	m_is_first_tx = true;
 	m_is_tx_pending = false;
@@ -3524,8 +3529,18 @@ bool ArgosTxService::aop_is_usable(const ArgosConfig &config, std::time_t now, u
 /// @brief Are the AOP usable (present, dated, not expired)?
 ArgosTxService::AopStatus ArgosTxService::aop_status(const ArgosConfig &config, std::time_t now, unsigned int &age_s) {
 	age_s = 0;
-	BasePassPredict &pp = configuration_store->read_pass_predict();
-	if (pp.num_records == 0) return AopStatus::NO_RECORD;
+	// The flash store throws while its pass-predict cache is invalid (a failed
+	// AOP write, until the next reboot). That is the same answer as an empty
+	// set, and it must not escape the scheduling path: Service::start would
+	// keep retrying and the service never start (2026-07 audit). The callers
+	// below read the set again only once this says USABLE.
+	unsigned int num_records = 0;
+	try {
+		num_records = configuration_store->read_pass_predict().num_records;
+	} catch (...) {
+		return AopStatus::NO_RECORD;
+	}
+	if (num_records == 0) return AopStatus::NO_RECORD;
 	// last_aop_update = ARGOS_AOP_DATE, set when a PASPW is received.
 	// Its factory value is old (Oct. 2021): a beacon that was never provisioned
 	// is therefore considered expired as soon as the age limit is enabled, and

@@ -221,6 +221,90 @@ TEST_GROUP(ArgosTxService) {
 	}
 };
 
+namespace {
+// The flash store throws while its pass-predict cache is invalid: after a failed
+// AOP write, until the next reboot.
+class UnreadablePassPredictStore : public FakeConfigurationStore {
+public:
+	BasePassPredict &read_pass_predict() override { throw CONFIG_DOES_NOT_EXIST; }
+};
+}  // namespace
+
+// Prepass gating (any mode) and PASS_PREDICTION both ask for the AOP status. The
+// exception escaped Service::start, which retried for ever: a prepass beacon never
+// transmitted again. It now reads as "no AOP record" and the beacon falls back to
+// periodic TX (July audit, robust/argos).
+TEST(ArgosTxService, AnUnreadablePassPredictStoreReadsAsNoAopRecord) {
+	delete fake_config_store;
+	fake_config_store = new UnreadablePassPredictStore;
+	configuration_store = fake_config_store;
+	configuration_store->init();
+	fake_config_store->write_param(ParamID::PP_MIN_ELEVATION, 5.0);
+	fake_config_store->write_param(ParamID::MIN_SURFACE_CYCLE_INTERVAL_S, 0U);
+	configure_plain_legacy();
+	fake_config_store->write_param(ParamID::SAT_PREPASS_EN, true);
+	fake_config_store->write_param(ParamID::SAT_AOP_VALID, true);
+
+	mock().ignoreOtherCalls();
+	for (BaseArgosMode mode : { BaseArgosMode::LEGACY, BaseArgosMode::PASS_PREDICTION }) {
+		fake_config_store->write_param(ParamID::ARGOS_MODE, mode);
+		ArgosTxService serv(*mock_kineis);
+		std::time_t t = 1652105502000;
+		fake_rtc->settime(t / 1000);
+		fake_timer->set_counter(t);
+		mock_kineis->send_count = 0;
+		try {
+			serv.start();
+			inject_gps_location(true, 11.8768, -33.8232, t / 1000, true);
+		} catch (...) {
+			FAIL("the pass-predict read escaped the scheduling path");
+		}
+		CHECK_FALSE(fake_config_store->read_param<bool>(ParamID::SAT_AOP_VALID));
+		t += serv.get_last_schedule();
+		fake_rtc->settime(t / 1000);
+		fake_timer->set_counter(t);
+		system_scheduler->run();
+		CHECK_EQUAL(1U, mock_kineis->send_count);
+		serv.stop();
+	}
+}
+
+// service_init() seeded the scheduler's location from the persisted fix, then a
+// hundred lines further down reset the scheduler, which empties that location:
+// after every reset the prepass had no position until a live fix (July audit,
+// robust/argos). The next pass is now computed at start.
+TEST(ArgosTxService, PrepassStartsFromThePersistedFixAfterAReset) {
+	configure_plain_legacy();
+	fake_config_store->write_param(ParamID::SAT_PREPASS_EN, true);
+	fake_config_store->write_param(ParamID::SAT_AOP_MAX_AGE_DAYS, 0U);
+	BasePassPredict pass_predict = { /* version_code */ 0,
+	                                 1,
+	                                 { { 0xA,
+		                                 SAT_DNLK_ON,
+		                                 SAT_UPLK_ON_ARGOS_3,
+		                                 { 2020, 1, 26, 22, 59, 44 },
+		                                 7195.550f,
+		                                 98.5444f,
+		                                 327.835f,
+		                                 -25.341f,
+		                                 101.3587f,
+		                                 0.00f } } };
+	fake_config_store->write_pass_predict(pass_predict);
+
+	std::time_t t = 1580083200000;  // ms
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	fake_config_store->write_param(ParamID::ARGOS_AOP_DATE, (std::time_t)(t / 1000 - 3600));
+	GPSLogEntry last = make_gps_location(true, 11.8768, -33.8232, t / 1000, true);
+	configuration_store->notify_gps_location(last);
+
+	ArgosTxService serv(*mock_kineis);
+	mock().ignoreOtherCalls();
+	serv.start();
+	CHECK_TRUE(fake_config_store->read_param<bool>(ParamID::SAT_AOP_VALID));
+	CHECK_COMPARE(fake_config_store->read_param<unsigned int>(ParamID::SAT_NEXT_PASS_TS), >, 0U);
+}
+
 // A depth of 0 can only come from a corrupted store, and a cap of 0 from a LoRa
 // frame too small for one fix: both divided by zero in retrieve() (2026-07 audit
 // L2). The depth reads as 1, as set_max_size() does; a cap of 0 takes nothing.

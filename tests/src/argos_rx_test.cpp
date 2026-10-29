@@ -79,6 +79,7 @@ TEST_GROUP(ArgosRxService) {
 	public:
 		explicit Testable(KineisDevice &d) : ArgosRxService(d) {}
 		bool enabled() { return service_is_enabled(); }
+		unsigned int next_schedule_ms() { return service_next_schedule_in_ms(); }
 	};
 };
 
@@ -155,4 +156,32 @@ TEST(ArgosRxService, EnabledInNominalConfiguration) {
 	Testable serv(*mock_kineis);
 	CHECK_TRUE(serv.enabled());
 	mock().checkExpectations();
+}
+
+namespace {
+// The flash store throws while its pass-predict cache is invalid: after a failed
+// AOP write, until the next reboot.
+class UnreadablePassPredictStore : public FakeConfigurationStore {
+public:
+	BasePassPredict &read_pass_predict() override { throw CONFIG_DOES_NOT_EXIST; }
+};
+}  // namespace
+
+// Without a pass-predict set no reception window can be computed. The exception
+// used to leave the scheduling path (a start then retried for ever, a running
+// service reset the board): now nothing is scheduled.
+TEST(ArgosRxService, AnUnreadablePassPredictStoreSchedulesNoReception) {
+	delete fake_config_store;
+	fake_config_store = new UnreadablePassPredictStore;
+	configuration_store = fake_config_store;
+	configuration_store->init();
+	configure_rx_enabled();
+	Testable serv(*mock_kineis);
+	unsigned int ms = 0;
+	try {
+		ms = serv.next_schedule_ms();
+	} catch (...) {
+		FAIL("the pass-predict read escaped the scheduling path");
+	}
+	CHECK_EQUAL(Service::SCHEDULE_DISABLED, ms);
 }

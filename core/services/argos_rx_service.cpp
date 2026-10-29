@@ -74,9 +74,18 @@ bool ArgosRxService::service_is_enabled() {
 unsigned int ArgosRxService::service_next_schedule_in_ms() {
 	ArgosConfig argos_config;
 	configuration_store->get_argos_configuration(argos_config);
-	BasePassPredict &pass_predict = configuration_store->read_pass_predict();
+	// No usable pass-predict set (the store throws while its cache is invalid,
+	// after a failed AOP write): no window can be computed, so no reception,
+	// rather than an exception out of the scheduling path.
+	BasePassPredict *pass_predict = nullptr;
+	try {
+		pass_predict = &configuration_store->read_pass_predict();
+	} catch (...) {
+		DEBUG_WARN("ArgosRxService: pass-predict store unreadable, no reception scheduled");
+		return SCHEDULE_DISABLED;
+	}
 	std::time_t now = service_current_time();
-	return m_sched.schedule(argos_config, pass_predict, now, m_timeout, m_mode);
+	return m_sched.schedule(argos_config, *pass_predict, now, m_timeout, m_mode);
 }
 
 /// @brief Start RX — power on receiver in scheduled mode.
@@ -185,14 +194,25 @@ void ArgosRxService::react(KineisEventRxStopped const &e) {
 	m_rx_window_open = false;
 }
 
+/// @brief The pass-predict set already stored, or an empty one when the store
+/// cannot be read (it throws while its cache is invalid, after a failed AOP
+/// write): the records just received then rebuild it, and writing them makes the
+/// store valid again. Out of update_pass_predict(), which the complexity ratchet pins.
+static BasePassPredict stored_pass_predict_or_empty() {
+	try {
+		return configuration_store->read_pass_predict();
+	} catch (...) {
+		DEBUG_WARN("ArgosRxService: pass-predict store unreadable, rebuilding it from the received records");
+		return BasePassPredict{};
+	}
+}
+
 /// @brief Merge new AOP records into existing pass predict database and persist to flash.
 /// @param new_pass_predict  Decoded AOP records from downlink packet(s).
 void ArgosRxService::update_pass_predict(BasePassPredict &new_pass_predict) {
-	BasePassPredict existing_pass_predict;
-	unsigned int num_updated_records = 0;
-
 	// Read in the existing pass predict database
-	existing_pass_predict = configuration_store->read_pass_predict();
+	BasePassPredict existing_pass_predict = stored_pass_predict_or_empty();
+	unsigned int num_updated_records = 0;
 
 	// Iterate over new candidate records
 	for (unsigned int i = 0; i < new_pass_predict.num_records; i++) {
