@@ -1207,6 +1207,11 @@ def c_aller_retour_complet(r, case):
        rejette un etat que la balise porte legitimement."""
     if saute_si_radio_muette(r, case, 'le dialogue avec le module'):
         return
+    # La sonde radio, jouee au premier cas qui la demande, sort de configuration
+    # (radio_repond): premier de la passe, ce cas envoyait son PARMR global carte
+    # en fonctionnement, ou le DTE ne repond pas (29/10/2026).
+    if not _en_config(r.b):
+        return r.record(case, 'ERROR', 'mode configuration inaccessible')
     m, err = r.raw_until("$PARMR#000;\r", r'\$O;PARMR#[0-9A-Fa-f]{3};(.*)', timeout=15)
     if err: return r.record(case, 'ERROR', err)
     if not m: return r.record(case, 'FAIL', 'PARMR global sans reponse')
@@ -1277,10 +1282,13 @@ CASES_V3 = [
 #  Aucun cas ne laisse le mode arme en sortant.
 # =====================================================================
 
-def _journal(r, secondes, motif):
-    """Ecoute le journal pendant une duree et rend les lignes qui correspondent."""
+def _journal(r, secondes, motif, depuis=None):
+    """Ecoute le journal pendant une duree et rend les lignes qui correspondent.
+
+    `depuis`: indice d historique ou commencer (une marque posee AVANT l action),
+    sinon maintenant."""
     b = r.b
-    idx = b.mark()
+    idx = b.mark() if depuis is None else depuis
     rx = re.compile(motif)
     fin = time.time() + secondes
     vues = []
@@ -1390,10 +1398,13 @@ def c_prepass_sans_gnss(r, case):
     try:
         b.enter_config()
         b.write_params({'ARGOS_MODE': 1, 'GNSS_EN': 0})
+        # La ligne part a l init des services, avant la reponse au %STATE que
+        # exit_config() attend: ecouter depuis AVANT la sortie (29/10/2026, SMD).
+        mk = b.mark()
         b.exit_config()
     except Exception as e:
         return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
-    vues = _journal(r, 40, r'INCOMPATIBLE|incompatible|PASS_PREDICTION|SCHEDULE_DISABLED')
+    vues = _journal(r, 40, r'INCOMPATIBLE|incompatible|PASS_PREDICTION|SCHEDULE_DISABLED', depuis=mk)
     try:
         b.enter_config(); b.write_params({'ARGOS_MODE': 0, 'GNSS_EN': 1})
     except Exception: pass
@@ -1763,11 +1774,14 @@ def c_limiteur_fenetre_enorme(r, case):
                         'RATE_LIMIT_WINDOW_S': 4294967295, 'RATE_LIMIT_MAX_TX': 1,
                         'UNDERWATER_EN': 0, 'DRY_TIME_BEFORE_TX': 0,
                         'MIN_SURFACE_CYCLE_INTERVAL_S': 0, 'SAT_PREPASS_EN': 0})
+        # Ecouter des la sortie: un limiteur deja plein (sa memoire .noinit garde
+        # les emissions d avant, ici celle d un essai precedent) annonce son
+        # blocage a l init du service, avant le %GPS (29/10/2026).
+        mk = b.mark()
         b.exit_config()
     except Exception as e:
         return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
     time.sleep(2)
-    mk = b.mark()
     b._send('%GPS 43.6 3.9 5000 9\r')
     # On n echantillonne QU APRES que le quota soit consomme. Avant, l emission
     # est legitimement immediate — un fix vient de tomber — et un releve a 0 ms
@@ -7805,7 +7819,19 @@ def _encode_template(nom):
                            'la production; cas non concluant')
     if racine not in sys.path:
         sys.path.insert(0, racine)
-    from pylinkit.protocol.dte_params import DTEParamMap
+    # Le module a change de place entre versions de PyLinkit (pylinkit.dte_params
+    # en v3, pylinkit.protocol.dte_params ensuite), comme le sait deja
+    # tools/check_template_conf.load_live_encoder. Un checkout v3 s importe mais
+    # ne connait pas les parametres v4: encode() le dira, cle par cle.
+    DTEParamMap, dernier = None, None
+    for chemin in ('pylinkit.protocol.dte_params', 'pylinkit.dte_params'):
+        try:
+            DTEParamMap = __import__(chemin, fromlist=['DTEParamMap']).DTEParamMap
+            break
+        except Exception as e:
+            dernier = e
+    if DTEParamMap is None:
+        raise RuntimeError(f'PYLINKIT={racine}: module introuvable ({dernier})')
     return [(DTEParamMap.param_to_key(k), DTEParamMap.encode(k, v))
             for k, v in params.items()]
 
@@ -8148,53 +8174,39 @@ def c_blind_exclu_de_la_salve(r, case):
 
 
 def c_budget_session_ignore_sur_kim(r, case):
-    """SHUTDOWN_NTIME_SAT est accepte sur KIM2 mais n y eteint RIEN — et le dit.
-
-    Le parametre n a de sens que sur RSPB, ou le TPL5111 coupe l alimentation a
-    chaque cycle: "session" y vaut un cycle et le compteur repart au boot
-    suivant. Sur une carte qui reste alimentee, m_session_tx_count n est remis a
-    zero que dans service_init — le plafond deviendrait donc un plafond A VIE et
+    """SHUTDOWN_NTIME_SAT n a de sens que sur RSPB, ou le TPL5111 coupe
+    l alimentation a chaque cycle: "session" y vaut un cycle et le compteur repart
+    au boot suivant. Sur une carte qui reste alimentee, m_session_tx_count n est
+    remis a zero que dans service_init: le plafond deviendrait un plafond A VIE et
     tuerait le deploiement (a TR_NOM=60 s, un budget de 100 tue la balise en
     100 minutes).
 
-    Le firmware l ignore donc ici, et l annonce UNE fois. Ce cas verifie les
-    deux moitiés: l avertissement existe, ET l emission continue au-dela du
-    budget. Verifier seulement l avertissement laisserait passer une balise qui
-    se tait quand meme.
+    Jusqu a f4ba6c16 le parametre etait accepte puis ignore hors RSPB, avec un
+    avertissement. Il y est desormais REFUSE a l ecriture (is_implemented =
+    HAS_BOARD_RSPB, dte_params.cpp): mieux qu un avertissement, l operateur ne
+    peut plus le poser. Ce cas verifie ce refus, et que le reste d un lot qui le
+    contient passe quand meme. L ancienne version cherchait l avertissement et
+    tombait en ERROR sur ce refus (29/10/2026).
     """
-    if saute_si_radio_muette(r, case, 'une emission reussie'):
-        return
     b = r.b
-    budget = 2
-    try:
-        _config_mode(b, 4, GNSS_EN=0, TR_NOM=30, SHUTDOWN_NTIME_SAT=budget,
-                     SURFACING_BURST_MAX_MSG=0)
-    except Exception as e:
-        return r.record(case, 'ERROR', f'configuration impossible: {type(e).__name__}: {e}')
-    mk = b.mark()
-    vues = _compter_trace(b, [RX_TX_OK, r'session TX budget reached'], 210, depuis=mk)
-    try:
-        b.enter_config(); b.write_params({'ARGOS_MODE': 0, 'SHUTDOWN_NTIME_SAT': 0}); b.exit_config()
-    except Exception:
-        pass
-    emissions = [l for l in vues if _tx_ok(l)]
-    avert = [l for l in vues if 'session TX budget reached' in l]
-    trace = f'{len(emissions)} emissions, {len(avert)} avertissement(s)\n' + '\n'.join(vues[:8])
-    if len(emissions) <= budget:
-        return r.record(case, 'ERROR',
-                        f'seulement {len(emissions)} emission(s) pour un budget de {budget}: '
-                        'le depassement n a pas ete atteint, cas non concluant', trace)
-    if not avert:
-        return r.record(case, 'FAIL',
-                        f'{len(emissions)} emissions au-dela du budget de {budget}, mais AUCUN '
-                        'avertissement: le parametre est ignore en silence', trace)
-    if len(avert) > 1:
-        return r.record(case, 'FAIL',
-                        f'{len(avert)} avertissements: le message doit etre emis UNE fois, '
-                        'pas a chaque cycle', trace)
-    r.record(case, 'PASS',
-             f'budget de {budget} depasse ({len(emissions)} emissions), ignore avec un seul '
-             'avertissement — la balise ne se tait pas', trace)
+    if not _en_config(b):
+        return r.record(case, 'ERROR', 'mode configuration inaccessible')
+    if _est_rspb(b):        # PARML: ne repond qu en configuration
+        return r.record(case, 'SKIP', 'carte RSPB: le budget de session y a un sens (un cycle TPL)')
+    lot = 'PWP05=2,LDP01=0'
+    m, err = r.raw_until(f"$PARMW#{len(lot):03X};{lot}\r", r'\$([ON]);PARMW#[0-9A-Fa-f]{3};?(.*)$', timeout=20)
+    if err:
+        return r.record(case, 'ERROR', err)
+    if m is None:
+        return r.record(case, 'FAIL', 'PARMW sans reponse')
+    _, lu = b.read_params(['LDP01'])
+    refuse = m.group(1) == 'N' and 'PWP05' in m.group(2)
+    trace = f'reponse {m.group(0)[:60]!r}, LDP01 relu {lu.get("LDP01")!r}'
+    if not refuse:
+        return r.record(case, 'FAIL', 'SHUTDOWN_NTIME_SAT accepte hors RSPB: un plafond a vie possible', trace)
+    if lu.get('LDP01') != '0':
+        return r.record(case, 'FAIL', 'le refus a emporte le reste du lot', trace)
+    r.record(case, 'PASS', 'SHUTDOWN_NTIME_SAT refuse hors RSPB et nomme, le reste du lot applique', trace)
 
 
 def _cas_commande_simple(cmd, charge, motif, quoi, apres=None):
