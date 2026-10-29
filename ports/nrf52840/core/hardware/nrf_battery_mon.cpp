@@ -86,13 +86,15 @@ static constexpr BatteryProfile battery_profiles[] = {
 	// on "continuous discharge to 0.8 volts at 21 °C".
 	//
 	// The pack floor is 2.7 V (0.900 V/cell), NOT the 2.4 V the cell chemistry
-	// would allow. Below 2.7 V on Vbatt the nRF's own POFCON comparator raises
-	// NRF_EVT_POWER_FAILURE_WARNING (nrf_pmu.cpp arms THRESHOLD_V27), and the
-	// IS25 flash is specified down to 2.30 V with nothing left in hand. Reporting
-	// a few percent of remaining charge through that window would be a gauge that
-	// lies exactly where it matters, so 0 % is pinned to the system floor and the
-	// last sliver of cell capacity is deliberately left unused. Same reasoning,
-	// same number, as the LS17500 profile above.
+	// would allow. It was justified by POFCON (armed at 2.7 V) and by the IS25
+	// flash (2.30 V minimum), and that reasoning is wrong: both sit on VSYS,
+	// behind the TPS63901 buck-boost (1.8 V minimum input), and never see the
+	// pack. What does see it on this board revision is the reed: Q4 has its gate
+	// on VBAT and its source on VSYS, so below about 2.9 V of VBAT with VSYS at
+	// 3.3 V (2.3 to 2.9 V from one board to another) it can read a false "magnet
+	// present", and the reed gestures can then power the tag off. Until Q4 is
+	// reworked the usable floor is that one, above 2.7 V; the table was not
+	// re-measured and is left as it is, so the alkaline option stays experimental.
 	//
 	// SOC curve: the datasheet discharge shape rescaled so 100 % is a fresh cell
 	// at 1.567 V and 0 % is the 0.900 V/cell floor. Alkaline slopes continuously
@@ -137,10 +139,11 @@ static void nrfx_saadc_event_handler(nrfx_saadc_evt_t const *p_event) {
 /// Li-ion, whose internal resistance is low enough that a TX burst barely moves
 /// the terminal voltage. An alkaline D pack sags far harder under the same
 /// ~1 A pulse, so one unlucky sample taken mid-burst would declare a healthy
-/// pack critical and shut the tag down. Leaving a band is still governed by the
-/// SOC hysteresis below — this only debounces the way IN. The critical band,
-/// which ends in System OFF, also needs its samples spread in time: see
-/// CriticalBandConfirm.
+/// pack critical and shut the tag down. Only the way IN is debounced: a single
+/// sample at or above the threshold resets the count and drops the flag, so the
+/// SOC hysteresis below (filtered_soc) never holds a flag up on its own. The
+/// critical band, which ends in System OFF, also needs its samples spread in
+/// time: see CriticalBandConfirm.
 static constexpr uint8_t BATT_CONFIRM_SAMPLES = 3;
 
 /// @brief Filtered battery state persisted in .noinit RAM to survive soft resets.

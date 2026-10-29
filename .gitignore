@@ -5,6 +5,7 @@ build.ninja
 rules.ninja
 tests/_deps/*
 tests/build/*
+tests/build-asan/
 tests/CMakeFiles/*
 tests/TrackerTests
 CMakeCache.txt

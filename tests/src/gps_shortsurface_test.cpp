@@ -93,6 +93,7 @@ TEST_GROUP(GPSShortSurface) {
 	void teardown() {
 		delete system_scheduler;
 		delete fake_timer;
+		system_timer = nullptr;
 		delete fake_rtc;
 		rtc = nullptr;
 		delete fake_config_store;

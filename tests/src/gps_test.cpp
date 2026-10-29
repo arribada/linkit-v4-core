@@ -70,6 +70,7 @@ TEST_GROUP(GPSService) {
 		MooredModeService::reset_for_tests();
 		delete system_scheduler;
 		delete fake_timer;
+		system_timer = nullptr;
 		delete fake_rtc;
 		rtc = nullptr;
 		delete fake_config_store;

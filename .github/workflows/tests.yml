@@ -66,10 +66,11 @@ jobs:
       # Cyprus-only flags it exists to cover (LORA_MOTION_EXT, LORA_LINKCHECK)
       # were compiled by hand or not at all. It is built AND run below.
       #
-      # RSPBSimulation is compiled but not run. It has its own source list in
-      # tests/CMakeLists.txt (39 of its 43 sources are shared with the other two
-      # targets, but the list is maintained separately), so leaving it out of CI
-      # let a stale list pass here and fail on the first local RSPB build.
+      # RSPBSimulation is compiled here and run in the simulation job below. It
+      # has its own source list in tests/CMakeLists.txt (most of its sources are
+      # shared with the other targets, but the list is maintained separately), so
+      # leaving it out of CI let a stale list pass here and fail on the first
+      # local RSPB build.
       - name: Compile TrackerTests + TrackerTestsCyprus + TurtleSimulation + RSPBSimulation
         run: ninja -C tests/build TrackerTests TrackerTestsCyprus TurtleSimulation RSPBSimulation
 

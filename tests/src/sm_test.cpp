@@ -114,6 +114,7 @@ TEST_GROUP(Sm) {
 		delete dummy_switch;
 		delete fake_saltwater_switch;
 		delete fake_timer;
+		system_timer = nullptr;
 		delete sensor_log;
 		delete system_log;
 		gentracker_test_bootfail_keep(false);

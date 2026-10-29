@@ -69,10 +69,17 @@ TEST_GROUP(BatteryCriticalGuard) {
 
 	void teardown() {
 		delete probe;
+		// The globals are nulled with their objects: a later group in the same
+		// process (the single-process run of CLAUDE.md) would otherwise reach
+		// freed memory through them; -p, which CI uses, hides it.
 		delete fake_battery;
+		battery_monitor = nullptr;
 		delete fake_config_store;
+		configuration_store = nullptr;
 		delete fake_rtc;
+		rtc = nullptr;
 		delete fake_timer;
+		system_timer = nullptr;
 		mock().checkExpectations();
 		mock().clear();
 	}

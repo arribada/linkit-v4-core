@@ -27,6 +27,7 @@ TEST_GROUP(NrfSwitch) {
 
 	void teardown() {
 		delete fake_timer;
+		system_timer = nullptr;
 	}
 };
 

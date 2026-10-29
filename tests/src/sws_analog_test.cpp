@@ -67,6 +67,7 @@ TEST_GROUP(SWSAnalog) {
 	void teardown() {
 		delete system_scheduler;
 		delete fake_timer;
+		system_timer = nullptr;
 		delete fake_config_store;
 		mock().clear();
 	}
@@ -1450,6 +1451,7 @@ TEST_GROUP(SWSAnalogFlash) {
 		delete ram_flash;
 		delete system_scheduler;
 		delete fake_timer;
+		system_timer = nullptr;
 		delete fake_config_store;
 		mock().clear();
 	}

@@ -151,7 +151,8 @@ echo "Build tag: $(cat TAG_NAME)"
 
 # LinkIt V4 LoRa build configuration
 # - LORA_RAK3172=ON: Use RAK3172-SiP LoRa module
-# - ENABLE_AXL_SENSOR=ON: Enable BMA400 accelerometer
+# - ENABLE_AXL_SENSOR: BMA400 accelerometer, OFF unless asked for
+#   (ENABLE_AXL_SENSOR=ON ./scripts/build_linkitv4_lora.sh; the Cyprus script sets it)
 ENABLE_AXL_SENSOR=${ENABLE_AXL_SENSOR:-OFF}
 # Duty cycle. The switch is POSITIVE and matches the CMake option name exactly:
 # LORA_DCS_ENABLE=ON means the RAK3172 enforces the ETSI EN 300 220 limits

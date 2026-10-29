@@ -41,6 +41,7 @@ TEST_GROUP(DiveMode) {
 	void teardown() {
 		delete system_scheduler;
 		delete fake_timer;
+		system_timer = nullptr;
 		delete fake_config_store;
 		delete fake_rtc;
 		rtc = nullptr;  // never leave a dangling global for the next test

@@ -796,6 +796,7 @@ TEST_GROUP(TurtleSimulation1Year) {
 		delete logger;
 		delete fake_config;
 		delete fake_timer;
+		system_timer = nullptr;
 		delete fake_rtc;
 		rtc = nullptr;
 	}

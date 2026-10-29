@@ -198,6 +198,7 @@ TEST_GROUP(SWSLongRun) {
 	void teardown() {
 		delete system_scheduler;
 		delete fake_timer;
+		system_timer = nullptr;
 		delete fake_config_store;
 		mock().clear();
 	}

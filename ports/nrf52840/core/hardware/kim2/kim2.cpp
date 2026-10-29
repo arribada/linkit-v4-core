@@ -62,19 +62,6 @@ static constexpr uint16_t KIM2_TX_ACK_TIMEOUT_MS = 5000;
 ///        so budget its full power-on figure rather than the STANDBY one. Only
 ///        paid when the burst ended without the module talking to us.
 static constexpr uint16_t KIM2_DELAY_WKUP_RESUME_MS = 500;
-/// @brief How early SAT_EXTWAKEUP is raised before the LAST retransmission of a
-///        BLIND burst.
-///
-///        Measured on the bench 2026-08-25: with the pin released for the whole
-///        burst, the closing +TX= NEVER arrives -- the 240 s window expires, the
-///        TX is counted as failed and the module rail is cut. A framing error
-///        (type=04) shows up 57 s after the release, that is when the module
-///        wakes for its second transmission: our RX loses sync when the module's
-///        TX line swings as it enters and leaves low power.
-///        Raising the pin before the last transmission keeps the module awake
-///        with a stable UART at the moment it emits the closing message, while
-///        still letting it sleep through the earlier intervals -- which is where
-///        nearly all the saving is.
 /// @brief Poll interval of the receive state. The module emits about one
 ///        allcast message per second during a pass, so a 100 ms tick drains
 ///        the queue with a wide margin.
@@ -1642,10 +1629,9 @@ void KIM2Device::release_wkup_for_burst() {
 ///
 /// @param wait_for_wake blocks for KIM2_DELAY_WKUP_RESUME_MS after raising the
 ///        pin. Set it when an AT command may follow immediately and the module
-///        state is unknown (exit on error or on timeout). Not needed when we are
-///        only listening -- an early raise before the last retransmission, or a
-///        close on a +TX= that already proves the module is awake.
-/// @param reason label carried in the trace, to tell the three paths apart.
+///        state is unknown (exit on error or on timeout). Not needed on a close
+///        on a +TX=, which already proves the module is awake.
+/// @param reason label carried in the trace, to tell the two paths apart.
 void KIM2Device::resume_wkup_after_burst(bool wait_for_wake, const char *reason) {
 	if (!m_tx_wkup_lowered) return;
 	m_tx_wkup_lowered = false;

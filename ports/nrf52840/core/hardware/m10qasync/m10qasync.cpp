@@ -317,7 +317,9 @@ void M10QAsyncReceiver::power_on(const GPSNavSettings &nav_settings) {
 			try {
 				m_ubx_comms.init();
 				m_ubx_comms.subscribe(*this);
-				m_ubx_comms.set_debug_enable(m_nav_settings.debug_enable);
+				// This session's flag: m_nav_settings still holds the previous one
+				// until reset_session_state() below.
+				m_ubx_comms.set_debug_enable(nav_settings.debug_enable);
 			} catch (...) {
 				DEBUG_ERROR("M10QAsyncReceiver::power_on: ubx_comms.init failed during wake — forcing cold next time");
 				VAL_GNSS("ubx_init_throw fast_path -> force cold next");

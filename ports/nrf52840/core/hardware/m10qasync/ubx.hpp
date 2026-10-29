@@ -169,21 +169,15 @@ struct __attribute__((__packed__)) MSG_RST {
 
 namespace VALDEL {
 enum LAYERS : uint8_t { BBR = 1 << 0, FLASH = 1 << 1 };
-// FIXME: Same flexible array member UB as MSG_VALSET (see comment there).
+// Layout only. The keys follow the 4-byte header, so the message has to be
+// built in a buffer big enough for both, as MSG_VALSET is (see the comment
+// there). The constructor that copied them through `this + 1` was removed: it
+// overflowed any instance built on its own, and nothing in the tree sends one.
 struct __attribute__((__packed__)) MSG_VALDEL {
 	uint8_t version;
 	uint8_t layers;
 	uint16_t reserved0;
 	uint32_t keys[];
-	// Constructor for easy initialization
-	MSG_VALDEL(uint8_t version_, uint8_t layers_, const std::vector<uint32_t> &key_ids)
-	    : version(version_),
-	      layers(layers_),
-	      reserved0(0) {
-		// Allocate memory for keys dynamically after creating MSG_RST instance
-		uint32_t *key_ptr = reinterpret_cast<uint32_t *>(this + 1);
-		std::copy(key_ids.begin(), key_ids.end(), key_ptr);
-	}
 };
 }  // namespace VALDEL
 
@@ -195,21 +189,12 @@ enum LAYERS : uint8_t {
 	DEFAULT = 7  // Default configuration
 };
 
+// Layout only, for the same reason as MSG_VALDEL above.
 struct __attribute__((__packed__)) MSG_VALGET {
 	uint8_t version;    // Message version (0x01)
 	uint8_t layer;      // Layer to retrieve from (0 - RAM, 1 - BBR, etc.)
 	uint16_t position;  // Skipped config items in the result set
 	uint32_t keys[];    // Flexible array for dynamic key retrieval
-
-	// Constructor to initialize MSG_VALGET
-	MSG_VALGET(uint8_t version_, LAYERS layer_, uint16_t position_, const std::vector<uint32_t> &key_ids)
-	    : version(version_),
-	      layer(layer_),
-	      position(position_) {
-		// Copy keys into the dynamic array after MSG_VALGET
-		uint32_t *key_ptr = reinterpret_cast<uint32_t *>(this + 1);
-		std::copy(key_ids.begin(), key_ids.end(), key_ptr);
-	}
 };
 struct __attribute__((__packed__)) MSG_VALGET_RESP {
 	uint8_t version;    // Message version (0x01)
