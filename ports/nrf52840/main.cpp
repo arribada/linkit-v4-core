@@ -408,7 +408,8 @@ static void tpl_cut_power_now() {
 }
 #endif
 
-/// @brief Consecutive IS25 bring-up failures, kept in .noinit RAM.
+/// @brief Consecutive storage bring-up failures (IS25, filesystem, configuration
+/// store), kept in .noinit RAM.
 ///
 /// Survives the explicit resets issued by flash_init_failed() and any watchdog
 /// reset, but not a battery removal: a cold power-on leaves the RAM
@@ -504,7 +505,7 @@ LoRaTxService *lora_tx_service_instance = nullptr;
 
 /// @brief Consecutive boots whose init phases or FSM start threw, in .noinit RAM.
 ///
-/// Its own count, not s_flashfail's: that one is cleared as soon as the IS25 comes
+/// Its own count, not s_flashfail's: that one is cleared as soon as the storage is
 /// up, so a failure later in init would read 1 at every boot and never escalate.
 /// init_guarded() clears it once init and the FSM start went through.
 struct InitFailNoinit {
@@ -564,7 +565,8 @@ static constexpr uint32_t INIT_FAIL_MAX_RESETS = 5;
 /// @brief VALIDATION FIRMWARE ONLY (CMake FAULT_INJECT, never in a shipped build):
 /// make one failure happen at every boot, to watch its recovery ladder on a board.
 /// 1 a CPU fault during init, 2 an exception during init, 3 the IS25 flash init
-/// failing (in init_peripherals()), 4 an exception right after the FSM start.
+/// failing (in init_peripherals()), 4 an exception right after the FSM start, 5 the
+/// configuration store init failing (in init_storage(), after the IS25 came up).
 static void fault_inject(int at) {
 	if (FAULT_INJECT != at) return;
 	DEBUG_WARN("FAULT_INJECT=%d: failing on purpose", at);
@@ -862,12 +864,8 @@ static InitContext init_peripherals() {
 	DEBUG_TRACE("IS25 flash...");
 	static Is25Flash is25_flash;
 	if (!is25_init_ok(is25_flash)) storage_unusable("IS25 flash init");  // never returns
-
-	// The flash is up: forget any past bring-up failures so a transient fault
-	// months from now gets the full retry budget again rather than dropping
-	// straight into the watchdog-paced path.
-	s_flashfail.magic = FLASHFAIL_MAGIC;
-	s_flashfail.count = 0;
+	// The failure count is cleared at the end of init_storage(), not here: the
+	// mount and the configuration store count against the same budget.
 
 #ifdef BENCH_TEST
 	bench_flash = &is25_flash;
@@ -1158,6 +1156,7 @@ static LFSFileSystem &init_storage(NrfSwitch &nrf_reed_switch, Is25Flash &is25_f
 	// throw only LittleFS ints, which is exactly what those catches are for.
 	try {
 		configuration_store->init();
+		fault_inject(5);
 	} catch (ErrorCode e) {
 		storage_unusable("configuration store init");
 	} catch (int e) {
@@ -1165,6 +1164,16 @@ static LFSFileSystem &init_storage(NrfSwitch &nrf_reed_switch, Is25Flash &is25_f
 	} catch (...) {
 		storage_unusable("configuration store init (unknown)");
 	}
+
+	// The whole storage is up -- the IS25, the filesystem, the configuration
+	// store: forget past failures so a transient fault months from now gets the
+	// full retry budget again rather than dropping straight into the
+	// watchdog-paced path. Not earlier: this used to be cleared as soon as the
+	// IS25 answered, so a mount or a store init that failed after it read 1 at
+	// every boot -- 2 s resets for ever, never the watchdog-paced path nor, on
+	// RSPB, the TPL5111 cut.
+	s_flashfail.magic = FLASHFAIL_MAGIC;
+	s_flashfail.count = 0;
 
 	// Restore last known RTC from flash (enables MGA-ANO assistance and faster GNSS TTFF)
 	{

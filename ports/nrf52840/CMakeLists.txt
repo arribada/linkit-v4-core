@@ -200,12 +200,13 @@ message(STATUS "Argos TX error suspend: ${ARGOS_TX_ERROR_SUSPEND_S} s (0 = no su
 # main.cpp makes happen at every boot, to watch a recovery ladder on a real board
 # (fault_inject()): 0 none (default), 1 a CPU fault during init, 2 an exception
 # during init, 3 the IS25 flash init failing, 4 an exception right after the FSM
-# start. Such a board never completes a boot: flash a normal build afterwards.
+# start, 5 the configuration store init failing. Such a board never completes a
+# boot: flash a normal build afterwards.
 if(NOT DEFINED FAULT_INJECT)
     set(FAULT_INJECT 0)
 endif()
-if(NOT FAULT_INJECT MATCHES "^[0-4]$")
-    message(FATAL_ERROR "FAULT_INJECT must be 0 to 4, got '${FAULT_INJECT}'")
+if(NOT FAULT_INJECT MATCHES "^[0-5]$")
+    message(FATAL_ERROR "FAULT_INJECT must be 0 to 5, got '${FAULT_INJECT}'")
 endif()
 if(NOT FAULT_INJECT STREQUAL "0")
     message(WARNING "FAULT_INJECT=${FAULT_INJECT}: VALIDATION FIRMWARE that fails at every boot on purpose -- never ship it")
