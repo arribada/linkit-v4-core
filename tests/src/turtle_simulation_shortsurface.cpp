@@ -369,12 +369,13 @@ public:
 			    (cfg.hauled_day < cfg.duration_days && (unsigned int)((now - 1) / 86400) >= cfg.hauled_day);
 
 			// --- Generate next dive ---
+			// SWS events as the firmware sees them: wet when the dive starts, dry
+			// at the surfacing. A hauled animal stays dry throughout.
+			if (!force_hauled_now) HauledModeService::on_underwater_event(true, now);
 			unsigned int dive_s = sample_lognormal(cfg.dive_min_s, cfg.dive_max_s, cfg.dive_avg_s);
 			advance_time(now, dive_s);
 			if (now >= (std::time_t)1 + SIM_DURATION_S) break;
-
-			// Dive event = SWS submerged. Notify hauled service.
-			HauledModeService::on_underwater_event(true, now);
+			HauledModeService::on_underwater_event(false, now);
 			// Idle current during dive.
 			total_battery_mah += battery.idle_mah(dive_s);
 
@@ -388,7 +389,7 @@ public:
 			ev.duration_s = surface_s;
 			ev.tx = TxKind::NONE;
 
-			// Allow HauledModeService to evaluate based on idle duration.
+			// Allow HauledModeService to evaluate based on the dry spell.
 			HauledModeService::evaluate(now);
 
 			bool hauled = HauledModeService::is_hauled();
@@ -402,8 +403,8 @@ public:
 			ev.cooldown_active = cooldown_active;
 
 			if (force_hauled_now) {
-				// Hauled animal: no SWS surface event fires. But HauledModeService
-				// has long since engaged via the idle threshold.
+				// Hauled animal: the SWS stays dry, so HauledModeService engages
+				// once the dry spell passes the threshold.
 				surface_events.push_back(ev);
 				record_aggregates(now, ev);
 				continue;

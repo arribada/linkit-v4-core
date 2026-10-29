@@ -2788,16 +2788,18 @@ def c_duty_masque_horaire(r, case):
 def c_hauled_substitution(r, case):
     """Le mode hors-eau doit substituer HMP10/HMP11 et pas s engager trop tot.
 
-    HauledModeService::evaluate() compare (maintenant - dernier evenement SWS) a
+    HauledModeService::evaluate() compare la secheresse (maintenant - derniere
+    emersion, depuis le 29/10/2026 ; avant, depuis la derniere plongee) a
     HAULED_IDLE_THRESHOLD_H. On ne va pas attendre une heure au banc: on plonge
-    pour DATER un evenement, puis on fait avancer la RTC de deux heures.
+    puis on emerge pour DATER le debut de la secheresse, puis on fait avancer la
+    RTC de deux heures.
 
     ORDRE CRITIQUE, et c est ce qui avait fait rougir ce cas a tort: il faut
-    poser la RTC PUIS plonger PUIS activer HMP00. `last_uw_event_rtc` vit en
-    .noinit et survit aux redemarrages, donc il porte encore la date des
-    plongees des cas precedents; reculer la RTC ensuite rend l ecart enorme et
-    engage HAULED instantanement. Le firmware, lui, se protege correctement du
-    cas jamais-plonge (`if (last_uw_event_rtc == 0) return`).
+    poser la RTC PUIS plonger PUIS activer HMP00. `last_uw_event_rtc` et
+    `dry_since_rtc` vivent en .noinit et survivent aux redemarrages, donc ils
+    portent encore la date des cas precedents; avancer la RTC ensuite rend l ecart
+    enorme et engage HAULED instantanement. Le firmware, lui, se protege
+    correctement du cas jamais-plonge (`if (last_uw_event_rtc == 0) return`).
     """
     b = r.b
     BASE = 1767263400          # 2026-01-01 10:30:00 UTC
@@ -4222,7 +4224,7 @@ def _hauled(b, timeout=10.0):
     return d
 
 def _hauled_reset(b, timeout=10.0):
-    """Repart d un AT_SEA propre: efface in_hauled ET last_uw_event_rtc."""
+    """Repart d un AT_SEA propre: efface in_hauled, last_uw_event_rtc et dry_since_rtc."""
     for _ in range(4):
         mk = b.mark(); b._send('%HAULED RESET\r')
         if b.expect(r'%HAULED OK reset', timeout, from_idx=mk):
@@ -4254,7 +4256,8 @@ def c_hauled_entree(r, case):
     if not _hauled_reset(b):
         return r.record(case, 'ERROR', '%HAULED RESET sans reponse (sonde absente du build ?)')
     time.sleep(1)
-    # Un evenement d immersion ancre la derniere trace d eau a maintenant.
+    # Une immersion, puis l emersion qui ouvre la secheresse : elle se compte
+    # depuis l emersion (depuis le 29/10/2026 ; avant, depuis l immersion).
     # La console banc repond dans tous les etats, contrairement au DTE.
     b._send('%DIVE\r'); time.sleep(3)
     b._send('%SURFACE\r'); time.sleep(3)

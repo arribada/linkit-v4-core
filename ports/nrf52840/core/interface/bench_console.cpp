@@ -1020,6 +1020,42 @@ static void bench_satlog(const std::string &line) {
 #endif
 }
 
+static void bench_hauled(const std::string &line) {
+	// The hauled state lives in .noinit and SURVIVES a reboot, which makes
+	// every case that drives it non-idempotent: the second run finds the
+	// board already HAULED, no AT_SEA -> HAULED line is emitted, and the
+	// case blames firmware that did nothing wrong. That is exactly what
+	// happened on 2026-08-27, and there was no way to even SEE the state.
+	//
+	// HMP00=0 does clear in_hauled (evaluate() resets it when detection is
+	// disabled), but it leaves the dry spell standing -- so the next enable
+	// can engage HAULED immediately. RESET clears all of it, which is what
+	// a case needs to start from a known AT_SEA.
+	//
+	// %HAULED       -> classifier state, plus the dry time it is comparing
+	//                  against HMP01 (0 while in the water, -1 without RTC).
+	//                  A fresh board reads last_uw=0, and evaluate()
+	//                  deliberately stays AT_SEA there: never having been
+	//                  in the water is not being hauled out.
+	// %HAULED RESET -> clear the state so a case can start from AT_SEA.
+	if (line.find(" RESET") != std::string::npos) {
+		HauledModeService::reset_for_tests();
+		reply("%HAULED OK reset");
+	} else {
+		char buf[176];
+		long dry = -1;
+		const std::time_t dry_since = HauledModeService::dry_since_rtc();
+		if (rtc && rtc->is_set()) dry = dry_since ? (long)(rtc->gettime() - dry_since) : 0;
+		snprintf(buf, sizeof(buf), "%%HAULED en=%u state=%s last_uw=%u dry_s=%ld returns=%u/%u threshold_h=%u",
+		         (unsigned)configuration_store->read_param<bool>(ParamID::HAULED_DETECT_EN),
+		         HauledModeService::is_hauled() ? "HAULED" : "AT_SEA", (unsigned)HauledModeService::last_uw_event_rtc(),
+		         dry, HauledModeService::uw_events_since_hauled(),
+		         configuration_store->read_param<unsigned int>(ParamID::HAULED_RETURN_EVENTS),
+		         configuration_store->read_param<unsigned int>(ParamID::HAULED_IDLE_THRESHOLD_H));
+		reply(buf);
+	}
+}
+
 /// @brief OTA, satellite log, battery, scheduling, moored and hauled modes
 static bool handle_services_cmd(const std::string &cmd, const std::string &line) {
 	if (cmd == "%OTA") {
@@ -1068,38 +1104,7 @@ static bool handle_services_cmd(const std::string &cmd, const std::string &line)
 		         configuration_store->read_param<unsigned int>(ParamID::MOORED_AXL_HOLDOFF_S), d);
 		reply(buf);
 	} else if (cmd == "%HAULED") {
-		// The hauled state lives in .noinit and SURVIVES a reboot, which makes
-		// every case that drives it non-idempotent: the second run finds the
-		// board already HAULED, no AT_SEA -> HAULED line is emitted, and the
-		// case blames firmware that did nothing wrong. That is exactly what
-		// happened on 2026-08-27, and there was no way to even SEE the state.
-		//
-		// HMP00=0 does clear in_hauled (evaluate() resets it when detection is
-		// disabled), but it leaves last_uw_event_rtc standing -- and the dry
-		// time is measured from there, so the next enable can engage HAULED
-		// immediately. RESET clears both, which is what a case needs to start
-		// from a known AT_SEA.
-		//
-		// %HAULED       -> classifier state, plus the dry time it is comparing
-		//                  against HMP01. A fresh board reads last_uw=0, and
-		//                  evaluate() deliberately stays AT_SEA there: never
-		//                  having been in the water is not being hauled out.
-		// %HAULED RESET -> clear the state so a case can start from AT_SEA.
-		if (line.find(" RESET") != std::string::npos) {
-			HauledModeService::reset_for_tests();
-			reply("%HAULED OK reset");
-		} else {
-			char buf[176];
-			long dry = -1;
-			if (rtc && rtc->is_set()) dry = (long)(rtc->gettime() - HauledModeService::last_uw_event_rtc());
-			snprintf(buf, sizeof(buf), "%%HAULED en=%u state=%s last_uw=%u dry_s=%ld returns=%u/%u threshold_h=%u",
-			         (unsigned)configuration_store->read_param<bool>(ParamID::HAULED_DETECT_EN),
-			         HauledModeService::is_hauled() ? "HAULED" : "AT_SEA",
-			         (unsigned)HauledModeService::last_uw_event_rtc(), dry, HauledModeService::uw_events_since_hauled(),
-			         configuration_store->read_param<unsigned int>(ParamID::HAULED_RETURN_EVENTS),
-			         configuration_store->read_param<unsigned int>(ParamID::HAULED_IDLE_THRESHOLD_H));
-			reply(buf);
-		}
+		bench_hauled(line);
 	} else if (cmd == "%BOOTFAIL") {
 		// Own command name: under "%BOOT" this branch was shadowed by the
 		// reset-cause branch above and could never be reached.

@@ -3586,11 +3586,17 @@ TEST(ArgosTxService, RateLimiterZeroCapDisables) {
 
 // === HauledModeService (Plan 1 step 3) ====================================
 
+// A dive, then the surfacing at `t` that starts the dry spell.
+static void haul_surface_at(std::time_t t) {
+	HauledModeService::on_underwater_event(true, t - 300);
+	HauledModeService::on_underwater_event(false, t);
+}
+
 TEST(ArgosTxService, HauledModeDisabledNeverHauls) {
 	HauledModeService::reset_for_tests();
-	// HAULED_DETECT_EN defaults to false. Even with a stale last_uw_event,
+	// HAULED_DETECT_EN defaults to false. Even after a long dry spell,
 	// evaluate() must keep us at AT_SEA.
-	HauledModeService::on_underwater_event(true, 1000);
+	haul_surface_at(1000);
 	HauledModeService::evaluate(1000 + 100 * 3600);  // 100 hours later
 	CHECK_FALSE(HauledModeService::is_hauled());
 }
@@ -3601,13 +3607,101 @@ TEST(ArgosTxService, HauledModeHaulsAfterIdleThreshold) {
 	fake_config_store->write_param(ParamID::HAULED_IDLE_THRESHOLD_H, 2U);  // 2h
 	fake_config_store->write_param(ParamID::HAULED_RETURN_EVENTS, 3U);
 
-	HauledModeService::on_underwater_event(true, 1000);
-	// 1h59m later: still AT_SEA.
+	haul_surface_at(1000);
+	// 1h59m dry: still AT_SEA.
 	HauledModeService::evaluate(1000 + 119 * 60);
+	CHECK_FALSE(HauledModeService::is_hauled());
+	// Exactly 2h dry: still AT_SEA (strictly past the threshold).
+	HauledModeService::evaluate(1000 + 2 * 3600);
 	CHECK_FALSE(HauledModeService::is_hauled());
 	// Just past 2h: HAULED engages.
 	HauledModeService::evaluate(1000 + 2 * 3600 + 5);
 	CHECK_TRUE(HauledModeService::is_hauled());
+}
+
+TEST(ArgosTxService, HauledLongDiveDoesNotEngage) {
+	// Sea turtles dive for hours. The time since the start of a dive is not
+	// dry time: HAULED must not engage underwater, nor at the surfacing.
+	HauledModeService::reset_for_tests();
+	fake_config_store->write_param(ParamID::HAULED_DETECT_EN, (bool)true);
+	fake_config_store->write_param(ParamID::HAULED_IDLE_THRESHOLD_H, 2U);
+
+	HauledModeService::on_underwater_event(true, 1000);
+	HauledModeService::evaluate(1000 + 7 * 3600);  // 7 h dive
+	CHECK_FALSE(HauledModeService::is_hauled());
+
+	HauledModeService::on_underwater_event(false, 1000 + 7 * 3600);
+	HauledModeService::evaluate(1000 + 7 * 3600 + 60);
+	CHECK_FALSE(HauledModeService::is_hauled());
+	CHECK_EQUAL((std::time_t)(1000 + 7 * 3600), HauledModeService::dry_since_rtc());
+}
+
+TEST(ArgosTxService, HauledDiveRestartsDrySpell) {
+	// Two dry spells shorter than the threshold, split by a dive, never add up.
+	HauledModeService::reset_for_tests();
+	fake_config_store->write_param(ParamID::HAULED_DETECT_EN, (bool)true);
+	fake_config_store->write_param(ParamID::HAULED_IDLE_THRESHOLD_H, 2U);
+
+	haul_surface_at(1000);
+	HauledModeService::evaluate(1000 + 90 * 60);
+	CHECK_FALSE(HauledModeService::is_hauled());
+
+	HauledModeService::on_underwater_event(true, 1000 + 90 * 60);
+	CHECK_EQUAL((std::time_t)0, HauledModeService::dry_since_rtc());
+	HauledModeService::on_underwater_event(false, 1000 + 100 * 60);
+	HauledModeService::evaluate(1000 + 190 * 60);  // 90 min dry again, 190 min since the first surfacing
+	CHECK_FALSE(HauledModeService::is_hauled());
+
+	// The second spell alone crossing the threshold does engage.
+	HauledModeService::evaluate(1000 + 100 * 60 + 2 * 3600 + 1);
+	CHECK_TRUE(HauledModeService::is_hauled());
+}
+
+TEST(ArgosTxService, HauledRepeatedDryReportKeepsSpellStart) {
+	// The detector re-reports "dry" on every restart (cooldown, config exit):
+	// that is not a new surfacing and must not restart the dry spell.
+	HauledModeService::reset_for_tests();
+	fake_config_store->write_param(ParamID::HAULED_DETECT_EN, (bool)true);
+	fake_config_store->write_param(ParamID::HAULED_IDLE_THRESHOLD_H, 1U);
+
+	haul_surface_at(1000);
+	HauledModeService::on_underwater_event(false, 3000);
+	CHECK_EQUAL((std::time_t)1000, HauledModeService::dry_since_rtc());
+	HauledModeService::evaluate(1000 + 3601);
+	CHECK_TRUE(HauledModeService::is_hauled());
+}
+
+TEST(ArgosTxService, HauledNeverInWaterStaysAtSea) {
+	// Dry reports alone (a tag on a desk) never engage HAULED, even after
+	// the first GNSS sync re-anchors the stamps.
+	HauledModeService::reset_for_tests();
+	fake_config_store->write_param(ParamID::HAULED_DETECT_EN, (bool)true);
+	fake_config_store->write_param(ParamID::HAULED_IDLE_THRESHOLD_H, 1U);
+
+	HauledModeService::on_underwater_event(false, 10);
+	HauledModeService::evaluate(10 + 100 * 3600);
+	CHECK_FALSE(HauledModeService::is_hauled());
+
+	const std::time_t real_rtc = 1700000000;
+	HauledModeService::reset_for_rtc_sync(real_rtc);
+	CHECK_EQUAL((std::time_t)0, HauledModeService::last_uw_event_rtc());
+	HauledModeService::evaluate(real_rtc + 100 * 3600);
+	CHECK_FALSE(HauledModeService::is_hauled());
+}
+
+TEST(ArgosTxService, HauledDisableExitsImmediately) {
+	// HMP00=0 bypasses the cache and the hysteresis: HAULED is left at once.
+	HauledModeService::reset_for_tests();
+	fake_config_store->write_param(ParamID::HAULED_DETECT_EN, (bool)true);
+	fake_config_store->write_param(ParamID::HAULED_IDLE_THRESHOLD_H, 1U);
+	haul_surface_at(1000);
+	HauledModeService::evaluate(1000 + 3601);
+	CHECK_TRUE(HauledModeService::is_hauled());
+
+	fake_config_store->write_param(ParamID::HAULED_DETECT_EN, (bool)false);
+	HauledModeService::evaluate(1000 + 3602);
+	CHECK_FALSE(HauledModeService::is_hauled());
+	CHECK_EQUAL(0u, HauledModeService::uw_events_since_hauled());
 }
 
 TEST(ArgosTxService, HauledModeReturnsAfterReturnEvents) {
@@ -3617,13 +3711,16 @@ TEST(ArgosTxService, HauledModeReturnsAfterReturnEvents) {
 	fake_config_store->write_param(ParamID::HAULED_RETURN_EVENTS, 3U);
 
 	// Engage HAULED first.
-	HauledModeService::on_underwater_event(true, 1000);
+	haul_surface_at(1000);
 	HauledModeService::evaluate(1000 + 3601);
 	CHECK_TRUE(HauledModeService::is_hauled());
 
-	// 2 dive events: still HAULED (hysteresis).
+	// 2 dive events: still HAULED (hysteresis). Surfacings in between do not count.
 	HauledModeService::on_underwater_event(true, 5000);
 	CHECK_TRUE(HauledModeService::is_hauled());
+	HauledModeService::on_underwater_event(false, 5050);
+	CHECK_TRUE(HauledModeService::is_hauled());
+	CHECK_EQUAL(1u, HauledModeService::uw_events_since_hauled());
 	HauledModeService::on_underwater_event(true, 5100);
 	CHECK_TRUE(HauledModeService::is_hauled());
 	// 3rd dive: returns AT_SEA.
@@ -3647,7 +3744,7 @@ TEST(ArgosTxService, HauledModeOverrideAppliesToArgosConfig) {
 	CHECK_FALSE(ac.mode == BaseArgosMode::PASS_PREDICTION);  // base = LEGACY
 
 	// Engage hauled.
-	HauledModeService::on_underwater_event(true, 1000);
+	haul_surface_at(1000);
 	HauledModeService::evaluate(1000 + 3601);
 	CHECK_TRUE(HauledModeService::is_hauled());
 
@@ -3665,8 +3762,9 @@ TEST(ArgosTxService, HauledModeGnssStratOffForcesGnssOff) {
 	fake_config_store->write_param(ParamID::HAULED_GNSS_EN, (bool)true);
 	fake_config_store->write_param(ParamID::HAULED_GNSS_STRAT, 2U);  // OFF
 
-	HauledModeService::on_underwater_event(true, 1000);
+	haul_surface_at(1000);
 	HauledModeService::evaluate(1000 + 3601);
+	CHECK_TRUE(HauledModeService::is_hauled());
 
 	ArgosConfig ac;
 	configuration_store->get_argos_configuration(ac);
@@ -3689,8 +3787,9 @@ TEST(ArgosTxService, ReuseLastEngagesGnssStrategyInHauled) {
 	fake_config_store->write_param(ParamID::HAULED_GNSS_EN, (bool)true);  // ignored when STRAT=REUSE_LAST
 	fake_config_store->write_param(ParamID::HAULED_GNSS_STRAT, 1U);       // REUSE_LAST
 
-	HauledModeService::on_underwater_event(true, 1000);
+	haul_surface_at(1000);
 	HauledModeService::evaluate(1000 + 3601);
+	CHECK_TRUE(HauledModeService::is_hauled());
 
 	ArgosConfig ac;
 	configuration_store->get_argos_configuration(ac);
@@ -3707,8 +3806,9 @@ TEST(ArgosTxService, ReuseLastFreshHauledStillAcquires) {
 	fake_config_store->write_param(ParamID::HAULED_GNSS_EN, (bool)true);
 	fake_config_store->write_param(ParamID::HAULED_GNSS_STRAT, 0U);  // FRESH
 
-	HauledModeService::on_underwater_event(true, 1000);
+	haul_surface_at(1000);
 	HauledModeService::evaluate(1000 + 3601);
+	CHECK_TRUE(HauledModeService::is_hauled());
 
 	ArgosConfig ac;
 	configuration_store->get_argos_configuration(ac);
@@ -3730,8 +3830,9 @@ TEST(ArgosTxService, HauledArgosModeAutoPromotesSurfacingBurstToLegacy) {
 	// by setting directly (production would refuse PARMW HMP10=5).
 	fake_config_store->write_param(ParamID::HAULED_ARGOS_MODE, BaseArgosMode::SURFACING_BURST);
 
-	HauledModeService::on_underwater_event(true, 1000);
+	haul_surface_at(1000);
 	HauledModeService::evaluate(1000 + 3601);
+	CHECK_TRUE(HauledModeService::is_hauled());
 
 	ArgosConfig ac;
 	configuration_store->get_argos_configuration(ac);
@@ -3759,6 +3860,25 @@ TEST(ArgosTxService, HauledRollbackReBaselinesInsteadOfFreezing) {
 	CHECK_EQUAL((std::time_t)1, HauledModeService::last_uw_event_rtc());
 }
 
+TEST(ArgosTxService, HauledRollbackReBaselinesDrySpell) {
+	// Same M1b rollback, while dry: the dry spell restarts from the new RTC
+	// frame instead of freezing (stamp in the future) or engaging at once.
+	HauledModeService::reset_for_tests();
+	fake_config_store->write_param(ParamID::HAULED_DETECT_EN, (bool)true);
+	fake_config_store->write_param(ParamID::HAULED_IDLE_THRESHOLD_H, 1U);
+
+	haul_surface_at(100000);
+	HauledModeService::evaluate(1);
+	CHECK_FALSE(HauledModeService::is_hauled());
+	CHECK_EQUAL((std::time_t)1, HauledModeService::last_uw_event_rtc());
+	CHECK_EQUAL((std::time_t)1, HauledModeService::dry_since_rtc());
+
+	HauledModeService::evaluate(1 + 3600);
+	CHECK_FALSE(HauledModeService::is_hauled());
+	HauledModeService::evaluate(1 + 3601);
+	CHECK_TRUE(HauledModeService::is_hauled());
+}
+
 TEST(ArgosTxService, HauledResetForRtcSyncReAnchorsTimestamp) {
 	// K (2026-05): when GPS first syncs RTC from virtual epoch to real UTC,
 	// `last_uw_event_rtc` (computed in virtual frame) must be re-anchored
@@ -3772,6 +3892,166 @@ TEST(ArgosTxService, HauledResetForRtcSyncReAnchorsTimestamp) {
 	HauledModeService::reset_for_rtc_sync(real_rtc);
 
 	CHECK_EQUAL(real_rtc, HauledModeService::last_uw_event_rtc());
+	CHECK_EQUAL((std::time_t)0, HauledModeService::dry_since_rtc());  // still in the water
+}
+
+TEST(ArgosTxService, HauledResetForRtcSyncReAnchorsDrySpell) {
+	HauledModeService::reset_for_tests();
+	fake_config_store->write_param(ParamID::HAULED_DETECT_EN, (bool)true);
+	fake_config_store->write_param(ParamID::HAULED_IDLE_THRESHOLD_H, 2U);
+	haul_surface_at(3600);  // virtual RTC frame
+
+	const std::time_t real_rtc = 1700000000;
+	HauledModeService::reset_for_rtc_sync(real_rtc);
+	CHECK_EQUAL(real_rtc, HauledModeService::dry_since_rtc());
+	HauledModeService::evaluate(real_rtc + 3600);
+	CHECK_FALSE(HauledModeService::is_hauled());
+	HauledModeService::evaluate(real_rtc + 2 * 3600 + 1);
+	CHECK_TRUE(HauledModeService::is_hauled());
+}
+
+// --- .noinit persistence across a reset ---
+
+TEST(ArgosTxService, HauledRestoreKeepsValidState) {
+	HauledModeService::reset_for_tests();
+	fake_config_store->write_param(ParamID::HAULED_DETECT_EN, (bool)true);
+	fake_config_store->write_param(ParamID::HAULED_IDLE_THRESHOLD_H, 1U);
+	haul_surface_at(1000);
+	HauledModeService::evaluate(1000 + 3601);
+	CHECK_TRUE(HauledModeService::is_hauled());
+
+	HauledModeService::simulate_reset_for_tests();
+	HauledModeService::restore_state();
+	CHECK_TRUE(HauledModeService::is_hauled());
+	CHECK_EQUAL((std::time_t)700, HauledModeService::last_uw_event_rtc());
+	CHECK_EQUAL((std::time_t)1000, HauledModeService::dry_since_rtc());
+}
+
+TEST(ArgosTxService, HauledRestoreRejectsCorruptedCrc) {
+	HauledModeService::reset_for_tests();
+	fake_config_store->write_param(ParamID::HAULED_DETECT_EN, (bool)true);
+	fake_config_store->write_param(ParamID::HAULED_IDLE_THRESHOLD_H, 1U);
+	haul_surface_at(1000);
+	HauledModeService::evaluate(1000 + 3601);
+	CHECK_TRUE(HauledModeService::is_hauled());
+
+	std::size_t size = 0;
+	uint8_t *raw = HauledModeService::noinit_bytes_for_tests(size);
+	raw[0] ^= 0x01;  // one flipped bit in last_uw_event_rtc
+
+	HauledModeService::simulate_reset_for_tests();
+	HauledModeService::restore_state();
+	CHECK_FALSE(HauledModeService::is_hauled());
+	CHECK_EQUAL((std::time_t)0, HauledModeService::last_uw_event_rtc());
+	CHECK_EQUAL((std::time_t)0, HauledModeService::dry_since_rtc());
+	CHECK_EQUAL(0u, HauledModeService::uw_events_since_hauled());
+}
+
+// CRC16-CCITT, as the service computes it.
+static uint16_t hauled_test_crc(const uint8_t *data, std::size_t len) {
+	uint16_t crc = 0xFFFF;
+	for (std::size_t i = 0; i < len; i++) {
+		crc ^= static_cast<uint16_t>(data[i]) << 8;
+		for (uint8_t j = 0; j < 8; j++)
+			crc = (crc & 0x8000) ? (crc << 1) ^ 0x1021 : crc << 1;
+	}
+	return crc;
+}
+
+TEST(ArgosTxService, HauledRestoreRejectsOldLayout) {
+	// The pre-2026-10 layout {last_uw, in_hauled, events, pad, crc} with a
+	// valid CRC of its own, as an OTA would leave it: never read as current.
+	HauledModeService::reset_for_tests();
+	std::size_t size = 0;
+	uint8_t *raw = HauledModeService::noinit_bytes_for_tests(size);
+	std::memset(raw, 0, size);
+	const std::time_t old_last_uw = 1000;
+	std::memcpy(raw, &old_last_uw, sizeof(old_last_uw));
+	raw[sizeof(std::time_t)] = 1;  // in_hauled
+	const std::size_t old_crc_at = sizeof(std::time_t) + 4;
+	const uint16_t old_crc = hauled_test_crc(raw, old_crc_at);
+	std::memcpy(raw + old_crc_at, &old_crc, sizeof(old_crc));
+
+	HauledModeService::restore_state();
+	CHECK_FALSE(HauledModeService::is_hauled());
+	CHECK_EQUAL((std::time_t)0, HauledModeService::last_uw_event_rtc());
+	CHECK_EQUAL((std::time_t)0, HauledModeService::dry_since_rtc());
+}
+
+TEST(ArgosTxService, HauledRestoreRejectsWrongLayoutEvenWithValidCrc) {
+	// The layout tag is checked on its own: a matching CRC is not enough.
+	HauledModeService::reset_for_tests();
+	fake_config_store->write_param(ParamID::HAULED_DETECT_EN, (bool)true);
+	fake_config_store->write_param(ParamID::HAULED_IDLE_THRESHOLD_H, 1U);
+	haul_surface_at(1000);
+	HauledModeService::evaluate(1000 + 3601);
+	CHECK_TRUE(HauledModeService::is_hauled());
+
+	std::size_t size = 0;
+	uint8_t *raw = HauledModeService::noinit_bytes_for_tests(size);
+	const std::size_t layout_at = 2 * sizeof(std::time_t) + 2;  // after the stamps and two flags
+	const std::size_t crc_at = size - sizeof(uint16_t);
+	raw[layout_at] ^= 0x01;
+	const uint16_t crc = hauled_test_crc(raw, crc_at);
+	std::memcpy(raw + crc_at, &crc, sizeof(crc));
+
+	HauledModeService::simulate_reset_for_tests();
+	HauledModeService::restore_state();
+	CHECK_FALSE(HauledModeService::is_hauled());
+	CHECK_EQUAL((std::time_t)0, HauledModeService::last_uw_event_rtc());
+}
+
+TEST(ArgosTxService, HauledRestoreRejectsAFutureDrySpell) {
+	// A dry spell starting past 2100, CRC and layout valid (bits flipped past the
+	// CRC): not trusted, the state starts fresh.
+	HauledModeService::reset_for_tests();
+	fake_rtc->settime(1000);
+	fake_config_store->write_param(ParamID::HAULED_DETECT_EN, (bool)true);
+	fake_config_store->write_param(ParamID::HAULED_IDLE_THRESHOLD_H, 1U);
+	haul_surface_at(1000);
+	HauledModeService::evaluate(1000 + 3601);
+	CHECK_TRUE(HauledModeService::is_hauled());
+
+	std::size_t size = 0;
+	uint8_t *raw = HauledModeService::noinit_bytes_for_tests(size);
+	const std::time_t future = (std::time_t)1000 + (std::time_t)4102444800LL + 1;  // past the guard
+	std::memcpy(raw + sizeof(std::time_t), &future, sizeof(future));               // dry_since_rtc
+	const std::size_t crc_at = size - sizeof(uint16_t);
+	const uint16_t crc = hauled_test_crc(raw, crc_at);
+	std::memcpy(raw + crc_at, &crc, sizeof(crc));
+
+	HauledModeService::simulate_reset_for_tests();
+	HauledModeService::restore_state();
+	CHECK_FALSE(HauledModeService::is_hauled());
+	CHECK_EQUAL((std::time_t)0, HauledModeService::dry_since_rtc());
+}
+
+TEST(ArgosTxService, HauledAfterResetWaitsForDetector) {
+	// After a reset the restored dry spell is stale until the detector has
+	// reported: no engage on it alone. A dry report resumes it; a dive ends it.
+	HauledModeService::reset_for_tests();
+	fake_config_store->write_param(ParamID::HAULED_DETECT_EN, (bool)true);
+	fake_config_store->write_param(ParamID::HAULED_IDLE_THRESHOLD_H, 1U);
+	haul_surface_at(1000);
+
+	HauledModeService::simulate_reset_for_tests();
+	HauledModeService::restore_state();
+	HauledModeService::evaluate(1000 + 3 * 3600);
+	CHECK_FALSE(HauledModeService::is_hauled());
+
+	HauledModeService::on_underwater_event(false, 1000 + 3 * 3600);  // first report: dry
+	CHECK_EQUAL((std::time_t)1000, HauledModeService::dry_since_rtc());
+	HauledModeService::evaluate(1000 + 3 * 3600 + 1);
+	CHECK_TRUE(HauledModeService::is_hauled());
+
+	// Same reset, but the first report is a dive.
+	HauledModeService::reset_for_tests();
+	haul_surface_at(1000);
+	HauledModeService::simulate_reset_for_tests();
+	HauledModeService::restore_state();
+	HauledModeService::on_underwater_event(true, 1000 + 3 * 3600);
+	HauledModeService::evaluate(1000 + 3 * 3600 + 1);
+	CHECK_FALSE(HauledModeService::is_hauled());
 }
 
 TEST(ArgosTxService, RateLimiterResetForRtcSyncClearsRing) {
@@ -3824,8 +4104,9 @@ TEST(ArgosTxService, HauledModeLowBatteryWins) {
 	// is a no-op, so the underlying flag must be set explicitly.
 	fake_config_store->set_is_battery_level_low(true);
 
-	HauledModeService::on_underwater_event(true, 1000);
+	haul_surface_at(1000);
 	HauledModeService::evaluate(1000 + 3601);
+	CHECK_TRUE(HauledModeService::is_hauled());
 
 	ArgosConfig ac;
 	configuration_store->get_argos_configuration(ac);

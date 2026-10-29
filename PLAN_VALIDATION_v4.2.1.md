@@ -286,15 +286,18 @@ trois points porteurs ont été revérifiés un par un :
   `config_store.hpp:375`), contre un seuil `HAULED_IDLE_THRESHOLD_H` de **24 h**
   (`config_store.hpp:472`). La re-plongée ré-estampe le compteur.
 
-Le fait sous-jacent reste vrai et mérite d'être su : `hauled_mode_service.cpp:196`
-compare `now − last_uw_event_rtc`, estampé seulement à l'entrée en plongée, donc la
-grandeur **inclut la plongée en cours** alors que trois textes l'appellent « dry ».
+Le fait sous-jacent était vrai jusqu'au 29/10 : `evaluate()` comparait
+`now − last_uw_event_rtc`, estampé seulement à l'entrée en plongée, donc la grandeur
+**incluait la plongée en cours** alors que trois textes l'appelaient « dry ». D'où un
+plancher de configuration : `HAULED_IDLE_THRESHOLD_H` nettement au-dessus de
+3 × `UW_MAX_DIVE_TIME`, soit ≥ 12 h.
 
-**La contrainte est donc un plancher de configuration** : garder
-`HAULED_IDLE_THRESHOLD_H` nettement au-dessus de 3 × `UW_MAX_DIVE_TIME`, soit **≥ 12 h**.
-Et attention au piège de banc : la valeur 1 h, qui est le minimum DTE
-(`dte_params.cpp:423`), tombe sous ce plancher — c'est un piège d'instrumentation, pas
-un défaut de code. Sous cette contrainte, `HAULED_DETECT_EN` s'active tel quel.
+**Depuis le portage de `robust/hauled` (29/10), ce plancher ne tient plus** : la
+sécheresse se compte depuis l'émersion (`dry_since_rtc`) et une plongée y met fin, quelle
+que soit sa durée. Le choix de `HAULED_IDLE_THRESHOLD_H` devient biologique : il doit
+dépasser la plus longue période hors de l'eau d'un animal **en mer** (repos ou exposition
+en surface, capteur émergé). La valeur 1 h du banc n'est plus un piège. Sous cette
+réserve, `HAULED_DETECT_EN` s'active tel quel.
 
 Le coût d'un faux engagement, s'il survenait, est une perte de positions sur deux ou
 trois émersions (`HAULED_GNSS_STRAT=REUSE_LAST` éteint le GNSS), auto-résorbée.

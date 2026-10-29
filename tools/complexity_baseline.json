@@ -162,7 +162,7 @@
   "ports/nrf52840/core/interface/bench_console.cpp::handle_argos_cmd/2": 45,
   "ports/nrf52840/core/interface/bench_console.cpp::handle_gps_cmd/2": 18,
   "ports/nrf52840/core/interface/bench_console.cpp::handle_sensors_cmd/2": 16,
-  "ports/nrf52840/core/interface/bench_console.cpp::handle_services_cmd/2": 17,
+  "ports/nrf52840/core/interface/bench_console.cpp::handle_services_cmd/2": 13,
   "ports/nrf52840/core/interface/bench_console.cpp::handle_state_cmd/2": 20,
   "ports/nrf52840/core/interface/ble_interface.cpp::BleInterface::stm_ota_event_handler/3": 33,
   "ports/nrf52840/core/memmang/heap_4.c::pvPortMalloc/1": 16,

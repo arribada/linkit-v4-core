@@ -2,20 +2,22 @@
  * @file hauled_mode_service.hpp
  * @brief Hauled-vs-at-sea mode classifier (Plan 1 step 3).
  *
- * Auto-detects whether the animal is hauled out (long dry idle on SWS) or at
- * sea (recently submerged), based purely on the elapsed time since the most
- * recent underwater event. When hauled, `ConfigurationStore` substitutes the
- * `HAULED_*` parameter variants (Argos mode, TR_NOM, GNSS_EN) in place of the
- * base ones — cloning the LOW_BATTERY override pattern.
+ * Auto-detects whether the animal is hauled out (dry on the SWS for a long
+ * time) or at sea, based on how long it has been continuously out of the
+ * water. A long dive is not a dry spell. When hauled, `ConfigurationStore`
+ * substitutes the `HAULED_*` parameter variants (Argos mode, TR_NOM, GNSS_EN)
+ * in place of the base ones — cloning the LOW_BATTERY override pattern.
  *
  * Detection is asymmetric to provide hysteresis on a sandy / surf boundary:
- *   AT_SEA → HAULED : (now - last_uw_event) > HAULED_IDLE_THRESHOLD_H * 3600
+ *   AT_SEA → HAULED : dry now, and (now - dry_since) > HAULED_IDLE_THRESHOLD_H * 3600
  *   HAULED → AT_SEA : HAULED_RETURN_EVENTS consecutive UW=true events
+ * A device that has never been in the water stays AT_SEA.
  *
- * State (in_hauled / counters) persists in .noinit RAM with CRC16, so a soft
- * reset resumes the classifier where it left off. A cold boot conservatively
- * resets to AT_SEA — the device waits for evidence before substituting
- * battery-saving HAULED parameters.
+ * State (in_hauled / counters / stamps) persists in .noinit RAM with CRC16, so
+ * a soft reset resumes the classifier where it left off; HAULED cannot engage
+ * after a reset until the detector has reported again. A cold boot
+ * conservatively resets to AT_SEA — the device waits for evidence before
+ * substituting battery-saving HAULED parameters.
  *
  * Priority below LOW_BATTERY (existing) and above any future sequencer
  * (`AT_SEA_SEQUENCED`, Plan 2): when hauled, the sequencer is paused.
@@ -28,6 +30,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <ctime>
 
@@ -52,18 +55,26 @@ public:
 
 	// Public state accessors.
 	static bool is_hauled();
-	static std::time_t last_uw_event_rtc();
+	static std::time_t last_uw_event_rtc();  // last dive; 0 = never in the water
+	static std::time_t dry_since_rtc();      // start of the current dry spell; 0 = in the water or unknown
 	static unsigned uw_events_since_hauled();
 
 	// Mitigation K (2026-05): re-baseline timestamp when the RTC is synced
 	// from GNSS (jump from virtual epoch ~1 to real UTC ~1.7e9). Called by
-	// GPSService right after rtc->settime(real_t). Without this, the elapsed-
-	// time computation `(now - last_uw_event_rtc)` would jump by ~50 years,
+	// GPSService right after rtc->settime(real_t). Without this, the dry-time
+	// computation `(now - dry_since_rtc)` would jump by ~50 years,
 	// falsely engaging HAULED on the very next evaluate() call.
 	// Preserves `in_hauled` (logical state stays valid) and
-	// `uw_events_since_hauled`; only the time baseline is shifted to `now`.
+	// `uw_events_since_hauled`; only the non-zero stamps are shifted to `now`.
 	static void reset_for_rtc_sync(std::time_t now);
 
 	// Visible-for-tests: clear state directly.
 	static void reset_for_tests();
+
+#ifdef CPPUTEST
+	// Drop the RAM-only state as a reset does; .noinit is kept.
+	static void simulate_reset_for_tests();
+	// Raw .noinit image, to corrupt it or plant another layout.
+	static uint8_t *noinit_bytes_for_tests(std::size_t &size);
+#endif
 };

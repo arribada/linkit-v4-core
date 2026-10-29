@@ -66,8 +66,8 @@ GNP01, GNP52, ARP01, CAP01 et GNP25 n'ont pas changé (1, 4294967295, 0, 0, 1).
 
 | # | Commande | Attendu |
 |---|---|---|
-| 1.1 | `cd tests && ./build/TrackerTests -p -xg SWS` | tout passe (1095/1095 au 29/10, après Argos A de 2.15 ; aussi en un seul processus, sans `-p`) |
-| 1.2 | `cd tests && ./build/TrackerTestsCyprus -p -xg SWS` | tout passe (1113/1113 au 29/10, après Argos A de 2.15) |
+| 1.1 | `cd tests && ./build/TrackerTests -p -xg SWS` | tout passe (1108/1108 au 29/10, après HAULED de 2.15 ; aussi en un seul processus, sans `-p`) |
+| 1.2 | `cd tests && ./build/TrackerTestsCyprus -p -xg SWS` | tout passe (1126/1126 au 29/10, après HAULED de 2.15 ; aussi en un seul processus) |
 | 1.3 | `cd tests && ./build/TrackerTests -p -g SWSAnalog`, puis `-g SWSAnalogFlash`, puis `-sg SWSLongRun -sn H45_FixedDelayClean_ControlDetectsSurfacings` | tout passe |
 | 1.4 | `cd tests && ./build/TurtleSimulation -v` | 11/11, dont les tests budget `BatteryAndBusyWaitWithinBudget` et `JournalAtWarnHoldsOnlyFaults` |
 | 1.5 | `cd tests && ./build/RSPBSimulation -v` | 15/15 au 29/10, après P6 de 2.15 |
@@ -722,6 +722,9 @@ démarre jamais, reflasher un build normal ensuite.**
 | Argos A (de `robust/argos`) : sur SMD en AT, une plongée entre l'AT+TX et son `+OK` (chauffe TCXO comprise) rend le crédit de la pile de profondeur ; TxStarted, levé dès l'écriture de l'AT+TX, le comptait émis. KIM2, LoRa et SMD SPI inchangés | PC | groupe `SmdSatCmdAtRfStart` (10, octets du module injectés), `ArgosTxService.CreditIsGivenBackWhenTheBackendSaysRfNeverStarted`, `…CreditStaysSpentOnceTheBackendSaysRfStarted`, `…CreditIsGivenBackWhenTheTxDiesBeforeTxStarted` | passent ; dix mutations détectées | ✅ 29/10 |
 | | LinkIt SMD (banc) | régression sans émission : contrôle carte complet après flash | 36 sur 36 | ⬜ |
 | | LinkIt SMD, **émission autorisée** (antenne ou charge, alimentation ≥ 1 A) | `ARGOS_TCXO_WARMUP_TIME` ≥ 2 s, plongée par `%SWSRAW` pendant la chauffe d'un AT+TX qui n'est pas la 1re de l'émersion (celle-là part sans chauffe) | « TX ended before reaching the air — 1 depth-pile credit(s) given back », la même position réémise à l'émersion suivante | ⬜ (accord radio) |
+| HAULED (de `robust/hauled`) : la sécheresse se compte depuis l'émersion, une plongée y met fin ; une balise jamais mouillée reste AT_SEA (la synchro RTC ne fabrique plus de plongée) ; après un reset, rien ne s'engage avant le 1er rapport du détecteur ; `.noinit` à étiquette de disposition. Lève le plancher HMP01 ≥ 12 h du plan B4 | PC | 12 tests repris + `HauledRestoreRejectsAFutureDrySpell` ; cas existants passés par une émersion | passent ; onze mutations détectées | ✅ 29/10 |
+| | LinkIt SMD (banc), sans émission | la séquence de HAUL-02 à la main, Argos coupé **dans les deux profils** : `ARP01=0`, `GNP01=0`, et `HMP10=0`, `HMP12=0`, `HMP13=2`, sans quoi l'engagement substitue `HMP10` (LEGACY par défaut) et la balise émet. `HMP00=1`, `HMP01=1`, puis `%HAULED RESET`, `%DIVE`, `%SURFACE`, `RTCW` +2 h, `%HAULED` ; enfin `%HAULED RESET` et la configuration de référence remise. La campagne classe tous les cas `HAUL-`/`HAULED-` comme émetteurs (HAUL-02 laisse `HMP10` à LEGACY, HAULED-01 émet toutes les 60 s) : pas de `--cases` sans accord | `state=HAULED` ; `dry_s` compté depuis l'émersion | ⬜ |
+| | LinkIt SMD, **émission autorisée** | `dte_campaign --cases HAULED-01,HAUL-02,HAUL-03` | les trois passent | ⬜ (accord radio) |
 | Banc, LED-03 | carte saine | rejouer `dte_campaign --cases LED-03` | rouge pour une session sans position ; sur la carte du banc le reed rebondit sans aimant (110 fronts en 30 s), d'où le blanc « aimant présent » | ⬜ |
 
 ---

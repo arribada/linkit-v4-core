@@ -1958,7 +1958,8 @@ TEST(ConfigStore, HauledTakesPriorityOverMoored) {
 	CHECK_TRUE(MooredModeService::is_moored());
 
 	HauledModeService::on_underwater_event(true, 1000);
-	HauledModeService::evaluate(1000 + 2 * 3600);
+	HauledModeService::on_underwater_event(false, 1300);  // surfaced: dry from here
+	HauledModeService::evaluate(1300 + 2 * 3600);
 	CHECK_TRUE(HauledModeService::is_hauled());
 
 	ArgosConfig argos;
