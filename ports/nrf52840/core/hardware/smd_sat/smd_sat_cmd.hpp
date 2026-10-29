@@ -102,6 +102,10 @@ public:
 	/// AFTER_LAST_TX cooldown arming — without this distinction, a failed TX
 	/// erroneously arms cooldown the same as a successful one.
 	virtual bool is_tx_successful() = 0;
+	/// @brief Has the TX handed over by the last initiate_tx() started
+	/// radiating? Parses what has already been received first. Default true: a
+	/// transport that cannot tell counts an accepted TX as on air (SPI).
+	virtual bool tx_rf_started() { return true; }
 	/// @brief Module-side timing of the last TX, in ms after the TX command was
 	/// sent: when the module acknowledged it (ok_ms) and when it reported the end
 	/// of the transmission (done_ms). False when the transport cannot tell.

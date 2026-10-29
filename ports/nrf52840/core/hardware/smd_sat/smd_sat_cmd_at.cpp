@@ -67,6 +67,7 @@ void SmdSatCmdAt::init() {
 	m_tx_in_progress = false;
 	m_tx_complete = false;
 	m_tx_status = 0;
+	m_tx_rf_started = false;
 }
 
 void SmdSatCmdAt::deinit() {
@@ -95,8 +96,7 @@ void SmdSatCmdAt::parse_response(const std::string &line) {
 
 	// +OK
 	if (line == "+OK") {
-		m_resp_ok = true;
-		if (m_tx_in_progress && !m_tx_ok_ms) m_tx_ok_ms = PMU::get_timestamp_ms();
+		on_ok();
 		return;
 	}
 
@@ -142,20 +142,7 @@ void SmdSatCmdAt::parse_response(const std::string &line) {
 
 	// +TX=<status>,<data> (async TX completion)
 	if (line.compare(0, 4, "+TX=") == 0) {
-		m_tx_done_ms = PMU::get_timestamp_ms();
-		std::string tx_resp = line.substr(4);
-		size_t comma = tx_resp.find(',');
-		if (comma != std::string::npos) {
-			try {
-				m_tx_status = std::stoi(tx_resp.substr(0, comma));
-			} catch (...) {
-				m_tx_status = 0xFFFF;
-			}
-		}
-		m_tx_complete = true;
-		m_tx_in_progress = false;  // TX resolved (completion received)
-		// Also set resp_ok since AT+TX waits for MAC acceptance
-		m_resp_ok = true;
+		on_tx_completion(line);
 		return;
 	}
 
@@ -570,6 +557,7 @@ bool SmdSatCmdAt::initiate_tx(const KineisPacket &payload) {
 	m_resp_error = false;
 	m_resp_ok = false;
 	m_tx_in_progress = true;  // arm +ERROR / +TX= async surfacing
+	m_tx_rf_started = false;
 	m_tx_ok_ms = 0;
 	m_tx_done_ms = 0;
 	m_tx_sent_ms = PMU::get_timestamp_ms();
@@ -605,6 +593,45 @@ bool SmdSatCmdAt::is_tx_finished() {
 bool SmdSatCmdAt::is_tx_in_progress() {
 	NrfUartAsync::process_rx();  // parse any pending async +TX= completion first
 	return !m_tx_complete;
+}
+
+/// @brief +OK: the reply to the command in flight. For an AT+TX the module sends
+/// it on its MAC's KNS_MAC_OK, with the TX LED: after the TCXO warm-up, which its
+/// AT+TX handler spends in HAL_Delay before queueing the frame
+/// (argos-smd-at-kineis-firmware sources, older than the flashed v1.0.0).
+/// Measured 2026-10-12, LDA2, warm-up 0: 540-600 ms after AT+TX, when RF starts.
+/// The frame counts as on air from then on.
+void SmdSatCmdAt::on_ok() {
+	m_resp_ok = true;
+	if (!m_tx_in_progress) return;
+	m_tx_rf_started = true;
+	if (!m_tx_ok_ms) m_tx_ok_ms = PMU::get_timestamp_ms();
+}
+
+/// @brief +TX=<status>,<data>: the asynchronous end of the TX. A status 0 proves
+/// the frame went out, even if its +OK was lost.
+void SmdSatCmdAt::on_tx_completion(const std::string &line) {
+	m_tx_done_ms = PMU::get_timestamp_ms();
+	const std::string tx_resp = line.substr(4);
+	const size_t comma = tx_resp.find(',');
+	if (comma != std::string::npos) {
+		try {
+			m_tx_status = std::stoi(tx_resp.substr(0, comma));
+		} catch (...) {
+			m_tx_status = 0xFFFF;
+		}
+	}
+	if (m_tx_in_progress && m_tx_status == 0) m_tx_rf_started = true;
+	m_tx_complete = true;
+	m_tx_in_progress = false;  // TX resolved (completion received)
+	// Also set resp_ok since AT+TX waits for MAC acceptance
+	m_resp_ok = true;
+}
+
+bool SmdSatCmdAt::tx_rf_started() {
+	// Draining needs the UART up: SmdSat asks before it tears the link down.
+	if (is_init()) NrfUartAsync::process_rx();
+	return m_tx_rf_started;
 }
 
 // ============================================================================

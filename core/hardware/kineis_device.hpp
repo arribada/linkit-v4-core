@@ -83,6 +83,13 @@ public:
 	/// never happen is lost for good -- with NTRY=1, on the first try. Backends
 	/// that are always able to transmit keep the default.
 	virtual bool can_transmit() const { return true; }
+	/// @brief Asked when a TX is abandoned after KineisEventTxStarted: did its
+	/// frame actually start radiating? TxStarted only means the module took the
+	/// frame; SMD over AT radiates later, and a dive in between cuts its rail with
+	/// nothing on air. A false answer lets the caller give the unspent depth-pile
+	/// credit back. Default true: TxStarted counts as on air, for backends that
+	/// cannot tell, as it always did.
+	virtual bool tx_reached_air() { return true; }
 	virtual void start_receive(const KineisModulation mode) = 0;
 	virtual bool stop_receive() = 0;
 

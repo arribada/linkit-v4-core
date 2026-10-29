@@ -66,6 +66,7 @@ public:
 	bool is_tx_finished() override;
 	bool is_tx_in_progress() override;
 	bool is_tx_successful() override { return m_tx_complete && m_tx_status == 0; }
+	bool tx_rf_started() override;
 	bool last_tx_timing(uint32_t *ok_ms, uint32_t *done_ms) override {
 		if (!m_tx_sent_ms || !m_tx_done_ms) return false;
 		*ok_ms = m_tx_ok_ms ? static_cast<uint32_t>(m_tx_ok_ms - m_tx_sent_ms) : 0;
@@ -134,6 +135,8 @@ private:
 	volatile bool m_tx_complete;     // +TX= response received
 	volatile uint16_t m_tx_status;   // TX error code from +TX= response
 	volatile bool m_tx_in_progress;  // AT+TX fired, awaiting +OK/+ERROR/+TX= (async, non-blocking)
+	// This TX's +OK (or a +TX=0) has been parsed: its frame is on air.
+	volatile bool m_tx_rf_started = false;
 	// Module-side TX timing (main context, so quantised by the TX poll period):
 	// AT+TX written, its +OK parsed, its +TX= parsed.
 	uint64_t m_tx_sent_ms = 0;
@@ -153,6 +156,8 @@ private:
 
 	// Response parsing
 	void parse_response(const std::string &line);
+	void on_ok();
+	void on_tx_completion(const std::string &line);
 
 	// Hex conversion helpers
 	static std::string bytes_to_hex(const uint8_t *data, uint16_t len);

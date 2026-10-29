@@ -200,6 +200,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     "${NRF_DIR}/core/hardware/ms58xx"
     "${NRF_DIR}/core/hardware/pressure_sensor"
     "${NRF_DIR}/core/hardware/cdt"
+    "${NRF_DIR}/core/hardware/smd_sat"
     "${NRF_DIR}/core/memmang"
 )
 
@@ -249,11 +250,12 @@ target_sources(${PROJECT_NAME} PRIVATE
     "${ROOT_DIR}/core/logging/debug.cpp"
     "${LINUX_DIR}/interrupt_lock.cpp"
     "${NRF_DIR}/core/hardware/nrf_switch.cpp"
-    # nrf_battery_mon.cpp excluded: depends on nrf_delay.h (Nordic SDK, not available in test builds)
+    # nrf_battery_mon.cpp excluded: depends on Nordic SDK headers (crc16.h; nrf_delay.h has a stub in fakes/)
     "${NRF_DIR}/core/hardware/m10qasync/m10qasync.cpp"
     "${NRF_DIR}/core/hardware/m10qasync/m10qasync_config.cpp"
     "${NRF_DIR}/core/hardware/m10qasync/ubx_comms.cpp"
     "${NRF_DIR}/core/hardware/nrf_uart_async.cpp"
+    "${NRF_DIR}/core/hardware/smd_sat/smd_sat_cmd_at.cpp"
     "${NRF_DIR}/core/hardware/lora_rak3172/lora_rak3172.cpp"
     "${NRF_DIR}/core/hardware/lora_rak3172/lora_rak3172_comm.cpp"
     "${NRF_DIR}/core/hardware/cdt/cdt.cpp"
@@ -277,10 +279,11 @@ target_sources(${PROJECT_NAME} PRIVATE
     "src/logger_test.cpp"
     "src/debug_logger_test.cpp"
     "src/nrf_switch_test.cpp"
-    # "src/nrf_battery_test.cpp"  # Excluded: depends on NrfBatteryMonitor (needs Nordic SDK nrf_delay.h)
+    # "src/nrf_battery_test.cpp"  # Excluded: depends on NrfBatteryMonitor (needs Nordic SDK headers)
     "src/battery_critical_confirm_test.cpp"
     "src/battery_sampling_test.cpp"
     "src/smd_tcxo_register_test.cpp"
+    "src/smd_sat_cmd_at_test.cpp"
     "src/dbd_save_schedule_test.cpp"
     "src/ph_sensor_test.cpp"
     "src/als_sensor_test.cpp"
@@ -514,7 +517,7 @@ target_sources(${TURTLE_SIM_NAME} PRIVATE
     "${ROOT_DIR}/core/logging/debug.cpp"
     "${LINUX_DIR}/interrupt_lock.cpp"
     "${NRF_DIR}/core/hardware/nrf_switch.cpp"
-    # nrf_battery_mon.cpp excluded: depends on nrf_delay.h (Nordic SDK, not available in test builds)
+    # nrf_battery_mon.cpp excluded: depends on Nordic SDK headers (crc16.h; nrf_delay.h has a stub in fakes/)
     "${NRF_DIR}/core/hardware/m10qasync/m10qasync.cpp"
     "${NRF_DIR}/core/hardware/m10qasync/m10qasync_config.cpp"
     "${NRF_DIR}/core/hardware/m10qasync/ubx_comms.cpp"

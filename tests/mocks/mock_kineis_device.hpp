@@ -68,6 +68,12 @@ public:
 	unsigned int cooldown_remaining_ms() const override { return m_cooldown_remaining_ms; }
 	void test_set_cooldown_remaining_ms(unsigned int ms) { m_cooldown_remaining_ms = ms; }
 
+	// Test helper: what the backend answers when asked whether the frame of an
+	// abandoned TX ever radiated. Default true, like the base class. Not a mock()
+	// call, for the same reason as the hooks below.
+	bool tx_reached_air() override { return m_tx_reached_air; }
+	void test_set_tx_reached_air(bool on_air) { m_tx_reached_air = on_air; }
+
 	// Modulation guard hooks. Deliberately NOT mock() calls: service_init runs
 	// them in every ArgosTxService test, and most tests set no expectation.
 	// resync_rconf_cache() counts, may throw, and runs test_on_resync (which
@@ -100,4 +106,5 @@ public:
 private:
 	KineisModulation m_current_mod = KineisModulation::LDA2;
 	unsigned int m_cooldown_remaining_ms = 0;
+	bool m_tx_reached_air = true;
 };

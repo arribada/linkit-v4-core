@@ -31,10 +31,17 @@
  * @param base_address  Peripheral base address (e.g. 0x40003000 for TWIM0).
  */
 static inline void nrf_peripheral_power_reset(uint32_t base_address) {
+#ifdef CPPUTEST
+	// Host tests: no peripheral behind the address. The stub in tests/fakes/ does
+	// not cover the files next to this header (nrf_uart_async.cpp, nrf_i2c.cpp):
+	// #include "..." looks beside the including file first, and finds this one.
+	(void)base_address;
+#else
 	volatile auto *power = reinterpret_cast<volatile uint32_t *>(base_address + 0xFFC);
 	*power = 0;    // Power OFF — resets all peripheral state
 	(void)*power;  // Dummy read — bus synchronization barrier
 	*power = 1;    // Power ON — peripheral back to initial state
+#endif
 }
 
 /// @name Common peripheral base addresses for power reset

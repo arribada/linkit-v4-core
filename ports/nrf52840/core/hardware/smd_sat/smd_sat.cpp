@@ -567,6 +567,8 @@ void SmdSat::degraded_mode_note_tx_cancelled_during_cascade() {
 #endif  // SMDSAT_AUTOFALLBACK_ENABLED
 
 void SmdSat::state_stopped_enter() {
+	// First: deinit() stops the parsing of what the module has already sent.
+	latch_tx_rf_started();
 	m_cmd.deinit();
 
 	// Release wakeup pin LOW so SMD can enter deep sleep (STANDBY/SHUTDOWN)
@@ -1340,6 +1342,7 @@ void SmdSat::state_transmit_pending() {
 			return;
 		}
 		TXTRACE("state_transmit_pending: initiate_tx OK, TX started on STM32");
+		m_tx_initiated = true;
 #ifdef BENCH_TEST
 		// One marker, not the twelve TXTRACE lines: each of those is a DEBUG_INFO
 		// committed to LFS, which inflates the very latency being measured. This
@@ -1521,6 +1524,23 @@ void SmdSat::stop_send() {
 	m_tx_buffer.clear();
 }
 
+/// @brief Read the transport's verdict on the TX in flight while the link can
+/// still be read. Latched: once on air, on air until the next send().
+void SmdSat::latch_tx_rf_started() {
+	if (!m_tx_initiated || m_tx_rf_started) return;
+	// Called from state_stopped_enter(): nothing may escape and stop the power-off.
+	try {
+		m_tx_rf_started = m_cmd.tx_rf_started();
+	} catch (...) {
+		// Unknown counts as not on air: at worst the position gets one more try.
+	}
+}
+
+bool SmdSat::tx_reached_air() {
+	latch_tx_rf_started();
+	return m_tx_rf_started;
+}
+
 void SmdSat::start_receive(const KineisModulation mode) {
 	(void)mode;
 	DEBUG_TRACE("SmdSat::%s: Not supported", __func__);
@@ -1544,6 +1564,8 @@ unsigned int SmdSat::cooldown_remaining_ms() const {
 
 void SmdSat::send(const KineisModulation mode, const KineisPacket &user_payload, const unsigned int payload_length) {
 	m_tx_trace_start_ms = PMU::get_timestamp_ms();
+	m_tx_initiated = false;
+	m_tx_rf_started = false;
 	TXTRACE("send() entered: mode=%d state=%d first_tx=%u tcxo_warmup=%u s", static_cast<int>(mode),
 	        static_cast<int>(m_state), m_is_first_tx, m_tcxo_warmup_time);
 

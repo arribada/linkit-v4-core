@@ -66,8 +66,8 @@ GNP01, GNP52, ARP01, CAP01 et GNP25 n'ont pas changé (1, 4294967295, 0, 0, 1).
 
 | # | Commande | Attendu |
 |---|---|---|
-| 1.1 | `cd tests && ./build/TrackerTests -p -xg SWS` | tout passe (1082/1082 au 29/10, après stockage C6+C7 de 2.15 ; aussi en un seul processus, sans `-p`) |
-| 1.2 | `cd tests && ./build/TrackerTestsCyprus -p -xg SWS` | tout passe (1100/1100 au 29/10, après stockage C6+C7 de 2.15) |
+| 1.1 | `cd tests && ./build/TrackerTests -p -xg SWS` | tout passe (1095/1095 au 29/10, après Argos A de 2.15 ; aussi en un seul processus, sans `-p`) |
+| 1.2 | `cd tests && ./build/TrackerTestsCyprus -p -xg SWS` | tout passe (1113/1113 au 29/10, après Argos A de 2.15) |
 | 1.3 | `cd tests && ./build/TrackerTests -p -g SWSAnalog`, puis `-g SWSAnalogFlash`, puis `-sg SWSLongRun -sn H45_FixedDelayClean_ControlDetectsSurfacings` | tout passe |
 | 1.4 | `cd tests && ./build/TurtleSimulation -v` | 11/11, dont les tests budget `BatteryAndBusyWaitWithinBudget` et `JournalAtWarnHoldsOnlyFaults` |
 | 1.5 | `cd tests && ./build/RSPBSimulation -v` | 15/15 au 29/10, après P6 de 2.15 |
@@ -719,6 +719,9 @@ démarre jamais, reflasher un build normal ensuite.**
 | | LinkIt (prépasse) | `PPP07=1` avec un AOP à jour et une position connue, redémarrage (`RSTBW`), puis `STATR` | `PPT0x` donne la prochaine passe dès le démarrage (avant : rien jusqu'au premier fix) ; aucune émission nécessaire pour le lire | ⬜ |
 | Stockage C6+C7 (de `robust/storage`) : l'alimentation de la flash est rendue sur tous les chemins d'erreur, VSYS peut redescendre à 2,3 V après une écriture ratée (C6) ; une erreur de lecture de `pass_predict.dat` garde l'AOP téléversé et charge le jeu intégré en RAM seulement, et un nombre d'enregistrements au-delà de 40 est refusé (C7) | PC | groupe `ConfigStoreFlashFaults` (5), flash à pannes injectées | passent ; les cinq échouent sur HEAD | ✅ 29/10 |
 | | LinkIt SMD (banc) | régression : contrôle carte complet après flash, `PASPW` d'un AOP puis `PARMR` de `PPT01` | 36 sur 36 ; l'AOP relu après redémarrage | ⬜ |
+| Argos A (de `robust/argos`) : sur SMD en AT, une plongée entre l'AT+TX et son `+OK` (chauffe TCXO comprise) rend le crédit de la pile de profondeur ; TxStarted, levé dès l'écriture de l'AT+TX, le comptait émis. KIM2, LoRa et SMD SPI inchangés | PC | groupe `SmdSatCmdAtRfStart` (10, octets du module injectés), `ArgosTxService.CreditIsGivenBackWhenTheBackendSaysRfNeverStarted`, `…CreditStaysSpentOnceTheBackendSaysRfStarted`, `…CreditIsGivenBackWhenTheTxDiesBeforeTxStarted` | passent ; dix mutations détectées | ✅ 29/10 |
+| | LinkIt SMD (banc) | régression sans émission : contrôle carte complet après flash | 36 sur 36 | ⬜ |
+| | LinkIt SMD, **émission autorisée** (antenne ou charge, alimentation ≥ 1 A) | `ARGOS_TCXO_WARMUP_TIME` ≥ 2 s, plongée par `%SWSRAW` pendant la chauffe d'un AT+TX qui n'est pas la 1re de l'émersion (celle-là part sans chauffe) | « TX ended before reaching the air — 1 depth-pile credit(s) given back », la même position réémise à l'émersion suivante | ⬜ (accord radio) |
 | Banc, LED-03 | carte saine | rejouer `dte_campaign --cases LED-03` | rouge pour une session sans position ; sur la carte du banc le reed rebondit sans aimant (110 fronts en 30 s), d'où le blanc « aimant présent » | ⬜ |
 
 ---

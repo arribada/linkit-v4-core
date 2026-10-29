@@ -158,6 +158,12 @@ private:
 	/// cannot fit -- instead of handing the module a wrong-length frame.
 	KineisPacket m_raw_payload;
 	SmdArgosModulation m_framed_for = ARGOS_MOD_LDA2;
+	/// @brief RF verdict for the TX of the last send() (see tx_reached_air()).
+	/// Latched from the transport before the link is torn down, which would
+	/// drop replies not parsed yet. Reset by send().
+	bool m_tx_initiated = false;
+	bool m_tx_rf_started = false;
+	void latch_tx_rf_started();
 	/// @brief Set by write_credentials_from_config() when it read back the
 	/// master it had just written (adaptive off, recognised code).
 	bool m_master_readback_ok = false;
@@ -267,6 +273,7 @@ public:
 	void send(const KineisModulation mode, const KineisPacket &packet, const unsigned int size_bits) override;
 	void stop_send() override;
 	bool can_transmit() const override;
+	bool tx_reached_air() override;
 	void start_receive(const KineisModulation mode) override;
 	bool stop_receive() override;
 	void set_frequency(double freq_mhz) override;

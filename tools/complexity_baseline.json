@@ -141,7 +141,7 @@
   "ports/nrf52840/core/hardware/smd_sat/smd_sat.cpp::SmdSat::set_credentials/4": 31,
   "ports/nrf52840/core/hardware/smd_sat/smd_sat.cpp::SmdSat::state_load_kmac/0": 34,
   "ports/nrf52840/core/hardware/smd_sat/smd_sat.cpp::SmdSat::write_credentials_from_config/0": 32,
-  "ports/nrf52840/core/hardware/smd_sat/smd_sat_cmd_at.cpp::SmdSatCmdAt::parse_response/1": 18,
+  "ports/nrf52840/core/hardware/smd_sat/smd_sat_cmd_at.cpp::SmdSatCmdAt::parse_response/1": 14,
   "ports/nrf52840/core/hardware/smd_sat/smd_sat_cmd_at.cpp::SmdSatCmdAt::send_at_with_data/3": 25,
   "ports/nrf52840/core/hardware/smd_sat/smd_sat_cmd_spi.cpp::SmdSatCmdSpi::dfu_enter/0": 16,
   "ports/nrf52840/core/hardware/smd_sat/smd_sat_cmd_spi.cpp::SmdSatCmdSpi::dfu_send_command/5": 28,

@@ -153,9 +153,10 @@ private:
 	// that dies before KineisEventTxStarted has already destroyed its positions;
 	// these two let the failure paths give them back. Same lifecycle as
 	// m_last_val_tx_type below: set just before m_kineis.send(), consumed by the
-	// completion handlers. TxStarted is the dividing line and it is not
+	// completion handlers. RF start is the dividing line and it is not
 	// arbitrary -- a frame that left the antenna has used its try, one that
-	// never did has not.
+	// never did has not. TxStarted marks it, unless the backend's
+	// tx_reached_air() says the module never radiated (inflight_reached_air()).
 	// One slot, and that is only sound while BLIND keeps nb_parallel = 1 (both
 	// backends hardcode it: kim2.cpp load_kmac(), smd_sat.cpp load_kmac_profil).
 	// Raise it and several messages are in flight at once, so a second send()
@@ -165,6 +166,7 @@ private:
 	std::vector<GPSLogEntry *> m_inflight_gps;
 	bool m_inflight_reached_air = false;
 	unsigned int m_inflight_evictions = 0;
+	bool inflight_reached_air();
 
 	const char *m_last_val_tx_type = "none";
 

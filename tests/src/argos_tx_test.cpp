@@ -5190,6 +5190,122 @@ TEST(ArgosTxService, CloudLocateReadyOnLda2MasterStillFiresEarly) {
 }
 
 // ============================================================================
+// Depth-pile credit of a frame that never radiated
+// ============================================================================
+// SMD over AT: TxStarted fires once AT+TX is written, but the module radiates
+// only at its +OK, after the TCXO warm-up. A dive in between cuts the rail with
+// nothing on air; the backend says so through tx_reached_air().
+
+// One fix, one try (NTRY=1), and a dive before the module even took the frame
+// (no TxStarted): the position comes back whatever the backend would answer.
+TEST(ArgosTxService, CreditIsGivenBackWhenTheTxDiesBeforeTxStarted) {
+	configure_plain_legacy();
+	fake_config_store->write_param(ParamID::NTRY_PER_MESSAGE, 1U);
+	fake_config_store->write_param(ParamID::DRY_TIME_BEFORE_TX, 0U);
+
+	ArgosTxService serv(*mock_kineis);
+	std::time_t t = 1652105502000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+
+	mock().expectNCalls(2, "send").onObject(mock_kineis).ignoreOtherParameters();
+	mock().ignoreOtherCalls();
+	serv.start();
+	inject_gps_location(true, 11.8768, -33.8232, t / 1000, true);
+
+	t += serv.get_last_schedule();
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	system_scheduler->run();
+	CHECK_EQUAL(1U, mock_kineis->send_count);
+	const KineisPacket first = mock_kineis->last_packet;
+
+	mock_kineis->test_set_tx_reached_air(true);
+	notify_underwater_state(true);
+	notify_underwater_state(false);
+
+	t += serv.get_last_schedule();
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	system_scheduler->run();
+	CHECK_EQUAL(2U, mock_kineis->send_count);
+	CHECK(first == mock_kineis->last_packet);
+	mock().checkExpectations();
+}
+
+// One fix, one try (NTRY=1). The module takes the frame, the turtle dives
+// before RF: the position must come back on the next surfacing.
+TEST(ArgosTxService, CreditIsGivenBackWhenTheBackendSaysRfNeverStarted) {
+	configure_plain_legacy();
+	fake_config_store->write_param(ParamID::NTRY_PER_MESSAGE, 1U);
+	fake_config_store->write_param(ParamID::DRY_TIME_BEFORE_TX, 0U);
+
+	ArgosTxService serv(*mock_kineis);
+	std::time_t t = 1652105502000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+
+	mock().expectNCalls(2, "send").onObject(mock_kineis).ignoreOtherParameters();
+	mock().ignoreOtherCalls();
+	serv.start();
+	inject_gps_location(true, 11.8768, -33.8232, t / 1000, true);
+
+	t += serv.get_last_schedule();
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	system_scheduler->run();
+	CHECK_EQUAL(1U, mock_kineis->send_count);
+	const KineisPacket first = mock_kineis->last_packet;
+
+	mock_kineis->notify(KineisEventTxStarted({}));
+	mock_kineis->test_set_tx_reached_air(false);
+	notify_underwater_state(true);
+	notify_underwater_state(false);
+
+	t += serv.get_last_schedule();
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	system_scheduler->run();
+	CHECK_EQUAL(2U, mock_kineis->send_count);
+	CHECK(first == mock_kineis->last_packet);
+	mock().checkExpectations();
+}
+
+// Same sequence, but RF had started when the rail was cut: the try is spent.
+TEST(ArgosTxService, CreditStaysSpentOnceTheBackendSaysRfStarted) {
+	configure_plain_legacy();
+	fake_config_store->write_param(ParamID::NTRY_PER_MESSAGE, 1U);
+	fake_config_store->write_param(ParamID::DRY_TIME_BEFORE_TX, 0U);
+
+	ArgosTxService serv(*mock_kineis);
+	std::time_t t = 1652105502000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+
+	mock().expectOneCall("send").onObject(mock_kineis).ignoreOtherParameters();
+	mock().ignoreOtherCalls();
+	serv.start();
+	inject_gps_location(true, 11.8768, -33.8232, t / 1000, true);
+
+	t += serv.get_last_schedule();
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	system_scheduler->run();
+
+	mock_kineis->notify(KineisEventTxStarted({}));
+	mock_kineis->test_set_tx_reached_air(true);
+	notify_underwater_state(true);
+	notify_underwater_state(false);
+
+	t += serv.get_last_schedule();
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	system_scheduler->run();
+	CHECK_EQUAL(1U, mock_kineis->send_count);
+	mock().checkExpectations();
+}
+
+// ============================================================================
 // Host-owned Argos message counter (operator rule 2026-10-12)
 // ============================================================================
 #include "argos_message_counter.hpp"

@@ -1221,6 +1221,13 @@ bool ArgosTxService::service_is_active_on_initiate() {
 	return false;
 }
 
+/// @brief Did the TX in flight reach the air? TxStarted first, then the
+/// backend's word: SMD over AT is handed the frame at TxStarted but radiates
+/// only after its TCXO warm-up, and a dive before that cuts it with nothing sent.
+bool ArgosTxService::inflight_reached_air() {
+	return m_inflight_reached_air && m_kineis.tx_reached_air();
+}
+
 /// @brief Cancel pending TX — power off device and stop send.
 /// @return true if TX was pending and cancelled, false otherwise.
 bool ArgosTxService::service_cancel() {
@@ -1236,7 +1243,7 @@ bool ArgosTxService::service_cancel() {
 	// that never made it on air are destroyed rather than deferred -- with
 	// NTRY=1, on the first try. m_inflight_gps is empty once TxComplete has run,
 	// so a cancel that follows a real transmission gives nothing back.
-	if (is_pending && !m_inflight_reached_air && !m_inflight_gps.empty()
+	if (is_pending && !inflight_reached_air() && !m_inflight_gps.empty()
 	    && m_depth_pile_manager.gps_evictions() == m_inflight_evictions) {
 		const unsigned int n = m_depth_pile_manager.refund_gps(m_inflight_gps);
 		if (n) {
@@ -1495,7 +1502,7 @@ void ArgosTxService::notify_peer_event(ServiceEvent &e) {
 			if (m_is_tx_pending) {
 				DEBUG_WARN("ArgosTxService: dive while a TX is in flight (type=%s, %s the air, %u position(s)) — "
 				           "its completion may never come",
-				           m_last_val_tx_type, m_inflight_reached_air ? "reached" : "before",
+				           m_last_val_tx_type, inflight_reached_air() ? "reached" : "before",
 				           (unsigned int)m_inflight_gps.size());
 			}
 			m_kineis.set_idle_timeout(1000);
@@ -3073,7 +3080,8 @@ void ArgosTxService::react(KineisEventTxStarted const &) {
 	// free to be slow now.
 	DebugLogger::release();
 	DEBUG_TRACE("ArgosTxService::react: KineisEventTxStarted");
-	// The frame is on the air: the try is genuinely used, nothing to give back.
+	// The module has the frame. On the air for every backend but SMD over AT,
+	// which radiates only at its +OK: inflight_reached_air() asks the backend.
 	m_inflight_reached_air = true;
 #if !defined(ARGOS_SMD) || (ARGOS_SMD != 1)
 	// KIM2 only: the burst type + modulation + running session TX count, so the
