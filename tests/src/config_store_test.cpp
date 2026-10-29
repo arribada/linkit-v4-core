@@ -1,3 +1,7 @@
+#include <functional>
+#include <set>
+#include <vector>
+
 #include "config_store_fs.hpp"
 
 #include "dte_protocol.hpp"
@@ -1985,4 +1989,186 @@ TEST(ConfigStore, LowBatteryTakesPriorityOverMoored) {
 	store->get_argos_configuration(argos);
 	CHECK_TRUE(argos.is_lb);
 	CHECK_EQUAL(900U, argos.tx_interval_s);  // LOW_BATTERY wins
+}
+
+// ---------------------------------------------------------------------------
+// The store when the flash fails under it (from robust/storage, ported
+// 2026-10-29): flash power given back on every way out, and an uploaded AOP not
+// destroyed by a read error.
+// ---------------------------------------------------------------------------
+
+namespace {
+// RamFlash that fails on demand: reads of chosen blocks, or every program and
+// erase once a budget is spent (a power cut half-way through a write). Counts the
+// flash power taken and given back.
+class FaultyRamFlash : public RamFlash {
+public:
+	FaultyRamFlash(unsigned int block_size, unsigned int blocks, unsigned int page_size)
+	    : RamFlash(block_size, blocks, page_size) {}
+
+	std::set<lfs_block_t> bad_read_blocks;
+	int progs_left = -1;  // < 0: unlimited
+	bool record_progs = false;
+	std::vector<lfs_block_t> programmed;  // in program order, while record_progs
+	int powered = 0;                      // power_up() minus power_down()
+
+	int read(lfs_block_t block, lfs_off_t off, void *buffer, lfs_size_t size) override {
+		if (bad_read_blocks.count(block)) return LFS_ERR_IO;
+		return RamFlash::read(block, off, buffer, size);
+	}
+	int prog(lfs_block_t block, lfs_off_t off, const void *buffer, lfs_size_t size) override {
+		if (progs_left == 0) return LFS_ERR_IO;
+		if (progs_left > 0) progs_left--;
+		if (record_progs) programmed.push_back(block);
+		return RamFlash::prog(block, off, buffer, size);
+	}
+	int erase(lfs_block_t block) override {
+		if (progs_left == 0) return LFS_ERR_IO;
+		return RamFlash::erase(block);
+	}
+	void power_up() override { powered++; }
+	void power_down() override { powered--; }
+
+	// Data blocks written while recording, the root metadata pair (0, 1) excluded.
+	std::set<lfs_block_t> data_blocks() const {
+		std::set<lfs_block_t> s;
+		for (lfs_block_t b : programmed)
+			if (b > 1) s.insert(b);
+		return s;
+	}
+};
+}  // namespace
+
+TEST_GROUP(ConfigStoreFlashFaults) {
+	FaultyRamFlash *flash;
+	LFSFileSystem *fs;
+	FakeBatteryMonitor *fake_battery_monitor;
+	LFSConfigurationStore *store = nullptr;
+
+	void setup() {
+		fake_battery_monitor = new FakeBatteryMonitor;
+		battery_monitor = fake_battery_monitor;
+		// Small blocks (block size = page size) so a file spans several blocks.
+		flash = new FaultyRamFlash(PAGE_SIZE, 4096, PAGE_SIZE);
+		fs = new LFSFileSystem(flash);
+		fs->format();
+		fs->mount();
+		main_filesystem = fs;
+	}
+
+	void teardown() {
+		configuration_store = nullptr;
+		delete store;
+		store = nullptr;
+		fs->umount();
+		delete fs;
+		main_filesystem = nullptr;
+		delete flash;
+		delete fake_battery_monitor;
+		battery_monitor = nullptr;
+	}
+
+	// A fresh store, as after a reboot.
+	void reboot() {
+		delete store;
+		store = new LFSConfigurationStore(*fs);
+	}
+
+	// Remount with empty caches, so that the next reads really reach the flash.
+	void remount() {
+		fs->umount();
+		CHECK_EQUAL(0, fs->mount());
+		// Fill LittleFS' free-block window now: a later allocation must not need
+		// to walk the files whose blocks are about to fail.
+		LFSFile f(fs, "warmup.bin", LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC);
+		uint8_t buf[2 * PAGE_SIZE] = {};
+		f.write(buf, sizeof(buf));
+	}
+
+	static bool throws(const std::function<void()> &f) {
+		try {
+			f();
+		} catch (...) {
+			return true;
+		}
+		return false;
+	}
+};
+
+// An exception between power_up() and power_down() kept the flash powered for good.
+TEST(ConfigStoreFlashFaults, FailedPassPredictWriteReleasesFlashPower) {
+	store = new LFSConfigurationStore(*fs);
+	store->init();
+	const int powered = flash->powered;
+	BasePassPredict pp{};
+	pp.num_records = 10;
+	flash->progs_left = 0;
+	CHECK_TRUE(throws([&]() { store->write_pass_predict(pp); }));
+	flash->progs_left = -1;
+	CHECK_EQUAL(powered, flash->powered);
+}
+
+// config.dat missing (as after a format): the open itself has to write, and its
+// exception came out of the LFSFile constructor, past every power_down().
+TEST(ConfigStoreFlashFaults, FailedSaveReleasesFlashPower) {
+	store = new LFSConfigurationStore(*fs);
+	store->init();
+	CHECK_EQUAL(0, fs->remove("config.dat"));
+	const int powered = flash->powered;
+	flash->progs_left = 0;
+	CHECK_TRUE(throws([&]() { store->save_params(); }));
+	flash->progs_left = -1;
+	CHECK_EQUAL(powered, flash->powered);
+}
+
+// An empty file system: init() has to create config.dat, and every write fails.
+TEST(ConfigStoreFlashFaults, InitWhoseWriteBackFailsReleasesFlashPower) {
+	const int powered = flash->powered;
+	flash->progs_left = 0;
+	store = new LFSConfigurationStore(*fs);
+	CHECK_TRUE(throws([&]() { store->init(); }));
+	flash->progs_left = -1;
+	CHECK_EQUAL(powered, flash->powered);
+}
+
+// A read error used to rewrite pass_predict.dat with the built-in set: the AOP an
+// operator had uploaded was gone, though the next boot could have read it.
+TEST(ConfigStoreFlashFaults, PassPredictReadErrorKeepsTheUploadedSet) {
+	store = new LFSConfigurationStore(*fs);
+	store->init();
+	BasePassPredict pp{};
+	pp.num_records = 10;
+	flash->record_progs = true;
+	store->write_pass_predict(pp);
+	flash->record_progs = false;
+
+	remount();
+	flash->bad_read_blocks = flash->data_blocks();
+	reboot();
+	store->init();                                            // the configuration itself reads fine
+	CHECK_EQUAL(25, store->read_pass_predict().num_records);  // built-in set, in RAM only
+
+	flash->bad_read_blocks.clear();
+	reboot();
+	store->init();
+	CHECK_EQUAL(10, store->read_pass_predict().num_records);
+}
+
+// PREVIPASS walks the records up to num_records, in a table of
+// MAX_AOP_SATELLITE_ENTRIES: a larger count read from the file is not believed.
+TEST(ConfigStoreFlashFaults, PassPredictWithImpossibleRecordCountIsReplaced) {
+	store = new LFSConfigurationStore(*fs);
+	store->init();
+	BasePassPredict pp{};
+	pp.num_records = 10;
+	store->write_pass_predict(pp);
+	{
+		LFSFile f(fs, "pass_predict.dat", LFS_O_WRONLY);
+		f.seek(offsetof(BasePassPredict, num_records));
+		uint8_t count = MAX_AOP_SATELLITE_ENTRIES + 1;
+		f.write(&count, sizeof(count));
+	}
+	reboot();
+	store->init();
+	CHECK_EQUAL(25, store->read_pass_predict().num_records);
 }

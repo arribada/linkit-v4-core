@@ -17,6 +17,22 @@
 
 extern BatteryMonitor *battery_monitor;
 
+/// @brief Flash power held for one scope: power_down() runs on every way out, an
+/// exception included. A power_up() whose power_down() an exception skipped left
+/// the IS25's reference count up for good, its "busy" interlock raised, and VSYS
+/// at 3.3 V in every idle until the next reset (2026-07 audit, robust/storage).
+/// Scopes nest: the IS25 counts references.
+class FlashPowerScope {
+public:
+	explicit FlashPowerScope(FileSystem &fs) : m_fs(fs) { m_fs.power_up(); }
+	~FlashPowerScope() { m_fs.power_down(); }
+	FlashPowerScope(const FlashPowerScope &) = delete;
+	FlashPowerScope &operator=(const FlashPowerScope &) = delete;
+
+private:
+	FileSystem &m_fs;
+};
+
 class LFSConfigurationStore : public ConfigurationStore {
 protected:
 	bool m_is_pass_predict_valid;
@@ -444,12 +460,11 @@ protected:
 	/// @brief Write full configuration to config.dat (versioned, all implemented params).
 	void serialize_config() override {
 		DEBUG_TRACE("ConfigurationStoreLFS::serialize_config");
-		m_filesystem.power_up();
+		FlashPowerScope power(m_filesystem);
 		LFSFile f(&m_filesystem, "config.dat", LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC);
 
 		// Write configuration version field
 		if (f.write((void *)&m_config_version_code, sizeof(m_config_version_code)) != sizeof(m_config_version_code)) {
-			m_filesystem.power_down();
 			throw CONFIG_STORE_CORRUPTED;
 		}
 
@@ -467,31 +482,49 @@ protected:
 
 			if (!serialize_config_entry(f, i)) {
 				DEBUG_ERROR("serialize_config: failed to serialize param %u", i);
-				m_filesystem.power_down();
 				throw CONFIG_STORE_CORRUPTED;
 			}
 		}
 
 		m_is_config_valid = true;
-		m_filesystem.power_down();
 
 		DEBUG_TRACE("ConfigurationStoreLFS::serialize_config: saved new file config.data");
 	}
 
 	/// @brief Read Argos pass prediction data from pass_predict.dat.
+	///
+	/// A file that is missing, of another version, short, corrupt or with more
+	/// records than the table holds is replaced by the built-in set, on flash. A
+	/// read that FAILS (LFS_ERR_IO, which may be transient) keeps the built-in set
+	/// in RAM only: rewriting the file there destroyed an uploaded AOP that the
+	/// next boot could have read (2026-07 audit, robust/storage). The record count
+	/// bound matters on its own: PREVIPASS walks the records up to num_records, in
+	/// a table of MAX_AOP_SATELLITE_ENTRIES.
 	void deserialize_prepass() {
 		DEBUG_TRACE("ConfigurationStoreLFS::deserialize_prepass");
-		LFSFile f(&m_filesystem, "pass_predict.dat", LFS_O_RDWR);
-		if (f.read(&m_pass_predict, sizeof(m_pass_predict)) == sizeof(m_pass_predict)) {
-			if (m_pass_predict.version_code == m_config_version_code_aop)
-				m_is_pass_predict_valid = true;
-			else
-				DEBUG_WARN("ConfigurationStoreLFS::deserialize_prepass: pass predict file version code mismatch");
+		int error = 0;
+		lfs_ssize_t got = 0;
+		try {
+			LFSFile f(&m_filesystem, "pass_predict.dat", LFS_O_RDONLY);
+			got = f.read(&m_pass_predict, sizeof(m_pass_predict));
+			if (got < 0) error = (int)got;
+		} catch (int e) {
+			error = e;
 		}
-		if (!m_is_pass_predict_valid) {
-			DEBUG_TRACE("ConfigurationStoreLFS::deserialize_prepass: using default AOP");
-			create_default_prepass();
+		if (error == LFS_ERR_IO) {
+			DEBUG_WARN("deserialize_prepass: pass_predict.dat unreadable - built-in AOP set in RAM, file kept");
+			m_pass_predict = default_prepass;
+			m_is_pass_predict_valid = true;
+			return;
 		}
+		if (error == 0 && got == (lfs_ssize_t)sizeof(m_pass_predict)
+		    && m_pass_predict.version_code == m_config_version_code_aop
+		    && m_pass_predict.num_records <= MAX_AOP_SATELLITE_ENTRIES) {
+			m_is_pass_predict_valid = true;
+			return;
+		}
+		DEBUG_WARN("deserialize_prepass: pass_predict.dat missing or unusable (%d) - built-in AOP set written", error);
+		create_default_prepass();
 	}
 
 	/// @brief Write pass prediction data to pass_predict.dat.
@@ -668,7 +701,7 @@ public:
 		std::copy(std::begin(default_params), std::end(default_params), m_params.begin());
 
 		// Keep flash powered during entire init sequence to avoid per-I/O power cycling
-		m_filesystem.power_up();
+		FlashPowerScope power(m_filesystem);
 
 		// Read in configuration file or create new one if it doesn't not exist
 		try {
@@ -681,7 +714,6 @@ public:
 		if (m_requires_serialization) serialize_config();
 
 		if (!m_is_config_valid) {
-			m_filesystem.power_down();
 			throw CONFIG_STORE_CORRUPTED;  // This is a non-recoverable error
 		}
 
@@ -692,8 +724,6 @@ public:
 			DEBUG_WARN("AOP file does not exist or is corrupted - resetting AOP file");
 			create_default_prepass();
 		}
-
-		m_filesystem.power_down();
 	}
 
 	bool is_valid() override { return m_is_config_valid; }
@@ -706,7 +736,7 @@ public:
 
 private:
 	void format_and_restore(bool keep_safety) {
-		m_filesystem.power_up();
+		FlashPowerScope power(m_filesystem);
 		m_filesystem.umount();
 		m_filesystem.format();
 		m_filesystem.mount();
@@ -714,7 +744,6 @@ private:
 		save_calibration_data();
 		m_is_config_valid = false;
 		m_is_pass_predict_valid = false;
-		m_filesystem.power_down();
 	}
 
 public:
@@ -727,9 +756,8 @@ public:
 	}
 
 	void write_pass_predict(BasePassPredict &value) override {
-		m_filesystem.power_up();
+		FlashPowerScope power(m_filesystem);
 		m_pass_predict = value;
 		serialize_pass_predict();
-		m_filesystem.power_down();
 	}
 };
