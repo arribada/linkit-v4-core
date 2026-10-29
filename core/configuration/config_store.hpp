@@ -710,6 +710,28 @@ public:
 	/// FACTR, which an operator asks for, stays a full reset.
 	virtual void factory_reset_for_recovery() { factory_reset(); }
 
+	/// @brief After a configuration that could not be read was started over (the
+	/// last resort of LFSConfigurationStore::init()): the radio module still holds
+	/// the identity the file lost, and the boot takes it back. Pending, across
+	/// reboots, until an adopt_*() call succeeds or radio_credentials_done().
+	virtual bool radio_credentials_pending() { return false; }
+	/// @brief What the last resort did with the unreadable file, null if it did not run.
+	virtual const char *last_resort_outcome() const { return nullptr; }
+	/// @brief Nothing to take back (KIM2 transmits on its own identity).
+	virtual void radio_credentials_done() {}
+	/// @brief The Argos identity read back from the module. False, and still
+	/// pending, when a value does not look like one.
+	virtual bool adopt_argos_credentials(unsigned int /*dec_id*/, unsigned int /*address*/,
+	                                     const std::string & /*seckey*/, const std::string & /*radioconf*/) {
+		return false;
+	}
+	/// @brief The LoRaWAN identity read back from the RAK3172; same contract.
+	virtual bool adopt_lora_credentials(const std::string & /*deveui*/, const std::string & /*appeui*/,
+	                                    const std::string & /*appkey*/, const std::string & /*devaddr*/,
+	                                    unsigned int /*njm*/) {
+		return false;
+	}
+
 	/// @brief Read Argos pass prediction data from flash.
 	virtual BasePassPredict &read_pass_predict() = 0;
 

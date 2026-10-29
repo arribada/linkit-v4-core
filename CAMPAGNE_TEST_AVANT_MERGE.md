@@ -66,8 +66,8 @@ GNP01, GNP52, ARP01, CAP01 et GNP25 n'ont pas changé (1, 4294967295, 0, 0, 1).
 
 | # | Commande | Attendu |
 |---|---|---|
-| 1.1 | `cd tests && ./build/TrackerTests -p -xg SWS` | tout passe (1108/1108 au 29/10, après HAULED de 2.15 ; aussi en un seul processus, sans `-p`) |
-| 1.2 | `cd tests && ./build/TrackerTestsCyprus -p -xg SWS` | tout passe (1126/1126 au 29/10, après HAULED de 2.15 ; aussi en un seul processus) |
+| 1.1 | `cd tests && ./build/TrackerTests -p -xg SWS` | tout passe (1117/1117 au 29/10, après stockage C1 de 2.15 ; aussi en un seul processus, sans `-p`) |
+| 1.2 | `cd tests && ./build/TrackerTestsCyprus -p -xg SWS` | tout passe (1135/1135 au 29/10, après stockage C1 de 2.15 ; aussi en un seul processus) |
 | 1.3 | `cd tests && ./build/TrackerTests -p -g SWSAnalog`, puis `-g SWSAnalogFlash`, puis `-sg SWSLongRun -sn H45_FixedDelayClean_ControlDetectsSurfacings` | tout passe |
 | 1.4 | `cd tests && ./build/TurtleSimulation -v` | 11/11, dont les tests budget `BatteryAndBusyWaitWithinBudget` et `JournalAtWarnHoldsOnlyFaults` |
 | 1.5 | `cd tests && ./build/RSPBSimulation -v` | 15/15 au 29/10, après P6 de 2.15 |
@@ -727,6 +727,8 @@ démarre jamais, reflasher un build normal ensuite.**
 | | LinkIt SMD, **émission autorisée** | `dte_campaign --cases HAULED-01,HAUL-02,HAUL-03` | les trois passent | ✅ 29/10 : 3 ok ; aucune émission (IDP13/IDP14 vides, `can_transmit()` retient) ; 4 clés remises |
 | Stockage C2 (de `robust/storage`) : le compteur d'échecs du stockage n'est plus remis à zéro dès que l'IS25 répond, mais après un `configuration_store->init()` réussi ; un magasin qui refuse de s'initialiser atteint l'escalade (sommeil sous chien de garde, coupure TPL sur RSPB) au lieu de redémarrer sans fin | LinkIt SMD (banc), sans émission | `FAULT_INJECT=5` (init du magasin échouée à dessein), compteur `s_flashfail` lu par SWD après 25 s de marche libre, une seule lecture puis `--run` (`--memrd` fige le cœur) | témoin à l'ancienne place : 1, boucle sans fin ; correctif : 6, puis 9 après 70 s en build de banc (reset lent sans chien de garde) ; Release : 6, chien de garde en marche ; relance à 15 min déduite (APPROTECT réarmé), pas lue | ✅ 29/10 |
 | | LinkIt SMD (banc) | image normale, contrôle carte complet | 35 sur 36 : seul `PWP07` (LAST_TIME_SYNC) diffère, posé par la remise à l'heure après l'essai radio ; configuration = référence | ✅ 29/10 |
+| Stockage C1 (de `robust/storage`) : seul un `config.dat` **absent** repart des défauts ; toute autre erreur de lecture n'écrit rien, relit 3 fois, puis lève (C2 fait ses 5 resets, le démarrage suivant relit le fichier intact). Budget épuisé : dernier recours — `config.dat` gardé en `config.bad` s'il reste ≥ 25 % libre (sinon supprimé), défauts d'usine avec `TR_NOM` 1200 s, un fix GNSS par heure, batterie faible activée, et l'identité reprise au module radio (SMD, LoRa ; KIM2 émet sur la sienne) ; décisions de l'utilisateur du 29/10 | PC | groupe `ConfigStoreFlashFaults` (+9 : illisible laissé tel quel, panne passagère, erreur au milieu du fichier, dernier recours à un coup, gardé / supprimé faute de place / supprimé faute de mesure, identité Argos et LoRa adoptées) | passent ; dix mutations détectées | ✅ 29/10 |
+| | LinkIt SMD (banc), sans émission | `FAULT_INJECT=6` (lecture de `config.dat` refusée à l'init de main.cpp, Argos coupé dans les quatre profils), `%AMODE 0` et garde RF ; puis image normale, configuration remise, contrôle carte | 6e démarrage : profil de survie, DECID, HEXID `6B972D`, clé et radioconf repris du SMD ; journal : « Configuration started over … kept as config.bad », « Radio identity taken back … » ; aucune émission ; ensuite 36 sur 36, configuration = référence | ✅ 29/10 |
 | Banc, LED-03 | carte saine | rejouer `dte_campaign --cases LED-03` | rouge pour une session sans position ; sur la carte du banc le reed rebondit sans aimant (110 fronts en 30 s), d'où le blanc « aimant présent » | ⬜ |
 
 ---

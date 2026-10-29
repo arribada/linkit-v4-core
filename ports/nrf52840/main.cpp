@@ -566,7 +566,8 @@ static constexpr uint32_t INIT_FAIL_MAX_RESETS = 5;
 /// make one failure happen at every boot, to watch its recovery ladder on a board.
 /// 1 a CPU fault during init, 2 an exception during init, 3 the IS25 flash init
 /// failing (in init_peripherals()), 4 an exception right after the FSM start, 5 the
-/// configuration store init failing (in init_storage(), after the IS25 came up).
+/// configuration store init failing (in init_storage(), after the IS25 came up), 6
+/// config.dat unreadable at main's init() only (the store's last resort, Argos off).
 static void fault_inject(int at) {
 	if (FAULT_INJECT != at) return;
 	DEBUG_WARN("FAULT_INJECT=%d: failing on purpose", at);
@@ -1074,6 +1075,57 @@ static bool tpl_wake_is_our_turn(unsigned int &boot_counter) {
 }
 #endif
 
+/// @brief The configuration store's init(), under the storage failure policy.
+static void init_configuration_store(LFSConfigurationStore &store) {
+	// init() throws CONFIG_STORE_CORRUPTED out of its WRITE paths -- serialize_config(),
+	// serialize_pass_predict(), serialize_protected_config() -- and the commonest way in
+	// is the ordinary one: no config file yet, so init() writes the defaults, and the
+	// write fails. Uncaught here the exception left main(), which is std::terminate: no
+	// log, no LED, no bounded policy, just a dead tag the 15-minute watchdog reboots into
+	// the same terminate forever.
+	//
+	// storage_unusable() is the policy this file already applies to a failed mount: a few
+	// announced reboots with a red blink, then defer to the watchdog, which keeps
+	// retrying every 15 min. A write that failed once may well succeed on the next boot.
+	//
+	// Deliberately NOT a factory_reset: on a sealed unit that wipes the Argos/LoRa
+	// credentials, which is a worse brick than the one being handled -- the tag would
+	// come up but never be able to transmit, and there is no downlink to re-provision it.
+	//
+	// init() also throws the LittleFS int of a config.dat it could not read, leaving the
+	// file for the next boot to read again (C1): the (lfs) case below. Once the budget
+	// is spent, the store's last resort starts such a file over instead of failing
+	// again (user decision 2026-10-29).
+	store.allow_last_resort(s_flashfail.magic == FLASHFAIL_MAGIC && s_flashfail.count >= FLASH_INIT_MAX_RESETS);
+#if FAULT_INJECT == 6
+	store.fault_inject_unreadable = true;
+#endif
+	try {
+		configuration_store->init();
+		fault_inject(5);
+	} catch (ErrorCode e) {
+		storage_unusable("configuration store init");
+	} catch (int e) {
+		storage_unusable("configuration store init (lfs)");
+	} catch (...) {
+		storage_unusable("configuration store init (unknown)");
+	}
+
+#if FAULT_INJECT == 6
+	store.fault_inject_unreadable = false;  // BootState's own init() reads the file again
+#endif
+
+	// The whole storage is up -- the IS25, the filesystem, the configuration
+	// store: forget past failures so a transient fault months from now gets the
+	// full retry budget again rather than dropping straight into the
+	// watchdog-paced path. Not earlier: this used to be cleared as soon as the
+	// IS25 answered, so a mount or a store init that failed after it read 1 at
+	// every boot -- 2 s resets for ever, never the watchdog-paced path nor, on
+	// RSPB, the TPL5111 cut.
+	s_flashfail.magic = FLASHFAIL_MAGIC;
+	s_flashfail.count = 0;
+}
+
 static LFSFileSystem &init_storage(NrfSwitch &nrf_reed_switch, Is25Flash &is25_flash) {
 	DEBUG_TRACE("Scheduler...");
 	static Scheduler scheduler(system_timer);
@@ -1136,44 +1188,7 @@ static LFSFileSystem &init_storage(NrfSwitch &nrf_reed_switch, Is25Flash &is25_f
 	DEBUG_TRACE("Configuration store...");
 	static LFSConfigurationStore store(lfs_file_system);
 	configuration_store = &store;
-	// init() throws CONFIG_STORE_CORRUPTED out of its WRITE paths -- serialize_config(),
-	// serialize_pass_predict(), serialize_protected_config() -- and the commonest way in
-	// is the ordinary one: no config file yet, so init() writes the defaults, and the
-	// write fails. Uncaught here the exception left main(), which is std::terminate: no
-	// log, no LED, no bounded policy, just a dead tag the 15-minute watchdog reboots into
-	// the same terminate forever.
-	//
-	// storage_unusable() is the policy this file already applies to a failed mount: a few
-	// announced reboots with a red blink, then defer to the watchdog, which keeps
-	// retrying every 15 min. A write that failed once may well succeed on the next boot.
-	//
-	// Deliberately NOT a factory_reset: on a sealed unit that wipes the Argos/LoRa
-	// credentials, which is a worse brick than the one being handled -- the tag would
-	// come up but never be able to transmit, and there is no downlink to re-provision it.
-	//
-	// The two `catch (int e)` inside init() are NOT part of this: every ErrorCode throw
-	// lives in a serialize_* path, outside those try blocks, and the deserialize paths
-	// throw only LittleFS ints, which is exactly what those catches are for.
-	try {
-		configuration_store->init();
-		fault_inject(5);
-	} catch (ErrorCode e) {
-		storage_unusable("configuration store init");
-	} catch (int e) {
-		storage_unusable("configuration store init (lfs)");
-	} catch (...) {
-		storage_unusable("configuration store init (unknown)");
-	}
-
-	// The whole storage is up -- the IS25, the filesystem, the configuration
-	// store: forget past failures so a transient fault months from now gets the
-	// full retry budget again rather than dropping straight into the
-	// watchdog-paced path. Not earlier: this used to be cleared as soon as the
-	// IS25 answered, so a mount or a store init that failed after it read 1 at
-	// every boot -- 2 s resets for ever, never the watchdog-paced path nor, on
-	// RSPB, the TPL5111 cut.
-	s_flashfail.magic = FLASHFAIL_MAGIC;
-	s_flashfail.count = 0;
+	init_configuration_store(store);
 
 	// Restore last known RTC from flash (enables MGA-ANO assistance and faster GNSS TTFF)
 	{
@@ -1782,6 +1797,62 @@ static void init_runtime(NrfSwitch &nrf_reed_switch) {
 }
 
 
+/// @brief After the store's last resort: take the radio identity back from the module,
+/// which keeps its own, so that the defaults still communicate (user decision
+/// 2026-10-29). Pending across boots until it works.
+static void recover_radio_credentials() {
+	if (!configuration_store) return;
+	const char *outcome = configuration_store->last_resort_outcome();
+	const bool pending = configuration_store->radio_credentials_pending();
+	bool adopted = false;
+	if (pending) {
+		try {
+#if defined(LORA_RAK3172) && (LORA_RAK3172 == 1)
+			if (lora_device_instance) {
+				const auto c = lora_device_instance->read_lora_credentials();
+				adopted =
+				    c.read_ok
+				    && configuration_store->adopt_lora_credentials(c.deveui, c.appeui, c.appkey, c.devaddr, c.njm);
+			}
+#elif defined(ARGOS_SMD) && (ARGOS_SMD == 1)
+			if (smd_sat_instance) {
+				unsigned int dec_id = 0, address = 0;
+				std::string seckey, radioconf;
+				smd_sat_instance->read_credentials(&dec_id, &address, &seckey, &radioconf);
+				adopted = configuration_store->adopt_argos_credentials(dec_id, address, seckey, radioconf);
+			}
+#else
+			// KIM2 transmits on the identity burned into the module.
+			configuration_store->radio_credentials_done();
+			adopted = true;
+#endif
+		} catch (...) {
+			adopted = false;
+		}
+	}
+	// The system log opens in BootState (LoggerManager::create()): logged now, these
+	// lines would reach the console only, and a recovered tag would keep no trace of
+	// the one event most worth finding. The first scheduler tick comes after it.
+	if (outcome || pending)
+		system_scheduler->post_task_prio(
+		    [outcome, pending, adopted]() {
+			    if (outcome) DEBUG_ERROR("Configuration started over: config.dat was unreadable, %s", outcome);
+			    if (pending && adopted)
+				    DEBUG_WARN("Radio identity taken back from the module after the configuration start-over");
+			    else if (pending)
+				    DEBUG_ERROR("Radio identity not taken back from the module: tried again at the next boot");
+		    },
+		    "StartOverLog", Scheduler::DEFAULT_PRIORITY, 0);
+#if FAULT_INJECT == 6
+	// The validation board must not transmit, now that it holds the module's identity:
+	// Argos off in every profile that brings its own mode (low battery is on).
+	for (ParamID mode :
+	     { ParamID::ARGOS_MODE, ParamID::LB_ARGOS_MODE, ParamID::ZONE_ARGOS_MODE, ParamID::HAULED_ARGOS_MODE })
+		configuration_store->write_param(mode, BaseArgosMode::OFF);
+	configuration_store->save_params();
+#endif
+}
+
 /// @brief Every init phase, then the FSM start.
 static void init_and_start() {
 	auto [reed, flash] = init_peripherals();
@@ -1793,6 +1864,7 @@ static void init_and_start() {
 	init_battery();
 	init_core_services(lfs, flash);
 	init_communication(lfs);
+	recover_radio_credentials();
 	init_sensors(lfs);
 	init_runtime(reed);
 

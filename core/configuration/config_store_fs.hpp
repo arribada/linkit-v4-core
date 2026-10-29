@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include <cctype>
 #include <cstring>
 #include <algorithm>
 #include "config_store.hpp"
@@ -145,7 +146,8 @@ protected:
 		uint8_t entry_buffer[KEY_LENGTH + BASE_TEXT_MAX_LENGTH];
 
 		// Read entry from file
-		if (f.read(entry_buffer, KEY_LENGTH + BASE_TEXT_MAX_LENGTH) != KEY_LENGTH + BASE_TEXT_MAX_LENGTH) return false;
+		if (note_io(f.read(entry_buffer, KEY_LENGTH + BASE_TEXT_MAX_LENGTH)) != KEY_LENGTH + BASE_TEXT_MAX_LENGTH)
+			return false;
 
 		// Check param key matches
 		if (std::string((const char *)entry_buffer, KEY_LENGTH) != entry->key) return false;
@@ -320,7 +322,7 @@ protected:
 		unsigned int recovered = 0, lost = 0;
 
 		auto recover_by_key = [&](ParamID id) {
-			if (f.seek(first_record) != first_record) return false;
+			if (note_io(f.seek(first_record)) != first_record) return false;
 			for (unsigned int record = 0; record < MAX_CONFIG_ITEMS; record++) {
 				if (deserialize_config_entry(f, (unsigned int)id)) return true;
 			}
@@ -380,7 +382,7 @@ protected:
 		constexpr lfs_soff_t RECORD = KEY_LENGTH + BASE_TEXT_MAX_LENGTH;
 		unsigned int skipped = 0, moved = 0;
 		unsigned int expected = 0;  // the slot of the next record, when the file is this build's
-		const lfs_soff_t file_size = f.size();
+		const lfs_soff_t file_size = note_io(f.size());
 		for (lfs_soff_t at = first_record; at + RECORD <= file_size; at += RECORD) {
 			while (expected < MAX_CONFIG_ITEMS && !param_map[expected].is_implemented)
 				expected++;
@@ -390,18 +392,18 @@ protected:
 			}
 			// Not the expected record, or past the last slot: whose is it?
 			char key[KEY_LENGTH];
-			if (f.seek(at) != at || f.read(key, KEY_LENGTH) != KEY_LENGTH) break;
+			if (note_io(f.seek(at)) != at || note_io(f.read(key, KEY_LENGTH)) != KEY_LENGTH) break;
 			const int slot = slot_of_key(key);
 			if (slot < 0 || !param_map[slot].is_implemented || placed[slot]) {
 				skipped++;  // a slot this build does not have, or a second record of one
 			} else {
-				if (f.seek(at) == at && deserialize_config_entry(f, (unsigned int)slot)) placed[slot] = true;
+				if (note_io(f.seek(at)) == at && deserialize_config_entry(f, (unsigned int)slot)) placed[slot] = true;
 				if ((unsigned int)slot != expected) moved++;
 				// Forward only: every placed slot stays below `expected`, so the
 				// fast path never lands on one already placed.
 				if ((unsigned int)slot >= expected) expected = (unsigned int)slot + 1;
 			}
-			if (f.seek(at + RECORD) != at + RECORD) break;
+			if (note_io(f.seek(at + RECORD)) != at + RECORD) break;
 		}
 		if (skipped || moved) {
 			DEBUG_WARN("deserialize_config: %u record(s) of slots this build lacks skipped, %u placed by key", skipped,
@@ -411,24 +413,32 @@ protected:
 	}
 
 	/// @brief Read full configuration from config.dat, recover protected fields on version mismatch.
+	/// @brief Read config.dat into m_params. Throws the LittleFS error of an open or
+	/// of any read that failed: a file the flash did not deliver is not a file to
+	/// rebuild from the defaults.
 	void deserialize_config() {
 		DEBUG_TRACE("ConfigurationStoreLFS::deserialize_config");
+		m_read_error = 0;
+		fault_inject_read();
 		LFSFile f(&m_filesystem, "config.dat", LFS_O_RDONLY);
 
 		unsigned int config_version_code = 0;
 		const lfs_soff_t first_record = (lfs_soff_t)sizeof(config_version_code);
 
 		// Read configuration version field
-		if (f.read(&config_version_code, sizeof(config_version_code)) != sizeof(config_version_code)
+		if (note_io(f.read(&config_version_code, sizeof(config_version_code))) != sizeof(config_version_code)
 		    || config_version_code != m_config_version_code) {
+			raise_read_error();
 			DEBUG_WARN(
 			    "deserialize_config: configuration version mismatch; try to recover protected & reset all others");
 			recover_protected_params(f, first_record);
+			raise_read_error();
 			return;
 		}
 
 		bool placed[MAX_CONFIG_ITEMS] = {};
 		read_records_by_key(f, first_record, placed);
+		raise_read_error();
 
 		for (unsigned int i = 0; i < MAX_CONFIG_ITEMS; i++) {
 			// Skip non-implemented/disabled parameters (reserved slots, disabled sensors)
@@ -570,6 +580,119 @@ protected:
 private:
 	FileSystem &m_filesystem;
 	bool m_requires_serialization;
+	/// @brief First LittleFS error a read of config.dat met, 0 if none: see note_io().
+	int m_read_error = 0;
+	/// @brief Set by main.cpp once the storage failure budget is spent (C2).
+	bool m_last_resort_allowed = false;
+	/// @brief What the last resort did with the unreadable file, null if it did not
+	/// run: logged by main.cpp once the system log is attached, after init().
+	const char *m_last_resort_outcome = nullptr;
+
+	static constexpr unsigned int CONFIG_READ_RETRIES = 3;
+	static constexpr unsigned int CONFIG_READ_RETRY_DELAY_MS = 50;  // as main.cpp's mount retries
+	static constexpr const char *RADIO_IDS_PENDING = "radio_ids.todo";
+
+	/// @brief Keep the first LittleFS error of a read: a short read is a missing
+	/// record (an old or truncated file), a negative one a flash that did not answer.
+	lfs_ssize_t note_io(lfs_ssize_t r) {
+		if (r < 0 && !m_read_error) m_read_error = (int)r;
+		return r;
+	}
+
+	void raise_read_error() const {
+		if (m_read_error) throw m_read_error;
+	}
+
+	/// @brief FAULT_INJECT=6 (validation firmware): config.dat reads as unreadable.
+	void fault_inject_read() const {
+#if defined(FAULT_INJECT) && (FAULT_INJECT == 6)
+		if (fault_inject_unreadable) throw (int)LFS_ERR_IO;
+#endif
+	}
+
+	/// @brief Read config.dat, again on an error: a passing IS25 fault clears in
+	/// milliseconds. @return 0, LFS_ERR_NOENT when there is no file, or the error
+	/// that outlived the retries.
+	int read_config() {
+		int error = 0;
+		for (unsigned int attempt = 0; attempt <= CONFIG_READ_RETRIES; attempt++) {
+			if (attempt) PMU::delay_ms(CONFIG_READ_RETRY_DELAY_MS);
+			std::copy(std::begin(default_params), std::end(default_params), m_params.begin());
+			m_requires_serialization = false;
+			try {
+				deserialize_config();
+				return 0;
+			} catch (int e) {
+				error = e;
+			}
+			if (error == LFS_ERR_NOENT) return error;
+			DEBUG_WARN("config.dat: read failed (%d), attempt %u of %u", error, attempt + 1, CONFIG_READ_RETRIES + 1);
+		}
+		return error;
+	}
+
+	/// @brief The last resort, once the storage budget is spent and config.dat is
+	/// still unreadable (user decision 2026-10-29): keep the file for an analysis
+	/// if there is room, start again from defaults that still communicate, and let
+	/// the boot take the radio identity back from the module.
+	void start_over(int error) {
+		DEBUG_ERROR("config.dat unreadable (%d) after every retry: starting over", error);
+		quarantine_unreadable_config();
+		std::copy(std::begin(default_params), std::end(default_params), m_params.begin());
+		apply_survival_profile();
+		mark_radio_credentials_pending();
+		m_requires_serialization = true;
+	}
+
+	/// @brief config.dat becomes config.bad if the file system keeps a quarter of
+	/// its blocks free with it; otherwise it is removed. Only the latest is kept.
+	void quarantine_unreadable_config() {
+		lfs_t *lfs = static_cast<lfs_t *>(m_filesystem.get_private_data());
+		m_filesystem.remove("config.bad");
+		// lfs_fs_size() walks every file: a bad block inside config.dat makes it
+		// fail too, and a file whose cost cannot be measured is not kept.
+		const lfs_ssize_t used = lfs_fs_size(lfs);
+		const lfs_size_t blocks = lfs->cfg->block_count;
+		const bool room = used >= 0 && (blocks - (lfs_size_t)used) * 4 >= blocks;
+		if (room && lfs_rename(lfs, "config.dat", "config.bad") == 0) {
+			m_last_resort_outcome = "kept as config.bad";
+			return;
+		}
+		m_filesystem.remove("config.dat");
+		m_last_resort_outcome = used < 0 ? "removed (free space unreadable)"
+		                        : room   ? "removed (could not be renamed)"
+		                                 : "removed (no room to keep it)";
+	}
+
+	/// @brief Factory defaults, minus what would drain a tag nobody can reconfigure:
+	/// one Argos TX every 20 min instead of every minute, one GNSS fix an hour
+	/// instead of every 10 min, and the low-battery mode on.
+	void apply_survival_profile() {
+		m_params.at((unsigned int)ParamID::TR_NOM) = 1200U;
+		m_params.at((unsigned int)ParamID::DLOC_ARG_NOM) = 60U * 60U;
+		m_params.at((unsigned int)ParamID::LB_EN) = true;
+	}
+
+	void mark_radio_credentials_pending() {
+		try {
+			LFSFile f(&m_filesystem, RADIO_IDS_PENDING, LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC);
+		} catch (int e) {
+			DEBUG_ERROR("%s not created (%d): the module identity will not be taken back", RADIO_IDS_PENDING, e);
+		}
+	}
+
+	static bool is_hex(const std::string &s) {
+		return !s.empty() && std::all_of(s.begin(), s.end(), [](char c) { return std::isxdigit((unsigned char)c); });
+	}
+
+	static bool is_hex_of(const std::string &s, size_t length) { return s.size() == length && is_hex(s); }
+
+	/// @brief OTAA needs DEVEUI, APPEUI and APPKEY; ABP its DEVADDR.
+	static bool lora_identity_usable(const std::string &deveui, const std::string &appeui, const std::string &appkey,
+	                                 const std::string &devaddr, unsigned int njm) {
+		if (njm == 1) return is_hex_of(deveui, 16) && is_hex_of(appeui, 16) && is_hex_of(appkey, 32);
+		return is_hex_of(devaddr, 8);
+	}
 
 	/// @brief Parameters a factory_reset must NOT destroy.
 	///
@@ -691,24 +814,29 @@ public:
 	      m_filesystem(filesystem) {}
 
 	/// @brief Init: deserialize config + prepass from flash, create defaults if missing.
-	/// @throws CONFIG_STORE_CORRUPTED on unrecoverable flash error.
+	/// @throws CONFIG_STORE_CORRUPTED on unrecoverable flash error, and the LittleFS
+	/// error of a config.dat that could not be read: the file is left as it is, for
+	/// the next boot to read again (main.cpp: storage_unusable()).
 	void init() override {
 		m_requires_serialization = false;
 		m_is_pass_predict_valid = false;
 		m_is_config_valid = false;
-
-		// Copy default params so we have an initial working set
-		std::copy(std::begin(default_params), std::end(default_params), m_params.begin());
+		const bool last_resort = m_last_resort_allowed;
+		m_last_resort_allowed = false;  // one shot: main.cpp decides it for its own call
 
 		// Keep flash powered during entire init sequence to avoid per-I/O power cycling
 		FlashPowerScope power(m_filesystem);
 
-		// Read in configuration file or create new one if it doesn't not exist
-		try {
-			deserialize_config();
-		} catch (int e) {
+		// Only an ABSENT file starts from the defaults. Every LittleFS error used to
+		// read as "no file", and a passing read error on the IS25 rewrote the
+		// credentials no downlink can restore (C1, robust/storage).
+		const int error = read_config();
+		if (error == LFS_ERR_NOENT) {
 			DEBUG_WARN("No configuration file so creating a default file");
 			m_requires_serialization = true;
+		} else if (error) {
+			if (!last_resort) throw error;
+			start_over(error);
 		}
 
 		if (m_requires_serialization) serialize_config();
@@ -734,6 +862,60 @@ public:
 	/// @brief The boot-fail recovery's factory reset: SAFETY_PARAMS kept as well.
 	void factory_reset_for_recovery() override { format_and_restore(true); }
 
+	/// @brief main.cpp, before init(): the storage failure budget is spent, so an
+	/// unreadable config.dat may be started over (see start_over()).
+	void allow_last_resort(bool allowed) { m_last_resort_allowed = allowed; }
+#if defined(FAULT_INJECT) && (FAULT_INJECT == 6)
+	/// @brief VALIDATION FIRMWARE ONLY: config.dat reads as unreadable (LFS_ERR_IO).
+	bool fault_inject_unreadable = false;
+#endif
+	const char *last_resort_outcome() const override { return m_last_resort_outcome; }
+
+	bool radio_credentials_pending() override {
+		FlashPowerScope power(m_filesystem);
+		struct lfs_info info;
+		return m_filesystem.stat(RADIO_IDS_PENDING, &info) == 0;
+	}
+
+	void radio_credentials_done() override {
+		FlashPowerScope power(m_filesystem);
+		m_filesystem.remove(RADIO_IDS_PENDING);
+	}
+
+	bool adopt_argos_credentials(unsigned int dec_id, unsigned int address, const std::string &seckey,
+	                             const std::string &radioconf) override {
+		if (!is_hex(radioconf) || radioconf.size() % 2) return false;
+#if defined(ARGOS_SMD) && (ARGOS_SMD == 1)
+		if (seckey.size() != 32 || !is_hex(seckey)) return false;
+		write_param(ParamID::ARGOS_SECKEY, seckey);
+#else
+		(void)seckey;
+#endif
+		write_param(ParamID::ARGOS_DECID, dec_id);
+		write_param(ParamID::ARGOS_HEXID, address);
+		write_param(ParamID::ARGOS_RADIOCONF, radioconf);
+		save_params();
+		radio_credentials_done();
+		return true;
+	}
+
+#if defined(LORA_RAK3172) && (LORA_RAK3172 == 1)
+	/// The session keys the module keeps are not overwritten while the configuration
+	/// has none (lora_rak3172.cpp skips the empty ones).
+	bool adopt_lora_credentials(const std::string &deveui, const std::string &appeui, const std::string &appkey,
+	                            const std::string &devaddr, unsigned int njm) override {
+		if (!lora_identity_usable(deveui, appeui, appkey, devaddr, njm)) return false;
+		write_param(ParamID::LORA_NJM, njm);
+		if (is_hex(deveui)) write_param(ParamID::LORA_DEVEUI, deveui);
+		if (is_hex(appeui)) write_param(ParamID::LORA_APPEUI, appeui);
+		if (is_hex(appkey)) write_param(ParamID::LORA_APPKEY, appkey);
+		if (is_hex(devaddr)) write_param(ParamID::LORA_DEVADDR, devaddr);
+		save_params();
+		radio_credentials_done();
+		return true;
+	}
+#endif
+
 private:
 	void format_and_restore(bool keep_safety) {
 		FlashPowerScope power(m_filesystem);
@@ -747,7 +929,6 @@ private:
 	}
 
 public:
-
 	BasePassPredict &read_pass_predict() override {
 		if (m_is_pass_predict_valid) {
 			return m_pass_predict;

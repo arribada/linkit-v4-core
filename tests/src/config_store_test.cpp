@@ -2008,13 +2008,17 @@ public:
 	    : RamFlash(block_size, blocks, page_size) {}
 
 	std::set<lfs_block_t> bad_read_blocks;
-	int progs_left = -1;  // < 0: unlimited
+	int bad_reads_left = -1;  // reads of bad_read_blocks that fail before they heal; < 0: never heal
+	int progs_left = -1;      // < 0: unlimited
 	bool record_progs = false;
 	std::vector<lfs_block_t> programmed;  // in program order, while record_progs
 	int powered = 0;                      // power_up() minus power_down()
 
 	int read(lfs_block_t block, lfs_off_t off, void *buffer, lfs_size_t size) override {
-		if (bad_read_blocks.count(block)) return LFS_ERR_IO;
+		if (bad_read_blocks.count(block) && bad_reads_left != 0) {
+			if (bad_reads_left > 0) bad_reads_left--;
+			return LFS_ERR_IO;
+		}
 		return RamFlash::read(block, off, buffer, size);
 	}
 	int prog(lfs_block_t block, lfs_off_t off, const void *buffer, lfs_size_t size) override {
@@ -2086,6 +2090,27 @@ TEST_GROUP(ConfigStoreFlashFaults) {
 		f.write(buf, sizeof(buf));
 	}
 
+	// A provisioned configuration (DECID 1234) whose blocks then refuse to be read.
+	// filler_pages fill the file system first, while it still reads.
+	void config_dat_on_bad_blocks(unsigned int filler_pages = 0) {
+		store = new LFSConfigurationStore(*fs);
+		store->init();
+		store->write_param(ParamID::ARGOS_DECID, 1234U);
+		if (filler_pages) {
+			LFSFile filler(fs, "filler.bin", LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC);
+			uint8_t buf[PAGE_SIZE] = {};
+			for (unsigned int i = 0; i < filler_pages; i++)
+				filler.write(buf, sizeof(buf));
+		}
+		flash->record_progs = true;
+		store->save_params();
+		flash->record_progs = false;
+		remount();
+		flash->bad_read_blocks = flash->data_blocks();
+		reboot();
+		mock().ignoreOtherCalls();
+	}
+
 	static bool throws(const std::function<void()> &f) {
 		try {
 			f();
@@ -2153,6 +2178,172 @@ TEST(ConfigStoreFlashFaults, PassPredictReadErrorKeepsTheUploadedSet) {
 	reboot();
 	store->init();
 	CHECK_EQUAL(10, store->read_pass_predict().num_records);
+}
+
+// --- C1: a config.dat the flash does not deliver is not a missing one ---
+
+// Every LittleFS error used to read as "no file": the defaults were written over
+// the credentials. Now init() throws, writes nothing, and the next boot reads the
+// file again.
+TEST(ConfigStoreFlashFaults, AnUnreadableConfigIsLeftAsItIs) {
+	config_dat_on_bad_blocks();
+	mock().expectNCalls(3, "delay_ms").ignoreOtherParameters();
+	flash->programmed.clear();
+	flash->record_progs = true;
+	CHECK_TRUE(throws([&]() { store->init(); }));
+	flash->record_progs = false;
+	CHECK_TRUE(flash->programmed.empty());
+	mock().checkExpectations();
+
+	flash->bad_read_blocks.clear();
+	reboot();
+	store->init();
+	CHECK_EQUAL(1234U, store->read_param<unsigned int>(ParamID::ARGOS_DECID));
+	CHECK_FALSE(store->radio_credentials_pending());
+	CHECK_TRUE(store->last_resort_outcome() == nullptr);
+}
+
+// One data block of config.dat unreadable, chosen so that the version still reads
+// (LittleFS walks a file back from its last block, so not every block will do): the
+// failure comes mid-file, from a record. It used to put the unread slots back to
+// their defaults and save that over the file.
+TEST(ConfigStoreFlashFaults, AMidFileReadErrorWritesNothing) {
+	config_dat_on_bad_blocks();
+	const std::set<lfs_block_t> candidates = flash->bad_read_blocks;
+	lfs_block_t mid = 0;
+	for (lfs_block_t b : candidates) {
+		flash->bad_read_blocks = { b };
+		fs->umount();
+		fs->mount();  // empty caches: the reads below reach the flash
+		try {
+			LFSFile f(fs, "config.dat", LFS_O_RDONLY);
+			unsigned int version = 0;
+			if (f.read(&version, sizeof(version)) != sizeof(version)) continue;
+			uint8_t buf[PAGE_SIZE];
+			lfs_ssize_t n;
+			while ((n = f.read(buf, sizeof(buf))) > 0) {}
+			if (n < 0) {
+				mid = b;
+				break;
+			}
+		} catch (int) {}
+	}
+	CHECK(mid != 0);
+	flash->bad_read_blocks = { mid };
+	remount();
+	reboot();
+	mock().expectNCalls(3, "delay_ms").ignoreOtherParameters();
+	flash->programmed.clear();
+	flash->record_progs = true;
+	CHECK_TRUE(throws([&]() { store->init(); }));
+	flash->record_progs = false;
+	CHECK_TRUE(flash->programmed.empty());
+	flash->bad_read_blocks.clear();
+	reboot();
+	store->init();
+	CHECK_EQUAL(1234U, store->read_param<unsigned int>(ParamID::ARGOS_DECID));
+}
+
+// A fault that clears within the retries costs nothing.
+TEST(ConfigStoreFlashFaults, APassingReadErrorIsRetried) {
+	config_dat_on_bad_blocks();
+	flash->bad_reads_left = 1;
+	mock().expectOneCall("delay_ms").ignoreOtherParameters();
+	store->init();
+	mock().checkExpectations();
+	CHECK_EQUAL(1234U, store->read_param<unsigned int>(ParamID::ARGOS_DECID));
+}
+
+// The last resort is for main.cpp's call once the budget is spent: one shot, so
+// that BootState's own init() of the same store does not start over.
+TEST(ConfigStoreFlashFaults, TheLastResortIsOneShot) {
+	config_dat_on_bad_blocks();
+	store->allow_last_resort(true);
+	flash->bad_read_blocks.clear();
+	store->init();  // read fine: nothing to start over
+	CHECK_EQUAL(1234U, store->read_param<unsigned int>(ParamID::ARGOS_DECID));
+	flash->bad_read_blocks = flash->data_blocks();
+	remount();  // the same store, as BootState's own init() after main.cpp's
+	mock().expectNCalls(3, "delay_ms").ignoreOtherParameters();
+	CHECK_TRUE(throws([&]() { store->init(); }));
+	CHECK_TRUE(store->last_resort_outcome() == nullptr);
+}
+
+// The budget spent and the file still unreadable: kept for an analysis (room
+// enough), the defaults with the survival profile, the identity pending.
+TEST(ConfigStoreFlashFaults, TheLastResortKeepsTheFileWhenThereIsRoom) {
+	config_dat_on_bad_blocks();
+	flash->bad_reads_left = 4;  // the four read attempts fail, the space count then reads
+	store->allow_last_resort(true);
+	store->init();
+	STRCMP_EQUAL("kept as config.bad", store->last_resort_outcome());
+	struct lfs_info info;
+	CHECK_EQUAL(0, fs->stat("config.bad", &info));
+	CHECK_EQUAL(0U, store->read_param<unsigned int>(ParamID::ARGOS_DECID));
+	CHECK_EQUAL(1200U, store->read_param<unsigned int>(ParamID::TR_NOM));
+	CHECK_EQUAL(3600U, store->read_param<unsigned int>(ParamID::DLOC_ARG_NOM));
+	CHECK_TRUE(store->read_param<bool>(ParamID::LB_EN));
+	CHECK_TRUE(store->radio_credentials_pending());
+	reboot();
+	store->init();  // the fresh file reads back, the profile with it
+	CHECK_EQUAL(1200U, store->read_param<unsigned int>(ParamID::TR_NOM));
+	CHECK_TRUE(store->radio_credentials_pending());
+}
+
+// A bad block inside the file also breaks the free-space count: removed.
+TEST(ConfigStoreFlashFaults, AFileWhoseCostCannotBeMeasuredIsRemoved) {
+	config_dat_on_bad_blocks();
+	store->allow_last_resort(true);
+	store->init();
+	STRCMP_EQUAL("removed (free space unreadable)", store->last_resort_outcome());
+	struct lfs_info info;
+	CHECK_TRUE(fs->stat("config.bad", &info) < 0);
+	CHECK_EQUAL(1200U, store->read_param<unsigned int>(ParamID::TR_NOM));
+}
+
+// Less than a quarter of the blocks free with the file: removed.
+TEST(ConfigStoreFlashFaults, TheLastResortRemovesTheFileWithoutRoom) {
+	config_dat_on_bad_blocks(4096 * 8 / 10);  // 80 % of the blocks taken
+	flash->bad_reads_left = 4;
+	store->allow_last_resort(true);
+	store->init();
+	STRCMP_EQUAL("removed (no room to keep it)", store->last_resort_outcome());
+	struct lfs_info info;
+	CHECK_TRUE(fs->stat("config.bad", &info) < 0);
+}
+
+// The identity the module still holds, taken back: written, saved, no longer pending.
+TEST(ConfigStoreFlashFaults, TheModuleIdentityIsAdopted) {
+	config_dat_on_bad_blocks();
+	flash->bad_reads_left = 4;
+	store->allow_last_resort(true);
+	store->init();
+	CHECK_FALSE(store->adopt_argos_credentials(294910U, 0x6B97ADU, "", "ABC"));  // odd-length RADIOCONF
+	CHECK_FALSE(store->adopt_argos_credentials(294910U, 0x6B97ADU, "", "XYZ0"));
+	CHECK_TRUE(store->radio_credentials_pending());
+	CHECK_TRUE(store->adopt_argos_credentials(294910U, 0x6B97ADU, "", "A1B2C3D4E5F60718293A4B5C6D7E8F90"));
+	CHECK_FALSE(store->radio_credentials_pending());
+	reboot();
+	store->init();
+	CHECK_EQUAL(294910U, store->read_param<unsigned int>(ParamID::ARGOS_DECID));
+	CHECK_EQUAL(0x6B97ADU, store->read_param<unsigned int>(ParamID::ARGOS_HEXID));
+	STRCMP_EQUAL("A1B2C3D4E5F60718293A4B5C6D7E8F90", store->read_param<std::string>(ParamID::ARGOS_RADIOCONF).c_str());
+}
+
+TEST(ConfigStoreFlashFaults, TheLoRaIdentityIsAdopted) {
+	config_dat_on_bad_blocks();
+	flash->bad_reads_left = 4;
+	store->allow_last_resort(true);
+	store->init();
+	const std::string deveui = "0011223344556677", appeui = "8899AABBCCDDEEFF";
+	CHECK_FALSE(store->adopt_lora_credentials(deveui, appeui, "00112233445566778899AABBCCDDEEF", "", 1U));
+	CHECK_TRUE(store->radio_credentials_pending());
+	CHECK_TRUE(store->adopt_lora_credentials(deveui, appeui, "00112233445566778899AABBCCDDEEFF", "", 1U));
+	CHECK_FALSE(store->radio_credentials_pending());
+	reboot();
+	store->init();
+	STRCMP_EQUAL(deveui.c_str(), store->read_param<std::string>(ParamID::LORA_DEVEUI).c_str());
+	CHECK_EQUAL(1U, store->read_param<unsigned int>(ParamID::LORA_NJM));
 }
 
 // PREVIPASS walks the records up to num_records, in a table of
