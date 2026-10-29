@@ -169,7 +169,7 @@
   "ports/nrf52840/main.cpp::init_peripherals/0": 18,
   "ports/nrf52840/main.cpp::init_power_on_check/1": 18,
   "ports/nrf52840/main.cpp::init_sensors/1": 43,
-  "ports/nrf52840/main.cpp::init_storage/2": 26,
+  "ports/nrf52840/main.cpp::init_storage/2": 25,
   "ports/nrf52840/main.cpp::main/0": 23
  }
 }

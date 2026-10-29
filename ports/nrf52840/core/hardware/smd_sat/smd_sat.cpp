@@ -1431,7 +1431,20 @@ void SmdSat::state_transmitting_exit() {
 }
 
 void SmdSat::state_transmitting() {
-	if (m_cmd.is_tx_finished()) {
+	// The poll reaches send_command_aplus on the SPI driver, which throws
+	// ErrorCode::SPI_COMMS_ERROR on a transient fault. Route it to the SMD error
+	// state, as initiate_tx() is in state_transmit_pending(), instead of letting
+	// it unwind to a global ErrorEvent and a reset (2026-07 audit 6b).
+	bool tx_finished = false;
+	try {
+		tx_finished = m_cmd.is_tx_finished();
+	} catch (...) {
+		DEBUG_ERROR("SmdSat::%s: TX poll threw (SPI) - aborting TX", __func__);
+		m_tx_buffer.clear();
+		SMD_STATE_CHANGE(transmitting, error);
+		return;
+	}
+	if (tx_finished) {
 		if (m_tx_buffer.size()) {
 			TXTRACE("state_transmitting: TX FINISHED — total elapsed");
 			[[maybe_unused]] const unsigned int tx_bytes = static_cast<unsigned int>(m_tx_buffer.size());

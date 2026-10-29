@@ -94,4 +94,14 @@ inline uint32_t update_calibration_ms(uint32_t nominal_s, uint32_t current_ms, u
 	return (uint32_t)((3ULL * current_ms + measured_ms) / 4ULL);
 }
 
+/// @brief The pseudo-RTC one hop later: `last_rtc + period_s`.
+/// @return 0 when there is nothing to advance (no time, no period), or when the
+///         sum would pass `max_valid` or wrap around 32 bits -- which only a
+///         corrupted period does, the DTE caps WAKEUP_PERIOD at a day (2026-07
+///         audit L6). The caller then treats the chain as broken.
+inline uint32_t advance(uint32_t last_rtc, uint32_t period_s, uint32_t max_valid) {
+	if (last_rtc == 0 || period_s == 0 || last_rtc > max_valid || period_s > max_valid - last_rtc) return 0;
+	return last_rtc + period_s;
+}
+
 }  // namespace TplClock

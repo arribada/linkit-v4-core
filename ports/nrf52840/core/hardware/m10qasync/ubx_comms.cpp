@@ -299,8 +299,10 @@ void UBXComms::handle_rx_buffer(uint8_t *buffer, unsigned int length) {
 				run_rxm_filter(msg);
 			}
 
-			// Shift any surplus remaining data to the start of RX buffer
-			std::memcpy(m_rx_buffer, curr_buffer, curr_length);
+			// Shift any surplus remaining data to the start of RX buffer. The two
+			// ranges overlap (the surplus lies inside the same buffer): memmove,
+			// not memcpy, whose result is undefined there (2026-07 audit L1).
+			std::memmove(m_rx_buffer, curr_buffer, curr_length);
 			m_rx_buffer_offset = curr_length;
 
 		} else {

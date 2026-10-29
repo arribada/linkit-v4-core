@@ -1215,11 +1215,12 @@ static LFSFileSystem &init_storage(NrfSwitch &nrf_reed_switch, Is25Flash &is25_f
 		// not when the next TPL wake comes.
 		rtc->set_chain_anchorable(tpl_cycle);
 
-		if (last_rtc > 0 && wakeup_period > 0 && tpl_cycle) {
-			// LAST_KNOWN_RTC holds the instant the previous run BOOTED (see
-			// RTC::persisted_time): the TPL5111 period runs from one wake to the
-			// next, whatever the run length.
-			unsigned int pseudo_rtc = last_rtc + wakeup_period;
+		// LAST_KNOWN_RTC holds the instant the previous run BOOTED (see
+		// RTC::persisted_time): the TPL5111 period runs from one wake to the
+		// next, whatever the run length. 0 = nothing to advance, or a sum past
+		// RTC_MAX_VALID (a corrupted period): the chain is then broken.
+		const unsigned int pseudo_rtc = TplClock::advance(last_rtc, wakeup_period, RTC_MAX_VALID);
+		if (pseudo_rtc > 0 && tpl_cycle) {
 			configuration_store->write_param(ParamID::LAST_KNOWN_RTC, pseudo_rtc);
 			rtc->settime(static_cast<std::time_t>(pseudo_rtc));
 			const unsigned int unc =
@@ -1239,9 +1240,9 @@ static LFSFileSystem &init_storage(NrfSwitch &nrf_reed_switch, Is25Flash &is25_f
 			// boot. The next TPL boots stay unbounded until a fix taken in a TPL
 			// run sets a new anchor -- a fix or a $RTCW in THIS run cannot.
 			configuration_store->write_param(ParamID::LAST_TIME_SYNC, 0U);
-			DEBUG_WARN("EXTERNAL_WAKEUP: wake outside TPL (cause=%d) — pseudo-RTC chain broken, time restored without "
+			DEBUG_WARN("EXTERNAL_WAKEUP: pseudo-RTC chain broken (cause=%d, period=%u s), time restored without "
 			           "advance (%u)",
-			           (int)boot_cause, last_rtc);
+			           (int)boot_cause, wakeup_period, last_rtc);
 		} else {
 			DEBUG_INFO("EXTERNAL_WAKEUP: No pseudo RTC available (last_rtc=%u, wakeup_period=%u)", last_rtc,
 			           wakeup_period);

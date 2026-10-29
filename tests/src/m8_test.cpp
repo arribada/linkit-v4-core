@@ -1790,6 +1790,18 @@ TEST(TplClock, ChainUsesTheNominalPeriodUntilCalibrated) {
 	CHECK_EQUAL(TplClock::CALIBRATED_TOLERANCE_PERMILLE, TplClock::tolerance_permille(3600, 3550400));
 }
 
+// One hop forward, never past 2100 nor across the 32-bit wrap: only a corrupted
+// period gets there, the DTE caps WAKEUP_PERIOD at a day (July audit L6).
+TEST(TplClock, AdvanceStopsAtTheHorizon) {
+	const uint32_t horizon = 4102444800U;  // 2100-01-01, RTC_MAX_VALID in main.cpp
+	CHECK_EQUAL(1000u + 3600u, TplClock::advance(1000, 3600, horizon));
+	CHECK_EQUAL(horizon, TplClock::advance(horizon - 3600, 3600, horizon));
+	CHECK_EQUAL(0u, TplClock::advance(horizon - 3600, 3601, horizon));
+	CHECK_EQUAL(0u, TplClock::advance(1800000000u, 0xF0000000u, horizon));  // the old sum wrapped
+	CHECK_EQUAL(0u, TplClock::advance(0, 3600, horizon));                   // no time to advance
+	CHECK_EQUAL(0u, TplClock::advance(1000, 0, horizon));                   // no period
+}
+
 TEST(TplClock, MeasuresTheRealPeriodFromTheErrorAtTheFix) {
 	// Anchor: a fix 300 s into the run that booted at A. Two hops later the chain
 	// (3600 s per hop) says A + 7200, GNSS says the board booted at A + 7100:

@@ -22,9 +22,13 @@ static constexpr uint32_t RAM_END_ADDR = 0x20040000;  ///< 256 KB RAM
 class NrfMemoryAccess : public MemoryAccess {
 public:
 	void *get_physical_address(unsigned int addr, unsigned int length) override {
-		// Guard against integer overflow and out-of-range access
+		// Guard against integer overflow and out-of-range access. The end is
+		// tested by subtraction: addr + length wraps for an address near
+		// 0xFFFFFFFF (DUMPM takes any 32-bit address) and passed the old test.
+		// length is bounded by the RAM size first, so the subtraction cannot
+		// underflow (2026-07 audit M3).
 		if (addr < RAM_START_ADDR || length == 0 || length > RAM_END_ADDR - RAM_START_ADDR
-		    || addr + length > RAM_END_ADDR) {
+		    || addr > RAM_END_ADDR - length) {
 			throw ILLEGAL_MEMORY_ADDRESS;
 		}
 		return reinterpret_cast<void *>(addr);

@@ -221,6 +221,22 @@ TEST_GROUP(ArgosTxService) {
 	}
 };
 
+// A depth of 0 can only come from a corrupted store, and a cap of 0 from a LoRa
+// frame too small for one fix: both divided by zero in retrieve() (2026-07 audit
+// L2). The depth reads as 1, as set_max_size() does; a cap of 0 takes nothing.
+TEST(ArgosTxService, DepthPileZeroDepthOrCapRetrievesSafely) {
+	DepthPile<GPSLogEntry> dp;
+	GPSLogEntry e;
+	dp.store(e, 1);
+	CHECK_EQUAL(1, dp.eligible());
+
+	CHECK_EQUAL(0, dp.retrieve(24, 0).size());
+	CHECK_EQUAL(1, dp.eligible());  // no credit spent
+
+	CHECK_EQUAL(1, dp.retrieve(0).size());
+	CHECK_EQUAL(0, dp.eligible());
+}
+
 TEST(ArgosTxService, DepthPileFillsAndEmpties) {
 	DepthPile<GPSLogEntry> dp;
 	std::vector<GPSLogEntry *> v;

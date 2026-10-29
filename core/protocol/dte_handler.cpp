@@ -2183,7 +2183,14 @@ std::string DTEHandler::RTCW_REQ(int error_code, std::vector<BaseType> &arg_list
 
 	unsigned int timestamp = std::get<unsigned int>(arg_list[0]);
 
-	if (timestamp == 0) {
+	// The window the rest of the firmware believes: before 2000 a time counts as
+	// not real (RTC_MIN_REAL, rtc.hpp), and past 2100 the next boot discards
+	// LAST_KNOWN_RTC as corrupt (RTC_MAX_VALID, main.cpp). Only 0 used to be
+	// refused (2026-07 audit L4, without its 2035 limit, which would have refused
+	// every RTCW from that year on).
+	constexpr unsigned int RTCW_MIN_VALID = 946684800U;   // 2000-01-01
+	constexpr unsigned int RTCW_MAX_VALID = 4102444800U;  // 2100-01-01
+	if (timestamp < RTCW_MIN_VALID || timestamp > RTCW_MAX_VALID) {
 		return DTEEncoder::encode(DTECommand::RTCW_RESP, (int)DTEError::VALUE_OUT_OF_RANGE);
 	}
 

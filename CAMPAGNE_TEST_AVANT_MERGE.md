@@ -66,8 +66,8 @@ GNP01, GNP52, ARP01, CAP01 et GNP25 n'ont pas changé (1, 4294967295, 0, 0, 1).
 
 | # | Commande | Attendu |
 |---|---|---|
-| 1.1 | `cd tests && ./build/TrackerTests -p -xg SWS` | tout passe (1068/1068 au 29/10, après P7 de 2.15) |
-| 1.2 | `cd tests && ./build/TrackerTestsCyprus -p -xg SWS` | tout passe (1086/1086 au 29/10, après P7 de 2.15) |
+| 1.1 | `cd tests && ./build/TrackerTests -p -xg SWS` | tout passe (1073/1073 au 29/10, après P9 de 2.15 ; aussi en un seul processus, sans `-p`) |
+| 1.2 | `cd tests && ./build/TrackerTestsCyprus -p -xg SWS` | tout passe (1091/1091 au 29/10, après P9 de 2.15) |
 | 1.3 | `cd tests && ./build/TrackerTests -p -g SWSAnalog`, puis `-g SWSAnalogFlash`, puis `-sg SWSLongRun -sn H45_FixedDelayClean_ControlDetectsSurfacings` | tout passe |
 | 1.4 | `cd tests && ./build/TurtleSimulation -v` | 11/11, dont les tests budget `BatteryAndBusyWaitWithinBudget` et `JournalAtWarnHoldsOnlyFaults` |
 | 1.5 | `cd tests && ./build/RSPBSimulation -v` | 15/15 au 29/10, après P6 de 2.15 |
@@ -710,6 +710,9 @@ démarre jamais, reflasher un build normal ensuite.**
 | | RSPB | une session de mortalité complète | activité et score comme avant, aucune ligne `all axes ~0 g` | ⬜ |
 | P8 : RSPB. Attente avant `MCU_DONE` ramenée de 1 s à 20 ms (M5). Journal flash (L12) : firmware inchangé, mesurer d'abord. Suspension du SMD gardée à travers les coupures TPL (D1) : **non fait** (décision du 29/10 : P5 borne déjà un réveil à 3 échecs, et un paramètre coûte ~216 o de RAM partout) | RSPB | build release, PPK seule alimentation : un réveil « pas son tour », puis un réveil complet, contre le build d'avant sur le même montage | la coupure arrive toujours, environ 1 s plus tôt dans les deux cas | ⬜ |
 | | RSPB | L12 : un réveil complet, puis `DUMPD` | nombre de lignes écrites dans `system.log` par réveil ; si le coût le justifie, `DBP02=2` dans le gabarit RSPB | ⬜ |
+| P9 : petits correctifs de juillet, sans effet en fonctionnement normal. DUMPM borné sans débordement 32 bits (M3) ; tampon UBX décalé par `memmove` (L1) ; pile sans division par zéro (L2) ; observateur de coupure d'alimentation sans exception (L3) ; RTCW refuse avant 2000 et après 2100 (L4) ; pseudo-RTC RSPB borné (L6) ; sondage d'émission SMD SPI qui lève → état d'erreur du SMD, plus de reset (6b). **Non portés** : L5 et la borne 2035 de L4 (bombe à retardement), M4 (le reset sur liste de minuteurs pleine est voulu), L11 (garde la 2e tentative de récupération I²C). L10 : en attente de décision | PC | `NrfMemoryAccess` (2), `TplClock.AdvanceStopsAtTheHorizon`, `ArgosTxService.DepthPileZeroDepthOrCapRetrievesSafely`, `DTEHandler.RTCW_REQ_RefusesATimeTheFirmwareWouldNotBelieve` | passent ; ceux de M3, L2 et L4 échouent sans leur correctif | ✅ 29/10 |
+| | LinkIt SMD (banc) | `$DUMPM` sur `FFFFFC00`, 0x500 octets ; `$RTCW` à 946684799 puis 4102444801 | `$N;DUMPM#001;7` (refus, pas de faute ni de redémarrage) ; `$N;RTCW#001;7` deux fois, horloge inchangée | ⬜ |
+| | SMD SPI | 6b : un défaut SPI pendant le sondage d'émission n'est pas provocable sans injection | revue de code ; l'émission elle-même reste couverte par 2.6 | — |
 
 ---
 

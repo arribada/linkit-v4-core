@@ -32,6 +32,7 @@ extern ConfigurationStore *configuration_store;
 extern MemoryAccess *memory_access;
 extern BatteryMonitor *battery_monitor;
 extern GPSDevice *gps_device;
+extern RTC *rtc;
 
 
 TEST_GROUP(DTEHandler) {
@@ -362,6 +363,31 @@ TEST(DTEHandler, DUMPM_REQ) {
 	             "gIGCg4SFhoeIiYqLjI2Oj5CRkpOUlZaXmJmam5ydnp+goaKjpKWmp6ipqqusra6vsLGys7S1tre4ubq7vL2+"
 	             "v8DBwsPExcbHyMnKy8zNzs/Q0dLT1NXW19jZ2tvc3d7f4OHi4+Tl5ufo6err7O3u7/Dx8vP09fb3+Pn6+/z9/v8=\r",
 	             resp.c_str());
+}
+
+TEST(DTEHandler, RTCW_REQ_RefusesATimeTheFirmwareWouldNotBelieve) {
+	// RTCW sets the clock the rest of the firmware reads, and refuses what that
+	// firmware would not believe: a time before 2000 (RTC_MIN_REAL, "not a real
+	// time") or past 2100 (RTC_MAX_VALID at boot, which then throws LAST_KNOWN_RTC
+	// away as corrupt). Only 0 was refused before (July audit L4). There is no RTC
+	// here: a time inside the window reaches the "no RTC" answer, 5, which shows
+	// the window let it through.
+	RTC *const saved_rtc = rtc;
+	rtc = nullptr;
+	std::string resp;
+	std::string req = "$RTCW#009;946684799\r";
+	dte_handler->handle_dte_message(req, resp);
+	STRCMP_EQUAL("$N;RTCW#001;7\r", resp.c_str());
+	req = "$RTCW#00A;4102444801\r";
+	dte_handler->handle_dte_message(req, resp);
+	STRCMP_EQUAL("$N;RTCW#001;7\r", resp.c_str());
+	req = "$RTCW#009;946684800\r";
+	dte_handler->handle_dte_message(req, resp);
+	STRCMP_EQUAL("$N;RTCW#001;5\r", resp.c_str());
+	req = "$RTCW#00A;4102444800\r";
+	dte_handler->handle_dte_message(req, resp);
+	STRCMP_EQUAL("$N;RTCW#001;5\r", resp.c_str());
+	rtc = saved_rtc;
 }
 
 TEST(DTEHandler, DUMPM_REQ_OutOfRangeAddressIsRefusedNotIgnored) {

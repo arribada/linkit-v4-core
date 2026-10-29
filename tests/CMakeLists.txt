@@ -291,6 +291,7 @@ target_sources(${PROJECT_NAME} PRIVATE
     "src/bma400_math_test.cpp"
     "src/pressure_sensor_test.cpp"
     "src/calibration_test.cpp"
+    "src/nrf_memory_access_test.cpp"
     "src/argos_tx_test.cpp"
     "src/dx1_doppler_test.cpp"
     "src/argos_rx_test.cpp"

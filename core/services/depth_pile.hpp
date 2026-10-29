@@ -220,6 +220,12 @@ public:
 	}
 
 	std::vector<T *> retrieve(unsigned int depth, unsigned int max_messages = 3) {
+		// Both divide below (2026-07 audit L2). A zero depth can only come from a
+		// corrupted store, the DTE accepts 1 to 24: read it as 1, as set_max_size()
+		// does. A zero cap means not even one entry fits the frame (LoRa at its
+		// smallest data rates): take nothing rather than spend a credit.
+		if (depth == 0) depth = 1;
+		if (max_messages == 0) return {};
 		max_messages = std::min(depth, max_messages);
 		unsigned int max_index = (depth + (max_messages - 1)) / max_messages;
 		unsigned int span = std::min(max_messages, (unsigned int)m_entry.size());
