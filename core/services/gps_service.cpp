@@ -731,8 +731,7 @@ ScheduleDecision GPSService::service_next_schedule() {
 	if (rtc && rtc->is_set() && ServiceManager::is_in_cooldown(service_current_time())) {
 		const std::time_t now_s = service_current_time();
 		return ScheduleDecision::hold_until(
-		    (uint32_t)(now_s + (std::time_t)ServiceManager::get_cooldown_remaining_s(now_s)),
-		    "surface-cycle cooldown");
+		    (uint32_t)(now_s + (std::time_t)ServiceManager::get_cooldown_remaining_s(now_s)), "surface-cycle cooldown");
 	}
 
 	// Rate-limit gate (2026-05-23): if Argos TX is rate-limited, acquiring
@@ -773,8 +772,7 @@ ScheduleDecision GPSService::service_next_schedule() {
 		// m_defer_gnss_timeout_task is the primary release -- it clears the flag,
 		// which this bound cannot do. The bound is the second net: without a
 		// flag clear, a re-evaluation lands right back here.
-		return ScheduleDecision::hold_for_event(DEFER_GNSS_MAX_S + 10,
-		                                        "deferred until the first Argos TX");
+		return ScheduleDecision::hold_for_event(DEFER_GNSS_MAX_S + 10, "deferred until the first Argos TX");
 	}
 #endif
 
@@ -836,8 +834,7 @@ ScheduleDecision GPSService::service_next_schedule() {
 	// Find the time in milliseconds until this schedule (cast to uint64_t to prevent
 	// overflow when aq_period > 4294 seconds, since the result is truncated to unsigned int)
 	uint64_t delay_ms = static_cast<uint64_t>(next_schedule - now) * MS_PER_SEC;
-	return ScheduleDecision::run((delay_ms > UINT32_MAX) ? UINT32_MAX : static_cast<unsigned int>(delay_ms),
-	                             aq_why);
+	return ScheduleDecision::run((delay_ms > UINT32_MAX) ? UINT32_MAX : static_cast<unsigned int>(delay_ms), aq_why);
 }
 
 /// @brief The battery for this session (BATTERY_SAMPLE_EACH_GNSS_SESSION, top of file).

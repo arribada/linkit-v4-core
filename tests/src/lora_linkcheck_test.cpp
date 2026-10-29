@@ -72,7 +72,8 @@ std::vector<unsigned int> frame_latitudes(const KineisPacket &p) {
 
 std::set<unsigned int> fix_codes(unsigned int first, unsigned int last) {
 	std::set<unsigned int> codes;
-	for (unsigned int n = first; n <= last; n++) codes.insert(fix_code(n));
+	for (unsigned int n = first; n <= last; n++)
+		codes.insert(fix_code(n));
 	return codes;
 }
 
@@ -81,7 +82,8 @@ constexpr unsigned int NO_FIX_LATITUDE = (1U << LoRaPacketBuilder::BITS_LATITUDE
 
 unsigned int count_code(const std::vector<unsigned int> &lats, unsigned int code) {
 	unsigned int n = 0;
-	for (unsigned int lat : lats) n += (lat == code);
+	for (unsigned int lat : lats)
+		n += (lat == code);
 	return n;
 }
 
@@ -401,7 +403,8 @@ TEST(LoRaLinkCheck, PileChangedInFlightFallsBackToOneCredit) {
 // waited sits at the old marker's address: the refund must not land on the new
 // marker. As when the pile changes on air, the frame then spends one credit.
 TEST(LoRaLinkCheck, CancelledFrameDoesNotRefundAMarkerReplacedBeforeTheAir) {
-	for (unsigned int k = 1; k <= 3; k++) fix_and_send(LINK_NOT_HEARD);
+	for (unsigned int k = 1; k <= 3; k++)
+		fix_and_send(LINK_NOT_HEARD);
 	set_time(t + 300000);
 	inject_no_fix();
 	if (dispatch()) complete(true, LINK_NOT_HEARD);
@@ -431,7 +434,8 @@ TEST(LoRaLinkCheck, CancelledFrameDoesNotRefundAMarkerReplacedBeforeTheAir) {
 // counter to zero, and the next frame leaves the marker out.
 TEST(LoRaLinkCheck, CancelledFrameCannotWrapAReplacedMarkerAtNtryZero) {
 	fake_config_store->write_param(ParamID::NTRY_PER_MESSAGE, 0U);
-	for (unsigned int k = 1; k <= 3; k++) fix_and_send(LINK_NOT_HEARD);
+	for (unsigned int k = 1; k <= 3; k++)
+		fix_and_send(LINK_NOT_HEARD);
 	set_time(t + 300000);
 	inject_no_fix();
 	if (dispatch()) complete(true, LINK_NOT_HEARD);
@@ -498,7 +502,9 @@ public:
 TEST_GROUP(LoRaLinkCheckParser) {
 	LineFeeder comm;
 	LinkCheckProbe probe;
-	void setup() { comm.subscribe(probe); }
+	void setup() {
+		comm.subscribe(probe);
+	}
 };
 
 TEST(LoRaLinkCheckParser, AnswerCarriesMarginGatewaysRssiSnr) {

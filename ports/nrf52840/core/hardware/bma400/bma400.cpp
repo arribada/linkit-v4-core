@@ -264,8 +264,7 @@ void BMA400LL::rearm_or_sleep() {
 		setup_sleep_mode();
 		return;
 	}
-	int8_t rslt =
-	    bma400_set_power_mode(m_power_mode == 0 ? BMA400_MODE_LOW_POWER : BMA400_MODE_NORMAL, &m_bma400_dev);
+	int8_t rslt = bma400_set_power_mode(m_power_mode == 0 ? BMA400_MODE_LOW_POWER : BMA400_MODE_NORMAL, &m_bma400_dev);
 	check_result("set_power_mode(rearm)", rslt);
 }
 
@@ -357,12 +356,11 @@ void BMA400LL::recover_after_failed_read() {
 		}
 		m_failed_reads++;
 		m_irq_pending = false;
-		const uint8_t mode = !m_wakeup_armed           ? BMA400_MODE_SLEEP
+		const uint8_t mode = !m_wakeup_armed       ? BMA400_MODE_SLEEP
 		                     : (m_power_mode == 0) ? BMA400_MODE_LOW_POWER
 		                                           : BMA400_MODE_NORMAL;
 		[[maybe_unused]] const int8_t rslt = bma400_set_power_mode(mode, &m_bma400_dev);
-	} catch (...) {
-	}
+	} catch (...) {}
 }
 #endif
 

@@ -877,7 +877,7 @@ void M10QAsyncReceiver::react(const UBXCommsEventSecUniqId &uid) {
 		m_gnss_info_valid = true;
 		// TRACE, not INFO: same IRQ-context / LittleFS re-entrancy reason as the SW/HW line above.
 		DEBUG_TRACE("GNSS UID: %02X%02X%02X%02X%02X", m_gnss_unique_id[0], m_gnss_unique_id[1], m_gnss_unique_id[2],
-		           m_gnss_unique_id[3], m_gnss_unique_id[4]);
+		            m_gnss_unique_id[3], m_gnss_unique_id[4]);
 		notify(GPSEventDeviceInfoReady{});
 		m_op_state = OpState::SUCCESS;
 		run_state_machine();

@@ -438,7 +438,7 @@ TEST_GROUP(LoRaMotionExt) {
 
 	/// Append `m`, then check the frame grew by exactly the block, the base
 	/// bytes are unchanged and the block decodes back to `m`.
-	static void append_and_check(KineisPacket &pkt, unsigned int size_bits, unsigned int base_bytes,
+	static void append_and_check(KineisPacket & pkt, unsigned int size_bits, unsigned int base_bytes,
 	                             const LoRaMotionExt &m) {
 		CHECK_EQUAL(base_bytes, (unsigned int)pkt.size());
 		const KineisPacket base = pkt;
@@ -478,8 +478,8 @@ TEST(LoRaMotionExt, SingleFixGrowsFromThirteenToSeventeenBytes) {
 	GPSLogEntry e = fix(T0);
 	std::vector<GPSLogEntry *> v{ &e };
 	unsigned int size_bits;
-	KineisPacket pkt = LPB::build_gps_packet(v, false, false,
-	                                         LoRaPayloadLimits::DR3_MAX_BYTES - LPB::MOTION_EXT_BYTES, size_bits);
+	KineisPacket pkt =
+	    LPB::build_gps_packet(v, false, false, LoRaPayloadLimits::DR3_MAX_BYTES - LPB::MOTION_EXT_BYTES, size_bits);
 	append_and_check(pkt, size_bits, 13, sample());
 }
 
@@ -487,8 +487,8 @@ TEST(LoRaMotionExt, DepthPileOfThreeGrowsFromThirtyToThirtyFourBytes) {
 	GPSLogEntry a = fix(T0), b = fix(T0 + 300), c = fix(T0 + 600);
 	std::vector<GPSLogEntry *> v{ &a, &b, &c };  // oldest first, as retrieve() returns them
 	unsigned int size_bits;
-	KineisPacket pkt = LPB::build_gps_packet(v, false, false,
-	                                         LoRaPayloadLimits::DR3_MAX_BYTES - LPB::MOTION_EXT_BYTES, size_bits);
+	KineisPacket pkt =
+	    LPB::build_gps_packet(v, false, false, LoRaPayloadLimits::DR3_MAX_BYTES - LPB::MOTION_EXT_BYTES, size_bits);
 	append_and_check(pkt, size_bits, 30, sample());
 }
 
@@ -532,9 +532,7 @@ TEST(LoRaMotionExt, ReservingTheBlockKeepsFullGpsFramesWithinTheDataRate) {
 }
 
 TEST(LoRaMotionExt, MinutesSinceSaturatesAndFlagsMissingTimes) {
-	auto enc = [](std::time_t now, std::time_t then) {
-		return (unsigned int)LPB::encode_minutes_since(now, then);
-	};
+	auto enc = [](std::time_t now, std::time_t then) { return (unsigned int)LPB::encode_minutes_since(now, then); };
 	constexpr unsigned int UNKNOWN = LPB::MOTION_MINUTES_UNKNOWN;
 	constexpr unsigned int SATURATED = LPB::MOTION_MINUTES_SATURATED;
 	CHECK_EQUAL(UNKNOWN, enc(T0, 0));        // never happened

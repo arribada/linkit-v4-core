@@ -274,8 +274,7 @@ void MooredModeService::on_motion_event(std::time_t now) {
 	// still read as one burst. The `now >=` guard mirrors the hold-off above:
 	// a future timestamp (RTC rollback) does not read as an expired window,
 	// and heals when a fresh burst restarts the anchor.
-	bool burst_expired = s_noinit.motion_events != 0 && s_noinit.last_motion_rtc != 0
-	                     && now >= s_noinit.last_motion_rtc
+	bool burst_expired = s_noinit.motion_events != 0 && s_noinit.last_motion_rtc != 0 && now >= s_noinit.last_motion_rtc
 	                     && (now - s_noinit.last_motion_rtc) > MOTION_BURST_WINDOW_S;
 	if (burst_expired) {
 		DEBUG_TRACE("MooredModeService: motion burst window expired (%u events dropped), restarting at 1",

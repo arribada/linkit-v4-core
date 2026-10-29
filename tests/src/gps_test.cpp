@@ -111,7 +111,8 @@ TEST_GROUP(GPSService) {
 		fake_rtc->incrementtime((std::time_t)s);
 		fake_timer->set_counter(m_current_ms);
 		/* Let a task that re-arms itself settle. */
-		for (int i = 0; i < 8; i++) system_scheduler->run();
+		for (int i = 0; i < 8; i++)
+			system_scheduler->run();
 	}
 
 	void notify_underwater_state(bool state) {
@@ -768,7 +769,8 @@ TEST(GPSService, MooredExitKicksAnImmediateAcquisitionWithoutGNP26) {
 
 	// Moor the classifier directly — the funnel path for fixes has its own
 	// coverage in the MooredMode group.
-	for (unsigned int i = 0; i < 4; i++) MooredModeService::on_gnss_fix(10.0, 10.0, 0, fake_rtc->gettime() + i);
+	for (unsigned int i = 0; i < 4; i++)
+		MooredModeService::on_gnss_fix(10.0, 10.0, 0, fake_rtc->gettime() + i);
 	CHECK_TRUE(MooredModeService::is_moored());
 
 	ServiceEvent e;
