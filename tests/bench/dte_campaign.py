@@ -3402,11 +3402,15 @@ def _gnss_base(b, **extra):
     Une aide de preconditions pose TOUT ce dont le cas depend, pas seulement ce
     qui l interesse.
     """
+    # GNSS_COLD_START_RETRY_PERIOD (GNP23) too: indoors no session ever fixes,
+    # so it, not DLOC_ARG_NOM, sets when the next one starts. The bench board
+    # has run with GNP23=3600 since 2026-10-27 (CAMPAGNE section 0), and GPS-D4,
+    # which waits 500 s for the next session, failed on that alone.
     cfg = {'ARGOS_MODE': 0, 'GNSS_EN': 1, 'UNDERWATER_EN': 0,
            'MOORED_DETECT_EN': 0, 'HAULED_DETECT_EN': 0,
            'UW_DIVE_MODE_ENABLE': 0, 'LB_EN': 0, 'RATE_LIMIT_EN': 0,
            'ZONE_ENABLE_OUT_OF_ZONE_DETECTION_MODE': 0,
-           'GNSS_NTRY': 0, 'DLOC_ARG_NOM': 13}
+           'GNSS_NTRY': 0, 'DLOC_ARG_NOM': 13, 'GNSS_COLD_START_RETRY_PERIOD': 60}
     cfg.update(extra)
     b.enter_config(); b.write_params(cfg); b.exit_config()
 
@@ -5614,18 +5618,28 @@ def c_boot_survit_redemarrage(r, case):
     b = r.b
     if not b.wait_state('OPERATIONAL', timeout=90):
         return r.record(case, 'ERROR', 'la carte ne repasse pas en OPERATIONAL apres RSTBW')
+    # Depuis le 2026-10-28 (21a0e18b) le compteur n est efface qu apres 60 s en
+    # fonctionnement (BOOTFAIL_CLEAR_DWELL_MS): une panne dans la premiere minute
+    # doit garder son compte. On le lit donc jusqu a 80 s apres le retour en
+    # OPERATIONAL, et un 1 avant les 60 s est normal.
+    t0 = time.time()
     apres = _boot(b)
-    trace = f'avant: failures={avant[0]} usine={avant[1]}\napres: failures={apres[0]} usine={apres[1]}'
+    while apres[0] is not None and apres[0] > 0 and time.time() - t0 < 80:
+        time.sleep(5)
+        apres = _boot(b)
+    attente = time.time() - t0
+    trace = (f'avant: failures={avant[0]} usine={avant[1]}\n'
+             f'apres: failures={apres[0]} usine={apres[1]} ({attente:.0f} s apres OPERATIONAL)')
     if apres[0] is None:
         if _BOOT_MASQUE:
             return r.record(case, 'SKIP', _RAISON_BOOT_MASQUE, trace)
         return r.record(case, 'ERROR', '%BOOT sans reponse apres redemarrage', trace)
     if apres[0] > 0:
         return r.record(case, 'FAIL',
-                        f'apres un redemarrage volontaire le compteur vaut {apres[0]}: '
-                        'le demarrage reussi ne l efface pas', trace)
+                        f'apres un redemarrage volontaire le compteur vaut encore {apres[0]} '
+                        f'au bout de {attente:.0f} s en fonctionnement: il ne s efface pas', trace)
     r.record(case, 'PASS',
-             'le compteur revient a zero apres un redemarrage volontaire', trace)
+             f'le compteur revient a zero apres un redemarrage volontaire ({attente:.0f} s)', trace)
 
 def c_rstvw_compteur_tx(r, case):
     """RSTVW remet le compteur d emissions a zero, et refuse un index inconnu.

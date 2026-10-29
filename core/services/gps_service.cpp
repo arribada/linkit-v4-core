@@ -458,7 +458,10 @@ void GPSService::try_enter_deep_idle_or_poweroff() {
 	system_scheduler->cancel_task(m_deep_idle_auto_off_task);
 
 	if (deep_idle_s == 0) {
-		DEBUG_TRACE("GPSService::try_enter_deep_idle_or_poweroff: disabled — power_off");
+		// DETAIL, not TRACE: the deep-idle and never-poweroff dispositions both
+		// announce themselves, and the bench (GPS-D1) needs this one too on a
+		// level-3 build. Console only, no flash: GNP52=0 is RSPB's default.
+		DEBUG_DETAIL("GPSService::try_enter_deep_idle_or_poweroff: disabled — power_off");
 		VAL_GNSS("dispatch=immediate_off GNP52=0");
 		m_last_dispatch_was_deep_idle = false;
 		m_device.power_off();
