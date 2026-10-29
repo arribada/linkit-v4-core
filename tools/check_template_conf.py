@@ -243,6 +243,15 @@ INERTES = [
     (lambda v: v.get("ARGOS_MODE") not in ("SURFACING_BURST", "DOPPLER"),
      ("SURFACING_BURST_",),
      "la sequence d emersion n existe qu en SURFACING_BURST et DOPPLER"),
+    (lambda v: v.get("ARGOS_MODE") != "DUTY_CYCLE",
+     ("ARGOS_DUTY_CYCLE",),
+     "le masque horaire ne sert qu en DUTY_CYCLE — LEGACY emet sur les 24 h"),
+    (lambda v: v.get("LB_ARGOS_MODE") != "DUTY_CYCLE",
+     ("LB_ARGOS_DUTY_CYCLE",),
+     "le masque horaire ne sert qu en DUTY_CYCLE — LEGACY emet sur les 24 h"),
+    (lambda v: v.get("ZONE_ARGOS_MODE") != "DUTY_CYCLE",
+     ("ZONE_ARGOS_DUTY_CYCLE",),
+     "le masque horaire ne sert qu en DUTY_CYCLE — LEGACY emet sur les 24 h"),
     (lambda v: v.get("ARGOS_MODE") == "SURFACING_BURST" and v.get("ARGOS_BLIND_EN") == "1",
      ("ARGOS_BLIND_RETX_NB", "ARGOS_BLIND_RETX_PERIOD_S"),
      "BLIND est refuse en SURFACING_BURST — la rafale n est jamais confiee au module"),
@@ -278,7 +287,7 @@ def inertes(valeurs):
             # "ARGOS_RX_EN=0 est sans effet" n apprend rien a personne. On ne
             # remonte que ce qui FERAIT quelque chose ailleurs.
             v = (valeur or "").strip().upper()
-            if v in ("0", "OFF", "0.0", "FALSE", "", "000000"):
+            if v in ("0", "OFF", "0.0", "FALSE", "", "000000", "FFFFFF"):
                 continue
             out.append((nom, raison))
     # Un parametre peut tomber sous deux regles; garder la premiere.
@@ -354,10 +363,19 @@ def coherence(valeurs):
     if v("ARGOS_RX_EN") == "1" and mode != "PASS_PREDICTION":
         out.append(f"ARGOS_RX_EN=1 only bites in PASS_PREDICTION; with {mode} the receive "
                    "window never opens and the parameter does nothing.")
-    dc = (v("ARGOS_DUTY_CYCLE") or "").strip().upper()
-    if dc in ("0", "000000", "00000000"):
-        out.append("ARGOS_DUTY_CYCLE is an empty hour mask: the beacon is MUTE, "
-                   "twenty-four hours a day.")
+    # The hour mask only gates DUTY_CYCLE: LEGACY schedules on DUTYCYCLE_24HRS and
+    # the other modes never read it, which is why the firmware default (0) and a
+    # fleet that never ran DUTY_CYCLE transmit with an empty one. Each profile
+    # substitutes its own mode AND its own mask.
+    for mode_key, mask_key, actif in (
+            ("ARGOS_MODE", "ARGOS_DUTY_CYCLE", True),
+            ("LB_ARGOS_MODE", "LB_ARGOS_DUTY_CYCLE", v("LB_EN") == "1"),
+            ("ZONE_ARGOS_MODE", "ZONE_ARGOS_DUTY_CYCLE",
+             v("ZONE_ENABLE_OUT_OF_ZONE_DETECTION_MODE") == "1")):
+        dc = (v(mask_key) or "").strip().upper()
+        if actif and v(mode_key) == "DUTY_CYCLE" and dc in ("0", "000000", "00000000"):
+            out.append(f"{mode_key}=DUTY_CYCLE with an empty {mask_key} hour mask: that "
+                       "profile is MUTE, twenty-four hours a day.")
     if v("GNSS_ENABLE") == "1" and v("GNSS_HACCFILT_ENABLE") == "1":
         seuil = _num(v("GNSS_HACCFILT_THR"))
         if seuil is not None and seuil <= 5:

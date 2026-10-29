@@ -10,11 +10,23 @@ Example DTE configuration files, to be pushed with
 | [`turtle_doppler_only.cfg`](turtle_doppler_only.cfg) | Sea turtle, position reconstructed on the ground | `DOPPLER` | off |
 | [`turtle_gps.cfg`](turtle_gps.cfg) | Sea turtle, on-board GNSS fixes | `SURFACING_BURST` | every 10 min |
 | [`turtle_cloudlocate.cfg`](turtle_cloudlocate.cfg) | Sea turtle, raw measurements positioned in the cloud | `SURFACING_BURST` | raw snapshot |
+| [`turtle_argos_surface.cfg`](turtle_argos_surface.cfg) | Sea turtle, surfacings counted in seconds (CloudLocate) | `SURFACING_BURST` | raw snapshot |
+| [`turtle_lora.cfg`](turtle_lora.cfg) | Sea turtle, LoRa, CloudLocate MEAS50 | `SURFACING_BURST` (LoRa) | every 30 min + raw snapshot |
+| [`cyprus_boat.cfg`](cyprus_boat.cfg) | Boat at anchor, LoRa, MOORED detection | `LEGACY` (LoRa) | every 5 min, hourly moored |
+| [`cyprus_boat_campaign.cfg`](cyprus_boat_campaign.cfg) | The same, for the accelerometer-threshold campaign | `LEGACY` (LoRa) | every 5 min |
+| [`rspb_mortality.cfg`](rspb_mortality.cfg) | Bird, RSPB board, mortality detection | `LEGACY` | every TPL5111 session |
 | [`drifter.cfg`](drifter.cfg) | Drifting buoy, permanently at the surface | `PASS_PREDICTION` | hourly |
 | [`fix_beacon.cfg`](fix_beacon.cfg) | Fixed ground station | `PASS_PREDICTION` | daily |
 
 Each file carries its rationale inline: why the mode, and — more useful in
-practice — which value would silence the beacon.
+practice — which value would silence the beacon. On a LoRa build the Argos mode
+is the LoRa TX service's own mode: `OFF` silences it.
+
+Which file serves which production project, and how each differs from the
+configuration its fleet actually runs, is in [`PROJETS.md`](PROJETS.md). The
+platform's Config Tool writes its own dialect (wire codes, seconds, three
+names nobody else knows): a file exported from the platform is not pushable
+with `pylinkit_cli` as it stands.
 
 The `.cfg` format itself is generic — `pylinkit --parmw <file>` serves the whole
 family (Linkit, Horizon, RSPB). What is **not** generic is writing a whole
@@ -23,7 +35,7 @@ template to a device on the bench: the wave that does it (`TPL-*`) reads
 pushing a full profile to the KIM2 bench board reconfigures the very device
 under validation and represents no deployment anyone performs.
 
-The RSPB file additionally has nine keys behind `HAS_BOARD_RSPB`,
+The RSPB file, `rspb_mortality.cfg`, additionally has nine keys behind `HAS_BOARD_RSPB`,
 `HAS_EXTERNAL_WAKEUP` or `ENABLE_MORTALITY_SENSOR`, reported as not implemented
 anywhere else.
 
@@ -52,7 +64,9 @@ to the wrong spelling.
 The duty cycle deserves its own line: PyLinkit encodes it with `int(value, 16)`,
 so `16777215` means `0x16777215` — 376926741, which the device refuses, leaving
 whatever mask was already in place. `FFFFFF` is all twenty-four hours;
-`000000` is a mute beacon.
+`000000` mutes a beacon in `DUTY_CYCLE` mode, the only mode that reads the
+mask: `LEGACY` schedules around the clock whatever it says, which is why the
+firmware default (`0`) does not silence a `LEGACY` tracker.
 
 `GNSS_FASTLOC_MODE` and `GNSS_CLOUDLOCATE_FORMAT` are the exception: PyLinkit
 passes them through as plain integers, so they keep their numeric values.
@@ -75,7 +89,7 @@ also spend one of its redundancy slots. The pile then carries nothing and a
 battery budget computed as "three positions per transmission" is wrong by a
 factor of three.
 
-The four turtle templates ship `ARGOS_ADAPTIVE_MODULATION = 0` (decision
+The four Argos turtle templates ship `ARGOS_ADAPTIVE_MODULATION = 0` (decision
 2026-10), so adaptive modulation is **no longer a way to reach LDA2** for them.
 Every frame goes on the modulation of the **master RCONF** (`ARGOS_RADIOCONF`),
 and the per-modulation RCONFs (`ARGOS_RADIOCONF_LDK/LDA2/VLDA4`) only matter
@@ -161,7 +175,8 @@ refused by the device. The checker closes both gaps — it reads
 - **combinations that produce a silent beacon** — every parameter in range,
   every name valid, and a tracker that never transmits: `PASS_PREDICTION` with
   the GNSS off, `SURFACING_BURST` without the water sensor, CloudLocate in any
-  mode but `SURFACING_BURST`, an empty duty-cycle mask, a critical battery
+  mode but `SURFACING_BURST`, `DUTY_CYCLE` with an empty hour mask (in each
+  profile that uses it: nominal, low battery, zone), a critical battery
   threshold above the low one;
 - **provisioning prerequisites** (informational) — what the file needs from
   the device that no template can state, such as CloudLocate MEAS20 with
