@@ -288,6 +288,7 @@ target_sources(${PROJECT_NAME} PRIVATE
     "src/cdt_sensor_test.cpp"
     "src/cdt_mock_test.cpp"
     "src/axl_sensor_test.cpp"
+    "src/bma400_math_test.cpp"
     "src/pressure_sensor_test.cpp"
     "src/calibration_test.cpp"
     "src/argos_tx_test.cpp"

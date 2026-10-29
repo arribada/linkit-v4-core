@@ -112,8 +112,10 @@ public:
 	 * @param[out] offset_x  Measured average X in g (target: 0).
 	 * @param[out] offset_y  Measured average Y in g (target: 0).
 	 * @param[out] offset_z  Measured average Z in g (target: 1.0).
+	 * @return false if fewer than half the samples could be read: the outputs are
+	 *         then left untouched (bma400_calibration_average).
 	 */
-	void calibrate_offset(uint8_t g_range, double &offset_x, double &offset_y, double &offset_z);
+	bool calibrate_offset(uint8_t g_range, double &offset_x, double &offset_y, double &offset_z);
 	/// @}
 
 	/// @name Configuration getters
@@ -300,6 +302,7 @@ private:
 	double m_last_z = 0;             ///< Last calibrated Z in g
 	int16_t m_last_temperature = 0;  ///< Last temperature (°C × 10)
 	uint8_t m_last_activity = 0;     ///< Last activity metric (0-255)
+	bool m_stuck_reported = false;   ///< A stuck reading is already in the journal
 	/// @}
 
 	/// @name FIFO batch mode state

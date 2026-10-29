@@ -9,6 +9,7 @@
 #include "bma400.h"
 #include "bma400.hpp"
 #include "bma400_defs.h"
+#include "bma400_math.hpp"
 
 #include "debug.hpp"
 #include "nrf_delay.h"
@@ -420,6 +421,11 @@ void BMA400LL::read_xyz(double &x, double &y, double &z, int16_t &temperature) {
 	}
 	if (!data_ready) {
 		DEBUG_WARN("BMA400::read_xyz: DRDY timeout");
+		// No fresh sample: do not hand the previous one back as new. A repeated
+		// still reading would count toward a false death in mortality; 0/0/0
+		// reads as stuck instead, i.e. maximum activity (bma400_activity), and
+		// is visibly impossible in the log and on the ground.
+		x = y = z = 0.0;
 		rearm_or_sleep();
 		return;
 	}
@@ -494,7 +500,7 @@ void BMA400LL::set_z_calibration(double z) {
 // ═══════════════════════════════════════════════════════
 
 /// @brief Auto-calibrate: average 200 samples at rest → X/Y/Z offsets in g.
-void BMA400LL::calibrate_offset(uint8_t g_range, double &offset_x, double &offset_y, double &offset_z) {
+bool BMA400LL::calibrate_offset(uint8_t g_range, double &offset_x, double &offset_y, double &offset_z) {
 	SensorsPowerGuard power_guard;
 	int8_t rslt;
 	constexpr uint8_t N_SAMPLES = 200;
@@ -521,6 +527,7 @@ void BMA400LL::calibrate_offset(uint8_t g_range, double &offset_x, double &offse
 	PMU::delay_ms(100);
 
 	DEBUG_TRACE("BMA400: calibrating (%u samples)...", N_SAMPLES);
+	unsigned int n_read = 0;
 	for (uint8_t i = 0; i < N_SAMPLES; ++i) {
 		// Wait for DRDY with timeout
 		uint16_t int_status = 0;
@@ -540,18 +547,25 @@ void BMA400LL::calibrate_offset(uint8_t g_range, double &offset_x, double &offse
 
 		struct bma400_sensor_data data;
 		rslt = bma400_get_accel_data(BMA400_DATA_ONLY, &data, &m_bma400_dev);
+		if (rslt != BMA400_OK) {
+			DEBUG_WARN("BMA400: calibrate read failed at sample %u", i);
+			continue;
+		}
 		acc_x += lsb_to_ms2(data.x, g_force, 12) / GRAVITY;
 		acc_y += lsb_to_ms2(data.y, g_force, 12) / GRAVITY;
 		acc_z += lsb_to_ms2(data.z, g_force, 12) / GRAVITY;
+		n_read++;
 	}
 
 	rearm_or_sleep();
 
-	offset_x = acc_x / N_SAMPLES;
-	offset_y = acc_y / N_SAMPLES;
-	offset_z = acc_z / N_SAMPLES;
+	if (!bma400_calibration_average(acc_x, acc_y, acc_z, n_read, N_SAMPLES, offset_x, offset_y, offset_z)) {
+		DEBUG_ERROR("BMA400: calibration refused, %u/%u samples read - previous calibration kept", n_read, N_SAMPLES);
+		return false;
+	}
 
 	DEBUG_TRACE("BMA400: calibrated x=%.4f y=%.4f z=%.4f g", offset_x, offset_y, offset_z);
+	return true;
 }
 
 
@@ -908,15 +922,14 @@ void BMA400::read_fifo_batch() {
 }
 
 /// @brief Compute activity metric: deviation from 1g (rest) scaled to 0-255.
+/// A stuck reading (all axes ~0 g) counts as maximum activity, with one journal
+/// line per episode, not per sample: a dead sensor is read at every sample.
 double BMA400::compute_activity() {
-	double g_mag = std::sqrt(m_last_x * m_last_x + m_last_y * m_last_y + m_last_z * m_last_z);
-	double activity_g = std::abs(g_mag - 1.0);
-
-	uint8_t g_range = m_bma400.range_to_g(m_bma400.get_range());
-	double max_dev = std::max(1.0, static_cast<double>(g_range) - 1.0);
-
-	if (activity_g > max_dev) activity_g = max_dev;
-	m_last_activity = static_cast<uint8_t>((activity_g / max_dev) * 255.0);
+	const bool stuck = bma400_reads_stuck(m_last_x, m_last_y, m_last_z);
+	if (stuck && !m_stuck_reported)
+		DEBUG_WARN("BMA400: all axes ~0 g (stuck or missing sensor?) - activity counted as maximum");
+	m_stuck_reported = stuck;
+	m_last_activity = bma400_activity(m_last_x, m_last_y, m_last_z, m_bma400.range_to_g(m_bma400.get_range()));
 	return static_cast<double>(m_last_activity);
 }
 
@@ -939,7 +952,9 @@ void BMA400::calibration_write(const double value, const unsigned int offset) {
 		break;
 	case 3: {
 		double ox, oy, oz;
-		m_bma400.calibrate_offset(m_bma400.get_range(), ox, oy, oz);
+		// Refused (too few samples read): AXL.CAL keeps the previous calibration,
+		// and the throw makes SCALW answer an error instead of a silent success.
+		if (!m_bma400.calibrate_offset(m_bma400.get_range(), ox, oy, oz)) throw ErrorCode::RESOURCE_NOT_AVAILABLE;
 		m_bma400.set_x_calibration(ox);
 		m_bma400.set_y_calibration(oy);
 		m_bma400.set_z_calibration(oz);

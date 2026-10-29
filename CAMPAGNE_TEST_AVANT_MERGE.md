@@ -66,8 +66,8 @@ GNP01, GNP52, ARP01, CAP01 et GNP25 n'ont pas changé (1, 4294967295, 0, 0, 1).
 
 | # | Commande | Attendu |
 |---|---|---|
-| 1.1 | `cd tests && ./build/TrackerTests -p -xg SWS` | tout passe (1064/1064 au 29/10, après P6 de 2.15) |
-| 1.2 | `cd tests && ./build/TrackerTestsCyprus -p -xg SWS` | tout passe (1082/1082 au 29/10, après P6 de 2.15) |
+| 1.1 | `cd tests && ./build/TrackerTests -p -xg SWS` | tout passe (1068/1068 au 29/10, après P7 de 2.15) |
+| 1.2 | `cd tests && ./build/TrackerTestsCyprus -p -xg SWS` | tout passe (1086/1086 au 29/10, après P7 de 2.15) |
 | 1.3 | `cd tests && ./build/TrackerTests -p -g SWSAnalog`, puis `-g SWSAnalogFlash`, puis `-sg SWSLongRun -sn H45_FixedDelayClean_ControlDetectsSurfacings` | tout passe |
 | 1.4 | `cd tests && ./build/TurtleSimulation -v` | 11/11, dont les tests budget `BatteryAndBusyWaitWithinBudget` et `JournalAtWarnHoldsOnlyFaults` |
 | 1.5 | `cd tests && ./build/RSPBSimulation -v` | 15/15 au 29/10, après P6 de 2.15 |
@@ -705,6 +705,9 @@ démarre jamais, reflasher un build normal ensuite.**
 | P6 : jauge STC3117 du RSPB. « Critique » exige l'état de charge **et** la tension sous `LBP12` (H3a) ; une erreur I²C au démarrage de la jauge est vue et la jauge arrêtée (compteur, #7) ; borne de l'écriture I²C (#8). Jauge muette = batterie basse (H3b) : refusé, inchangé | PC | `RSPBGauge` (3, dans RSPBSimulation) | passent ; le verdict et le compteur échouent sans leur correctif | ✅ 29/10 |
 | | RSPB | réveil normal, jauge saine | `STC3117: V=… SOC=…` comme avant, aucune ligne `not critical`, courant de la jauge en veille inchangé (PPK) | ⬜ |
 | | RSPB | `LBP12` réglé au-dessus de l'état de charge lu, `LBP02` au-dessus de `LBP12` : SOC et tension sont alors d'accord | `BatteryCriticalState` et coupure immédiate, comme avant : le veto ne retient pas une vraie batterie critique. Remettre `LBP12` et `LBP02` : aimant au réveil, `BatteryCriticalState` passe alors en configuration | ⬜ |
+| P7 : BMA400. Calibration `SCALW` 3 moyennée sur les lectures réussies, **refusée** sous la moitié : l'ancienne reste dans `AXL.CAL` et `SCALW` répond une erreur (M1) ; lecture sans donnée prête = 0/0/0 au lieu de la valeur précédente (L8) ; capteur à 0 g = activité maximale, une ligne de journal par épisode (M3b) | PC | `Bma400Math` (4, TrackerTests et Cyprus) | passent ; trois échouent avec l'ancien calcul (le 4e fige le calcul inchangé) | ✅ 29/10 |
+| | LinkIt SMD (banc) | `SCALR` 0,4 à 0,6 (calibration en place, à noter), `SCALR` 0,1 à 0,3 (lecture), puis `SCALW` 0,3 (auto-calibration) carte immobile, et de nouveau `SCALR` | lectures plausibles (\|g\| ≈ 1 au repos), calibration acceptée (`$O`), décalages proches des anciens si la carte n'a pas bougé. Remettre la calibration notée (`SCALW` 0,0 à 0,2) | ⬜ |
+| | RSPB | une session de mortalité complète | activité et score comme avant, aucune ligne `all axes ~0 g` | ⬜ |
 
 ---
 
