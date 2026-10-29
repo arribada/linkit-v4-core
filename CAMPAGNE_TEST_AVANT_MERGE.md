@@ -34,6 +34,7 @@ Avec ces corrections et compléments, établis au banc le 27 octobre 2026 :
 | Mesures de courant | **Le PPK doit être la seule alimentation.** USB branché, le PPK lit de 0 à environ la moitié du courant réel, selon le moment. Une mesure d'écart (A/B) reste visible mais sous-estimée ; une valeur absolue est fausse. |
 | Carte du banc LinkIt SMD | **Défectueuse** : elle consomme plus qu'une carte normale (environ 19 à 24 mA en veille). Ses valeurs absolues ne valent rien ; seuls les écarts mesurés sur elle comptent. Les valeurs absolues se mesurent sur une carte saine (une LinkIt KIM est disponible). |
 | GNSS sans position | La relance après démarrage à froid (`GNP23`, 60 s par défaut) relance une session chaque minute tant qu'aucune position n'a été obtenue, quelle que soit la période `ARP11`. |
+| Campagne DTE sans émission | **`--suite sans-radio`**, jamais `interieur`, qui contient les cas satellite (`ARG-`, `SURF-`, `MOD-`…). Le 29/10, ARG-03 a fait émettre le SMD de la carte du banc, port RF ouvert. **Une carte sans `IDP13`/`IDP14` n'est pas muette** : le module garde ses propres identifiants, et le 1er ping d'émersion en SURFACING_BURST ne vérifie pas ceux de la carte (laissé tel quel par l'utilisateur : ce ping ne doit pas être retardé). Le garde du harnais n'agit qu'après la 1re émission. |
 
 **Pilotage du PPK2 depuis WSL** : par le Python Windows, avec la bibliothèque `ppk2-api`
 installée dans `C:\Python314` et le script
@@ -209,7 +210,7 @@ LittleFS de 70 à 480 ms, dans un journal de 8192 entrées. Les services en écr
 | Compilation | matrice 7 variantes sur l'arbre final (avec `DBP02`), plus un build `DEBUG_LEVEL=2` : 0 avertissement ; build de banc, 0 avertissement | ✅ 27/10 |
 | Carte : console | cycle complet (démarrage, OP, session GNSS, veille, coupure, rallumage, entrée et sortie de configuration) : les sous-étapes apparaissent en `[DETAIL]`, les étapes en `[INFO]` | ✅ 27/10, build de banc SMD UART : 13 lignes `[INFO]` et 54 `[DETAIL]` sur le cycle |
 | Carte : journal flash | `DUMPD` du `system.log` après ce cycle : seules les lignes d'étape, compter les entrées ajoutées par session GNSS (5 attendues : `M10Q on`, `boot sync`, fin, rail, prochaine session) | ✅ 27/10 : les 5, plus « auto-poweroff timer fired » et sa replanification quand le rail est coupé. Vus à cette occasion : l'ERROR « error opening MGA ANO file » à **chaque** session, corrigé (désormais une fois par démarrage, ensuite `[DETAIL]`) ; le WARN de trame UBX à chaque allumage du M10Q, passé en `[DETAIL]` puis **remis en WARN le 28/10** : sa pause d'écriture flash espace les erreurs de la synchro du 1er allumage, sans elle la synchro échoue (2.12). L'ERROR `UBXCommsEventError: type=0c` reste lui aussi, pour la même raison |
-| Carte : harnais | une vague courte de `gnss_bench.py` ou `dte_campaign.py` sans émission : aucun cas cassé par un texte | ⬜ |
+| Carte : harnais | une vague courte de `gnss_bench.py` ou `dte_campaign.py --suite sans-radio` : aucun cas cassé par un texte | ⬜ |
 | Carte : émission | une émission avec antenne ou charge (accord requis) : une ligne `TX SUCCESS` en flash, les lignes KIM2/SMD en `[DETAIL]` | ⬜ |
 | Carte : `DBP02=2` | `PARMW DBP02=2`, sortie de configuration, même cycle : console inchangée, `DUMPD` ne contient que l'enregistrement de démarrage et les WARN/ERROR ; retour à `DBP02=3` ensuite | ✅ 27/10 : 6 entrées sur le cycle — le geste aimant et l'entrée en PreOperational (écrits avant que le niveau s'applique), puis par session le WARN de trame UBX (gardé, voir 2.12) et l'ERROR ANO (corrigé depuis, ligne ci-dessus). Console inchangée (15 `[INFO]`, 94 `[DETAIL]`). Retour à `DBP02=3` fait |
 | Carte : mise à jour | un firmware antérieur flashé puis celui-ci, magasin conservé : `DBP02` lu à 3, le reste de la configuration intact | ⬜ |
@@ -559,7 +560,7 @@ Chaque ligne renvoie à sa section, qui donne le protocole et le résultat atten
 | **Oscilloscope** | 2.11 ligne du reed (P1.03) sur la carte du banc, sans aimant |
 | **Ancien firmware** | 2.4 mise à jour depuis un firmware sans DBP02 (lu à 3) ; 2.8 mise à jour depuis la release v4.2.0 (configuration intacte) |
 | **Caméra** | 2.3 build `CAM_CONTROL=BUTTON`, `CAP06=AUTO`, alimentation par `CAM_PWR_EN` |
-| **Sans condition** (carte du banc) | 2.1 valeurs batterie, `STATR` répété, `SENSR`, seuil `LBP02`, 1re mesure au démarrage ; 2.4 une vague courte de `gnss_bench.py` ou `dte_campaign.py` sans émission |
+| **Sans condition** (carte du banc) | 2.1 valeurs batterie, `STATR` répété, `SENSR`, seuil `LBP02`, 1re mesure au démarrage ; 2.4 une vague courte de `gnss_bench.py` ou `dte_campaign.py --suite sans-radio` |
 | **Carte KIM2** (suite) | 2.14 identité lue au démarrage, puis 1re session ; 2.15 P1 (compteur d'échecs après 60 s) |
 | **Matériel CLS** (woodbuoy) | 2.14 trame woodbuoy reçue et décodée, baromètre et alimentation, buzzer |
 

@@ -146,7 +146,9 @@ répond **émet** même sans credentials chargés.
 code valide, relire, comparer ; puis écrire un code hors table et vérifier le refus
 par `DTE_PROTOCOL_VALUE_OUT_OF_RANGE` **sans que la valeur change**.
 
-`tests/bench/dte_campaign.py` couvre déjà une large campagne DTE sans émission radio.
+`tests/bench/dte_campaign.py --suite sans-radio` couvre déjà une large campagne DTE sans émission
+radio. La suite `interieur` contient en plus les cas satellite, qui **émettent** : le 29/10, ARG-03 a
+fait émettre le SMD d'une carte sans `IDP13`/`IDP14`, qui garde ses propres identifiants.
 
 Deux pièges, sinon on conclut à tort à un bug : `DEPTH_PILE` a une table où le code
 n'est **pas** la valeur (9→12, 10→16, 11→20, 12→24), et `GNSS_DYN_MODEL` n'a pas de
