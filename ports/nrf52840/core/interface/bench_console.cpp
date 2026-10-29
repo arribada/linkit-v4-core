@@ -19,6 +19,7 @@
 #include "debug.hpp"
 #include "is25_flash.hpp"
 #include "config_store.hpp"
+#include "filesystem.hpp"
 #include "ledsm.hpp"
 #include "rgb_led.hpp"
 
@@ -66,6 +67,7 @@ extern Scheduler *system_scheduler;
 extern Timer *system_timer;
 extern GPSService *gps_service;
 extern RTC *rtc;
+extern FileSystem *main_filesystem;
 #ifdef BENCH_TEST
 void bench_bootfail_read(unsigned int &, unsigned int &);
 extern uint32_t g_bench_vsys_restore_settled;  // nrf_pmu.cpp
@@ -944,6 +946,39 @@ static void bench_gpioteab(const std::string &line) {
 	}
 }
 
+/// @brief The regular files at the root of the file system, space separated.
+static std::string bench_root_files() {
+	if (!main_filesystem) return "no-fs";
+	main_filesystem->power_up();
+	lfs_t *lfs = static_cast<lfs_t *>(main_filesystem->get_private_data());
+	std::string out;
+	lfs_dir_t dir;
+	if (lfs_dir_open(lfs, &dir, "/") == 0) {
+		struct lfs_info info;
+		while (lfs_dir_read(lfs, &dir, &info) > 0)
+			if (info.type == LFS_TYPE_REG) out += std::string(info.name) + " ";
+		lfs_dir_close(lfs, &dir);
+	}
+	main_filesystem->power_down();
+	return out;
+}
+
+/// @brief %RECOVERY: the boot-fail recovery's factory reset now, then a reboot --
+/// what the FSM does after five failed boots (and, on LinkIt, 30 min of backoff),
+/// on demand, to watch it on a board. Identity and safety are kept, the state goes;
+/// the files at the root are listed before and after.
+static void bench_recovery() {
+	reply("%RECOVERY before " + bench_root_files());
+	try {
+		configuration_store->factory_reset_for_recovery();
+	} catch (...) {
+		reply("%RECOVERY ERR the factory reset threw");
+	}
+	reply("%RECOVERY after " + bench_root_files());
+	PMU::delay_ms(100);  // let the replies leave
+	PMU::reset(false);
+}
+
 static void bench_mem() {
 	// The two watermarks MemoryMonitorService only journals every 12 h, on demand:
 	// the stack peak since boot (stack painting) against the reserved size, and
@@ -978,7 +1013,8 @@ static void bench_swsraw(const std::string &line) {
 	}
 }
 
-/// @brief rails, pull-downs, GPIOTE, the satellite reset line, a raw SWS reading, memory
+/// @brief rails, pull-downs, GPIOTE, the satellite reset line, a raw SWS reading, memory,
+/// the boot-fail recovery on demand
 static bool handle_probe_cmd(const std::string &cmd, const std::string &line) {
 	if (cmd == "%SATRST") {
 		bench_satrst(line);
@@ -992,6 +1028,8 @@ static bool handle_probe_cmd(const std::string &cmd, const std::string &line) {
 		bench_swsraw(line);
 	} else if (cmd == "%MEM") {
 		bench_mem();
+	} else if (cmd == "%RECOVERY") {
+		bench_recovery();
 #ifdef VSYS_SEL
 	} else if (cmd == "%RAILS") {
 		bench_rails();

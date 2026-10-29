@@ -8,6 +8,7 @@
 #include <cctype>
 #include <cstring>
 #include <algorithm>
+#include <vector>
 #include "config_store.hpp"
 #include "filesystem.hpp"
 #include "debug.hpp"
@@ -681,6 +682,29 @@ private:
 		}
 	}
 
+	/// @brief What the boot-fail recovery keeps: the configuration it has just
+	/// rewritten, the calibrations it has just saved, and the last resort's records.
+	static bool kept_through_recovery(const std::string &name) {
+		static const std::string cal = ".CAL";
+		return name == "config.dat" || name == "config.bad" || name == RADIO_IDS_PENDING
+		       || (name.size() > cal.size() && name.compare(name.size() - cal.size(), cal.size(), cal) == 0);
+	}
+
+	/// @brief Every other file at the root goes, one by one: logs, the AOP, the GNSS
+	/// database, the OTA images. One that refuses does not stop the rest.
+	void remove_state_files() {
+		lfs_t *lfs = static_cast<lfs_t *>(m_filesystem.get_private_data());
+		std::vector<std::string> doomed;  // never remove while the directory is open
+		lfs_dir_t dir;
+		if (lfs_dir_open(lfs, &dir, "/") < 0) return;
+		struct lfs_info info;
+		while (lfs_dir_read(lfs, &dir, &info) > 0)
+			if (info.type == LFS_TYPE_REG && !kept_through_recovery(info.name)) doomed.emplace_back(info.name);
+		lfs_dir_close(lfs, &dir);
+		for (const std::string &name : doomed)
+			m_filesystem.remove(name.c_str());
+	}
+
 	static bool is_hex(const std::string &s) {
 		return !s.empty() && std::all_of(s.begin(), s.end(), [](char c) { return std::isxdigit((unsigned char)c); });
 	}
@@ -859,8 +883,22 @@ public:
 	/// @brief Factory reset: format flash, preserve DECID/HEXID + calibration data.
 	void factory_reset() override { format_and_restore(false); }
 
-	/// @brief The boot-fail recovery's factory reset: SAFETY_PARAMS kept as well.
-	void factory_reset_for_recovery() override { format_and_restore(true); }
+	/// @brief The boot-fail recovery's factory reset: SAFETY_PARAMS kept as well, and
+	/// no format (C5, user decision 2026-10-29). It runs on a tag already failing to
+	/// boot, often for want of power, so where a cut is most likely, and a cut between
+	/// the format and the rewrite left an empty file system: the identity was gone for
+	/// good. LittleFS commits a rewritten file on close, so a cut now leaves the old
+	/// config.dat or the new one, whole. What must start again from nothing is the
+	/// state, not the file system: the mount went through, or this boot would not be
+	/// here. FACTR, with an operator present, keeps the format.
+	void factory_reset_for_recovery() override {
+		FlashPowerScope power(m_filesystem);
+		serialize_protected_config(true);
+		save_calibration_data();
+		remove_state_files();
+		m_is_config_valid = false;
+		m_is_pass_predict_valid = false;
+	}
 
 	/// @brief main.cpp, before init(): the storage failure budget is spent, so an
 	/// unreadable config.dat may be started over (see start_over()).

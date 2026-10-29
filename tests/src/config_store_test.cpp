@@ -2111,6 +2111,36 @@ TEST_GROUP(ConfigStoreFlashFaults) {
 		mock().ignoreOtherCalls();
 	}
 
+	// C5: a provisioned tag about to take the boot-fail recovery -- identity, one
+	// safety parameter, one ordinary one -- with state files around it.
+	static constexpr const char *RCONF = "A1B2C3D4E5F60718293A4B5C6D7E8F90";
+	void provisioned_with_state(const std::vector<const char *> &extra_files = {}) {
+		delete store;
+		store = nullptr;
+		fs->umount();
+		fs->format();
+		fs->mount();
+		store = new LFSConfigurationStore(*fs);
+		store->init();
+		store->write_param(ParamID::ARGOS_DECID, 1234U);
+		store->write_param(ParamID::ARGOS_RADIOCONF, std::string(RCONF));
+		store->write_param(ParamID::LB_THRESHOLD, 33U);
+		store->write_param(ParamID::TR_NOM, 600U);
+		store->save_params();
+		std::vector<const char *> files = { "system.log", "sensor.log", "gnss_dbd.dat" };
+		files.insert(files.end(), extra_files.begin(), extra_files.end());
+		for (const char *name : files) {
+			LFSFile f(fs, name, LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC);
+			uint8_t buf[PAGE_SIZE] = {};
+			f.write(buf, sizeof(buf));
+		}
+	}
+
+	bool exists(const char *name) {
+		struct lfs_info info;
+		return fs->stat(name, &info) == 0;
+	}
+
 	static bool throws(const std::function<void()> &f) {
 		try {
 			f();
@@ -2344,6 +2374,68 @@ TEST(ConfigStoreFlashFaults, TheLoRaIdentityIsAdopted) {
 	store->init();
 	STRCMP_EQUAL(deveui.c_str(), store->read_param<std::string>(ParamID::LORA_DEVEUI).c_str());
 	CHECK_EQUAL(1U, store->read_param<unsigned int>(ParamID::LORA_NJM));
+}
+
+// --- C5: the boot-fail recovery no longer formats ---
+
+// It used to format, then rewrite: a cut in between left an empty file system and
+// the identity was gone for good. Cut after every program a whole recovery makes:
+// the identity always reads back, from the old config.dat or the new one.
+TEST(ConfigStoreFlashFaults, ACutAnywhereInTheRecoveryKeepsTheIdentity) {
+	provisioned_with_state();
+	flash->programmed.clear();
+	flash->record_progs = true;
+	store->factory_reset_for_recovery();
+	flash->record_progs = false;
+	const int whole = (int)flash->programmed.size();
+	CHECK(whole > 0);
+
+	for (int budget = 0; budget <= whole; budget++) {
+		provisioned_with_state();
+		flash->progs_left = budget;  // every program after it fails, as after a cut
+		throws([&]() { store->factory_reset_for_recovery(); });
+		flash->progs_left = -1;
+		remount();
+		reboot();
+		store->init();
+		const std::string at = "cut after " + std::to_string(budget) + " of " + std::to_string(whole) + " programs";
+		CHECK_EQUAL_TEXT(1234U, store->read_param<unsigned int>(ParamID::ARGOS_DECID), at.c_str());
+		STRCMP_EQUAL_TEXT(RCONF, store->read_param<std::string>(ParamID::ARGOS_RADIOCONF).c_str(), at.c_str());
+	}
+}
+
+// The configuration and the calibrations are rewritten, the last resort's records
+// kept; every other file goes. Identity and safety survive, the rest is default.
+TEST(ConfigStoreFlashFaults, TheRecoveryKeepsTheCalibrationAndDropsTheState) {
+	provisioned_with_state({ "SWS.CAL", "config.bad", "radio_ids.todo" });
+	CHECK_TRUE(exists("pass_predict.dat"));
+	store->factory_reset_for_recovery();
+	CHECK_TRUE(exists("config.dat"));
+	CHECK_TRUE(exists("SWS.CAL"));
+	CHECK_TRUE(exists("config.bad"));
+	CHECK_TRUE(exists("radio_ids.todo"));
+	CHECK_FALSE(exists("system.log"));
+	CHECK_FALSE(exists("sensor.log"));
+	CHECK_FALSE(exists("gnss_dbd.dat"));
+	CHECK_FALSE(exists("pass_predict.dat"));
+	reboot();
+	store->init();
+	CHECK_EQUAL(1234U, store->read_param<unsigned int>(ParamID::ARGOS_DECID));
+	STRCMP_EQUAL(RCONF, store->read_param<std::string>(ParamID::ARGOS_RADIOCONF).c_str());
+	CHECK_EQUAL(33U, store->read_param<unsigned int>(ParamID::LB_THRESHOLD));
+	CHECK_EQUAL(60U, store->read_param<unsigned int>(ParamID::TR_NOM));
+}
+
+// FACTR, with an operator present, keeps the full repair: it still formats.
+TEST(ConfigStoreFlashFaults, FactrStillFormats) {
+	provisioned_with_state({ "config.bad" });
+	store->factory_reset();
+	CHECK_FALSE(exists("config.bad"));
+	CHECK_FALSE(exists("system.log"));
+	reboot();
+	store->init();
+	CHECK_EQUAL(1234U, store->read_param<unsigned int>(ParamID::ARGOS_DECID));
+	CHECK_EQUAL(10U, store->read_param<unsigned int>(ParamID::LB_THRESHOLD));  // FACTR resets safety: factory 10 %
 }
 
 // PREVIPASS walks the records up to num_records, in a table of
