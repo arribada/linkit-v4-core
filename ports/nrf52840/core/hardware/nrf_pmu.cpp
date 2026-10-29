@@ -398,6 +398,28 @@ static void persist_rtc_for_next_boot() {
 	}
 }
 
+/// @brief Power-down step: release POWER_CONTROL and give its rail time to drop.
+/// Out of PMU::powerdown(), which the complexity ratchet pins.
+static void cut_power_control() {
+#if defined(POWER_CONTROL_PIN)
+	// Cut power control pin — on LinkIt V4 this de-asserts the VSYS latch.
+	// If the hardware pull-up keeps it HIGH (pseudo power-off), the soft reset
+	// that follows in powerdown() handles the actual shutdown. On boards with a
+	// real load switch, this cuts VDD directly.
+	DEBUG_TRACE("Attempt power off using power control pin");
+	GPIOPins::clear(POWER_CONTROL_PIN);
+#if defined(EXTERNAL_WAKEUP)
+	// On RSPB this pin only gates a board rail: reduce_power_rails() clears it in
+	// every deep idle and the nRF runs on. The TPL5111 cuts the nRF, on the
+	// MCU_DONE pulse that follows. Waiting 1 s for a load switch here was active
+	// CPU at every TPL wake, modulo skips included (2026-07 audit M5): a short settle.
+	PMU::delay_ms(20);
+#else
+	PMU::delay_ms(1000);  // Wait for load switch to take effect (if real power-off)
+#endif
+#endif
+}
+
 /// @brief Shut down device — save state, cut power rails, then reset or infinite sleep.
 void PMU::powerdown() {
 	// #if VALIDATION_LOG_ENABLE
@@ -527,15 +549,7 @@ void PMU::powerdown() {
 	GPIOPins::clear(VSYS_SEL);
 #endif
 
-#if defined(POWER_CONTROL_PIN)
-	// Cut power control pin — on LinkIt V4 this de-asserts the VSYS latch.
-	// If the hardware pull-up keeps it HIGH (pseudo power-off), the soft reset
-	// below handles the actual shutdown. On boards with a real load switch,
-	// this cuts VDD directly.
-	DEBUG_TRACE("Attempt power off using power control pin");
-	GPIOPins::clear(POWER_CONTROL_PIN);
-	PMU::delay_ms(1000);  // Wait for load switch to take effect (if real power-off)
-#endif
+	cut_power_control();
 
 #if defined(PSEUDO_POWER_OFF)
 	DEBUG_TRACE("Pseudo power off (soft reset with GPREGRET)");

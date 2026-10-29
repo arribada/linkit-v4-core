@@ -553,7 +553,7 @@ Chaque ligne renvoie à sa section, qui donne le protocole et le résultat atten
 | **Module SMD en firmware SPI** | 2.2 session SMD complète sans émission ; 2.3 caméra avec le SMD en SPI ; 2.6 trois émissions SMD SPI (accord RF) |
 | **Eau salée** | 2.9 trempage réel des électrodes (même relevé que `%SWSRAW`) |
 | **Carte KIM2** | 2.2 réveil par `SAT_WKUP` en mode BLIND et émission (accord RF) ; 2.8 changement de variante |
-| **Carte RSPB** | 2.1 jauge sur un cycle TPL ; 2.2 GNSS et SMD sur un cycle TPL ; 2.8 changement de variante ; 2.9 DBD à l'extinction de fin de cycle ; 2.12 synchro GNSS au réveil TPL ; 2.15 P1, P3 (coupures), P4 (`FAULT_INJECT` 1 à 4, PPK pour la coupure), P5 (échecs d'émission, reset de récupération), P6 (jauge) |
+| **Carte RSPB** | 2.1 jauge sur un cycle TPL ; 2.2 GNSS et SMD sur un cycle TPL ; 2.8 changement de variante ; 2.9 DBD à l'extinction de fin de cycle ; 2.12 synchro GNSS au réveil TPL ; 2.15 P1, P3 (coupures), P4 (`FAULT_INJECT` 1 à 4, PPK pour la coupure), P5 (échecs d'émission, reset de récupération), P6 (jauge), P7 (mortalité), P8 (extinction au PPK, lignes du journal) |
 | **Carte du banc, builds de validation** | 2.15 P4 : `FAULT_INJECT=2`, `=3`, `=4` sur la LinkIt SMD, puis reflash du build normal |
 | **Carte saine, PPK seule alimentation** | 2.2 courant absolu de veille GNSS |
 | **Carte saine** (reed sans rebonds) | 2.11 fronts du reed et mesure du coût ; 2.12 synchro du 1er allumage, HEAD puis arbre final |
@@ -708,6 +708,8 @@ démarre jamais, reflasher un build normal ensuite.**
 | P7 : BMA400. Calibration `SCALW` 3 moyennée sur les lectures réussies, **refusée** sous la moitié : l'ancienne reste dans `AXL.CAL` et `SCALW` répond une erreur (M1) ; lecture sans donnée prête = 0/0/0 au lieu de la valeur précédente (L8) ; capteur à 0 g = activité maximale, une ligne de journal par épisode (M3b) | PC | `Bma400Math` (4, TrackerTests et Cyprus) | passent ; trois échouent avec l'ancien calcul (le 4e fige le calcul inchangé) | ✅ 29/10 |
 | | LinkIt SMD (banc) | `SCALR` 0,4 à 0,6 (calibration en place, à noter), `SCALR` 0,1 à 0,3 (lecture), puis `SCALW` 0,3 (auto-calibration) carte immobile, et de nouveau `SCALR` | lectures plausibles (\|g\| ≈ 1 au repos), calibration acceptée (`$O`), décalages proches des anciens si la carte n'a pas bougé. Remettre la calibration notée (`SCALW` 0,0 à 0,2) | ⬜ |
 | | RSPB | une session de mortalité complète | activité et score comme avant, aucune ligne `all axes ~0 g` | ⬜ |
+| P8 : RSPB. Attente avant `MCU_DONE` ramenée de 1 s à 20 ms (M5). Journal flash (L12) : firmware inchangé, mesurer d'abord. Suspension du SMD gardée à travers les coupures TPL (D1) : **non fait** (décision du 29/10 : P5 borne déjà un réveil à 3 échecs, et un paramètre coûte ~216 o de RAM partout) | RSPB | build release, PPK seule alimentation : un réveil « pas son tour », puis un réveil complet, contre le build d'avant sur le même montage | la coupure arrive toujours, environ 1 s plus tôt dans les deux cas | ⬜ |
+| | RSPB | L12 : un réveil complet, puis `DUMPD` | nombre de lignes écrites dans `system.log` par réveil ; si le coût le justifie, `DBP02=2` dans le gabarit RSPB | ⬜ |
 
 ---
 
