@@ -690,8 +690,11 @@ target_sources(${RSPB_SIM_NAME} PRIVATE
     "${NRF_DIR}/core/hardware/lora_rak3172/lora_rak3172.cpp"
     "${NRF_DIR}/core/hardware/lora_rak3172/lora_rak3172_comm.cpp"
     "${NRF_DIR}/core/hardware/cdt/cdt.cpp"
+    "${NRF_DIR}/core/hardware/stc3117/Generic_I2C.c"
+    "${NRF_DIR}/core/hardware/stc3117/stc311x_gasgauge.c"
     "src/rspb_simulation.cpp"
     "src/rspb_recovery_test.cpp"
+    "src/rspb_gauge_test.cpp"
     "src/rspb_main.cpp"
     "fakes/memmang.cpp"
     "fakes/fake_bsp.cpp"
@@ -705,5 +708,8 @@ target_sources(${RSPB_SIM_NAME} PRIVATE
 
 set_source_files_properties(${ROOT_DIR}/libraries/prepass/previpass-PREPASS_V4.0/prepas.c ${ROOT_DIR}/libraries/prepass/previpass-PREPASS_V4.0/utils.c ${ROOT_DIR}/libraries/prepass/previpass_compat_layer/previpass.c
     PROPERTIES COMPILE_FLAGS "-Wno-unused-parameter -Wno-switch-enum -Wno-switch -Wno-double-promotion -Wno-conversion -Wno-sign-conversion -Wno-float-conversion -Wno-cast-align -Wno-missing-field-initializers")
+# ST's gauge driver, as delivered: in MixedMode_FSM_management, BATT_LOWBATT falls
+# into default, which sets the same state.
+set_source_files_properties(${NRF_DIR}/core/hardware/stc3117/stc311x_gasgauge.c PROPERTIES COMPILE_FLAGS "-Wno-implicit-fallthrough")
 
 target_link_libraries(${RSPB_SIM_NAME} PRIVATE CppUTest CppUTestExt ${CMAKE_THREAD_LIBS_INIT})

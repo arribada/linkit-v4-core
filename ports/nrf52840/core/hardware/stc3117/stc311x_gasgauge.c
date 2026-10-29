@@ -530,8 +530,11 @@ int STC31xx_GetRunningCounter(void)
 	/* read STC3117_REG_COUNTER */
 	status = STC31xx_ReadUnsignedWord16(STC311x_REG_COUNTER, &value);
 
+	/* On an I2C error, return the negative status itself: -1 stored in the
+	 * unsigned short came back as 65535, a counter past the ready mark, and the
+	 * caller's communication-error branch could never be taken. */
 	if(status < 0) //error
-		value = -1;
+		return status;
 
 	return ((int)value);
 }

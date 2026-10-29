@@ -6,6 +6,7 @@
 #include <cstdint>
 
 #include "stc3117_gasgauge.hpp"
+#include "icp402050_ocv.hpp"
 extern "C" {
 #include "Generic_I2C.h"
 #include "stc311x_BatteryInfo.h"
@@ -119,6 +120,13 @@ int GaugeBatteryMonitor::init() {
 		}
 		if (counter < 0) {
 			DEBUG_ERROR("STC3117: Communication error during startup");
+#if !STC3117_MIXED_MODE
+			// The start has set GG_RUN (~70 uA, against ~3 uA in standby) and
+			// shutdown() does nothing while m_is_init is false: stop the gauge
+			// here, best effort, or it runs until the next good read. Voltage
+			// mode only, as in internal_update(): mixed mode must keep running.
+			GasGauge_Stop();
+#endif
 			return -1;
 		}
 		nrf_delay_ms(STC3117_COUNTER_CHECK_MS);
@@ -165,7 +173,10 @@ int GaugeBatteryMonitor::i2c_write(int I2cSlaveAddr, int RegAddress, unsigned ch
 		return STC3117_OK;
 	}
 
-	if (NumberOfBytes > static_cast<int>(STC3117_MAX_BUFFER_LEN + sizeof(reg_addr))) {
+	// buffer[] holds reg_addr then the NumberOfBytes data bytes. The old bound
+	// (> LEN + sizeof(reg_addr)) let LEN and LEN + 1 through, one or two bytes
+	// past the buffer; a negative count would be a huge size_t to memcpy.
+	if (NumberOfBytes < 0 || NumberOfBytes + static_cast<int>(sizeof(reg_addr)) > STC3117_MAX_BUFFER_LEN) {
 		return STC3117_E_OUT_OF_RANGE;
 	}
 
@@ -202,47 +213,17 @@ int GaugeBatteryMonitor::check_i2c_device() {
 	return status;
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// RSPB battery cell — Renata ICP402050 (402050, 3.7 V 420 mAh LiPo)
-//
-// SINGLE SOURCE OF TRUTH for the OCV curve. Both consumers derive from these
-// two arrays so they can never drift:
-//   - the STC3117 chip OCV table  (GasGauge_DefaultInit, CUSTOM_BATTERY_OCV)
-//   - the voltage-based sanity estimate (estimate_soc_from_voltage below)
-// Rested-OCV deduced from a standard 4.2 V LiCoO2 shape anchored to this cell's
-// endpoints (datasheet ICP402050PR rev V02: 4.2 V charge / 3.0 V cutoff @0.2C;
-// the datasheet has no discharge graph). Refine ICP402050_OCV_MV[] with measured
-// rested-OCV points if you characterize the cell. Cell params (capacity, Rint,
-// Rsense, voltages) live in stc311x_BatteryInfo.h.
-// ─────────────────────────────────────────────────────────────────────────
-static constexpr unsigned int ICP402050_OCV_POINTS = 16;
-static const uint16_t ICP402050_OCV_MV[ICP402050_OCV_POINTS] = {
-	3300, 3440, 3510, 3560, 3600, 3630, 3655, 3675, 3700, 3740, 3800, 3835, 3875, 3955, 4060, 4180,
-};
-static const uint8_t ICP402050_OCV_SOC[ICP402050_OCV_POINTS] = {
-	0, 3, 6, 10, 15, 20, 25, 30, 40, 50, 60, 65, 70, 80, 90, 100,
-};
+// The cell's OCV curve (single source of truth) and the verdicts drawn from it
+// live in icp402050_ocv.hpp, where the host tests can reach them.
 
-// STC3117 OCV register LSB = 0.55 mV → reg = round(mV / 0.55) = round(mV * 100 / 55).
-static inline uint16_t stc3117_mv_to_ocv_reg(uint16_t mv) {
-	return static_cast<uint16_t>((static_cast<uint32_t>(mv) * 100u + 27u) / 55u);
-}
-
-// Voltage-based SOC estimate from the single-source ICP402050 OCV curve above.
-// Used as a sanity check when the STC3117 reports an implausible SOC after a
-// power cycle. Tracks the CUSTOM_BATTERY_OCV profile (the RSPB default).
-static uint8_t estimate_soc_from_voltage(uint16_t mv) {
-	if (mv <= ICP402050_OCV_MV[0]) return 0;
-	if (mv >= ICP402050_OCV_MV[ICP402050_OCV_POINTS - 1]) return 100;
-	for (unsigned int i = 1; i < ICP402050_OCV_POINTS; i++) {
-		if (mv <= ICP402050_OCV_MV[i]) {
-			uint32_t range_mv = ICP402050_OCV_MV[i] - ICP402050_OCV_MV[i - 1];
-			uint32_t range_soc = ICP402050_OCV_SOC[i] - ICP402050_OCV_SOC[i - 1];
-			return ICP402050_OCV_SOC[i - 1]
-			       + static_cast<uint8_t>((mv - ICP402050_OCV_MV[i - 1]) * range_soc / range_mv);
-		}
-	}
-	return 100;
+/// @brief Critical verdict of one sample, with a journal line when the voltage
+/// overrules a critical SOC (the gauge then disagrees with the cell).
+static bool critical_verdict(uint8_t soc, uint16_t mv, uint8_t critical_level) {
+	const bool critical = soc_and_voltage_critical(soc, mv, critical_level);
+	if (!critical && soc < critical_level)
+		DEBUG_WARN("STC3117: SOC %u%% < %u%% but %umV reads %u%%: not critical", soc, critical_level, mv,
+		           estimate_soc_from_voltage(mv));
+	return critical;
 }
 
 /// @brief Periodic update: read STC3117 via gas gauge task, apply SOC hysteresis, persist to .noinit RAM.
@@ -344,8 +325,10 @@ void GaugeBatteryMonitor::internal_update() {
 	m_last_level = level;
 	m_last_read_ok = true;  // gauge answered and gave data this cycle
 
-	// Set flags (both based on SOC level)
-	m_is_critical_voltage = m_filtered_values[1] < m_critical_level;
+	// Set flags: critical needs the voltage to agree with the SOC (see
+	// soc_and_voltage_critical); low stays on the SOC alone, as a false low only
+	// costs one wake in low-battery mode.
+	m_is_critical_voltage = critical_verdict(static_cast<uint8_t>(m_filtered_values[1]), mv, m_critical_level);
 	m_is_low_level = m_filtered_values[1] < m_low_level;
 }
 

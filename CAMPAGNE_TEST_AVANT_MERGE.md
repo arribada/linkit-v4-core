@@ -65,11 +65,11 @@ GNP01, GNP52, ARP01, CAP01 et GNP25 n'ont pas changé (1, 4294967295, 0, 0, 1).
 
 | # | Commande | Attendu |
 |---|---|---|
-| 1.1 | `cd tests && ./build/TrackerTests -p -xg SWS` | tout passe (1060/1060 au 28/10, après P3 de 2.15) |
-| 1.2 | `cd tests && ./build/TrackerTestsCyprus -p -xg SWS` | tout passe (1078/1078 au 28/10, après P3 de 2.15) |
+| 1.1 | `cd tests && ./build/TrackerTests -p -xg SWS` | tout passe (1064/1064 au 29/10, après P6 de 2.15) |
+| 1.2 | `cd tests && ./build/TrackerTestsCyprus -p -xg SWS` | tout passe (1082/1082 au 29/10, après P6 de 2.15) |
 | 1.3 | `cd tests && ./build/TrackerTests -p -g SWSAnalog`, puis `-g SWSAnalogFlash`, puis `-sg SWSLongRun -sn H45_FixedDelayClean_ControlDetectsSurfacings` | tout passe |
 | 1.4 | `cd tests && ./build/TurtleSimulation -v` | 11/11, dont les tests budget `BatteryAndBusyWaitWithinBudget` et `JournalAtWarnHoldsOnlyFaults` |
-| 1.5 | `cd tests && ./build/RSPBSimulation -v` | 10/10 |
+| 1.5 | `cd tests && ./build/RSPBSimulation -v` | 15/15 au 29/10, après P6 de 2.15 |
 | 1.6 | `python3 scripts/check_param_tables.py` | OK |
 | 1.7 | `python3 tools/check_cached_modulation_writes.py`, `scripts/check_doc_links.py`, `tools/check_battery_guard_callers.py` | OK |
 | 1.8 | `python3 tools/check_gpio_output_pulls.py` (nouveau) | OK |
@@ -552,7 +552,7 @@ Chaque ligne renvoie à sa section, qui donne le protocole et le résultat atten
 | **Module SMD en firmware SPI** | 2.2 session SMD complète sans émission ; 2.3 caméra avec le SMD en SPI ; 2.6 trois émissions SMD SPI (accord RF) |
 | **Eau salée** | 2.9 trempage réel des électrodes (même relevé que `%SWSRAW`) |
 | **Carte KIM2** | 2.2 réveil par `SAT_WKUP` en mode BLIND et émission (accord RF) ; 2.8 changement de variante |
-| **Carte RSPB** | 2.1 jauge sur un cycle TPL ; 2.2 GNSS et SMD sur un cycle TPL ; 2.8 changement de variante ; 2.9 DBD à l'extinction de fin de cycle ; 2.12 synchro GNSS au réveil TPL ; 2.15 P1, P3 (coupures), P4 (`FAULT_INJECT` 1 à 4, PPK pour la coupure) |
+| **Carte RSPB** | 2.1 jauge sur un cycle TPL ; 2.2 GNSS et SMD sur un cycle TPL ; 2.8 changement de variante ; 2.9 DBD à l'extinction de fin de cycle ; 2.12 synchro GNSS au réveil TPL ; 2.15 P1, P3 (coupures), P4 (`FAULT_INJECT` 1 à 4, PPK pour la coupure), P5 (échecs d'émission, reset de récupération), P6 (jauge) |
 | **Carte du banc, builds de validation** | 2.15 P4 : `FAULT_INJECT=2`, `=3`, `=4` sur la LinkIt SMD, puis reflash du build normal |
 | **Carte saine, PPK seule alimentation** | 2.2 courant absolu de veille GNSS |
 | **Carte saine** (reed sans rebonds) | 2.11 fronts du reed et mesure du coût ; 2.12 synchro du 1er allumage, HEAD puis arbre final |
@@ -701,6 +701,9 @@ démarre jamais, reflasher un build normal ensuite.**
 | | RSPB | même essai avec `SHUTDOWN_TIMER=600` | inchangé : la suspension, puis la coupure par le minuteur | ⬜ |
 | | RSPB | récupération automatique (5 démarrages ratés, `FAULT_INJECT=4`), puis un build normal : `PARMR` | `PWP01`, `PWP03`, `PWP04`, `PWP05`, `LBP01/02/12/14` gardés, les modes revenus aux défauts | ⬜ |
 | | LinkIt | `FACTR` | reset complet : `LBP01/02/12` reviennent aussi aux défauts | ⬜ |
+| P6 : jauge STC3117 du RSPB. « Critique » exige l'état de charge **et** la tension sous `LBP12` (H3a) ; une erreur I²C au démarrage de la jauge est vue et la jauge arrêtée (compteur, #7) ; borne de l'écriture I²C (#8). Jauge muette = batterie basse (H3b) : refusé, inchangé | PC | `RSPBGauge` (3, dans RSPBSimulation) | passent ; le verdict et le compteur échouent sans leur correctif | ✅ 29/10 |
+| | RSPB | réveil normal, jauge saine | `STC3117: V=… SOC=…` comme avant, aucune ligne `not critical`, courant de la jauge en veille inchangé (PPK) | ⬜ |
+| | RSPB | `LBP12` réglé au-dessus de l'état de charge lu, `LBP02` au-dessus de `LBP12` : SOC et tension sont alors d'accord | `BatteryCriticalState` et coupure immédiate, comme avant : le veto ne retient pas une vraie batterie critique. Remettre `LBP12` et `LBP02` : aimant au réveil, `BatteryCriticalState` passe alors en configuration | ⬜ |
 
 ---
 
