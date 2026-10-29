@@ -28,6 +28,7 @@
 #include "fake_timer.hpp"
 #include "fake_battery_mon.hpp"
 #include "mock_comparators.hpp"
+#include "rate_limiter.hpp"
 
 
 extern Timer *system_timer;
@@ -567,6 +568,43 @@ TEST(GPSShortSurface, DeepIdleRegimeSentinelWithoutPeerEventEntersIdle) {
 	increment_time_s(FIRST_AQPERIOD);
 	mock_m10q->notify_max_nav_samples();
 	CHECK_TRUE(mock_m10q->is_in_deep_idle());
+}
+
+/// A start refused by the rate limiter leaves the deep-idle window as it was.
+/// It used to cancel the auto-off and clear the window's start BEFORE asking the
+/// limiter: after the refusal nothing cut the rail any more, and the receiver
+/// stayed in backup, rail on, until the limiter let a session through (July audit
+/// L10). The turtle templates run the limiter with a finite GNP52.
+TEST(GPSShortSurface, RateLimitedStartLeavesTheDeepIdleWindowArmed) {
+	fake_config_store->write_param(ParamID::GNSS_DEEP_IDLE_AFTER_OFF_S, 600U);
+	fake_config_store->write_param(ParamID::RATE_LIMIT_EN, (bool)true);
+	fake_config_store->write_param(ParamID::RATE_LIMIT_WINDOW_S, 3600U);
+	fake_config_store->write_param(ParamID::RATE_LIMIT_MAX_TX, 1U);
+	RateLimiter::reset_for_tests();
+	fake_rtc->settime(1580083200);
+	GPSService s(*mock_m10q, fake_log);
+	s.start();
+
+	// One session, no fix: the receiver goes into a 600 s deep-idle window.
+	mock().expectOneCall("power_on").onObject(mock_m10q).ignoreOtherParameters();
+	increment_time_s(FIRST_AQPERIOD);
+	mock().expectOneCall("power_off").onObject(mock_m10q);
+	mock_m10q->notify_max_nav_samples();
+	CHECK_TRUE(mock_m10q->is_in_deep_idle());
+
+	// A transmission fills the limiter; a surfacing then asks for a session at once,
+	// and the limiter refuses it: no power_on.
+	RateLimiter::record_tx(fake_rtc->gettime());
+	notify_underwater_state(true);
+	notify_underwater_state(false);
+	increment_time_s(5);
+	mock().checkExpectations();
+
+	// The window still ends on time: the auto-off cuts the rail.
+	increment_time_s(600);
+	CHECK_EQUAL(1, mock_m10q->poweroff_from_deep_idle_calls());
+	CHECK_FALSE(mock_m10q->is_in_deep_idle());
+	RateLimiter::reset_for_tests();
 }
 
 TEST(GPSShortSurface, DeepIdleNeverOffSentinel) {

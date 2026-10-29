@@ -90,8 +90,19 @@ public:
 	void persist_soon() override { m_persist_soon_calls++; }
 	unsigned int persist_soon_calls() const { return m_persist_soon_calls; }
 
+	/// The rail cut at the end of a deep-idle window (the auto-off timer). The
+	/// base class makes it a no-op, so the mock stayed in deep idle for ever and no
+	/// test could see the window end. Counted, not mocked, like persist_soon():
+	/// every test that runs past a window reaches it.
+	void poweroff_from_deep_idle() override {
+		m_in_deep_idle = false;
+		m_poweroff_from_deep_idle_calls++;
+	}
+	unsigned int poweroff_from_deep_idle_calls() const { return m_poweroff_from_deep_idle_calls; }
+
 private:
 	unsigned int m_persist_soon_calls = 0;
+	unsigned int m_poweroff_from_deep_idle_calls = 0;
 	GPSNavSettings m_last_nav_settings{};
 	bool m_deep_idle_requested = false;
 	bool m_in_deep_idle = false;

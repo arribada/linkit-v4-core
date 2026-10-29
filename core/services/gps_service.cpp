@@ -899,6 +899,41 @@ void GPSService::service_initiate() {
 
 	m_initiate_retry_count = 0;  // past the re-entry gate: this slot is ours
 
+	// FIX 2026-05-23 (audit finding cross #2): re-check rate-limit at the
+	// service_initiate entry. service_next_schedule_in_ms gates rate-limited
+	// sessions, but when the framework's reschedule task fires (Service::
+	// reschedule posts a delayed task that calls service_initiate DIRECTLY,
+	// without re-running service_next_schedule_in_ms — see service.cpp:586),
+	// the gate check is bypassed. Without this re-check, a rate-limited GPS
+	// would still power-on at the rescheduled time, burning a full
+	// cold-acq window of current for a fix that can't be TX'd.
+	//
+	// Asked BEFORE the deep-idle window below is cancelled (2026-07 audit L10):
+	// a refused start used to leave the receiver in backup with no auto-off
+	// armed and no window start, both of which the rail cuts need, so the rail
+	// stayed on until the limiter let a session through.
+	{
+		unsigned int rl_reschedule_s = 0;
+		if (rtc && rtc->is_set() && RateLimiter::is_blocked(service_current_time(), rl_reschedule_s)) {
+			DEBUG_INFO("GPSService::service_initiate: rate-limited (reschedule_s=%u), aborting fire", rl_reschedule_s);
+			// GNSS MED #4 audit fix: cancel the safety-net timeout posted
+			// by Service::reschedule() just before this call. Otherwise it
+			// fires ~120 s later, triggers service_cancel + a redundant
+			// reschedule, and leaks scheduler slots. Over a year-long
+			// deployment with rate limiting active, these accumulate.
+			cancel_safety_timeout();
+			// Caller (Service::reschedule lambda) does not expect us to
+			// re-schedule ourselves — but if we just return, no further
+			// task fires. service_complete with shall_reschedule=true so
+			// the framework calls reschedule() which routes back through
+			// service_next_schedule_in_ms (which will return the same
+			// reschedule_s and re-arm the timer correctly).
+			m_is_active = false;
+			service_complete(nullptr, nullptr, true);
+			return;
+		}
+	}
+
 	// 2026-05 deep-idle refactor: cancel any pending auto-poweroff. We're about
 	// to acquire a fresh fix — the disposition will be re-armed at end of
 	// session via try_enter_deep_idle_or_poweroff().
@@ -933,36 +968,6 @@ void GPSService::service_initiate() {
 		VAL_GNSS("session_diag rtc_set=%u rtc=%u batt_mv=%u lb=%u anow=%u ano=%u first_fix=%u ntry=%u dead=%u",
 		         (unsigned)diag_rtc_set, rtc_now, diag_batt_mv, (unsigned)diag_lb, (unsigned)anow, (unsigned)ano,
 		         (unsigned)m_is_first_fix_found, m_cold_start_ntry, m_consecutive_dead_sessions);
-	}
-
-	// FIX 2026-05-23 (audit finding cross #2): re-check rate-limit at the
-	// service_initiate entry. service_next_schedule_in_ms gates rate-limited
-	// sessions, but when the framework's reschedule task fires (Service::
-	// reschedule posts a delayed task that calls service_initiate DIRECTLY,
-	// without re-running service_next_schedule_in_ms — see service.cpp:586),
-	// the gate check is bypassed. Without this re-check, a rate-limited GPS
-	// would still power-on at the rescheduled time, burning a full
-	// cold-acq window of current for a fix that can't be TX'd.
-	{
-		unsigned int rl_reschedule_s = 0;
-		if (rtc && rtc->is_set() && RateLimiter::is_blocked(service_current_time(), rl_reschedule_s)) {
-			DEBUG_INFO("GPSService::service_initiate: rate-limited (reschedule_s=%u), aborting fire", rl_reschedule_s);
-			// GNSS MED #4 audit fix: cancel the safety-net timeout posted
-			// by Service::reschedule() just before this call. Otherwise it
-			// fires ~120 s later, triggers service_cancel + a redundant
-			// reschedule, and leaks scheduler slots. Over a year-long
-			// deployment with rate limiting active, these accumulate.
-			cancel_safety_timeout();
-			// Caller (Service::reschedule lambda) does not expect us to
-			// re-schedule ourselves — but if we just return, no further
-			// task fires. service_complete with shall_reschedule=true so
-			// the framework calls reschedule() which routes back through
-			// service_next_schedule_in_ms (which will return the same
-			// reschedule_s and re-arm the timer correctly).
-			m_is_active = false;
-			service_complete(nullptr, nullptr, true);
-			return;
-		}
 	}
 
 	// If a backup-cell charge session is in flight (active or pending retry),
