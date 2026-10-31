@@ -110,3 +110,7 @@ int NrfSPIM::finish_transfer() {
 
 	return 0;
 }
+
+void NrfSPIM::set_frequency(uint32_t frequency) {
+	nrf_spim_frequency_set(BSP::SPI_Inits[m_instance].spim.p_reg, static_cast<nrf_spim_frequency_t>(frequency));
+}

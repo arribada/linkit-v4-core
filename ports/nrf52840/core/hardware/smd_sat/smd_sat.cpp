@@ -15,6 +15,7 @@
 #include "timer.hpp"
 #include "binascii.hpp"
 #include "smd_sat.hpp"
+#include "smd_dfu_image.hpp"
 #include "pmu.hpp"
 #include "modulation_guard.hpp"
 
@@ -1966,6 +1967,7 @@ bool SmdSat::write_credentials_from_config() {
 void SmdSat::set_credentials(unsigned int dec_id, unsigned int address, const std::string &seckey,
                              const std::string &radioconf) {
 	DEBUG_TRACE("SmdSat::%s", __func__);
+	if (refuse_while_in_bootloader(__func__)) return;
 	bool was_stopped = (m_state == SmdSatState::stopped);
 
 	auto wait_between_commands = []() -> bool {
@@ -2263,6 +2265,7 @@ void SmdSat::bench_parallel_probe(unsigned int nb_parallel, unsigned int retx_nb
 void SmdSat::read_credentials(unsigned int *dec_id, unsigned int *address, std::string *seckey,
                               std::string *radioconf) {
 	DEBUG_TRACE("SmdSat::%s", __func__);
+	if (refuse_while_in_bootloader(__func__)) return;
 	bool was_stopped = (m_state == SmdSatState::stopped);
 
 	if (was_stopped) {
@@ -2493,6 +2496,7 @@ void SmdSat::restore_cached_modulation(KineisModulation mode) {
 
 bool SmdSat::resync_rconf_cache() {
 	if (m_state != SmdSatState::stopped || !configuration_store || !can_transmit()) return false;
+	if (refuse_while_in_bootloader(__func__)) return false;
 
 	DEBUG_INFO("SmdSat::%s: master modulation not trusted — one-time read-back of the master RCONF", __func__);
 	bool ok = false;
@@ -2538,24 +2542,29 @@ bool SmdSat::resync_rconf_cache() {
 // DFU (delegates to command layer)
 // ============================================================================
 
+bool SmdSat::refuse_while_in_bootloader(const char *caller) const {
+	if (!m_cmd.is_dfu_mode()) return false;
+	DEBUG_WARN("SmdSat::%s: refused, the module is in its bootloader (unfinished update: send the image again)",
+	           caller);
+	return true;
+}
+
 bool SmdSat::dfu_enter() {
 	DEBUG_TRACE("SmdSat::%s", __func__);
 
 	bool was_stopped = (m_state == SmdSatState::stopped);
+	// An earlier attempt that erased the application left the module powered in
+	// its bootloader: no reset, no power cycle now. A bootloader without the
+	// page-0 trampoline would boot the erased vector table.
+	const bool held = m_cmd.is_dfu_mode();
 
-	if (was_stopped) {
-		GPIOPins::acquire_sensors_pwr();
-		GPIOPins::set(SAT_PWR_EN);
-		PMU::kick_watchdog();
-		nrf_delay_ms(smdsat_delay_power_on_ms());
-		PMU::kick_watchdog();
-		nrf_delay_ms(smdsat_delay_power_on_ms());
-#ifdef SMD_VPA_PIN
-		GPIOPins::release_to_highz(SMD_VPA_PIN);
-#endif
-
-		// Only init SPI if it wasn't already running
-		m_cmd.init();
+	if (was_stopped && !held) {
+		// The sequence every other blocking path uses: reset held through the
+		// ramp, EXTWAKEUP high on LinkIt, transport init, then a wait for the
+		// application. The power-up that stood here did none of the first two
+		// and waited 125 ms: the SMD UART module never answered AT+BOOT
+		// (bench 2026-10-30).
+		power_on_blocking();
 	}
 	// If SPI is already active (not stopped), do NOT re-init — dfu_enter() handles protocol reset
 
@@ -2564,13 +2573,11 @@ bool SmdSat::dfu_enter() {
 
 	bool result = m_cmd.dfu_enter();
 
-	if (!result) {
-		if (was_stopped) {
-			m_cmd.deinit();
-			shutdown();
-			GPIOPins::release_sensors_pwr();
-			nrf_gpio_cfg_default(BSP::GPIO_Inits[SAT_RESET].pin_number);
-		}
+	if (!result && was_stopped && !held) {
+		m_cmd.deinit();
+		shutdown();
+		GPIOPins::release_sensors_pwr();
+		nrf_gpio_cfg_default(BSP::GPIO_Inits[SAT_RESET].pin_number);
 	}
 
 	return result;
@@ -2646,7 +2653,7 @@ SmdDfuResponse SmdSat::firmware_update(const uint8_t *firmware, size_t size,
 
 	while (remaining > 0) {
 		uint16_t chunk_size =
-		    (remaining > SMDSAT_DFU_CHUNK_SIZE) ? SMDSAT_DFU_CHUNK_SIZE : static_cast<uint16_t>(remaining);
+		    (remaining > m_cmd.dfu_chunk_size()) ? m_cmd.dfu_chunk_size() : static_cast<uint16_t>(remaining);
 
 		PMU::kick_watchdog();
 
@@ -2710,14 +2717,28 @@ SmdDfuResponse SmdSat::firmware_update(const uint8_t *firmware, size_t size,
 	return DFU_RSP_OK;
 }
 
+/// @brief What the streamed firmware_update() checks before it reaches the module.
+///
+/// The staged image is checked here, not left to the bootloader: dfu_erase() wipes
+/// the module's application before a byte of the new image is sent (see
+/// smd_dfu_staged_image_ok()).
+static SmdDfuResponse staged_image_precheck(File *file, size_t size, uint32_t stm32_crc32) {
+	if (file == nullptr || size == 0) return DFU_RSP_ERROR;
+
+	if (!smd_dfu_staged_image_ok(*file, size, stm32_crc32)) {
+		DEBUG_ERROR("SmdSat: staged image does not match CRC32=0x%08X | module left untouched", stm32_crc32);
+		return DFU_RSP_CRC_ERROR;
+	}
+	return DFU_RSP_OK;
+}
+
 SmdDfuResponse SmdSat::firmware_update(File *file, size_t size, uint32_t stm32_crc32,
                                        void (*progress_callback)(uint8_t percent)) {
 	DEBUG_INFO("SmdSat::%s: Starting streamed firmware update | size=%u bytes | CRC32=0x%08X", __func__,
 	           static_cast<unsigned>(size), stm32_crc32);
 
-	if (file == nullptr || size == 0) {
-		return DFU_RSP_ERROR;
-	}
+	const SmdDfuResponse precheck = staged_image_precheck(file, size, stm32_crc32);
+	if (precheck != DFU_RSP_OK) return precheck;
 
 	if (!m_cmd.dfu_supported()) {
 		return DFU_RSP_ERROR;
@@ -2761,7 +2782,7 @@ SmdDfuResponse SmdSat::firmware_update(File *file, size_t size, uint32_t stm32_c
 
 	while (remaining > 0) {
 		uint16_t chunk_size =
-		    (remaining > SMDSAT_DFU_CHUNK_SIZE) ? SMDSAT_DFU_CHUNK_SIZE : static_cast<uint16_t>(remaining);
+		    (remaining > m_cmd.dfu_chunk_size()) ? m_cmd.dfu_chunk_size() : static_cast<uint16_t>(remaining);
 
 		PMU::kick_watchdog();
 
@@ -2831,6 +2852,7 @@ SmdDfuResponse SmdSat::firmware_update_from_file(const std::string &filepath,
 
 bool SmdSat::cw_start(uint32_t freq_hz, uint16_t power_dbm, uint16_t duration_s) {
 	DEBUG_INFO("SmdSat::cw_start: %lu Hz, %u dBm, %u s", (unsigned long)freq_hz, power_dbm, duration_s);
+	if (refuse_while_in_bootloader(__func__)) return false;
 
 	bool was_stopped = (m_state == SmdSatState::stopped);
 	if (was_stopped) {
@@ -2877,6 +2899,7 @@ bool SmdSat::cw_stop() {
 
 std::string SmdSat::get_firmware_version() {
 	DEBUG_TRACE("SmdSat::%s", __func__);
+	if (refuse_while_in_bootloader(__func__)) return "";
 
 	bool was_stopped = (m_state == SmdSatState::stopped);
 
@@ -2926,6 +2949,7 @@ std::string SmdSat::get_firmware_version() {
 }
 
 std::string SmdSat::smd_spi_test() {
+	if (refuse_while_in_bootloader(__func__)) return "refused: module in its bootloader, send the image again";
 	bool was_stopped = (m_state == SmdSatState::stopped);
 
 	if (was_stopped) {

@@ -269,7 +269,7 @@ namespace BSP
                 .ss_active_high = false,
                 .irq_priority = INTERRUPT_PRIORITY_SPI_2,
                 .orc = 0xFF, // Over-run character
-                .frequency = NRF_SPIM_FREQ_2M,  // STM32WL Protocol A+ requires ≤125K (DMA re-arm timing)
+                .frequency = NRF_SPIM_FREQ_2M,  // Application link; the bootloader DFU runs at SMDSAT_DFU_SPI_FREQUENCY
                 .mode = NRF_SPIM_MODE_0,
                 .bit_order = NRF_SPIM_BIT_ORDER_MSB_FIRST
             }

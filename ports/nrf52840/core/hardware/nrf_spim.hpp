@@ -18,6 +18,8 @@ public:
 	int transfer(const uint8_t *tx_data, uint8_t *rx_data, uint16_t size) override;
 	int transfer_continuous(const uint8_t *tx_data, uint8_t *rx_data, uint16_t size) override;
 	int finish_transfer() override;
+	// SCK frequency (an nrf_spim_frequency_t value), between transfers only
+	void set_frequency(uint32_t frequency);
 };
 
 #endif  // _NRF_SPIM_HPP__

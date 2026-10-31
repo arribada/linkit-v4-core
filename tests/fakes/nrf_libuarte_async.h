@@ -164,6 +164,13 @@ void nrf_libuarte_tx_log_clear(void);
 size_t nrf_libuarte_tx_log_size(void);
 const uint8_t *nrf_libuarte_tx_log_data(void);
 
+// Optional peer for request/response drivers: called after each transmission
+// with what was sent, it writes the receiver's answer into reply (at most
+// reply_max bytes) and returns its length, which is then received as RX data.
+// NULL (the default) answers nothing.
+typedef size_t (*nrf_libuarte_responder_t)(const uint8_t *sent, size_t sent_len, uint8_t *reply, size_t reply_max);
+void nrf_libuarte_set_responder(nrf_libuarte_responder_t responder);
+
 /** @} */
 
 #ifdef __cplusplus

@@ -128,6 +128,11 @@ private:
 	// DFU state
 	bool m_dfu_mode;
 	SmdDfuInfo m_dfu_info;
+	// ERASE was sent and no VERIFY has passed since: the module may have no
+	// application left. Survives init(): only a passing VERIFY clears it.
+	bool m_dfu_erased = false;
+	// The last VERIFY passed: the bootloader has left for the application.
+	bool m_dfu_validated = false;
 
 	// Last TX status — populated by is_tx_finished() when it returns true.
 	// Used by is_tx_successful() to distinguish MAC_TX_DONE (real success)

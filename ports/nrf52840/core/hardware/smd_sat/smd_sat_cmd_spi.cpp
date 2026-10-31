@@ -1213,7 +1213,9 @@ SmdDfuResponse SmdSatCmdSpi::dfu_send_command(uint8_t cmd, const uint8_t *data, 
 	}
 
 	if (!has_valid_response(rx_buf, DFU_TRANSACTION_SIZE)) {
-		DEBUG_ERROR("SmdSatCmdSpi::%s: No valid response after %u retries", __func__, DFU_BUSY_RETRY_COUNT);
+		DEBUG_ERROR("SmdSatCmdSpi::%s: no valid response to 0x%02X after %u polls, rx %02X%02X%02X%02X%02X%02X%02X%02X",
+		            __func__, cmd, DFU_BUSY_RETRY_COUNT, rx_buf[0], rx_buf[1], rx_buf[2], rx_buf[3], rx_buf[4],
+		            rx_buf[5], rx_buf[6], rx_buf[7]);
 		m_sequence_number++;
 		return DFU_RSP_ERROR;
 	}
@@ -1340,6 +1342,9 @@ SmdDfuResponse SmdSatCmdSpi::dfu_get_info(SmdDfuInfo *info) {
 SmdDfuResponse SmdSatCmdSpi::dfu_erase() {
 	DEBUG_INFO("SmdSatCmdSpi::%s: Erasing application flash (~2-3 seconds)...", __func__);
 
+	// An erase that fails half way has erased pages all the same.
+	m_dfu_erased = true;
+	m_dfu_validated = false;
 	SmdDfuResponse result = dfu_send_command(SMDSAT_CMD_DFU_ERASE, nullptr, 0, nullptr, nullptr);
 
 	if (result == DFU_RSP_OK) {
@@ -1432,6 +1437,8 @@ SmdDfuResponse SmdSatCmdSpi::dfu_verify(uint32_t crc32) {
 	SmdDfuResponse result = dfu_send_command(SMDSAT_CMD_DFU_VERIFY, crc_data, 4, nullptr, nullptr);
 
 	if (result == DFU_RSP_OK) {
+		m_dfu_validated = true;
+		m_dfu_erased = false;
 		DEBUG_INFO("SmdSatCmdSpi::%s: CRC verification passed", __func__);
 	} else {
 		DEBUG_ERROR("SmdSatCmdSpi::%s: CRC verification failed", __func__);
@@ -1449,15 +1456,20 @@ SmdDfuResponse SmdSatCmdSpi::dfu_reset() {
 SmdDfuResponse SmdSatCmdSpi::dfu_jump() {
 	DEBUG_INFO("SmdSatCmdSpi::%s: Jumping to application...", __func__);
 
-	SmdDfuResponse result = dfu_send_command(SMDSAT_CMD_DFU_JUMP, nullptr, 0, nullptr, nullptr);
+	// After a passing VERIFY the bootloader has jumped on its own: a JUMP would
+	// reach the application, which does not know it, and answer nothing.
+	if (!m_dfu_validated) {
+		SmdDfuResponse result = dfu_send_command(SMDSAT_CMD_DFU_JUMP, nullptr, 0, nullptr, nullptr);
 
-	// Device may not respond after jump - that's OK (it has already jumped)
-	if (result != DFU_RSP_OK) {
-		DEBUG_WARN("SmdSatCmdSpi::%s: Jump response: 0x%02X (device may have jumped)", __func__,
-		           static_cast<int>(result));
+		// Device may not respond after jump - that's OK (it has already jumped)
+		if (result != DFU_RSP_OK) {
+			DEBUG_WARN("SmdSatCmdSpi::%s: Jump response: 0x%02X (device may have jumped)", __func__,
+			           static_cast<int>(result));
+		}
 	}
 
 	m_dfu_mode = false;
+	m_nrf_spim->set_frequency(BSP::SPI_Inits[SPI_SATELLITE].config.frequency);
 	nrf_delay_ms(SMDSAT_DFU_RESET_DELAY_MS);
 
 	return DFU_RSP_OK;  // Always return OK — no response means jump succeeded
@@ -1498,14 +1510,13 @@ SmdDfuResponse SmdSatCmdSpi::dfu_set_header(const uint8_t *header) {
 // STEP 1: SYNC with running app (5x 0xFF frames → expect 0xAA idle)
 // STEP 2: PING APP (cmd 0x02) to confirm app is running
 // STEP 3: DFU_ENTER (cmd 0x3F, send-only — STM32 jumps to bootloader)
-// STEP 4: ACTIVE POLL — send SPI sync frames immediately to lock bootloader
-//         into SPI mode (bootloader has 3s UART/SPI detection race!)
+// STEP 4: ACTIVE POLL — send SPI sync frames until the bootloader answers
 // STEP 5: DFU PING (cmd 0x30) with retries to confirm bootloader ready
 //
-// CRITICAL: The STM32 bootloader races UART vs SPI for 3 seconds after boot.
-// The first interface to send valid data wins. If we wait silently, UART noise
-// on PA3 can trigger false detection → bootloader deinitializes SPI → all zeros.
-// Solution: start sending SPI transactions ASAP after DFU_ENTER (~100ms).
+// DFU_ENTER makes the bootloader start straight in SPI, with no transport
+// detection. It only races UART against SPI for 3 s when it starts with no
+// protocol set: after a power cut that followed an ERASE (trampoline of the
+// 2026-10 bootloader). Then any byte on its UART RX locks it in UART.
 
 // ============================================================================
 // DFU high-level (SPI-specific communication sequence)
@@ -1518,6 +1529,15 @@ bool SmdSatCmdSpi::dfu_enter() {
 	m_protocol_mode = SpiProtocolMode::APLUS;
 	m_protocol_detected = true;
 	m_sequence_number = 0;
+
+	// The bootloader is a software-polled SPI slave with a 4-byte FIFO. At the
+	// 2 MHz of the application link, every DFU died in the middle of the writes
+	// (bench 2026-10-31: request CRC refused, then silence, after 5 to 150
+	// chunks); at 125 kHz it went through. 125 kHz is also the clock of the whole
+	// link in v4.0.6-v4.0.9, whose DFU worked: 37f5d397 (v4.1.0) moved the link to
+	// 2 MHz and broke it. The whole DFU runs slower; dfu_jump(), dfu_exit() and
+	// init() restore the clock.
+	m_nrf_spim->set_frequency(SMDSAT_DFU_SPI_FREQUENCY);
 
 	// STEP 1: SYNC with APP (5x 0xFF frames)
 	DEBUG_INFO("SmdSatCmdSpi::%s: STEP 1 - SPI sync with app...", __func__);
@@ -1552,6 +1572,7 @@ bool SmdSatCmdSpi::dfu_enter() {
 			if (bl_ping == DFU_RSP_OK) {
 				DEBUG_INFO("SmdSatCmdSpi::%s: Already in BOOTLOADER mode!", __func__);
 				m_dfu_mode = true;
+				m_dfu_validated = false;
 				return true;
 			}
 			DEBUG_WARN("SmdSatCmdSpi::%s: No response | trying DFU_ENTER anyway...", __func__);
@@ -1628,6 +1649,7 @@ bool SmdSatCmdSpi::dfu_enter() {
 			if (bl_ping == DFU_RSP_OK) {
 				DEBUG_INFO("SmdSatCmdSpi::%s: BOOTLOADER PING OK!", __func__);
 				m_dfu_mode = true;
+				m_dfu_validated = false;
 				return true;
 			}
 
@@ -1640,17 +1662,33 @@ bool SmdSatCmdSpi::dfu_enter() {
 	return false;
 }
 
+// Leave the bootloader without a new image. JUMP is refused until a VERIFY has
+// passed, so the way back to an application that was never erased is RESET.
+// Once ERASE has run, nothing may restart the module before a VERIFY passes: on
+// a bootloader without the page-0 trampoline it would boot the erased vector
+// table, and only SWD would bring it back. It stays in its bootloader, powered,
+// for the image to be sent again.
 bool SmdSatCmdSpi::dfu_exit() {
 	if (!m_dfu_mode) {
 		return true;
 	}
 
-	SmdDfuResponse result = dfu_jump();
-	if (result == DFU_RSP_OK) {
-		m_dfu_mode = false;
+	if (m_dfu_validated) {
+		dfu_jump();
 		return true;
 	}
-	return false;
+	if (m_dfu_erased) {
+		DEBUG_ERROR("SmdSatCmdSpi::%s: application erased, no image verified: module left in its bootloader, "
+		            "send the image again",
+		            __func__);
+		return false;
+	}
+	// The reset may answer nothing: its absence is not a failure.
+	dfu_reset();
+	m_dfu_mode = false;
+	m_nrf_spim->set_frequency(BSP::SPI_Inits[SPI_SATELLITE].config.frequency);
+	nrf_delay_ms(SMDSAT_DFU_RESET_DELAY_MS);
+	return true;
 }
 
 bool SmdSatCmdSpi::dfu_get_bootloader_info(SmdDfuInfo *info) {

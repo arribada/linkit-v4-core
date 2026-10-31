@@ -185,6 +185,8 @@ public:
 		return DFU_RSP_ERROR;
 	}
 	virtual SmdDfuResponse dfu_jump() { return DFU_RSP_ERROR; }
+	/// @brief Largest chunk dfu_write_chunk() takes on this transport.
+	virtual uint16_t dfu_chunk_size() const { return SMDSAT_DFU_CHUNK_SIZE; }
 	virtual uint32_t calculate_crc32(const uint8_t *data, size_t len) {
 		(void)data;
 		(void)len;

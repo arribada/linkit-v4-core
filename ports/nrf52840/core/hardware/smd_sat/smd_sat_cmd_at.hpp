@@ -102,6 +102,7 @@ public:
 	SmdDfuResponse dfu_read_chunk(uint32_t addr, uint8_t *data, uint16_t len) override;
 	SmdDfuResponse dfu_verify(uint32_t crc32) override;
 	SmdDfuResponse dfu_jump() override;
+	uint16_t dfu_chunk_size() const override { return SMDSAT_DFU_UART_CHUNK_SIZE; }
 	uint32_t calculate_crc32(const uint8_t *data, size_t len) override;
 
 	// Debug / test
@@ -146,13 +147,24 @@ private:
 	// DFU state
 	bool m_dfu_mode;
 	std::string m_dfu_resp_data;
+	// What the bootloader's last "+DFU=ERR,<NAME>" said, DFU_RSP_OK otherwise.
+	SmdDfuResponse m_dfu_error = DFU_RSP_OK;
+	// VERIFY answered VALIDATED: the bootloader has already left for the
+	// application, so there is nothing left to send a JUMP to.
+	bool m_dfu_validated = false;
+	// ERASE was sent and no VERIFY has passed since: the module may have no
+	// application left. Survives init(): only a passing VERIFY clears it.
+	bool m_dfu_erased = false;
 
 	// Low-level AT operations (use NrfUartAsync for UART)
 	bool send_at(const std::string &cmd, uint16_t timeout_ms = 2000);
 	bool send_at_with_data(const std::string &cmd, std::string &response_data, uint16_t timeout_ms = 2000);
-	bool send_dfu(uint8_t cmd_id, const std::string &hex_data = "", uint16_t timeout_ms = 5000);
-	bool send_dfu_with_data(uint8_t cmd_id, const std::string &hex_data, std::string &response_data,
-	                        uint16_t timeout_ms = 5000);
+	/// @brief Send "AT+DFU=<command>" (a name, then its arguments: "WRITE,<addr>,<hex>")
+	/// and wait for the bootloader's "+DFU=OK" or "+DFU=ERR,<NAME>".
+	bool send_dfu(const std::string &command, uint16_t timeout_ms = 5000);
+	bool send_dfu_with_data(const std::string &command, std::string &response_data, uint16_t timeout_ms = 5000);
+	/// @brief The code of a failed send_dfu(): the bootloader's error, or a timeout.
+	SmdDfuResponse dfu_failure() const { return (m_dfu_error != DFU_RSP_OK) ? m_dfu_error : DFU_RSP_TIMEOUT; }
 
 	// Response parsing
 	void parse_response(const std::string &line);

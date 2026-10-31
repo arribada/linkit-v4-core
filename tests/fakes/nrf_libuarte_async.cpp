@@ -58,6 +58,12 @@ void nrf_libuarte_async_set_timeout(const nrf_libuarte_async_t *const p_libuarte
 	DEBUG_TRACE("nrf_libuarte_async_set_timeout");
 }
 
+static nrf_libuarte_responder_t s_responder = nullptr;
+
+void nrf_libuarte_set_responder(nrf_libuarte_responder_t responder) {
+	s_responder = responder;
+}
+
 ret_code_t nrf_libuarte_async_tx(const nrf_libuarte_async_t *const p_libuarte, uint8_t *p_data, size_t length) {
 	(void)p_libuarte;
 	if (p_data && length) s_tx_log.insert(s_tx_log.end(), p_data, p_data + length);
@@ -65,6 +71,17 @@ ret_code_t nrf_libuarte_async_tx(const nrf_libuarte_async_t *const p_libuarte, u
 	nrf_libuarte_async_evt_t evt;
 	evt.type = NRF_LIBUARTE_ASYNC_EVT_TX_DONE;
 	m_evt_callback(m_context, &evt);
+	if (s_responder && p_data && length) {
+		static uint8_t reply[512];
+		size_t n = s_responder(p_data, length, reply, sizeof(reply));
+		if (n) {
+			nrf_libuarte_async_evt_t rx;
+			rx.type = NRF_LIBUARTE_ASYNC_EVT_RX_DATA;
+			rx.data.rxtx.length = n;
+			rx.data.rxtx.p_data = reply;
+			nrf_libuarte_inject_event(&rx);
+		}
+	}
 	return 0;
 }
 

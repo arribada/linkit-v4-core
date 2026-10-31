@@ -20,6 +20,32 @@
 #include <cstdio>
 #include <algorithm>
 
+namespace {
+// The bootloader names its errors on the UART ("+DFU=ERR,CRC_ERROR", bl_uart.c
+// of argos-smd-at-kineis-firmware), the same set the SPI frames carry as codes.
+SmdDfuResponse dfu_error_from_name(const std::string &name) {
+	static const struct {
+		const char *name;
+		SmdDfuResponse code;
+	} names[] = {
+		{ "CRC_ERROR", DFU_RSP_CRC_ERROR },
+		{ "ADDR_ERROR", DFU_RSP_ADDR_ERROR },
+		{ "SIZE_ERROR", DFU_RSP_SIZE_ERROR },
+		{ "FLASH_ERROR", DFU_RSP_FLASH_ERROR },
+		{ "BUSY", DFU_RSP_BUSY },
+		{ "INVALID_CMD", DFU_RSP_INVALID_CMD },
+		{ "TIMEOUT", DFU_RSP_TIMEOUT },
+		{ "NOT_READY", DFU_RSP_NOT_READY },
+		{ "INVALID_HEADER", DFU_RSP_INVALID_HEADER },
+		{ "VERIFY_ERROR", DFU_RSP_VERIFY_ERROR },
+	};
+	for (const auto &n : names) {
+		if (name == n.name) return n.code;
+	}
+	return DFU_RSP_ERROR;
+}
+}  // namespace
+
 // ============================================================================
 // Constructor / Destructor — delegate to NrfUartAsync
 // ============================================================================
@@ -133,6 +159,7 @@ void SmdSatCmdAt::parse_response(const std::string &line) {
 				m_dfu_resp_data.clear();
 			}
 		} else if (dfu_resp.compare(0, 3, "ERR") == 0) {
+			m_dfu_error = dfu_error_from_name(dfu_resp.size() > 4 ? dfu_resp.substr(4) : std::string());
 			m_resp_error = true;
 			m_resp_ok = true;
 			DEBUG_WARN("SmdSatCmdAt: DFU error: %s", dfu_resp.c_str());
@@ -256,17 +283,17 @@ bool SmdSatCmdAt::send_at_with_data(const std::string &cmd, std::string &respons
 	return true;
 }
 
-bool SmdSatCmdAt::send_dfu(uint8_t cmd_id, const std::string &hex_data, uint16_t timeout_ms) {
-	std::string cmd = "AT+DFU=" + std::to_string(cmd_id);
-	if (!hex_data.empty()) {
-		cmd += "," + hex_data;
-	}
-
+// The bootloader takes command NAMES (bl_main.c of argos-smd-at-kineis-firmware:
+// PING, INFO, ERASE, WRITE, READ, VERIFY, JUMP, RESET, STATUS, ABORT). The numeric
+// ids this layer used to send ("AT+DFU=1" for PING) are unknown commands to it:
+// no UART update could ever get past dfu_enter().
+bool SmdSatCmdAt::send_dfu(const std::string &command, uint16_t timeout_ms) {
 	m_resp_ok = false;
 	m_resp_error = false;
+	m_dfu_error = DFU_RSP_OK;
 	m_dfu_resp_data.clear();
 
-	if (!send_string(cmd + "\r\n")) return false;
+	if (!send_string("AT+DFU=" + command + "\r\n")) return false;
 
 	while (!m_resp_ok && timeout_ms > 0) {
 		if (timeout_ms % 500 == 0) PMU::kick_watchdog();
@@ -275,12 +302,13 @@ bool SmdSatCmdAt::send_dfu(uint8_t cmd_id, const std::string &hex_data, uint16_t
 		timeout_ms--;
 	}
 
+	// "+ERROR=" comes from an application, not from the bootloader.
+	if (m_resp_error && m_dfu_error == DFU_RSP_OK) m_dfu_error = DFU_RSP_ERROR;
 	return !m_resp_error && (timeout_ms > 0);
 }
 
-bool SmdSatCmdAt::send_dfu_with_data(uint8_t cmd_id, const std::string &hex_data, std::string &response_data,
-                                     uint16_t timeout_ms) {
-	if (!send_dfu(cmd_id, hex_data, timeout_ms)) return false;
+bool SmdSatCmdAt::send_dfu_with_data(const std::string &command, std::string &response_data, uint16_t timeout_ms) {
+	if (!send_dfu(command, timeout_ms)) return false;
 	response_data = m_dfu_resp_data;
 	return true;
 }
@@ -760,7 +788,7 @@ void SmdSatCmdAt::write_udate(const uint8_t *udate_data, uint16_t len) {
 // ============================================================================
 // DFU (via AT+BOOT + AT+DFU= commands)
 // ============================================================================
-// Flow: AT+BOOT → reboot into bootloader → AT+DFU=<cmd_id>[,<hex_data>]
+// Flow: AT+BOOT → reboot into bootloader → AT+DFU=<NAME>[,<args>] (see send_dfu())
 
 bool SmdSatCmdAt::switch_baudrate(uint32_t nrf_baudrate) {
 	NrfUartAsync::deinit();
@@ -791,19 +819,35 @@ bool SmdSatCmdAt::dfu_enter() {
 	// baud (which the probe below covers). Measured on the bench 2026-09-02
 	// against a v1.0.0 module: a plain timeout, ~3.6 s, and the application was
 	// still answering AT+VERSION straight afterwards -- it never left the app.
-	if (!send_at("AT+BOOT=", 3000)) {
-		if (m_resp_error) {
-			// This module firmware has no AT DFU support: update it over SWD or SPI.
-			DEBUG_ERROR("SmdSatCmdAt::%s: module refused AT+BOOT (+ERROR) — no AT DFU, use SWD or SPI", __func__);
-		} else {
-			DEBUG_ERROR("SmdSatCmdAt::%s: AT+BOOT got no answer at all (timeout)", __func__);
+	//
+	// A refused AT+BOOT is not the end: a module that an earlier update left in
+	// its bootloader does not know AT+BOOT either, and the image must still be
+	// sendable to it again. Its bootloader answers the PING probe below.
+	//
+	// The application must be listening first. SmdSat powers the module up
+	// ~50 ms before this call and the AT application takes about a second to
+	// boot: a lone AT+BOOT sent then was lost, and the update failed with the
+	// module untouched (bench 2026-10-30). Same wait as get_firmware_version().
+	bool app_answers = false;
+	for (int attempt = 0; attempt < 10 && !app_answers; attempt++) {
+		if (attempt) {
+			PMU::kick_watchdog();
+			nrf_delay_ms(200);
 		}
-		return false;
+		app_answers = send_at("AT+PING=?", 500);
 	}
-
-	// Wait for bootloader to start
-	nrf_delay_ms(1000);
-	PMU::kick_watchdog();
+	if (!app_answers) {
+		DEBUG_WARN("SmdSatCmdAt::%s: application not answering — maybe already in its bootloader", __func__);
+	} else if (send_at("AT+BOOT=", 3000)) {
+		// Wait for bootloader to start
+		nrf_delay_ms(1000);
+		PMU::kick_watchdog();
+	} else if (m_resp_error) {
+		DEBUG_WARN("SmdSatCmdAt::%s: AT+BOOT refused — already in the bootloader, or no AT DFU in this firmware",
+		           __func__);
+	} else {
+		DEBUG_WARN("SmdSatCmdAt::%s: AT+BOOT got no answer at all (timeout)", __func__);
+	}
 
 	// The bootloader does not necessarily speak at the application's baud: the
 	// STM32WL one runs at 9600 only when built with BL_PROTOCOL_UART, otherwise
@@ -833,11 +877,12 @@ bool SmdSatCmdAt::dfu_enter() {
 		// wall time stays comparable: the DTE caller and the watchdog both see
 		// this as one blocking operation.
 		for (int attempt = 0; attempt < 4; attempt++) {
-			if (send_dfu_with_data(1, "", resp, 2000)) {  // DFU PING = cmd_id 1
+			if (send_dfu_with_data("PING", resp, 2000)) {
 				DEBUG_INFO("SmdSatCmdAt::%s: Bootloader ready at baud 0x%08X: %s", __func__,
 				           static_cast<unsigned>(baud), resp.c_str());
 				m_dfu_baudrate = baud;
 				m_dfu_mode = true;
+				m_dfu_validated = false;
 				return true;
 			}
 			nrf_delay_ms(500);
@@ -852,48 +897,65 @@ bool SmdSatCmdAt::dfu_enter() {
 	return false;
 }
 
+// Leave the bootloader without a new image. JUMP is refused until a VERIFY has
+// passed, so the way back to an application that was never erased is RESET: the
+// module restarts on it (the bootloader clears its entry request as it starts).
+// Once ERASE has run, nothing may restart the module before a VERIFY passes: on a
+// bootloader without the page-0 trampoline it would boot an erased vector table
+// and only SWD would bring it back. It is left in its bootloader for the image to
+// be sent again.
 bool SmdSatCmdAt::dfu_exit() {
 	if (!m_dfu_mode) return true;
 
-	// JUMP = cmd_id 8
-	if (send_dfu(8, "", 3000)) {
-		m_dfu_mode = false;
-		nrf_delay_ms(1000);
-		// The application runs at the BSP baud; if dfu_enter() had to move the
-		// link to reach the bootloader, move it back or every later AT command
-		// talks at the wrong speed.
-		const uint32_t app_baudrate = BSP::UARTAsync_Inits[m_uart_instance].config.baudrate;
-		if (m_dfu_baudrate != 0 && m_dfu_baudrate != app_baudrate) switch_baudrate(app_baudrate);
-		m_dfu_baudrate = 0;
-		return true;
+	if (!m_dfu_validated) {
+		if (m_dfu_erased) {
+			DEBUG_ERROR("SmdSatCmdAt::%s: application erased, no image verified: module left in its bootloader, "
+			            "send the image again",
+			            __func__);
+			return false;
+		}
+		// The reset can cut the reply short: its absence is not a failure.
+		send_dfu("RESET", 3000);
 	}
-	return false;
+
+	m_dfu_mode = false;
+	nrf_delay_ms(1000);
+	// The application runs at the BSP baud; if dfu_enter() had to move the
+	// link to reach the bootloader, move it back or every later AT command
+	// talks at the wrong speed.
+	const uint32_t app_baudrate = BSP::UARTAsync_Inits[m_uart_instance].config.baudrate;
+	if (m_dfu_baudrate != 0 && m_dfu_baudrate != app_baudrate) switch_baudrate(app_baudrate);
+	m_dfu_baudrate = 0;
+	return true;
 }
 
 bool SmdSatCmdAt::dfu_get_bootloader_info(SmdDfuInfo *info) {
 	if (!m_dfu_mode || !info) return false;
 
-	// GET_INFO = cmd_id 2
 	std::string resp;
-	if (!send_dfu_with_data(2, "", resp, 2000)) return false;
+	if (!send_dfu_with_data("INFO", resp, 2000)) return false;
 
-	// Parse response: hex data containing version, app_start, max_size, page_size
+	// Binary, so the bootloader sends it in hex: version (3), then app start,
+	// max size and page size (4 each, little-endian), as in the SPI GET_INFO.
 	uint8_t data[32] = { 0 };
 	uint16_t len = hex_to_bytes(resp, data, sizeof(data));
 
-	if (len >= 15) {
-		info->version_major = data[0];
-		info->version_minor = data[1];
-		info->version_patch = data[2];
-		info->app_start_addr = data[3] | (data[4] << 8) | (data[5] << 16) | (data[6] << 24);
-		info->app_max_size = data[7] | (data[8] << 8) | (data[9] << 16) | (data[10] << 24);
-		info->flash_page_size = data[11] | (data[12] << 8) | (data[13] << 16) | (data[14] << 24);
-
-		DEBUG_INFO("SmdSatCmdAt::%s: BL v%u.%u.%u | app=0x%08X | max=%u | page=%u", __func__, info->version_major,
-		           info->version_minor, info->version_patch, info->app_start_addr, info->app_max_size,
-		           info->flash_page_size);
+	// A reply too short to parse would leave *info as the caller's
+	// uninitialised struct, and the image would go wherever it pointed.
+	if (len < 15) {
+		DEBUG_WARN("SmdSatCmdAt::%s: reply too short to parse (%u bytes): %s", __func__, len, resp.c_str());
+		return false;
 	}
+	info->version_major = data[0];
+	info->version_minor = data[1];
+	info->version_patch = data[2];
+	info->app_start_addr = data[3] | (data[4] << 8) | (data[5] << 16) | (data[6] << 24);
+	info->app_max_size = data[7] | (data[8] << 8) | (data[9] << 16) | (data[10] << 24);
+	info->flash_page_size = data[11] | (data[12] << 8) | (data[13] << 16) | (data[14] << 24);
 
+	DEBUG_INFO("SmdSatCmdAt::%s: BL v%u.%u.%u | app=0x%08X | max=%u | page=%u", __func__, info->version_major,
+	           info->version_minor, info->version_patch, info->app_start_addr, info->app_max_size,
+	           info->flash_page_size);
 	return true;
 }
 
@@ -901,65 +963,76 @@ SmdDfuResponse SmdSatCmdAt::dfu_erase() {
 	DEBUG_INFO("SmdSatCmdAt::%s: Erasing flash...", __func__);
 	PMU::kick_watchdog();
 
-	// ERASE = cmd_id 3, long timeout (flash erase ~3s)
-	if (send_dfu(3, "", 10000)) {
+	// An erase that fails half way has erased pages all the same.
+	m_dfu_erased = true;
+	m_dfu_validated = false;
+	if (send_dfu("ERASE", 10000)) {
 		DEBUG_INFO("SmdSatCmdAt::%s: Erase OK", __func__);
 		return DFU_RSP_OK;
 	}
-	return DFU_RSP_ERROR;
+	return dfu_failure();
 }
 
 SmdDfuResponse SmdSatCmdAt::dfu_write_chunk(uint32_t addr, const uint8_t *data, uint16_t len) {
-	if (!data || len == 0 || len > SMDSAT_DFU_CHUNK_SIZE) {
+	if (!data || len == 0 || len > dfu_chunk_size()) {
 		return DFU_RSP_SIZE_ERROR;
 	}
+	if ((addr & 0x7) != 0) {
+		DEBUG_ERROR("SmdSatCmdAt::%s: Address 0x%08X not 8-byte aligned", __func__, static_cast<unsigned>(addr));
+		return DFU_RSP_ADDR_ERROR;
+	}
 
-	// WRITE = cmd_id 4, payload: <addr_4B_LE><data>
-	// Build hex: 4 bytes addr (LE) + data
-	uint8_t header[4] = { static_cast<uint8_t>(addr & 0xFF), static_cast<uint8_t>((addr >> 8) & 0xFF),
-	                      static_cast<uint8_t>((addr >> 16) & 0xFF), static_cast<uint8_t>((addr >> 24) & 0xFF) };
+	// AT+DFU=WRITE,<address, 8 hex digits>,<data in hex>
+	char head[16];
+	snprintf(head, sizeof(head), "WRITE,%08X,", static_cast<unsigned>(addr));
+	std::string hex = bytes_to_hex(data, len);
+	std::transform(hex.begin(), hex.end(), hex.begin(), ::toupper);
 
-	std::string hex = bytes_to_hex(header, 4) + bytes_to_hex(data, len);
-
-	if (send_dfu(4, hex, 3000)) {
+	if (send_dfu(head + hex, 3000)) {
 		return DFU_RSP_OK;
 	}
-	return DFU_RSP_ERROR;
+	DEBUG_ERROR("SmdSatCmdAt::%s: WRITE failed at 0x%08X: 0x%02X", __func__, static_cast<unsigned>(addr),
+	            static_cast<unsigned>(dfu_failure()));
+	return dfu_failure();
 }
 
 SmdDfuResponse SmdSatCmdAt::dfu_read_chunk(uint32_t addr, uint8_t *data, uint16_t len) {
 	if (!data || len == 0) return DFU_RSP_SIZE_ERROR;
 
-	// READ = cmd_id 5, payload: <addr_4B_LE><len_2B_LE>
-	uint8_t req[6] = { static_cast<uint8_t>(addr & 0xFF),         static_cast<uint8_t>((addr >> 8) & 0xFF),
-	                   static_cast<uint8_t>((addr >> 16) & 0xFF), static_cast<uint8_t>((addr >> 24) & 0xFF),
-	                   static_cast<uint8_t>(len & 0xFF),          static_cast<uint8_t>((len >> 8) & 0xFF) };
+	// AT+DFU=READ,<address, 8 hex digits>,<length>
+	char cmd[32];
+	snprintf(cmd, sizeof(cmd), "READ,%08X,%u", static_cast<unsigned>(addr), static_cast<unsigned>(len));
 
 	std::string resp;
-	if (send_dfu_with_data(5, bytes_to_hex(req, 6), resp, 3000)) {
+	if (send_dfu_with_data(cmd, resp, 3000)) {
 		hex_to_bytes(resp, data, len);
 		return DFU_RSP_OK;
 	}
-	return DFU_RSP_ERROR;
+	return dfu_failure();
 }
 
 SmdDfuResponse SmdSatCmdAt::dfu_verify(uint32_t crc32) {
-	// VERIFY = cmd_id 6, payload: <crc32_4B_LE>
-	uint8_t crc_data[4] = { static_cast<uint8_t>(crc32 & 0xFF), static_cast<uint8_t>((crc32 >> 8) & 0xFF),
-	                        static_cast<uint8_t>((crc32 >> 16) & 0xFF), static_cast<uint8_t>((crc32 >> 24) & 0xFF) };
+	// AT+DFU=VERIFY,<CRC-32/MPEG-2, 8 hex digits>. On success the bootloader
+	// answers "+DFU=OK,VALIDATED" and leaves for the application by itself.
+	char cmd[24];
+	snprintf(cmd, sizeof(cmd), "VERIFY,%08X", static_cast<unsigned>(crc32));
 
-	if (send_dfu(6, bytes_to_hex(crc_data, 4), 5000)) {
-		DEBUG_INFO("SmdSatCmdAt::%s: CRC OK", __func__);
+	std::string resp;
+	if (send_dfu_with_data(cmd, resp, 5000)) {
+		m_dfu_validated = true;
+		m_dfu_erased = false;
+		DEBUG_INFO("SmdSatCmdAt::%s: CRC OK (%s)", __func__, resp.c_str());
 		return DFU_RSP_OK;
 	}
-	return DFU_RSP_ERROR;
+	return dfu_failure();
 }
 
 SmdDfuResponse SmdSatCmdAt::dfu_jump() {
 	DEBUG_INFO("SmdSatCmdAt::%s: Jumping to app...", __func__);
 
-	// JUMP = cmd_id 8
-	send_dfu(8, "", 3000);
+	// After VALIDATED the bootloader has jumped on its own: a JUMP would reach
+	// the application, which does not know it.
+	if (!m_dfu_validated) send_dfu("JUMP", 3000);
 	m_dfu_mode = false;
 	nrf_delay_ms(SMDSAT_DFU_RESET_DELAY_MS);
 

@@ -284,6 +284,8 @@ target_sources(${PROJECT_NAME} PRIVATE
     "src/battery_sampling_test.cpp"
     "src/smd_tcxo_register_test.cpp"
     "src/smd_sat_cmd_at_test.cpp"
+    "src/smd_sat_cmd_at_dfu_test.cpp"
+    "src/smd_dfu_image_test.cpp"
     "src/dbd_save_schedule_test.cpp"
     "src/ph_sensor_test.cpp"
     "src/als_sensor_test.cpp"

@@ -79,9 +79,10 @@ static inline uint8_t spi_crc8_ccitt(const uint8_t *data, uint16_t len) {
 }
 
 // CRC-32 MPEG-2 calculation (polynomial 0x04C11DB7)
-// Used for firmware verification
-static inline uint32_t spi_crc32_mpeg2(const uint8_t *data, size_t len) {
-	uint32_t crc = 0xFFFFFFFF;
+// Used for firmware verification. The _update form carries the running value
+// across chunks: start it at 0xFFFFFFFF, as spi_crc32_mpeg2() does, and do not
+// invert the result.
+static inline uint32_t spi_crc32_mpeg2_update(uint32_t crc, const uint8_t *data, size_t len) {
 	for (size_t i = 0; i < len; i++) {
 		crc ^= (uint32_t)data[i] << 24;
 		for (int bit = 0; bit < 8; bit++) {
@@ -93,6 +94,10 @@ static inline uint32_t spi_crc32_mpeg2(const uint8_t *data, size_t len) {
 		}
 	}
 	return crc;
+}
+
+static inline uint32_t spi_crc32_mpeg2(const uint8_t *data, size_t len) {
+	return spi_crc32_mpeg2_update(0xFFFFFFFF, data, len);
 }
 
 // ============================================================================
@@ -429,7 +434,12 @@ typedef enum {
 // ============================================================================
 // DFU Configuration Constants (from Zephyr driver)
 // ============================================================================
-#define SMDSAT_DFU_CHUNK_SIZE        248   // Bytes per write chunk (8-byte aligned for STM32)
+#define SMDSAT_DFU_CHUNK_SIZE        248  // Bytes per write chunk (8-byte aligned for STM32)
+// UART (AT+DFU=WRITE) chunk: the bootloader shipped before 2026-10-30 keeps at
+// most 244 data bytes of a WRITE line and drops the rest without an error, which
+// leaves a gap that only VERIFY reveals, after the erase. 240 is the largest
+// multiple of 8 under that limit, so every later address stays 8-byte aligned.
+#define SMDSAT_DFU_UART_CHUNK_SIZE   240
 #define SMDSAT_DFU_HEADER_SIZE       256   // Application header size
 #define SMDSAT_DFU_ERASE_TIMEOUT_MS  3000  // Flash erase timeout (critical!)
 #define SMDSAT_DFU_WRITE_TIMEOUT_MS  100   // Flash write timeout per chunk
@@ -437,6 +447,10 @@ typedef enum {
 #define SMDSAT_DFU_RESET_DELAY_MS    100   // Delay after reset command
 #define SMDSAT_DFU_MAX_RETRIES       3     // Max retries per operation
 #define SMDSAT_DFU_READY_TIMEOUT_MS  5000  // Wait for bootloader ready
+
+// SPI clock for the whole DFU: the bootloader is a software-polled SPI slave
+// that drops bytes at 2 MHz (SmdSatCmdSpi::dfu_enter).
+#define SMDSAT_DFU_SPI_FREQUENCY     NRF_SPIM_FREQ_125K
 
 // STM32WL55 Flash Layout
 #define SMDSAT_DFU_APP_START_ADDR    0x08000000    // Application start

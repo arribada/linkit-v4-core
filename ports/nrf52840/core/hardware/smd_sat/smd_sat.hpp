@@ -228,6 +228,12 @@ private:
 	void power_off();
 	void power_on();
 	void power_on_blocking();  // Synchronous boot: power + reset + SPI init + wait for ping + VPA release
+	/// @brief True (and logged) while the module is in its bootloader: a DFU entered
+	/// and not left, or an update that erased the application without verifying a
+	/// new one. The blocking paths that power the module up and cut it afterwards
+	/// must not run then: on a bootloader without the page-0 trampoline, that cut
+	/// leaves the module with no firmware but what SWD can write.
+	bool refuse_while_in_bootloader(const char *caller) const;
 	bool write_credentials_from_config();
 
 	// State machine functionality
