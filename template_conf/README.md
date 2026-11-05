@@ -71,9 +71,8 @@ firmware default (`0`) does not silence a `LEGACY` tracker.
 `GNSS_FASTLOC_MODE` and `GNSS_CLOUDLOCATE_FORMAT` are the exception: PyLinkit
 passes them through as plain integers, so they keep their numeric values.
 
-The bench harness in [`../tests/bench/`](../tests/bench/) speaks the other
-language — raw DTE, firmware names, wire codes — because it drives the device
-directly. Do not carry a value across from one to the other.
+The raw DTE port speaks the other language — firmware names, wire codes. Do
+not carry a value across from one to the other.
 
 ## The depth pile only pays off on LDA2
 
@@ -141,34 +140,26 @@ read-back.
 
 The bench board is exactly the trap: it carries all three per-modulation RCONFs
 but its master decodes to LDK, so with adaptive off no LONG packet and no MEAS20
-can leave it. The `PROV-01` bench case reads these facts and returns that
-verdict for a given board.
+can leave it.
 
-## Validating a file
-
-```bash
-python3 tools/check_template_conf.py                       # every template
-python3 tools/check_template_conf.py template_conf/x.cfg   # just one
-```
+## What a valid file still gets wrong
 
 PyLinkit checks neither the spelling of a name against the firmware nor any
 numeric range: an unknown name is dropped, and an out-of-range value is only
-refused by the device. The checker closes both gaps — it reads
-`core/protocol/dte_params.cpp` for the keys and their limits, and
-`tools/pylinkit_map.py` for the names and the human-value tables. It reports:
+refused by the device. Before pushing a template, check it for:
 
-- an unknown parameter name — and, if you used the firmware's name for a
-  parameter PyLinkit spells differently, which name to use instead;
+- an unknown parameter name — or the firmware's name for a parameter PyLinkit
+  spells differently;
 - a read-only parameter (silently a no-op in a config file);
 - a duplicate key;
 - a value that is not one of the accepted words for a coded parameter;
-- a value outside the firmware's `[min, max]`;
+- a value outside the firmware's `[min, max]` (`core/protocol/dte_params.cpp`);
 - a value the firmware permits nowhere — `HAULED_ARGOS_MODE` takes any Argos
   mode except `SURFACING_BURST`, since a hauled device is dry and stationary
   and would transmit exactly zero times;
-- keys that only exist behind a build flag (informational);
-- **keys that are set but inert in this very configuration** (informational) —
-  a GNSS timeout with the receiver off, a low-battery threshold with `LB_EN=0`,
+- keys that only exist behind a build flag;
+- **keys that are set but inert in this very configuration** — a GNSS timeout
+  with the receiver off, a low-battery threshold with `LB_EN=0`,
   `ARGOS_BLIND_RETX_PERIOD_S` in `DOPPLER` where the period comes from the
   sequence instead. Neither an error nor a silence: a setting the operator made
   that will do nothing, and that no response from the port would ever mention;
@@ -178,45 +169,14 @@ refused by the device. The checker closes both gaps — it reads
   mode but `SURFACING_BURST`, `DUTY_CYCLE` with an empty hour mask (in each
   profile that uses it: nominal, low battery, zone), a critical battery
   threshold above the low one;
-- **provisioning prerequisites** (informational) — what the file needs from
-  the device that no template can state, such as CloudLocate MEAS20 with
-  adaptive off requiring a master RCONF that decodes to LDA2;
-- drift between `tools/pylinkit_map.py`, the firmware, and — when `PYLINKIT`
-  points at a checkout — that installation of PyLinkit.
-
-Set `PYLINKIT` whenever you can:
-
-```bash
-PYLINKIT=/path/to/pylinkit-v4 python3 tools/check_template_conf.py
-```
-
-Several codecs *transform* the value rather than look it up, and only the real
-encoder can be trusted with those — the duty cycle above is exactly such a
-case. Without `PYLINKIT` the checker says which lines it could not verify
-instead of guessing at them.
-
-Regenerate the mirror after a PyLinkit change:
-
-```bash
-python3 tools/gen_pylinkit_map.py /path/to/pylinkit-v4 > tools/pylinkit_map.py
-```
-
-### Checking it automatically
-
-`tools/hooks/pre-commit` runs the checker whenever a commit touches
-`template_conf/`, `dte_params.cpp` or the mirror — the three things that can
-put a template out of step. Git does not version its own hooks, so install it
-once per clone:
-
-```bash
-cp tools/hooks/pre-commit .git/hooks/ && chmod +x .git/hooks/pre-commit
-```
+- **provisioning prerequisites** — what the file needs from the device that no
+  template can state, such as CloudLocate MEAS20 with adaptive off requiring a
+  master RCONF that decodes to LDA2.
 
 ### Why this is not done in the firmware
 
 `is_implemented` is fixed at compile time, so `PARML` and `PARMR` already hide
-what a build cannot honour — `tools/params_for_build.py` shows exactly what a
-given build exposes. Hiding *mode-inert* parameters would be different: the set
+what a build cannot honour. Hiding *mode-inert* parameters would be different: the set
 of keys returned would then vary with the configuration, and a host that reads,
 modifies and writes back would silently drop everything the current mode masks.
 A configuration backup taken in one mode would not restore in another. Saying it

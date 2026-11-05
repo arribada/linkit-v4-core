@@ -208,11 +208,53 @@ private:
 	/// @brief nullptr (legacy Doppler) unless the build has the SWS tracker and
 	/// @p enabled, which is the caller's ArgosConfig::sws_tx_doppler_ext
 	/// (SWS_SENSOR_ENABLE_TX_MODE / UNP26 resolved with UNDERWATER_EN and the
-	/// release gate in get_argos_configuration(); no param read here). Otherwise
+	/// DIVE_INFO_MESSAGE build by dx1_effective() in get_argos_configuration();
+	/// no param read here). Otherwise
 	/// fills m_dx1_ext from the tracker latch and the SWS status (RAM reads only).
 	const ArgosPacketBuilder::DopplerExt *doppler_ext(bool enabled);
 	/// @brief DEND from the tracker and the SWS counters as they are now.
 	static unsigned int dx1_dive_end_now();
+
+	// ---- DX1 dive frame (24-byte LDA2 frame, 2026-11) -------------------
+	/// @brief Transmissions the module accepted (TxStarted) since the last
+	/// surfacing event, less those cancelled before completing: 0 means the next
+	/// TX is the first one on air of this surfacing, the shortest frame, which
+	/// never carries the dive frame.
+	unsigned int m_surface_txs = 0;
+	/// @brief The last TX counted in m_surface_txs has not completed yet: a
+	/// cancel takes it back (KIM2 notifies TxStarted at AT+TX, before its
+	/// +OK or +ERROR).
+	bool m_surface_tx_open = false;
+	/// @brief The frame being handed to send_with_mc() is a dive frame.
+	bool m_dive_frame_sending = false;
+	/// @brief The TX in flight is a dive frame (set by send_with_mc()).
+	bool m_dive_frame_inflight = false;
+	/// @brief A dive frame went on air during this surfacing (TxComplete).
+	bool m_dive_frame_this_surfacing = false;
+	/// @brief A dive frame went on air since boot, and when (uptime ms).
+	bool m_dive_frame_ever = false;
+	uint64_t m_last_dive_frame_ms = 0;
+	/// @brief Last underwater die-temperature read (uptime ms), if any.
+	bool m_temp_sampled = false;
+	uint64_t m_last_temp_sample_ms = 0;
+	static constexpr uint64_t TEMP_SAMPLE_PERIOD_MS = 60000ULL;
+	/// @brief One die-temperature read per minute, on the underwater SWS sample
+	/// ends that prewarm_refresh_allowed_on() accepts, into the tracker.
+	void sample_dive_temperature(const ServiceEvent &e);
+	/// @brief Is a dive frame due in this Doppler slot? @p before_position is
+	/// the overdue pass, which may take the slot from a cached position re-send.
+	bool dive_frame_due(const ArgosConfig &cfg, bool before_position);
+	/// @brief Build and send the dive frame when due; true if it was sent.
+	bool try_send_dive_frame(const ArgosConfig &cfg, bool before_position);
+	/// @brief Re-send the cached FIX / fastloc on ping 2+ when fresh; true if sent.
+	bool try_send_cached_position(ArgosConfig &argos_config);
+	/// @brief TxStarted bookkeeping: count the TX the module accepted.
+	void note_tx_accepted();
+	/// @brief TxComplete bookkeeping: a dive frame on air uses up the surfacing
+	/// and starts the 2-h spacing (a TX cut before RF completes nothing).
+	void note_tx_done();
+	/// @brief Per-surfacing dive-frame state back to "no TX yet" (service init/term).
+	void reset_dive_frame_session();
 
 	void react(KineisEventTxStarted const &) override;
 	void react(KineisEventTxComplete const &) override;

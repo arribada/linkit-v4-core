@@ -710,6 +710,14 @@ int PMU::get_die_temperature_c() {
 	return raw / 4;
 }
 
+/// @brief Read MCU die temperature in raw 0.25 °C steps; false if unavailable.
+bool PMU::get_die_temperature_q4(int32_t &q4) {
+	int32_t raw = 0;
+	if (sd_temp_get(&raw) != NRF_SUCCESS) return false;
+	q4 = raw;
+	return true;
+}
+
 /// Latched copy of the crash verdict. The initialiser puts this in .data, not
 /// .bss (verified: arm-none-eabi-nm rends `d _ZL12m_last_crash`, contre `b` pour
 /// m_callstack), which is what the contract needs -- startup copies "none" in,

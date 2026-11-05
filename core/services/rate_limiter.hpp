@@ -14,7 +14,9 @@
  *  - `react(KineisEventTxComplete)`   — record successful TX
  *
  * DTE params: `RATE_LIMIT_EN` (RLP01), `RATE_LIMIT_WINDOW_S` (RLP02),
- * `RATE_LIMIT_MAX_TX` (RLP03). Disabled by default.
+ * `RATE_LIMIT_MAX_TX` (RLP03). On by default since 2026-11-04: 30 TX per
+ * 3600 s (it was off). A full window also stops GPSService from starting a
+ * session, since no TX could use the fix.
  */
 
 #pragma once

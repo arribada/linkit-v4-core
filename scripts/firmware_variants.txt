@@ -32,14 +32,19 @@ linkit-kim|-DBOARD=LINKIT -DDEBUG_LEVEL=3 -DENABLE_AXL_SENSOR=ON -DENABLE_SWS_AN
 
 # ENABLE_SWS_LOG=1 guards code INSIDE sws_analog_service.cpp,
 # sws_analog_detection.cpp and main.cpp that no other variant here compiles.
-linkit-smd-spi|-DBOARD=LINKIT -DDEBUG_LEVEL=4 -DARGOS_SMD=ON -DENABLE_AXL_SENSOR=ON -DENABLE_SWS_LOG=1 -DGNSS_HAS_BACKUP_BATTERY=ON
+linkit-smd-spi|-DBOARD=LINKIT -DDEBUG_LEVEL=4 -DARGOS_SMD=ON -DENABLE_AXL_SENSOR=ON -DENABLE_SWS_LOG=1 -DGNSS_HAS_BACKUP_BATTERY=0
 
 # The variant that had never been compiled on LinkIt, at the DEBUG_LEVEL that
 # had stopped compiling. Both are why this file exists.
-linkit-smd-uart|-DBOARD=LINKIT -DDEBUG_LEVEL=2 -DARGOS_SMD=ON -DSMD_UART=ON -DENABLE_AXL_SENSOR=ON -DGNSS_HAS_BACKUP_BATTERY=ON -DLORA_DCS_ENABLE=ON
+linkit-smd-uart|-DBOARD=LINKIT -DDEBUG_LEVEL=2 -DARGOS_SMD=ON -DSMD_UART=ON -DENABLE_AXL_SENSOR=ON -DGNSS_HAS_BACKUP_BATTERY=0 -DLORA_DCS_ENABLE=ON
+
+# The same turtle release with the dive info compiled in (DIVE_INFO_MESSAGE: DX1
+# Doppler extension + 24-byte dive frame). The other variants keep it OFF, the
+# default, so both sides of the switch compile.
+linkit-smd-uart-dive|-DBOARD=LINKIT -DDEBUG_LEVEL=2 -DARGOS_SMD=ON -DSMD_UART=ON -DENABLE_AXL_SENSOR=ON -DGNSS_HAS_BACKUP_BATTERY=0 -DLORA_DCS_ENABLE=ON -DDIVE_INFO_MESSAGE=ON
 
 # DEBUG_LEVEL=0 compiles every debug macro out.
-linkit-lora|-DBOARD=LINKIT -DDEBUG_LEVEL=0 -DLORA_RAK3172=ON -DGNSS_HAS_BACKUP_BATTERY=ON
+linkit-lora|-DBOARD=LINKIT -DDEBUG_LEVEL=0 -DLORA_RAK3172=ON -DGNSS_HAS_BACKUP_BATTERY=0
 
 # Cyprus boat: the two flags that also distinguish TrackerTestsCyprus.
 linkit-cyprus|-DBOARD=LINKIT -DDEBUG_LEVEL=3 -DLORA_RAK3172=ON -DLORA_MOTION_EXT=ON -DLORA_LINKCHECK=ON -DENABLE_AXL_SENSOR=ON -DLORA_DCS_ENABLE=ON -DLORA_TX_ERROR_SUSPEND_S=900
@@ -47,17 +52,17 @@ linkit-cyprus|-DBOARD=LINKIT -DDEBUG_LEVEL=3 -DLORA_RAK3172=ON -DLORA_MOTION_EXT
 # RSPB with its shipped sensor set. BATTERY_MONITOR_TYPE already defaults to
 # STC3117 for this board; naming it keeps the gauge driver covered if that
 # default ever changes.
-rspb-smd-spi|-DBOARD=RSPB -DDEBUG_LEVEL=1 -DARGOS_SMD=ON -DBATTERY_MONITOR_TYPE=STC3117 -DENABLE_AXL_SENSOR=1 -DENABLE_MORTALITY_SENSOR=1 -DENABLE_PRESSURE_SENSOR=1 -DENABLE_THERMISTOR_SENSOR=1 -DGNSS_HAS_BACKUP_BATTERY=1
+rspb-smd-spi|-DBOARD=RSPB -DDEBUG_LEVEL=1 -DARGOS_SMD=ON -DBATTERY_MONITOR_TYPE=STC3117 -DENABLE_AXL_SENSOR=1 -DENABLE_MORTALITY_SENSOR=1 -DENABLE_PRESSURE_SENSOR=1 -DENABLE_THERMISTOR_SENSOR=1 -DGNSS_HAS_BACKUP_BATTERY=0
 
 # RSPB over the AT/UART path. build.yml offers it, it compiles, and nothing was
 # building it: added after a reviewer pointed out the list did not cover every
 # combination its own header claimed.
-rspb-smd-uart|-DBOARD=RSPB -DDEBUG_LEVEL=3 -DARGOS_SMD=ON -DSMD_UART=ON -DBATTERY_MONITOR_TYPE=STC3117 -DENABLE_AXL_SENSOR=1 -DENABLE_MORTALITY_SENSOR=1 -DENABLE_PRESSURE_SENSOR=1 -DENABLE_THERMISTOR_SENSOR=1 -DGNSS_HAS_BACKUP_BATTERY=1
+rspb-smd-uart|-DBOARD=RSPB -DDEBUG_LEVEL=3 -DARGOS_SMD=ON -DSMD_UART=ON -DBATTERY_MONITOR_TYPE=STC3117 -DENABLE_AXL_SENSOR=1 -DENABLE_MORTALITY_SENSOR=1 -DENABLE_PRESSURE_SENSOR=1 -DENABLE_THERMISTOR_SENSOR=1 -DGNSS_HAS_BACKUP_BATTERY=0
 
 # The bench build. bench_console.cpp has no host test at all -- it is
 # BENCH_TEST-only firmware -- so compiling it here is the only automated check
-# it gets. tests/bench/console_sweep.py covers its dispatch on a real board.
-linkit-kim-bench|-DBOARD=LINKIT -DDEBUG_LEVEL=3 -DBENCH_TEST=ON -DENABLE_AXL_SENSOR=ON
+# it gets. .claude/bench/console_sweep.py covers its dispatch on a real board.
+linkit-kim-bench|-DBOARD=LINKIT -DDEBUG_LEVEL=3 -DBENCH_TEST=ON -DENABLE_AXL_SENSOR=ON -DDIVE_INFO_MESSAGE=ON
 
 # ---------------------------------------------------------------------------
 # RSPB + KIM IS MISSING ON PURPOSE: IT HAS NEVER COMPILED.

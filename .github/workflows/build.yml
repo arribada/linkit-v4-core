@@ -96,6 +96,10 @@ on:
           - ANALOG
           - STC3117
           - FAKE
+      dive_info:
+        description: "DIVE_INFO_MESSAGE — DX1 + 24-B dive frame (LINKIT Argos only; platform v2.0.35 before a registered ID)"
+        type: boolean
+        default: false
       lora_dcs:
         description: "LORA_DCS — duty cycle ETSI EN 300 220 (LoRa only)"
         type: boolean
@@ -162,6 +166,17 @@ jobs:
 
           to01() { [ "$1" = "true" ] && echo 1 || echo 0; }
 
+          # Dive info rides on Argos frames and needs the LinkIt saltwater switch
+          # (CMake refuses it elsewhere too; failing here names the input).
+          DIVE_INFO_MESSAGE=OFF
+          if [ "${{ inputs.dive_info }}" = "true" ]; then
+            if [ "$BOARD" != "LINKIT" ] || [ "$COMM" = "LORA" ]; then
+              echo "::error::dive_info needs board=LINKIT with an Argos module (KIM, SMD_SPI, SMD_UART)"
+              exit 1
+            fi
+            DIVE_INFO_MESSAGE=ON
+          fi
+
           # Build directory + variant tag (used for artifact naming)
           case "$BOARD-$COMM" in
             LINKIT-KIM)      BUILD_DIR=ports/nrf52840/build/LINKIT;          VARIANT_TAG=linkit-kim ;;
@@ -173,6 +188,8 @@ jobs:
             RSPB-SMD_UART)   BUILD_DIR=ports/nrf52840/build/RSPB_SMD_UART;   VARIANT_TAG=rspb-smd-uart ;;
             *) echo "::error::unsupported board/comm combination $BOARD-$COMM"; exit 1 ;;
           esac
+          # A dive-info image must not pass for a legacy one once downloaded.
+          if [ "$DIVE_INFO_MESSAGE" = "ON" ]; then VARIANT_TAG="$VARIANT_TAG-dive"; fi
 
           # Bootloader paths
           if [ "$BOARD" = "LINKIT" ]; then
@@ -214,6 +231,7 @@ jobs:
             echo "ARGOS_SMD=$ARGOS_SMD"
             echo "SMD_UART=$SMD_UART"
             echo "LORA_RAK3172=$LORA_RAK3172"
+            echo "DIVE_INFO_MESSAGE=$DIVE_INFO_MESSAGE"
             echo "ENABLE_AXL_SENSOR=$(to01 "$AXL")"
             echo "ENABLE_PRESSURE_SENSOR=$(to01 "${{ inputs.sensor_pressure }}")"
             echo "ENABLE_THERMISTOR_SENSOR=$(to01 "$THERMISTOR")"
@@ -303,6 +321,7 @@ jobs:
                     -DARGOS_SMD=${{ steps.cfg.outputs.ARGOS_SMD }} \
                     -DSMD_UART=${{ steps.cfg.outputs.SMD_UART }} \
                     -DLORA_RAK3172=${{ steps.cfg.outputs.LORA_RAK3172 }} \
+                    -DDIVE_INFO_MESSAGE=${{ steps.cfg.outputs.DIVE_INFO_MESSAGE }} \
                     -DLORA_DCS_ENABLE=${{ steps.cfg.outputs.LORA_DCS_ENABLE }} \
                     -DLORA_POWER_OFF_UNDERWATER=${{ steps.cfg.outputs.LORA_POWER_OFF_UNDERWATER }} \
                     -DENABLE_AXL_SENSOR=${{ steps.cfg.outputs.ENABLE_AXL_SENSOR }} \
@@ -397,6 +416,7 @@ jobs:
           ARGOS_SMD=${{ steps.cfg.outputs.ARGOS_SMD }}
           SMD_UART=${{ steps.cfg.outputs.SMD_UART }}
           LORA_RAK3172=${{ steps.cfg.outputs.LORA_RAK3172 }}
+          DIVE_INFO_MESSAGE=${{ steps.cfg.outputs.DIVE_INFO_MESSAGE }}
           LORA_DCS_ENABLE=${{ steps.cfg.outputs.LORA_DCS_ENABLE }}
           LORA_POWER_OFF_UNDERWATER=${{ steps.cfg.outputs.LORA_POWER_OFF_UNDERWATER }}
           ENABLE_AXL_SENSOR=${{ steps.cfg.outputs.ENABLE_AXL_SENSOR }}

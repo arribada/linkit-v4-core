@@ -24,37 +24,37 @@
 #include <cstdint>
 
 #include "pmu.hpp"
+#include "rtc.hpp"
 
-// Whole feature compiles out where there is no SWS analog sensor or no dive at
-// all (RSPB / TPL5111 external-wakeup profile): the Doppler stays legacy there.
-#if ENABLE_SWS_ANALOG && !defined(BOARD_RSPB) && !defined(EXTERNAL_WAKEUP)
+// Dive info in the Argos messages (DX1: Doppler extension, 24-byte dive frame,
+// die temperature), set by the CMake option DIVE_INFO_MESSAGE (OFF). Undefined
+// or 0: the whole feature compiles out and every frame stays the pre-DX1 one,
+// bit-exact.
+#ifndef DIVE_INFO_MESSAGE
+#define DIVE_INFO_MESSAGE 0
+#endif
+
+// The feature also compiles out where there is no SWS analog sensor or no dive
+// at all (RSPB / TPL5111 external-wakeup profile): the Doppler stays legacy there.
+#if DIVE_INFO_MESSAGE && ENABLE_SWS_ANALOG && !defined(BOARD_RSPB) && !defined(EXTERNAL_WAKEUP)
 #define DX1_DOPPLER_EXT_BUILD 1
 #else
 #define DX1_DOPPLER_EXT_BUILD 0
 #endif
 
-// Release gate for SWS_SENSOR_ENABLE_TX_MODE = AUTO (UNP26). Stays 0 until the
-// platform decoder that knows DX1 is deployed: today's decoder drops the 4-byte
-// LDA2 view and reads the 16-byte LDK view as a GNSS position. Set by the CMake
-// option DX1_GROUND_DECODER_READY (OFF). Tags store AUTO, so the first release
-// built with 1 turns DX1 on across the fleet without rewriting any config.
-#ifndef DX1_GROUND_DECODER_READY
-#define DX1_GROUND_DECODER_READY 0
-#endif
-
 /// @brief SWS_SENSOR_ENABLE_TX_MODE values (BaseEncoding::UINT, 0..2).
 namespace SwsTxMode {
 constexpr unsigned int OFF = 0;    ///< legacy Doppler, bit-exact 006400 on every modulation
-constexpr unsigned int AUTO = 1;   ///< DX1 once the ground decoder is released (default)
-constexpr unsigned int FORCE = 2;  ///< DX1 regardless of the release gate: bench / pilots only
+constexpr unsigned int AUTO = 1;   ///< DX1 on a DIVE_INFO_MESSAGE build (default)
+constexpr unsigned int FORCE = 2;  ///< same as AUTO since the release gate went (2026-11), kept for stored configs
 }  // namespace SwsTxMode
 
 /// @brief Does the Doppler carry the DX1 extension? Pure, so the whole truth
-/// table runs on the host in one build. @p build is DX1_DOPPLER_EXT_BUILD and
-/// @p ready DX1_GROUND_DECODER_READY at the call site. Any mode outside 0..2
-/// (the DTE refuses it, but a stored value is not re-validated) means OFF.
-constexpr bool dx1_effective(unsigned int mode, bool uw_en, bool build, bool ready) {
-	return build && uw_en && (mode == SwsTxMode::FORCE || (mode == SwsTxMode::AUTO && ready));
+/// table runs on the host in one build. @p build is DX1_DOPPLER_EXT_BUILD at
+/// the call site. Any mode outside 0..2 (the DTE refuses it, but a stored value
+/// is not re-validated) means OFF.
+constexpr bool dx1_effective(unsigned int mode, bool uw_en, bool build) {
+	return build && uw_en && (mode == SwsTxMode::AUTO || mode == SwsTxMode::FORCE);
 }
 
 /// @brief Behaviour fields latched at the last dive edge, as RAW values.
@@ -76,6 +76,58 @@ struct Dx1Behaviour {
 	uint8_t surf_method = 0;  ///< 0 unknown, 1..5 L1..L5, 6 other / forced / ADC fallback
 };
 
+/// @brief DX1 dive frame (24-byte LDA2 frame, 2026-11) constants, shared by the
+/// tracker and the packet builder (which compiles on every target).
+namespace Dx1Dive {
+constexpr unsigned int HISTORY = 5;              ///< D_LAST + the 4 dives before it
+constexpr unsigned int BINS = 12;                ///< complete 2-h UTC bins sent, newest first
+constexpr uint64_t BIN_MS = 7200000ULL;          ///< 2 h
+constexpr uint32_t OBS_MIN_S = 3600;             ///< a bin observed less than this is unknown
+constexpr int64_t CLOCK_JUMP_MS = 300000;        ///< an RTC step larger than this clears the bins
+constexpr uint64_t MIN_SPACING_MS = 7200000ULL;  ///< at most one dive frame every 2 h
+constexpr uint64_t OVERDUE_MS = 21600000ULL;     ///< after 6 h it goes before a cached position
+constexpr int64_t RTC_MIN_REAL = 946684800;      ///< 2000-01-01: below, a virtual clock, never UTC
+}  // namespace Dx1Dive
+
+/// @brief UTC seconds the dive-frame timeline may trust, 0 otherwise. Only a
+/// clock set from GNSS or by the operator ($RTCW) counts: the virtual epoch
+/// (1 + uptime after a boot without a stored time) and a RESTORED clock (after
+/// a reset or a power-off, error unbounded) would put the 2-h bins in the wrong
+/// place on the ground with nothing to tell them apart. Such a tag sends every
+/// bin unknown until its next fix or RTCW.
+inline int64_t dx1_trusted_utc(RTC *r) {
+	if (!r || !r->is_set()) return 0;
+	const RtcSource src = r->source();
+	if (src != RtcSource::GNSS && src != RtcSource::OPERATOR) return 0;
+	const int64_t t = (int64_t)r->gettime();
+	return (t >= Dx1Dive::RTC_MIN_REAL) ? t : 0;
+}
+
+/// @brief Dive-frame inputs as RAW values, read from the tracker at TX time.
+/// ArgosPacketBuilder::dx1_encode_dive() turns them into codes. Plain data,
+/// outside the build guard like Dx1Behaviour.
+struct Dx1DiveData {
+	uint16_t surf_seq = 0;                   ///< SURF_SEQ, counting the surfacing in progress when it is real
+	uint32_t dive_s[Dx1Dive::HISTORY] = {};  ///< D_LAST then the 4 dives before, seconds, 0 unknown
+	bool temp_valid = false;                 ///< an underwater sample was taken during the dive D_LAST
+	int32_t temp_q4 = 0;                     ///< its die temperature, quarter degrees
+	uint16_t bin_dry_s[Dx1Dive::BINS] = {};  ///< newest complete 2-h UTC bin first
+	uint16_t bin_obs_s[Dx1Dive::BINS] = {};
+	uint8_t phase = 0;  ///< parity of the current 2-h UTC bin index (0 without a clock)
+};
+
+/// @brief Does a dive frame built from @p d say anything? A known dive
+/// duration, or one bin observed long enough to be known.
+inline bool dx1_dive_data_known(const Dx1DiveData &d) {
+	for (uint32_t s : d.dive_s) {
+		if (s != 0) return true;
+	}
+	for (uint16_t o : d.bin_obs_s) {
+		if (o >= Dx1Dive::OBS_MIN_S) return true;
+	}
+	return false;
+}
+
 #if DX1_DOPPLER_EXT_BUILD
 
 /// @brief One 6-h accounting block of the tracker ring (namespace scope: a
@@ -89,6 +141,80 @@ struct Dx1TrackerBlock {
 	uint32_t n = 0;
 	uint32_t dmax_s = 0;
 	bool blind = false;
+};
+
+/// @brief One 2-h UTC bin of the dive-frame timeline (namespace scope, as above).
+/// 8 bytes: id 0 marks a free slot, since a trusted UTC is past 2000 and its
+/// bin ids are all above 131 000.
+struct Dx1TimelineBin {
+	uint32_t id = 0;  ///< UTC ms / Dx1Dive::BIN_MS, 0 = free
+	uint16_t dry_s = 0;
+	uint16_t obs_s = 0;
+};
+
+/// @brief The dive-frame timeline: ids kept in [newest - BINS, newest], so 13
+/// slots always suffice. Same semantics as class Timeline of dx1_ref.py.
+struct Dx1Timeline {
+	static constexpr unsigned int SLOTS = Dx1Dive::BINS + 1;
+	Dx1TimelineBin bins[SLOTS] = {};
+	bool has_newest = false;
+	uint32_t newest = 0;
+
+	void clear() { *this = Dx1Timeline{}; }
+
+	/// Credit [u0, u1) UTC ms, split at bin edges, whole seconds per piece.
+	void add(uint64_t u0, uint64_t u1, bool dry) {
+		uint64_t t = u0;
+		while (t < u1) {
+			const uint32_t i = (uint32_t)(t / Dx1Dive::BIN_MS);
+			const uint64_t edge = ((uint64_t)i + 1ULL) * Dx1Dive::BIN_MS;
+			const uint64_t end = (u1 < edge) ? u1 : edge;
+			credit(i, (uint32_t)((end - t) / 1000ULL), dry);
+			t = end;
+		}
+	}
+
+	const Dx1TimelineBin *find(uint32_t id) const {
+		if (id == 0) return nullptr;
+		for (const auto &b : bins) {
+			if (b.id == id) return &b;
+		}
+		return nullptr;
+	}
+
+private:
+	void credit(uint32_t i, uint32_t s, bool dry) {
+		if (i == 0) return;  // not a trusted UTC (see dx1_trusted_utc)
+		if (!has_newest || i > newest) {
+			has_newest = true;
+			newest = i;
+			for (auto &b : bins) {
+				if (b.id != 0 && b.id + Dx1Dive::BINS < i) b = Dx1TimelineBin{};
+			}
+		}
+		if (i + Dx1Dive::BINS < newest) return;  // older than the window
+		Dx1TimelineBin &b = slot(i);
+		b.obs_s = (uint16_t)(b.obs_s + s);
+		if (dry) b.dry_s = (uint16_t)(b.dry_s + s);
+	}
+
+	Dx1TimelineBin &slot(uint32_t id) {
+		Dx1TimelineBin *free_slot = nullptr;
+		for (auto &b : bins) {
+			if (b.id == id) return b;
+			if (b.id == 0 && !free_slot) free_slot = &b;
+		}
+		if (!free_slot) {
+			// Unreachable while ids stay in the window; keep the ring bounded anyway.
+			free_slot = &bins[0];
+			for (auto &b : bins) {
+				if (b.id < free_slot->id) free_slot = &b;
+			}
+		}
+		*free_slot = Dx1TimelineBin{};
+		free_slot->id = id;
+		return *free_slot;
+	}
 };
 
 /// @brief RST counter record kept in .noinit across warm boots.
@@ -132,6 +258,13 @@ public:
 		s_surface_known = false;
 		s_latched = false;
 		s_latch = Dx1Behaviour{};
+		for (auto &d : s_hist)
+			d = 0;
+		s_temp_valid = false;
+		s_temp_q4 = 0;
+		s_utc_valid = false;
+		s_utc_off_ms = 0;
+		s_tl.clear();
 		if (!s_rst_done) {
 			s_rst_done = true;
 			update_rst_record();
@@ -249,6 +382,57 @@ public:
 		return l;
 	}
 
+	/// @brief RTC reading for the dive-frame timeline (@p utc_s from
+	/// dx1_trusted_utc(); 0 or anything before 2000 = no clock). Called before
+	/// every UW event and before a dive frame is built; a
+	/// step larger than Dx1Dive::CLOCK_JUMP_MS since the last call clears the
+	/// bins. RAM only.
+	static void on_clock(uint64_t now_ms, int64_t utc_s) {
+		if (utc_s < Dx1Dive::RTC_MIN_REAL) {
+			s_utc_valid = false;
+			return;
+		}
+		const int64_t off = utc_s * 1000 - (int64_t)now_ms;
+		const int64_t step = off - s_utc_off_ms;
+		if (s_utc_valid && (step > Dx1Dive::CLOCK_JUMP_MS || step < -Dx1Dive::CLOCK_JUMP_MS)) s_tl.clear();
+		s_utc_off_ms = off;
+		s_utc_valid = true;
+	}
+
+	/// @brief Die temperature (quarter °C) of an underwater SWS sample.
+	static void on_temp_sample(uint64_t now_ms, int32_t q4) {
+		(void)now_ms;
+		if (s_state != State::UW) return;
+		s_temp_q4 = q4;
+		s_temp_valid = true;
+	}
+
+	/// @brief Seconds of the last COMPLETED dive, 0 unknown: at the surface the
+	/// dive this surfacing just closed (known under the same conditions as
+	/// D_PREV at the next dive edge), underwater the D_PREV of the last dive edge.
+	static uint32_t last_dive_s() {
+		if (s_state == State::SURF) {
+			if (!(s_surface_known && s_has_snap && s_dive_start_real && !s_dive_blinded)) return 0;
+			uint64_t dive_s = (s_t_s > s_dive_start) ? (s_t_s - s_dive_start) / 1000ULL : 0ULL;
+			return (uint32_t)((dive_s < 1ULL) ? 1ULL : (dive_s > 0xFFFFFFFFULL ? 0xFFFFFFFFULL : dive_s));
+		}
+		return (s_state == State::UW) ? s_hist[0] : 0;
+	}
+
+	/// @brief Everything the dive frame needs, as of @p now_ms (call on_clock
+	/// first). RAM only; the open episode is credited to the timeline on a copy.
+	static Dx1DiveData dive_data(uint64_t now_ms) {
+		Dx1DiveData d;
+		d.surf_seq = (s_state == State::SURF && s_surface_known && !surface_forced())
+		                 ? (uint16_t)(s_seq % SURF_SEQ_MAX + 1U)
+		                 : s_seq;
+		fill_history(d);
+		d.temp_valid = s_temp_valid;
+		d.temp_q4 = s_temp_q4;
+		fill_timeline(d, now_ms);
+		return d;
+	}
+
 	/// @brief Warm boots since the last power-on that reached Operational.
 	static uint8_t rst_count() { return s_rst_valid ? s_rst.count : 0; }
 
@@ -317,6 +501,7 @@ private:
 
 	/// Add [t0, t1) to obs (and dry), split across blocks, whole seconds per piece.
 	static void account(uint64_t t0, uint64_t t1, bool dry) {
+		tl_account(s_tl, t0, t1, dry);
 		uint64_t t = t0;
 		while (t < t1) {
 			uint32_t i = bid(t);
@@ -357,13 +542,16 @@ private:
 
 		Dx1Behaviour l;
 		const bool dive_known = s_surface_known && s_has_snap && s_dive_start_real && !s_dive_blinded;
+		uint32_t closed_dive_s = 0;  // 0 unknown: what the dive-frame history keeps
 		if (dive_known) {
 			uint64_t dive_s = (s_t_s > s_dive_start) ? (s_t_s - s_dive_start) / 1000ULL : 0ULL;
 			uint32_t d = (uint32_t)((dive_s < 1ULL) ? 1ULL : (dive_s > 0xFFFFFFFFULL ? 0xFFFFFFFFULL : dive_s));
 			Block &b = blk(bid(s_t_s));
 			if (d > b.dmax_s) b.dmax_s = d;
 			l.d_prev_s = d;
+			closed_dive_s = d;
 		}
+		push_dive(closed_dive_s);
 		if (surface_real) {
 			s_seq = (uint16_t)(s_seq % SURF_SEQ_MAX + 1U);
 			blk(bid(now)).n++;
@@ -407,12 +595,56 @@ private:
 		// The dive that starts now.
 		s_state = State::UW;
 		s_acct_from = now;
+		s_temp_valid = false;
 		s_has_snap = true;
 		s_dive_start = now;
 		s_dive_start_real = surface_real;
 		s_dive_blinded = false;
 		s_dto0 = dto;
 		s_fsc0 = fsc;
+	}
+
+	/// Dive-frame history: shift in the dive a dive edge just closed (0 unknown).
+	static void push_dive(uint32_t closed_s) {
+		for (unsigned int k = Dx1Dive::HISTORY - 1; k > 0; k--)
+			s_hist[k] = s_hist[k - 1];
+		s_hist[0] = closed_s;
+	}
+
+	/// Credit [t0, t1) uptime ms to @p tl through the RTC offset; nothing
+	/// without a clock.
+	static void tl_account(Dx1Timeline &tl, uint64_t t0, uint64_t t1, bool dry) {
+		if (!s_utc_valid || t1 <= t0) return;
+		tl.add((uint64_t)((int64_t)t0 + s_utc_off_ms), (uint64_t)((int64_t)t1 + s_utc_off_ms), dry);
+	}
+
+	static void fill_history(Dx1DiveData &d) {
+		const bool surf = (s_state == State::SURF);
+		const unsigned int shift = surf || s_state == State::UNKNOWN ? 1U : 0U;
+		if (shift) d.dive_s[0] = surf ? last_dive_s() : 0U;
+		for (unsigned int k = shift; k < Dx1Dive::HISTORY; k++)
+			d.dive_s[k] = s_hist[k - shift];
+	}
+
+	/// The 12 complete bins before the current one, the open episode credited
+	/// on a copy exactly as the next dive edge (or cooldown) will credit it.
+	static void fill_timeline(Dx1DiveData &d, uint64_t now_ms) {
+		if (!s_utc_valid) return;
+		Dx1Timeline tl = s_tl;
+		if (!s_blind && s_state == State::UW) tl_account(tl, s_acct_from, now_ms, false);
+		if (!s_blind && s_state == State::SURF) {
+			if (s_acct_from < s_t_s) tl_account(tl, s_acct_from, s_t_s, false);
+			if (s_surface_known && !surface_forced())
+				tl_account(tl, (s_acct_from > s_t_s) ? s_acct_from : s_t_s, now_ms, true);
+		}
+		const uint64_t cur = (uint64_t)((int64_t)now_ms + s_utc_off_ms) / Dx1Dive::BIN_MS;
+		d.phase = (uint8_t)(cur & 1U);
+		for (unsigned int k = 0; k < Dx1Dive::BINS && cur >= k + 1U; k++) {
+			const Dx1TimelineBin *b = tl.find((uint32_t)(cur - 1U - k));
+			if (!b) continue;
+			d.bin_dry_s[k] = b->dry_s;
+			d.bin_obs_s[k] = b->obs_s;
+		}
 	}
 
 	static inline uint64_t s_reset_ms = 0;
@@ -439,6 +671,13 @@ private:
 	// latch
 	static inline bool s_latched = false;
 	static inline Dx1Behaviour s_latch = {};
+	// dive frame (2026-11)
+	static inline uint32_t s_hist[Dx1Dive::HISTORY] = {};  ///< closed dives, newest first, 0 unknown
+	static inline bool s_temp_valid = false;               ///< a sample since the last dive edge
+	static inline int32_t s_temp_q4 = 0;
+	static inline bool s_utc_valid = false;
+	static inline int64_t s_utc_off_ms = 0;  ///< UTC ms - uptime ms, from the last on_clock
+	static inline Dx1Timeline s_tl = {};
 	// RST: noinit record (defined in service.cpp), plus "already done this boot".
 	static RstRecord s_rst __attribute__((section(".noinit")));
 	static inline bool s_rst_done = false;

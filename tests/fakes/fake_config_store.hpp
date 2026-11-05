@@ -21,7 +21,7 @@ protected:
 	/// sampled the battery 4023 times a simulated day with no test noticing. The
 	/// store's own copies (level, voltage, low flag) stay where tests set them:
 	/// copying the monitor's flags in makes ten tests take the low-battery branch
-	/// they were never written for (see tools/check_battery_guard_callers.py).
+	/// they were never written for (see scripts/check_battery_guard_callers.py).
 	void update_battery_level() {
 		if (battery_monitor) battery_monitor->update();
 	}

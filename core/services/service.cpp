@@ -94,6 +94,10 @@ void ServiceManager::reset() {
 	m_last_successful_cycle_time = 0;
 	m_passive_surfacing_count = 0;
 	m_cooldown_wake_task = Scheduler::TaskHandle{};
+	// startall() restores the limiter ring, so the TX of one test would count
+	// against the next: on by default since 2026-11-04, they filled the window
+	// of later ArgosTxService tests in a serial run (without -p).
+	RateLimiter::reset_for_tests();
 }
 
 
@@ -233,6 +237,10 @@ void ServiceManager::notify_classifiers(ServiceEvent &event) {
 		// event this is on the surface-to-air path.
 		{
 			const uint64_t now_ms = PMU::get_timestamp_ms();
+			// The dive-frame timeline runs on UTC 2-h bins: hand it the RTC first
+			// (0 unless GNSS or the operator set it), so this edge is credited
+			// through the current offset.
+			DiveBehaviourTracker::on_clock(now_ms, dx1_trusted_utc(rtc));
 			if (SWSAnalogService::is_test_running()) {
 				DiveBehaviourTracker::on_test_event(now_ms);
 			} else {
@@ -726,7 +734,7 @@ void Service::reschedule(bool immediate) {
 	// "scheduled": that bypass is load-bearing (GPSService documents that an
 	// immediate reschedule deliberately skips its deep-idle gate, and Argos
 	// relies on it not re-picking m_scheduled_task), and the string is matched
-	// verbatim by tests/bench/dte_campaign.py.
+	// verbatim by .claude/bench/dte_campaign.py.
 	const ScheduleDecision decision = immediate ? ScheduleDecision::run(0, "scheduled") : service_next_schedule();
 
 	// The legacy value this decision would have been before the type existed.

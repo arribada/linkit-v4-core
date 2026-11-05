@@ -20,4 +20,4 @@ Most often the new code uses an SDK symbol that no fake provides. Either:
 - **Add a stub** here (preferred — keeps the test build green for everyone).
 - **Exclude the file from the host build** if it's deeply hardware-dependent (edit [`../CMakeLists.txt`](../CMakeLists.txt) `target_sources`).
 
-The pre-commit hook will catch the breakage on the next commit.
+The CI host build will catch the breakage.

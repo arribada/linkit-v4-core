@@ -190,12 +190,20 @@ GNSS_HAS_BACKUP_BATTERY=${GNSS_HAS_BACKUP_BATTERY:-0}
 # on -- without the service a tag has no dive and no surfacing at all:
 #   ENABLE_SWS_ANALOG=1 ./scripts/build_linkitv4_kim.sh [--bench|--release|...]
 # The CI matrix (scripts/firmware_variants.txt, linkit-kim) passes it explicitly.
+# Dive info in the Argos messages (DX1 Doppler extension, 24-byte dive frame),
+# OFF by default. A turtle feature: it turns the SWS on unless told otherwise
+# (ENABLE_SWS_ANALOG=0 with it is refused by CMake):
+#   DIVE_INFO_MESSAGE=ON ./scripts/build_linkitv4_kim.sh [...]
+DIVE_INFO_MESSAGE=${DIVE_INFO_MESSAGE:-OFF}
+case "${DIVE_INFO_MESSAGE}" in
+    ON|on|1|TRUE|true|YES|yes) ENABLE_SWS_ANALOG=${ENABLE_SWS_ANALOG:-1} ;;
+esac
 ENABLE_SWS_ANALOG=${ENABLE_SWS_ANALOG:-0}
 
 echo "  CAM_ENABLE=${CAM_ENABLE}  BUZZER_ENABLE=${BUZZER_ENABLE}"
 echo "  BATTERY_CHEMISTRY=${BATTERY_CHEMISTRY}"
 echo "  GNSS_HAS_BACKUP_BATTERY=${GNSS_HAS_BACKUP_BATTERY}"
-echo "  ENABLE_SWS_ANALOG=${ENABLE_SWS_ANALOG}"
+echo "  ENABLE_SWS_ANALOG=${ENABLE_SWS_ANALOG}  DIVE_INFO_MESSAGE=${DIVE_INFO_MESSAGE}"
 echo "  METRIC_LATENCY=${METRICS}  VALIDATION=${VALIDATION}"
 
 cmake -DCMAKE_TOOLCHAIN_FILE=../../toolchain_arm_gcc_nrf52.cmake \
@@ -206,6 +214,7 @@ cmake -DCMAKE_TOOLCHAIN_FILE=../../toolchain_arm_gcc_nrf52.cmake \
     -DGNSS_HAS_BACKUP_BATTERY=${GNSS_HAS_BACKUP_BATTERY} \
     -DBATTERY_CHEMISTRY=${BATTERY_CHEMISTRY} \
     -DENABLE_SWS_ANALOG=${ENABLE_SWS_ANALOG} \
+    -DDIVE_INFO_MESSAGE=${DIVE_INFO_MESSAGE} \
     -DMETRIC_LATENCY_LOG_ENABLE=$([ "$METRICS" = "ON" ] && echo 1 || echo 0) \
     -DVALIDATION_LOG_ENABLE=$([ "$VALIDATION" = "ON" ] && echo 1 || echo 0) \
     -DBENCH_TEST=${BENCH} \

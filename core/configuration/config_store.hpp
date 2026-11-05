@@ -21,7 +21,7 @@
 #include "service_scheduler.hpp"
 #include "hauled_mode_service.hpp"
 #include "moored_mode_service.hpp"
-#include "dive_behaviour_tracker.hpp"  // DX1_DOPPLER_EXT_BUILD, DX1_GROUND_DECODER_READY, dx1_effective()
+#include "dive_behaviour_tracker.hpp"  // DX1_DOPPLER_EXT_BUILD, dx1_effective()
 #include "modulation_guard.hpp"        // master-RCONF fingerprint + trust rule (ART13/ART14)
 
 #if VALIDATION_LOG_ENABLE
@@ -123,7 +123,7 @@ struct ArgosConfig {
 	unsigned int sensor_tx_enable;
 	/// @brief The Doppler carries the DX1 extension (SWS health + dive behaviour).
 	/// Resolved once from SWS_SENSOR_ENABLE_TX_MODE (UNP26), UNDERWATER_EN and the
-	/// build/release gates (dx1_effective()). NOT gated by gnss_en, the regime or
+	/// DIVE_INFO_MESSAGE build gate (dx1_effective()). NOT gated by gnss_en, the regime or
 	/// ARGOS_MODE: DX1 lives in the Doppler, which only exists where it already does.
 	bool sws_tx_doppler_ext = false;
 	unsigned int shutdown_ntime_sat;
@@ -133,7 +133,9 @@ struct ArgosConfig {
 	std::string radioconf_vlda4;
 	// BLIND MAC profile (module-owned retransmission). Global (not per-regime):
 	// blind_en selects KMAC BLIND vs BASIC; blind_retx_nb/period_s are the module
-	// burst config. NTRY_PER_MESSAGE stays the nRF-side count of blind sequences.
+	// burst config. NTRY_PER_MESSAGE and SHUTDOWN_NTIME_SAT count frames on air,
+	// and one burst spends blind_retx_nb of them: retx_nb is the module's TOTAL
+	// number of transmissions, the first one included.
 	bool blind_en;
 	unsigned int blind_retx_nb;
 	unsigned int blind_retx_period_s;
@@ -492,9 +494,9 @@ protected:
 		/* [226] SMD_DEGRADED_MODE */ 0U,              // 0 = FAST timings (default); 1 = SAFE (set by SmdSat::degraded_mode_engage)
 		/* [227] ARGOS_CACHED_MODULATION */ 0U,        // 0 = LDA2 (default), 1 = LDK, 2 = VLDA4 (mirrors SmdArgosModulation enum)
 		/* [228] GNSS_REUSE_FIX_MAX_AGE_S */ 86400U,   // 24 h: cached depth-pile fix older than this falls back to Doppler-only (REUSE_LAST → OFF)
-		/* [229] RATE_LIMIT_EN */ (bool)false,         // Plan 1 step 2 — disabled by default
+		/* [229] RATE_LIMIT_EN */ (bool)true,          // Plan 1 step 2 — on by default since 2026-11-04 (was off)
 		/* [230] RATE_LIMIT_WINDOW_S */ 3600U,         // 60 min sliding window
-		/* [231] RATE_LIMIT_MAX_TX */ 10U,             // 10 TX max inside the window
+		/* [231] RATE_LIMIT_MAX_TX */ 30U,             // 30 TX max inside the window (10 until 2026-11-04)
 		/* [232] HAULED_DETECT_EN */ (bool)false,      // Plan 1 step 3 — disabled by default
 		/* [233] HAULED_IDLE_THRESHOLD_H */ 24U,       // 24 h dry → HAULED
 		/* [234] HAULED_RETURN_EVENTS */ 3U,           // 3 dives → AT_SEA
@@ -529,7 +531,7 @@ protected:
 		/* [263] PP_MIN_CULMINATION */ 0U,         // TX: keep every pass the elevation filter accepted (previous hardcoded value)
 		/* [264] PP_RX_MIN_CULMINATION */ 20U,     // RX: a downlink needs a good pass — a grazing one wastes the whole window (previous hardcoded value)
 		/* [265] PP_POSITION_MARGIN_KM */ 0U,      // no position uncertainty by default
-		/* [266] SWS_SENSOR_ENABLE_TX_MODE */ 1U,  // AUTO: DX1 once DX1_GROUND_DECODER_READY; legacy Doppler until then
+		/* [266] SWS_SENSOR_ENABLE_TX_MODE */ 1U,  // AUTO: DX1 on a DIVE_INFO_MESSAGE build, legacy Doppler otherwise
 		/* [267] ARGOS_CFG_WARNINGS */ 0U,            // nothing reported until the first evaluation
 		/* [268] ARGOS_MASTER_MODULATION */ 3U,       // unknown until a genuine master read-back
 		/* [269] ARGOS_MASTER_RCONF_FP */ 0U,         // 0 never matches a non-empty master: untrusted
@@ -981,7 +983,7 @@ public:
 
 	/// @name Argos modulation state (adaptive modulation OFF)
 	/// ARGOS_CACHED_MODULATION (SMP01) has exactly ONE writer: write_cached_
-	/// modulation() below. tools/check_cached_modulation_writes.py fails the
+	/// modulation() below. scripts/check_cached_modulation_writes.py fails the
 	/// pre-commit hook and CI if a direct write_param() of it appears anywhere
 	/// else -- a writer that forgot the master-modulation bookkeeping would
 	/// leave a stale cache "trusted" for good. RAM only: the caller decides
@@ -1590,8 +1592,7 @@ public:
 		// outside the gnss_en block below: DX1 rides the Doppler, not GNSS.
 		const unsigned int sws_tx_mode = read_param<unsigned int>(ParamID::SWS_SENSOR_ENABLE_TX_MODE);
 		const bool sws_uw_en = read_param<bool>(ParamID::UNDERWATER_EN);
-		argos_config.sws_tx_doppler_ext =
-		    dx1_effective(sws_tx_mode, sws_uw_en, DX1_DOPPLER_EXT_BUILD, DX1_GROUND_DECODER_READY);
+		argos_config.sws_tx_doppler_ext = dx1_effective(sws_tx_mode, sws_uw_en, DX1_DOPPLER_EXT_BUILD);
 
 		// Set sensor TX enable based on configuration
 		argos_config.sensor_tx_enable = 0;

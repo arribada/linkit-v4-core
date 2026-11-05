@@ -40,10 +40,6 @@ Or via the script:
 ./scripts/build_unit_tests.sh
 ```
 
-## Pre-commit hook
-
-`.git/hooks/pre-commit` builds `TrackerTests` on every commit (build only, not run). A failed build aborts the commit.
-
 ## Adding a test
 
 1. Add `mything_test.cpp` in [`src/`](src/), using CppUTest's `TEST_GROUP` / `TEST` macros.

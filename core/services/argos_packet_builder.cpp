@@ -595,6 +595,72 @@ void ArgosPacketBuilder::dx1_refresh_dive_end(KineisPacket &img, unsigned int di
 	if (img.size() > DOPPLER_DX1_CRC_BYTE) img[DOPPLER_DX1_CRC_BYTE] = (char)dx1_crc8_head(img);
 }
 
+unsigned int ArgosPacketBuilder::dx1_bin_code(uint32_t dry_s, uint32_t obs_s) {
+	if (obs_s < Dx1Dive::OBS_MIN_S) return 0;
+	return 1U + (50U * dry_s + obs_s / 2U) / obs_s;
+}
+
+unsigned int ArgosPacketBuilder::dx1_temp_code(bool valid, int32_t q4) {
+	if (!valid) return 0;
+	// floor(q4 / 2) in 64 bits: C++ division truncates toward zero, and a
+	// negative quarter-degree reading must round down like the model's >> 1.
+	const int64_t q = q4;
+	const int64_t half = (q >= 0) ? q / 2 : -((-q + 1) / 2);
+	const int64_t code = half + 21;
+	return (unsigned int)(code < 1 ? 1 : (code > 127 ? 127 : code));
+}
+
+void ArgosPacketBuilder::dx1_encode_dive(DiveFrameExt &ext, const Dx1Behaviour &latch, const Dx1DiveData &d) {
+	DopplerExt codes;
+	dx1_encode_behaviour(codes, latch);
+	ext.dry_class = codes.dry_class;
+	ext.surf_seq = d.surf_seq;
+	for (unsigned int k = 0; k < Dx1Dive::HISTORY; k++)
+		ext.dive[k] = (uint8_t)dx1_em_encode(d.dive_s[k], 4, 3);  // 0 stays 0 = unknown
+	ext.s_last = codes.s_last;
+	ext.pct = codes.pct;
+	ext.n_surf = codes.n_surf;
+	ext.d_max = codes.d_max;
+	ext.temp = (uint8_t)dx1_temp_code(d.temp_valid, d.temp_q4);
+	for (unsigned int k = 0; k < Dx1Dive::BINS; k++)
+		ext.bins[k] = (uint8_t)dx1_bin_code(d.bin_dry_s[k], d.bin_obs_s[k]);
+	ext.phase = d.phase;
+}
+
+KineisPacket ArgosPacketBuilder::build_dive_frame(unsigned int batt_voltage, bool is_low_battery,
+                                                  const DiveFrameExt &ext, unsigned int &size_bits) {
+	unsigned int base_pos = 0;
+	KineisPacket packet;
+	// Every field masked to its width, as in the Doppler image: an encoder slip
+	// must corrupt one field, never spill into its neighbour.
+	auto put = [&packet, &base_pos](uint32_t v, unsigned int w) {
+		PACK_BITS(v & ((1U << w) - 1U), packet, base_pos, w);
+	};
+	packet.assign(DIVE_FRAME_BYTES, 0);
+	put(0, 8);  // frozen Doppler marker
+	put(convert_battery_voltage(batt_voltage), 7);
+	put(is_low_battery ? 1 : 0, 1);
+	put(DOPPLER_DX1_VER, 2);
+	put(1, 1);  // EXT: dive frame
+	put(ext.dry_class, 3);
+	put(ext.dive_end, 2);
+	put(dx1_crc8_head(packet), 8);
+	put(ext.surf_seq, 9);
+	for (unsigned int k = 0; k < Dx1Dive::HISTORY; k++)
+		put(ext.dive[k], 7);
+	put(ext.s_last, 7);
+	put(ext.pct, 7);
+	put(ext.n_surf, 7);
+	put(ext.d_max, 7);
+	put(ext.temp, 7);
+	for (unsigned int k = 0; k < Dx1Dive::BINS; k++)
+		put(ext.bins[k], 6);
+	put(ext.phase, 1);
+	apply_lda2_crc8(packet);  // CRC8 of bytes 0-22 at byte 23
+	size_bits = DIVE_FRAME_BITS;
+	return packet;
+}
+
 unsigned int ArgosPacketBuilder::doppler_view(KineisPacket &img, KineisModulation mode, unsigned int in_bits,
                                               bool is_dx1) {
 	if (!is_dx1 || img.size() != DOPPLER_DX1_IMAGE_BYTES) return in_bits;

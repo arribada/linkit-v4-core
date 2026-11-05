@@ -62,8 +62,11 @@ l'un ni l'autre est marquée `A REVOIR`, et la valeur reste celle de production.
    MEAS20, il demande donc une maîtresse LDA2 (README, « The depth pile only pays
    off on LDA2 »).
 8. **YanaRiba : le limiteur d'émission était actif** (`RATE_LIMIT_EN = 1`, 10 à
-   20 émissions par heure selon la balise). Les modèles l'ont coupé : aucun frein
-   n'est activé par défaut, c'est un choix par projet.
+   20 émissions par heure selon la balise). Depuis le 04/11/2026, le firmware
+   l'active par défaut à 30 émissions par heure, et les modèles tortue Argos
+   l'écrivent, puisque le magasin survit au reflash. Restent coupés
+   `rspb_mortality.cfg` (valeurs de la plateforme) et `turtle_lora.cfg` (le
+   limiteur ne compte que les émissions Argos).
 
 ## Cyprus-Boats
 
@@ -104,12 +107,11 @@ la colonne donne chaque valeur et son nombre de balises. Tu'uga a le GNSS coupé
 |---|---|---|
 | `ARGOS_TX_REPETITION` | 30 ×5, 60 ×3 | 60 |
 | `ARGOS_NTRY_PER_MESSAGE` | 3 ×7, 2 ×1 | 2 |
-| `ARGOS_DEPTH_PILE` | 1 | 4 |
 | `ARGOS_TX_JITTER_EN` | 0 | 1 |
 | `ARGOS_TCXO_WARMUP_TIME` | 0 | 2 |
 | `SURFACING_BURST_STEP` | 5 ×5, 10 ×3 | 10 |
 | `SURFACING_BURST_MAX_MSG` | 5 ×5, 3 ×3 | 6 |
-| `RATE_LIMIT_EN` | 1 | 0 |
+| `RATE_LIMIT_MAX_TX` | 10 à 20 | 30 |
 | `GNSS_ENABLE` | 1 ×7, 0 ×1 | 1 |
 | `GNSS_ACQ_TIMEOUT` | 60 ×4, 30 ×3, 120 ×1 | 60 |
 | `GNSS_COLD_ACQ_TIMEOUT` | 120 ×5, 60 ×3 | 90 |
@@ -148,8 +150,8 @@ firmware (1000, 200, 10000), conformément à la décision du 27/10/2026.
   `cyprus_boat.cfg` ? Puis corriger le seuil de Cyprus-test-2 sur la plateforme,
   et relire `ARP16` sur une balise.
 - **YanaRiba** : redéployer sur `turtle_argos_surface.cfg` suppose des
-  maîtresses LDA2 partout (ou MEASC12 sur les LDK) ; limiteur et basse batterie
-  à décider.
+  maîtresses LDA2 partout (ou MEASC12 sur les LDK) ; basse batterie à décider
+  (limiteur tranché le 04/11/2026 : 30 émissions par heure).
 - **Tortue LoRa** : `LB_EN = 0` et des délais GNSS de 30 s, froid compris.
 - **RSPB** : la constellation (6.).
 - **Plateforme** : les trois noms du Config Tool, et les secrets des modèles SMD

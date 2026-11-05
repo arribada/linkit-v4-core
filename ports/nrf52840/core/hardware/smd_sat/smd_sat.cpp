@@ -962,7 +962,7 @@ void SmdSat::state_load_kmac() {
 		if (--m_state_counter == 0) {
 			if (mac_st == MAC_TX_IN_PROGRESS) {
 				// Not a fault: the module is still emitting a previous burst, and
-				// a BLIND burst legitimately runs for (retx_nb + 1) * period --
+				// a BLIND burst legitimately runs for several periods --
 				// minutes, far beyond this poll budget. Give the attempt up
 				// without touching the KMAC state or the error count, and let
 				// ArgosTxService retry on its normal backoff by which time the
@@ -1267,7 +1267,7 @@ void SmdSat::apply_message_counter_hold() {
 	}
 
 	// BLIND owns its own repetitions, so the host must keep its hands off the
-	// counter. We hand the module ONE payload and it emits retx_nb + 1 copies on
+	// counter. We hand the module ONE payload and it emits retx_nb copies on
 	// its own schedule, numbering them itself; every AT+TX the host issues in
 	// BLIND is therefore a genuinely NEW message. Decrementing here would either
 	// do nothing (the module renumbers anyway) or collide with its numbering.
@@ -1401,6 +1401,10 @@ void SmdSat::state_transmitting_enter() {
 		// and "TX timeout after polling" at t+243. The last copy leaves at t=180
 		// and its completion needs more than the 60 s that remained. Two periods of
 		// margin covers it; the 2 h cap below still bounds an extreme config.
+		// 2026-11-02: those long bursts are not a 4th copy by design. retx_nb is the
+		// TOTAL (Kineis guide: retx = 4 is A1/4..A4/4); the MAC loads its counter with
+		// it and counts down on each valid TX_DONE, but a TX_TIMEOUT retries the frame
+		// without counting it -- that is what stretches a burst, a period at a time.
 		uint64_t burst_ms = ((uint64_t)rn + 2ULL) * (uint64_t)period * 1000ULL;
 		if (burst_ms > 7200000ULL) burst_ms = 7200000ULL;
 		total_timeout_ms += (uint32_t)burst_ms;

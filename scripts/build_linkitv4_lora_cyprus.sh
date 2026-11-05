@@ -8,7 +8,7 @@
 # change to the shared LoRa script is inherited here automatically — except for
 # the values pinned below, which is the whole point of having this file.
 #
-# SEVEN firmware options differ from the standard LoRa build. Every one of them
+# SIX firmware options differ from the standard LoRa build. Every one of them
 # is load-bearing; none may change silently if someone edits the defaults in
 # build_linkitv4_lora.sh. Each line below states the shared default it overrides.
 #
@@ -24,12 +24,6 @@
 #   shipping with DCS off is not legal. The shared script keeps OFF only to stay
 #   byte-identical for the existing LoRa turtles, and points here for the
 #   deployments that must opt in.
-#
-#   GNSS_HAS_BACKUP_BATTERY=OFF  (shared default: ON)
-#   The Cyprus boards have no V_BCKP coin cell, so the M10Q BBR fast-path
-#   reconfigure would fail its baud probe every session and fall back to a full
-#   configure anyway. Set ON only on a variant that actually fits the backup
-#   supply.
 #
 #   ENABLE_AXL_SENSOR=ON  (shared default: OFF)
 #   Required by moored-vs-underway mode. The BMA400 is the cheap sentinel
@@ -106,7 +100,6 @@ export LORA_BUILD_SUBDIR=LINKIT_CYPRUS
 
 export BATTERY_CHEMISTRY=BATT_CHEM_NCR18650_3100_3400
 export LORA_DCS_ENABLE=ON
-export GNSS_HAS_BACKUP_BATTERY=OFF
 export ENABLE_AXL_SENSOR=ON
 export LORA_MOTION_EXT=ON
 export LORA_LINKCHECK=${LORA_LINKCHECK:-ON}

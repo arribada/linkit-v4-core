@@ -15,7 +15,7 @@ namespace BSP
 		// with USB, ~0.25 mA expected from 3.3 V / 13 kOhm. Nor does it hold anything
 		// through a reset, which returns PIN_CNF to a disconnected input with no
 		// pull: a level that must survive a reset needs a resistor on the board.
-		// tools/check_gpio_output_pulls.py enforces this in CI.
+		// scripts/check_gpio_output_pulls.py enforces this in CI.
 		/* GPIO_POWER_CONTROL   */ {NRF_GPIO_PIN_MAP(0,  4), NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE, {}},
         /* GPIO_VSYS_SEL        */ {NRF_GPIO_PIN_MAP(1, 14), NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_S0D1, NRF_GPIO_PIN_NOSENSE, {}},
 		/* GPIO_DEBUG           */ {NRF_GPIO_PIN_MAP(0, 11), NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE, {}},

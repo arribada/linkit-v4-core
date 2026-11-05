@@ -224,7 +224,7 @@ protected:
 	/// The default wraps service_next_schedule_in_ms(), so no service has to
 	/// migrate for this to compile and behave exactly as before -- SCHEDULE_DISABLED
 	/// maps to off("no-schedule"), which is the literal the bench report and
-	/// tests/bench/dte_campaign.py already match on. Override this one instead of
+	/// .claude/bench/dte_campaign.py already match on. Override this one instead of
 	/// the legacy virtual when a service migrates; the legacy one deliberately
 	/// stays PURE until the last service has moved, so that a new service
 	/// implementing neither cannot compile and be silently off for ever -- which
@@ -310,7 +310,7 @@ protected:
 	///        config, because LB_EN defaults to false; and it is unreachable
 	///        from every host test, because FakeConfigurationStore overrides
 	///        update_battery_level() with an empty body, so the flag is
-	///        permanently false there. tools/check_battery_guard_callers.py
+	///        permanently false there. scripts/check_battery_guard_callers.py
 	///        pins what a source check can pin in the meantime.
 	/// @return The decision to return straight out of service_next_schedule(),
 	///         or nullopt to carry on scheduling. Note that on the shutdown
@@ -367,7 +367,8 @@ public:
 	static unsigned int add(Service &s);
 	static void remove(Service &s);
 	/// @brief Clear ALL static state (registered services, id counter, cooldown
-	///        and cycle bookkeeping). TEST-ONLY: production never resets the
+	///        and cycle bookkeeping, and the TX rate-limiter ring that startall()
+	///        restores). TEST-ONLY: production never resets the
 	///        ServiceManager. Lets a unit-test fixture guarantee a clean global
 	///        between tests so a leftover registration or deferred continuation
 	///        from a prior test cannot bleed into the next one.

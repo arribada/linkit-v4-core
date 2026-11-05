@@ -99,6 +99,12 @@ public:
 	unsigned int last_size_bits = 0;
 	unsigned int send_count = 0;
 
+	// Test helper: the Argos MC the service set for the next send(), what SmdSat
+	// writes to the module ahead of the frame. Not a mock() call, like the hooks
+	// above: every TX sets one.
+	void set_next_message_counter(uint16_t mc) override { last_mc = mc; }
+	uint16_t last_mc = 0;
+
 	void set_lpm_mode(uint8_t lpm_bitmap) override {
 		(void)lpm_bitmap;  // LPM is SMD-specific, not verified in generic TX tests
 	}

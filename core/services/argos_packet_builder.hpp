@@ -183,6 +183,49 @@ public:
 	/// RAM only, no allocation: this is the ONE thing DX1 adds to the surfacing
 	/// path. No-op on a frame shorter than 3 bytes.
 	static void dx1_refresh_dive_end(KineisPacket &img, unsigned int dive_end);
+	// DX1 dive frame (24-byte LDA2 frame, 2026-11). Never the first TX of a
+	// surfacing, LDA2 masters only, at most one per surfacing and per 2 h; the
+	// rules live in ArgosTxService::dive_frame_due(). Layout, MSB-first:
+	//   bytes 0-3    the compact DX1 head with EXT = 1 (CRC8 of bytes 0-2 at byte 3)
+	//   bits 32-40   SURF_SEQ, counting the surfacing in progress when it is real
+	//   bits 41-75   D_LAST, D_H1..D_H4: E4M3 seconds of the last 5 dives, newest first
+	//   bits 76-110  S_LAST, PCT_DRY, N_SURF_24H, D_MAX_24H (DX1 codes), TEMP
+	//   bits 111-182 12 x 6-bit 2-h UTC dry-% bins, newest complete bin first
+	//   bit 183      PHASE: parity of the current 2-h UTC bin index
+	//   byte 23      CRC8 of bytes 0-22, as every 24-byte LDA2 frame
+	// Byte 0 = 0x00 and 192 bits: no GNSS frame has day 0, and DX1 decoders
+	// that predate it must not read it as a Long. Vectors: dx1_doppler_test.cpp.
+	static constexpr unsigned int DIVE_FRAME_BITS = 192;
+	static constexpr unsigned int DIVE_FRAME_BYTES = 24;
+
+	/// @brief Already-encoded dive-frame codes (0 = unknown everywhere).
+	struct DiveFrameExt {
+		uint8_t dry_class = 0;                ///< head DRY, 0..7
+		uint8_t dive_end = 0;                 ///< head DEND, 0..3
+		uint16_t surf_seq = 0;                ///< 9 bits
+		uint8_t dive[Dx1Dive::HISTORY] = {};  ///< E4M3 seconds: D_LAST, D_H1..D_H4
+		uint8_t s_last = 0;                   ///< E4M3 seconds
+		uint8_t pct = 0;                      ///< dx1_pct_code()
+		uint8_t n_surf = 0;                   ///< E4M3(n + 1)
+		uint8_t d_max = 0;                    ///< E4M3 seconds
+		uint8_t temp = 0;                     ///< dx1_temp_code()
+		uint8_t bins[Dx1Dive::BINS] = {};     ///< dx1_bin_code(), newest first
+		uint8_t phase = 0;                    ///< 1 bit
+	};
+
+	/// @brief 6-bit timeline code: 0 unknown (observed < 1 h), else 1 + the
+	/// nearest 2 % step of the dry fraction (1..51).
+	static unsigned int dx1_bin_code(uint32_t dry_s, uint32_t obs_s);
+	/// @brief 7-bit temperature: 0 unknown, else floor(q4 / 2) + 21 clamped to
+	/// 1..127, so T = (code - 21) / 2 °C from -10 to +53 °C.
+	static unsigned int dx1_temp_code(bool valid, int32_t q4);
+	/// @brief Fill the dive-frame codes from the tracker's latch and dive data
+	/// (DEND is the caller's, as for the Doppler). Pure integer encoding.
+	static void dx1_encode_dive(DiveFrameExt &ext, const Dx1Behaviour &latch, const Dx1DiveData &d);
+	/// @brief Build the 24-byte dive frame (both CRCs included).
+	static KineisPacket build_dive_frame(unsigned int batt_voltage, bool is_low_battery, const DiveFrameExt &ext,
+	                                     unsigned int &size_bits);
+
 	/// @brief Shrink a DX1 image to the prefix the modulation carries and return
 	/// its size in bits (VLDA4 3 B/24, LDA2 4 B/32, LDK 16 B/128). A non-DX1 packet
 	/// (@p is_dx1 false) is left untouched and @p in_bits returned unchanged.

@@ -166,7 +166,10 @@ echo "Build tag: $(cat TAG_NAME)"
 ARGOS_SMD=${ARGOS_SMD:-ON}
 ENABLE_AXL_SENSOR=${ENABLE_AXL_SENSOR:-ON}
 ENABLE_SWS_LOG=${ENABLE_SWS_LOG:-OFF}
-GNSS_HAS_BACKUP_BATTERY=${GNSS_HAS_BACKUP_BATTERY:-ON}
+# GNSS_HAS_BACKUP_BATTERY: 0 on every build since 2026-11-04. It is only a hint
+# on the M10Q boot baud probe order (m10qasync.cpp); the BBR fast path is decided
+# at run time, so a wrong value costs ~3 s once per boot.
+GNSS_HAS_BACKUP_BATTERY=${GNSS_HAS_BACKUP_BATTERY:-0}
 BATTERY_CHEMISTRY=${BATTERY_CHEMISTRY:-BATT_CHEM_LS17500_2P}
 # SMD timing safety knobs.
 #
@@ -191,6 +194,9 @@ SMDSAT_AUTOFALLBACK=${SMDSAT_AUTOFALLBACK:-ON}
 # button driver's rail pin; SMD_UART keeps UARTE1 and leaves P0.09 free. CMake
 # refuses the other two combinations.
 CAM_ENABLE=${CAM_ENABLE:-0}
+# Dive info in the Argos messages (DX1 Doppler extension, 24-byte dive frame),
+# OFF by default: DIVE_INFO_MESSAGE=ON ./scripts/build_linkitv4_smd.sh [...]
+DIVE_INFO_MESSAGE=${DIVE_INFO_MESSAGE:-OFF}
 if [ "$SMD_UART" = "ON" ]; then CAM_CONTROL=${CAM_CONTROL:-BUTTON}; else CAM_CONTROL=${CAM_CONTROL:-UART}; fi
 
 echo "Building LinkIt V4 SMD with configuration:"
@@ -202,6 +208,7 @@ echo "  BATTERY_CHEMISTRY=${BATTERY_CHEMISTRY}"
 echo "  SMDSAT_USE_SAFE_TIMINGS=${SMDSAT_USE_SAFE_TIMINGS}"
 echo "  SMDSAT_AUTOFALLBACK=${SMDSAT_AUTOFALLBACK}"
 echo "  CAM_ENABLE=${CAM_ENABLE}  CAM_CONTROL=${CAM_CONTROL}"
+echo "  DIVE_INFO_MESSAGE=${DIVE_INFO_MESSAGE}"
 if [ "$BENCH" = "ON" ]; then
     printf '\033[1;35m  BENCH_TEST=ON  ->  %% USB-CDC console (%%CFG/%%OP/%%GPS) + GPS injection active\033[0m\n'
 fi
@@ -223,6 +230,7 @@ cmake -DCMAKE_TOOLCHAIN_FILE=../../toolchain_arm_gcc_nrf52.cmake \
       -DSMDSAT_AUTOFALLBACK=${SMDSAT_AUTOFALLBACK} \
       -DSMD_FLASH_HOLD=${SMD_FLASH_HOLD:-OFF} \
       -DSMD_DIVE_STANDBY=${SMD_DIVE_STANDBY:-OFF} \
+      -DDIVE_INFO_MESSAGE=${DIVE_INFO_MESSAGE} \
       -DSMD_UART=${SMD_UART} \
       -DCAM_ENABLE=${CAM_ENABLE} \
       -DCAM_CONTROL=${CAM_CONTROL} \

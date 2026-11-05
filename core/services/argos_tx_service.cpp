@@ -60,6 +60,7 @@ extern Scheduler *system_scheduler;
 extern GPSDevice *gps_device;
 extern RGBLed *status_led;
 extern BatteryMonitor *battery_monitor;
+extern RTC *rtc;
 #if defined(BOARD_RSPB) && ENABLE_MORTALITY_SENSOR
 #include "mortality_service.hpp"
 
@@ -259,6 +260,7 @@ void ArgosTxService::service_init() {
 	m_prepared_doppler_size_bits = 0;
 	m_prepared_doppler_is_dx1 = false;
 	m_prepared_at_ms = 0;
+	reset_dive_frame_session();
 
 	// Snapshot which per-mod RCONFs are provisioned. Used by adaptive bursts
 	// to skip a TX cleanly when the fallback modulation can't hold the packet
@@ -366,6 +368,7 @@ void ArgosTxService::service_term() {
 	m_prepared_doppler_size_bits = 0;
 	m_prepared_doppler_is_dx1 = false;
 	m_prepared_at_ms = 0;
+	reset_dive_frame_session();
 }
 
 /// @brief Enabled if Argos mode is not OFF (respects cert TX override).
@@ -420,8 +423,8 @@ ScheduleDecision ArgosTxService::service_next_schedule() {
 
 	// Rolling-window rate limit (Plan 1 step 2). Applies to ALL TX cycles
 	// including SURFACING_BURST's first ping — battery priority over the
-	// §5.3 first-TX-fast objective, by explicit user decision. Disabled by
-	// default (RATE_LIMIT_EN = false → returns false without reading config).
+	// §5.3 first-TX-fast objective, by explicit user decision. On by default
+	// since 2026-11-04, 30 TX/h (RATE_LIMIT_EN = false → false before the cap is read).
 	{
 		unsigned int reschedule_s = 0;
 		if (RateLimiter::is_blocked(now, reschedule_s)) {
@@ -1252,6 +1255,14 @@ bool ArgosTxService::service_cancel() {
 	}
 	m_inflight_gps.clear();
 	m_inflight_reached_air = false;
+	// Nor is a dive frame in flight any more: a TxComplete after this one is
+	// not ours (a DTE $SATTX or $SATDP shares the device) and must not spend the
+	// surfacing, the 2-h spacing or the overdue clock.
+	m_dive_frame_inflight = false;
+	// And a TX accepted but never completed did not go on air (a KIM2 +ERROR
+	// after AT+TX): it is not the first frame of the surfacing.
+	if (m_surface_tx_open && m_surface_txs) m_surface_txs--;
+	m_surface_tx_open = false;
 
 	return is_pending;
 }
@@ -1331,10 +1342,34 @@ static bool prewarm_refresh_allowed_on(const ServiceEvent &e) {
 #endif
 }
 
+/// @brief DX1 dive frame temperature (2026-11): one die read per minute, from
+/// the underwater SWS sample ends prewarm_refresh_allowed_on() accepts -- never
+/// the sample that saw the surface, never under the ADC-fault latch. About
+/// 50 µs, no bus, no flash: the tracker only stores it.
+void ArgosTxService::sample_dive_temperature(const ServiceEvent &e) {
+#if DX1_DOPPLER_EXT_BUILD
+	if (!m_is_underwater || e.event_source != ServiceIdentifier::UW_SENSOR || !prewarm_refresh_allowed_on(e)) return;
+	const uint64_t now_ms = PMU::get_timestamp_ms();
+	if (m_temp_sampled && now_ms - m_last_temp_sample_ms < TEMP_SAMPLE_PERIOD_MS) return;
+	// Nothing can carry it with UNP26 OFF: two RAM reads, no
+	// get_argos_configuration() on this 1-Hz path.
+	if (!dx1_effective(configuration_store->read_param<unsigned int>(ParamID::SWS_SENSOR_ENABLE_TX_MODE),
+	                   configuration_store->read_param<bool>(ParamID::UNDERWATER_EN), DX1_DOPPLER_EXT_BUILD))
+		return;
+	m_temp_sampled = true;
+	m_last_temp_sample_ms = now_ms;
+	int32_t q4 = 0;
+	if (PMU::get_die_temperature_q4(q4)) DiveBehaviourTracker::on_temp_sample(now_ms, q4);
+#else
+	(void)e;
+#endif
+}
+
 /// @brief Handle peer service events (GPS fix, sensor data, underwater state, surfacing).
 /// @param e  Event from another service (GPS, SWS, sensors, etc.).
 void ArgosTxService::notify_peer_event(ServiceEvent &e) {
 	//DEBUG_TRACE("ArgosTxService::notify_peer_event: (%u|%u)", e.event_source, e.event_type);
+	sample_dive_temperature(e);
 
 	// Background refresh of the pre-warmed Doppler packet: any peer event
 	// fired while underwater (sensor sample, GPS tick, etc.) is a chance to
@@ -1576,6 +1611,9 @@ void ArgosTxService::notify_peer_event(ServiceEvent &e) {
 			DEBUG_INFO("ArgosTxService: SURFACED uptime=%llu", (unsigned long long)PMU::get_timestamp_ms());
 #endif
 			m_is_underwater = false;
+			// DX1 dive frame: a new surfacing, whose first TX stays the shortest.
+			m_surface_txs = 0;
+			m_dive_frame_this_surfacing = false;
 			// Reset the session-suspension counter so a transient burst of
 			// failures earlier in the deployment can't permanently kill TX.
 			// Without this reset m_consecutive_device_errors only clears on
@@ -2530,6 +2568,87 @@ const ArgosPacketBuilder::DopplerExt *ArgosTxService::doppler_ext(bool enabled) 
 #endif
 }
 
+/// @brief The DX1 dive frame rules (2026-11), every one of them:
+///  - DX1 effective (DIVE_INFO_MESSAGE build, UNP26 on, UNDERWATER_EN), adaptive
+///    modulation OFF and an LDA2 master: 192 bits fit nowhere else;
+///  - SURFACING_BURST, a burst ping or a heartbeat at the surface, never the
+///    first TX on air since the surfacing (it stays the shortest): one the
+///    module accepted, then refused or never completed, does not count;
+///  - a trusted master (ART13), when known, must be LDA2 too;
+///  - at most one per surfacing and one per Dx1Dive::MIN_SPACING_MS (2 h),
+///    counted on the dive frames that went on air (note_tx_done()), so a dive
+///    that cuts one before RF leaves the slot to the next ping;
+///  - position first: the @p before_position pass only goes ahead of a cached
+///    position re-send when none went on air for Dx1Dive::OVERDUE_MS (6 h),
+///    or ever since boot. CloudLocate and degraded PVT always go first.
+bool ArgosTxService::dive_frame_due(const ArgosConfig &cfg, bool before_position) {
+	if (!cfg.sws_tx_doppler_ext || cfg.adaptive_modulation || cfg.mode != BaseArgosMode::SURFACING_BURST) return false;
+	// m_is_underwater is implied by the next test (the dive clears both flags):
+	// kept as the rule itself, an equivalent mutant by construction.
+	if (m_is_underwater || m_surface_txs == 0 || m_dive_frame_this_surfacing) return false;
+	if (!m_is_surfacing_burst && !m_awaiting_surfacing) return false;  // burst pings and heartbeats only
+	if (resolve_non_adaptive_modulation() != KineisModulation::LDA2) return false;
+	// The module may sit on LDA2 after an escalation (degraded PVT) on an LDK
+	// master: the master read back (ART13), when it can be trusted, decides.
+	const unsigned int master = configuration_store->trusted_master_modulation();
+	if (master != ModulationGuard::CODE_UNKNOWN && master != ModulationGuard::CODE_LDA2) return false;
+	const uint64_t since_ms = PMU::get_timestamp_ms() - m_last_dive_frame_ms;
+	if (m_dive_frame_ever && since_ms < Dx1Dive::MIN_SPACING_MS) return false;
+	return !before_position || !m_dive_frame_ever || since_ms >= Dx1Dive::OVERDUE_MS;
+}
+
+bool ArgosTxService::try_send_dive_frame(const ArgosConfig &cfg, bool before_position) {
+#if DX1_DOPPLER_EXT_BUILD
+	if (!dive_frame_due(cfg, before_position)) return false;
+	const uint64_t now_ms = PMU::get_timestamp_ms();
+	// Clock first: a step since the last UW event clears the timeline before it is read.
+	DiveBehaviourTracker::on_clock(now_ms, dx1_trusted_utc(rtc));
+	const Dx1DiveData data = DiveBehaviourTracker::dive_data(now_ms);
+	// A frame with no known dive and no known bin (first surfacings after a
+	// boot or an entry into Operational) would only burn the 2-h slot.
+	if (!dx1_dive_data_known(data)) return false;
+	ArgosPacketBuilder::DiveFrameExt ext;
+	ArgosPacketBuilder::dx1_encode_dive(ext, DiveBehaviourTracker::latch(now_ms), data);
+	ext.dive_end = (uint8_t)dx1_dive_end_now();
+	unsigned int size_bits = 0;
+	KineisPacket packet =
+	    ArgosPacketBuilder::build_dive_frame(service_get_voltage(), service_is_battery_level_low(), ext, size_bits);
+	DEBUG_DETAIL("ArgosTxService: DX1 dive frame, burst #%u%s", m_doppler_burst_count,
+	             before_position ? " (overdue)" : "");
+	m_last_tx_had_gps = false;
+	m_last_val_tx_type = "dive";  // DATA, an MC of its own: must never start with "doppler"
+	m_dive_frame_sending = true;
+	send_with_mc(KineisModulation::LDA2, packet, size_bits);
+	return true;
+#else
+	(void)cfg;
+	(void)before_position;
+	return false;
+#endif
+}
+
+void ArgosTxService::note_tx_accepted() {
+	if (m_surface_txs < UINT_MAX) m_surface_txs++;
+	m_surface_tx_open = true;
+}
+
+void ArgosTxService::note_tx_done() {
+	m_surface_tx_open = false;
+	if (!m_dive_frame_inflight) return;
+	m_dive_frame_inflight = false;
+	m_dive_frame_this_surfacing = true;
+	m_dive_frame_ever = true;
+	m_last_dive_frame_ms = PMU::get_timestamp_ms();
+}
+
+void ArgosTxService::reset_dive_frame_session() {
+	m_surface_txs = 0;
+	m_surface_tx_open = false;
+	m_dive_frame_sending = false;
+	m_dive_frame_inflight = false;
+	m_dive_frame_this_surfacing = false;
+}
+
 unsigned int ArgosTxService::dx1_dive_end_now() {
 #if DX1_DOPPLER_EXT_BUILD
 	const SWSAnalogService::Diagnostics diag = SWSAnalogService::get_diagnostics();
@@ -2605,6 +2724,108 @@ void ArgosTxService::prepare_doppler_packet() {
 	m_prepared_doppler_mode =
 	    argos_config.adaptive_modulation ? adaptive_doppler_modulation() : resolve_non_adaptive_modulation();
 	m_prepared_at_ms = PMU::get_timestamp_ms();
+}
+
+/// @brief Cached position branch of process_doppler_burst(), moved out whole
+/// (2026-11, to give the dive frame its slot without growing that function).
+/// Used only on ping #2+ (m_doppler_burst_count > 1) when no live CloudLocate
+/// raw or degraded PVT is available this surface. Sends the most-recent cached
+/// position between last GPS fix and last Fastloc/degraded PVT (RAM cache
+/// populated by gps_service).
+///
+/// Ping #1 is intentionally skipped to preserve the §5 priority-3 fast
+/// first-TX path: the pre-warmed Doppler stays untouched. This is the prudent
+/// "Approach A" — no change to the surface critical-path latency, position is
+/// added starting at ping #2.
+///
+/// @return false (the caller falls through to the standard Doppler) if the
+/// cache is empty or modulation constraints prevent TX.
+bool ArgosTxService::try_send_cached_position(ArgosConfig &argos_config) {
+	if (m_doppler_burst_count <= 1) return false;
+	const GPSLogEntry &cached_gps = configuration_store->get_last_gps_entry();
+	const GPSLogEntry &cached_fl = configuration_store->get_last_fastloc_entry();
+	bool gps_ok = (cached_gps.info.valid && cached_gps.info.event_type == GPSEventType::FIX);
+	bool fl_ok = (cached_fl.info.valid && cached_fl.info.event_type == GPSEventType::FASTLOC);
+
+	const GPSLogEntry *pick = nullptr;
+	if (gps_ok && fl_ok) {
+		std::time_t t_gps =
+		    convert_epochtime(cached_gps.header.year, cached_gps.header.month, cached_gps.header.day,
+			                  cached_gps.header.hours, cached_gps.header.minutes, cached_gps.header.seconds);
+		std::time_t t_fl =
+		    convert_epochtime(cached_fl.header.year, cached_fl.header.month, cached_fl.header.day,
+			                  cached_fl.header.hours, cached_fl.header.minutes, cached_fl.header.seconds);
+		pick = (t_fl > t_gps) ? &cached_fl : &cached_gps;
+	} else if (gps_ok) {
+		pick = &cached_gps;
+	} else if (fl_ok) {
+		pick = &cached_fl;
+	}
+
+	// No position older than CACHED_POSITION_MAX_AGE_S. Without a limit a
+	// tag whose GNSS stopped fixing (WWF 2026: dead on day 2 on every unit)
+	// re-sent the same fix on every ping 2+ and heartbeat for the rest of
+	// its life, in place of the Doppler that carries the SWS health. An
+	// unknown age (unset RTC, future-dated entry) counts as too old.
+	if (pick && compute_gps_log_age_seconds(*pick, service_current_time()) > CACHED_POSITION_MAX_AGE_S) {
+		DEBUG_TRACE("ArgosTxService::process_doppler_burst: cached position older than %u s — Doppler",
+		            CACHED_POSITION_MAX_AGE_S);
+		pick = nullptr;
+	}
+
+	if (pick) {
+		GPSLogEntry entry = *pick;
+		entry.info.batt_voltage = service_get_voltage();  // freshen battery field
+		bool is_fastloc = (entry.info.event_type == GPSEventType::FASTLOC);
+
+		KineisPacket cached_packet =
+		    is_fastloc
+		        ? ArgosPacketBuilder::build_fastloc_packet(&entry, argos_config.is_lb)
+		        : ArgosPacketBuilder::build_short_packet(&entry, argos_config.is_out_of_zone, argos_config.is_lb);
+		unsigned int cached_size_bits =
+		    is_fastloc ? ArgosPacketBuilder::FASTLOC_PACKET_BITS : ArgosPacketBuilder::SHORT_PACKET_BITS;
+
+		// Modulation: adaptive forces LDA2 (universal for both 96-bit short
+		// and 192-bit fastloc). Non-adaptive trusts the master modulation;
+		// fall through to Doppler if the cached payload doesn't fit
+		// (e.g. VLDA4 master with 96-bit short_packet — short doesn't fit 24).
+		KineisModulation cached_mode = KineisModulation::LDA2;
+		bool can_send = true;
+		if (argos_config.adaptive_modulation) {
+			if (!ensure_modulation(cached_mode)) {
+				DEBUG_WARN(
+				    "ArgosTxService::process_doppler_burst: cached-pos modulation switch failed, trying current");
+				cached_mode = m_kineis.get_current_modulation();
+				if (!size_fits_modulation(cached_size_bits, cached_mode)) {
+					DEBUG_WARN("ArgosTxService::process_doppler_burst: cached-pos %u bits doesn't fit fallback mod "
+					           "%d — falling through to Doppler",
+					           cached_size_bits, (int)cached_mode);
+					can_send = false;
+				}
+			}
+		} else {
+			cached_mode = resolve_non_adaptive_modulation();
+			if (!size_fits_modulation(cached_size_bits, cached_mode)) {
+				DEBUG_WARN("ArgosTxService: cached-pos %u bits doesn't fit master mod %d (ARGOS_AD_MOD=0) — Doppler",
+				           cached_size_bits, (int)cached_mode);
+				can_send = false;
+			}
+		}
+
+		if (can_send) {
+			// Demoted to TRACE: per-ping payload dump on hot path.
+			DEBUG_TRACE("ArgosTxService::process_doppler_burst: %s #%u lat=%lf lon=%lf mode=%s data=%s",
+			            is_fastloc ? "CACHED_FASTLOC" : "CACHED_GPS", m_doppler_burst_count, entry.info.lat,
+			            entry.info.lon, argos_modulation_to_string((BaseArgosModulation)cached_mode),
+			            Binascii::hexlify(cached_packet).c_str());
+			m_last_tx_had_gps = true;
+			m_last_val_tx_type = is_fastloc ? "fastloc-cached" : "short-cached";
+			send_with_mc(cached_mode, cached_packet, cached_size_bits);
+			return true;
+		}
+		// else fall through to standard Doppler below
+	}
+	return false;
 }
 
 /// @brief Build and send Doppler burst (24-bit, no GPS — or RSPB Doppler with mortality).
@@ -2895,104 +3116,12 @@ void ArgosTxService::process_doppler_burst() {
 		return;
 	}
 
-	// Cached position branch — used only on ping #2+ (m_doppler_burst_count > 1)
-	// when no live CloudLocate raw or degraded PVT is available this surface.
-	// Sends the most-recent cached position between last GPS fix and last
-	// Fastloc/degraded PVT (RAM cache populated by gps_service).
-	//
-	// Ping #1 is intentionally skipped to preserve the §5 priority-3 fast
-	// first-TX path: the existing pre-warmed Doppler (lines 1324-1357) stays
-	// untouched. This is the prudent "Approach A" — no change to the surface
-	// critical-path latency, position is added starting at ping #2.
-	//
-	// Falls through to standard Doppler if cache is empty or modulation
-	// constraints prevent TX.
-	if (m_doppler_burst_count > 1) {
-		const GPSLogEntry &cached_gps = configuration_store->get_last_gps_entry();
-		const GPSLogEntry &cached_fl = configuration_store->get_last_fastloc_entry();
-		bool gps_ok = (cached_gps.info.valid && cached_gps.info.event_type == GPSEventType::FIX);
-		bool fl_ok = (cached_fl.info.valid && cached_fl.info.event_type == GPSEventType::FASTLOC);
-
-		const GPSLogEntry *pick = nullptr;
-		if (gps_ok && fl_ok) {
-			std::time_t t_gps =
-			    convert_epochtime(cached_gps.header.year, cached_gps.header.month, cached_gps.header.day,
-				                  cached_gps.header.hours, cached_gps.header.minutes, cached_gps.header.seconds);
-			std::time_t t_fl =
-			    convert_epochtime(cached_fl.header.year, cached_fl.header.month, cached_fl.header.day,
-				                  cached_fl.header.hours, cached_fl.header.minutes, cached_fl.header.seconds);
-			pick = (t_fl > t_gps) ? &cached_fl : &cached_gps;
-		} else if (gps_ok) {
-			pick = &cached_gps;
-		} else if (fl_ok) {
-			pick = &cached_fl;
-		}
-
-		// No position older than CACHED_POSITION_MAX_AGE_S. Without a limit a
-		// tag whose GNSS stopped fixing (WWF 2026: dead on day 2 on every unit)
-		// re-sent the same fix on every ping 2+ and heartbeat for the rest of
-		// its life, in place of the Doppler that carries the SWS health. An
-		// unknown age (unset RTC, future-dated entry) counts as too old.
-		if (pick && compute_gps_log_age_seconds(*pick, service_current_time()) > CACHED_POSITION_MAX_AGE_S) {
-			DEBUG_TRACE("ArgosTxService::process_doppler_burst: cached position older than %u s — Doppler",
-			            CACHED_POSITION_MAX_AGE_S);
-			pick = nullptr;
-		}
-
-		if (pick) {
-			GPSLogEntry entry = *pick;
-			entry.info.batt_voltage = service_get_voltage();  // freshen battery field
-			bool is_fastloc = (entry.info.event_type == GPSEventType::FASTLOC);
-
-			KineisPacket cached_packet =
-			    is_fastloc
-			        ? ArgosPacketBuilder::build_fastloc_packet(&entry, argos_config.is_lb)
-			        : ArgosPacketBuilder::build_short_packet(&entry, argos_config.is_out_of_zone, argos_config.is_lb);
-			unsigned int cached_size_bits =
-			    is_fastloc ? ArgosPacketBuilder::FASTLOC_PACKET_BITS : ArgosPacketBuilder::SHORT_PACKET_BITS;
-
-			// Modulation: adaptive forces LDA2 (universal for both 96-bit short
-			// and 192-bit fastloc). Non-adaptive trusts the master modulation;
-			// fall through to Doppler if the cached payload doesn't fit
-			// (e.g. VLDA4 master with 96-bit short_packet — short doesn't fit 24).
-			KineisModulation cached_mode = KineisModulation::LDA2;
-			bool can_send = true;
-			if (argos_config.adaptive_modulation) {
-				if (!ensure_modulation(cached_mode)) {
-					DEBUG_WARN(
-					    "ArgosTxService::process_doppler_burst: cached-pos modulation switch failed, trying current");
-					cached_mode = m_kineis.get_current_modulation();
-					if (!size_fits_modulation(cached_size_bits, cached_mode)) {
-						DEBUG_WARN("ArgosTxService::process_doppler_burst: cached-pos %u bits doesn't fit fallback mod "
-						           "%d — falling through to Doppler",
-						           cached_size_bits, (int)cached_mode);
-						can_send = false;
-					}
-				}
-			} else {
-				cached_mode = resolve_non_adaptive_modulation();
-				if (!size_fits_modulation(cached_size_bits, cached_mode)) {
-					DEBUG_WARN(
-					    "ArgosTxService: cached-pos %u bits doesn't fit master mod %d (ARGOS_AD_MOD=0) — Doppler",
-					    cached_size_bits, (int)cached_mode);
-					can_send = false;
-				}
-			}
-
-			if (can_send) {
-				// Demoted to TRACE: per-ping payload dump on hot path.
-				DEBUG_TRACE("ArgosTxService::process_doppler_burst: %s #%u lat=%lf lon=%lf mode=%s data=%s",
-				            is_fastloc ? "CACHED_FASTLOC" : "CACHED_GPS", m_doppler_burst_count, entry.info.lat,
-				            entry.info.lon, argos_modulation_to_string((BaseArgosModulation)cached_mode),
-				            Binascii::hexlify(cached_packet).c_str());
-				m_last_tx_had_gps = true;
-				m_last_val_tx_type = is_fastloc ? "fastloc-cached" : "short-cached";
-				send_with_mc(cached_mode, cached_packet, cached_size_bits);
-				return;
-			}
-			// else fall through to standard Doppler below
-		}
-	}
+	// Ping 2 and later, position first (2026-11): a dive frame only takes the
+	// slot of a cached position re-send once it is overdue (6 h without one),
+	// otherwise it takes the slot that would have been a plain Doppler.
+	if (try_send_dive_frame(argos_config, true)) return;
+	if (try_send_cached_position(argos_config)) return;
+	if (try_send_dive_frame(argos_config, false)) return;
 
 	// Standard Doppler packet (first ping, or fastloc not available)
 	KineisPacket packet;
@@ -3066,6 +3195,8 @@ void ArgosTxService::send_with_mc(const KineisModulation mode, const KineisPacke
 		DEBUG_INFO("[VAL-MC] type=%s mc=%u", m_last_val_tx_type, (unsigned int)mc);
 #endif
 	}
+	m_dive_frame_inflight = m_dive_frame_sending;
+	m_dive_frame_sending = false;
 	m_kineis.send(mode, packet, size_bits);
 }
 
@@ -3080,6 +3211,7 @@ void ArgosTxService::react(KineisEventTxStarted const &) {
 	// free to be slow now.
 	DebugLogger::release();
 	DEBUG_TRACE("ArgosTxService::react: KineisEventTxStarted");
+	note_tx_accepted();
 	// The module has the frame. On the air for every backend but SMD over AT,
 	// which radiates only at its +OK: inflight_reached_air() asks the backend.
 	m_inflight_reached_air = true;
@@ -3095,6 +3227,7 @@ void ArgosTxService::react(KineisEventTxStarted const &) {
 /// @brief TX complete event — update counters, manage surfacing burst, complete service.
 void ArgosTxService::react(KineisEventTxComplete const &) {
 	DEBUG_TRACE("ArgosTxService::react: KineisEventTxComplete");
+	note_tx_done();
 	// The step line of a transmission, and the only one a tag stores: the
 	// backend's own per-TX lines are details. log_harvest.py counts it, and the
 	// bench parses "TX SUCCESS — type=(\S+) mode=(\d+)", so the text stays.

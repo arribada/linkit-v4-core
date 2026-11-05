@@ -411,7 +411,8 @@ const BaseMap param_map[] = {
 	// 0 = disable reuse (always fall back to OFF/Doppler). Default 24h.
 	{ "GNSS_REUSE_FIX_MAX_AGE_S", "GNP50", BaseEncoding::UINT, 0U, 0xFFFFFFFFU, {}, true, true },
 	// [229..231] Rolling-window TX rate limiter (Plan 1 step 2).
-	// Disabled by default. RATE_LIMIT_MAX_TX is bounded by RateLimiter::MAX_CAP
+	// On by default since 2026-11-04 (30 TX per 3600 s, was off). RATE_LIMIT_MAX_TX
+	// is bounded by RateLimiter::MAX_CAP
 	// (128) to keep the noinit ring buffer at a fixed 1024-byte footprint.
 	{ "RATE_LIMIT_EN",        "RLP01", BaseEncoding::BOOLEAN, 0, 0, {}, true, true },
 	{ "RATE_LIMIT_WINDOW_S",  "RLP02", BaseEncoding::UINT, 1U, 0xFFFFFFFFU, {}, true, true },
@@ -542,12 +543,12 @@ const BaseMap param_map[] = {
 	// UNP26: DX1 Doppler extension (was ARP47, renamed before any release; UNP14-18
 	// and UNP21 carried other meanings in released firmware / PyLinkit / the
 	// platform and must never be reused). 0 OFF keeps the legacy 006400-style
-	// frame bit-exact on every modulation. 1 AUTO (default) is DX1 only on a
-	// build with DX1_GROUND_DECODER_READY=1, legacy otherwise. 2 FORCE is DX1
-	// regardless: bench and pilots with a patched decoder ONLY, never in a
-	// template -- today's decoder drops DX1 LDA2 frames and reads DX1 LDK frames
-	// as GNSS positions. Inert without UNDERWATER_EN, on a build without SWS,
-	// and on LoRa builds (no ArgosTxService is instantiated there).
+	// frame bit-exact on every modulation. 1 AUTO (default) is DX1 on a build
+	// compiled with DIVE_INFO_MESSAGE, legacy otherwise; 2 FORCE is the same as
+	// AUTO since the release gate went (2026-11), kept for stored configs. Wherever
+	// DX1 is on, the 24-byte DX1 dive frame is too (SURFACING_BURST, LDA2 master).
+	// Inert without UNDERWATER_EN, on a build without SWS or without
+	// DIVE_INFO_MESSAGE, and on LoRa builds (no ArgosTxService is instantiated there).
 	{ "SWS_SENSOR_ENABLE_TX_MODE", "UNP26", BaseEncoding::UINT, 0U, 2U, { 0U, 1U, 2U }, true, true },
 	// ART12-ART15: Argos modulation guard (adaptive modulation OFF). All
 	// read-only status keys (key[2]=='T', returned by STATR, refused by PARMW),

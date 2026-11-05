@@ -497,9 +497,9 @@ enum class ParamID {
 
 	// 2026-10 — DX1 turtle Doppler extension (SWS health + dive behaviour in the
 	// existing Doppler). Renamed in place from ARGOS_DOPPLER_EXT_EN / ARP47
-	// before any release. UINT 0 OFF / 1 AUTO (default) / 2 FORCE; AUTO only
-	// emits DX1 on a build with DX1_GROUND_DECODER_READY=1. Always needs
-	// UNDERWATER_EN and an SWS-analog build (see dx1_effective()).
+	// before any release. UINT 0 OFF / 1 AUTO (default) / 2 FORCE (= AUTO since
+	// 2026-11); 1 and 2 emit DX1 on a build compiled with DIVE_INFO_MESSAGE.
+	// Always needs UNDERWATER_EN and an SWS-analog build (see dx1_effective()).
 	SWS_SENSOR_ENABLE_TX_MODE                = 266,  // uint: 0 OFF, 1 AUTO, 2 FORCE -- Doppler carries the DX1 extension
 
 	// 2026-10 — Argos modulation guard (adaptive modulation OFF). Read-only,

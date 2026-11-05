@@ -63,7 +63,7 @@ set(BOOL_BUILD_FLAGS
     SMDSAT_USE_SAFE_TIMINGS SMDSAT_AUTOFALLBACK SMDSAT_TXTRACE DEBUG_NO_SYSTEMLOG
     BENCH_TEST BENCH_ALLOW_POWERDOWN BENCH_FORCE_LPM_NONE SMD_FLASH_HOLD SMD_UART KIM2_BLIND_WKUP_RELEASE
     SMD_DIVE_STANDBY
-    DX1_GROUND_DECODER_READY
+    DIVE_INFO_MESSAGE
     CAM_ENABLE BUZZER_ENABLE CAM_CONTROL_UART ENABLE_BARO_SENSOR BATTERY_SAMPLE_EACH_GNSS_SESSION
     METRIC_LATENCY_LOG_ENABLE VALIDATION_LOG_ENABLE RSPB_VSENSORS_FLOOR)
 
@@ -109,13 +109,14 @@ option(BENCH_FORCE_LPM_NONE "Bench: force SMD LPM=NONE (isolate SPI from STOP-mo
 # 122,6 s d'éveil pour trois émissions espacées de 60 s. Ce flag relâche la pin
 # pendant la salve. Défaut OFF : comportement inchangé.
 option(KIM2_BLIND_WKUP_RELEASE "KIM2: release SAT_EXTWAKEUP during a module-paced BLIND burst" OFF)
-# DX1 (Doppler extension tortue) : verrou de publication de
-# SWS_SENSOR_ENABLE_TX_MODE = AUTO (UNP26, défaut des balises). OFF = AUTO émet le
-# Doppler historique au bit près ; seul FORCE (2, banc/pilotes) émet DX1. À ne
-# passer à ON qu'une fois le décodeur DX1 déployé sur la plateforme : le décodeur
-# actuel perd les vues LDA2 et lit les vues LDK comme des positions GNSS.
-# Voir dx1_effective() dans core/services/dive_behaviour_tracker.hpp.
-option(DX1_GROUND_DECODER_READY "DX1: AUTO emits the Doppler extension (ground decoder deployed)" OFF)
+# Infos de plongée dans les messages Argos (DX1 : extension du Doppler tortue,
+# trame plongée de 24 o, lecture de la température). ON = compilées et actives
+# (SWS_SENSOR_ENABLE_TX_MODE/UNP26 = 1 par défaut ; 0 les coupe pour une balise) ;
+# OFF = rien n'est compilé, les trames restent celles d'avant DX1 au bit près.
+# Il faut aussi le SWS analogique, hors RSPB et réveil externe (DX1_DOPPLER_EXT_BUILD).
+# La plateforme doit décoder la trame plongée (v2.0.35) avant qu'une balise
+# compilée ainsi parte avec un ID Argos enregistré : voir la page 16 du wiki.
+option(DIVE_INFO_MESSAGE "Dive info in the Argos messages (DX1 Doppler extension, 24-byte dive frame)" OFF)
 
 # SMD timing safety knobs.
 #
@@ -909,6 +910,13 @@ endif()
 # forcé à 0 sur RSPB, ...). Idempotent sur ceux déjà normalisés au passage 1.
 normalise_bool_flags()
 
+# Guard: DIVE_INFO_MESSAGE asked for must be compiled in. Without the analog SWS (RSPB
+# forces it off) DX1_DOPPLER_EXT_BUILD would quietly be 0, and a LoRa build has no Argos.
+if(DIVE_INFO_MESSAGE AND (NOT ENABLE_SWS_ANALOG OR LORA_RAK3172))
+    message(FATAL_ERROR "DIVE_INFO_MESSAGE=ON requires ENABLE_SWS_ANALOG=1 on an Argos LinkIt build "
+        "(not RSPB, not LoRa): the dive info would not be compiled in.")
+endif()
+
 target_compile_definitions(${TARGET_NAME} PRIVATE
     Release=0
     Debug=1
@@ -946,9 +954,9 @@ target_compile_definitions(${TARGET_NAME} PRIVATE
     # de rester éveillé toute la séquence. Défaut OFF = pin maintenue haute, le
     # comportement d'avant. Voir KIM2Device::release_wkup_for_burst().
     $<$<BOOL:${KIM2_BLIND_WKUP_RELEASE}>:KIM2_BLIND_WKUP_RELEASE=1>
-    # DX1 release gate for SWS_SENSOR_ENABLE_TX_MODE = AUTO. Undefined = 0
-    # (#ifndef default in dive_behaviour_tracker.hpp).
-    $<$<BOOL:${DX1_GROUND_DECODER_READY}>:DX1_GROUND_DECODER_READY=1>
+    # Dive info (DX1) compiled in. Undefined = 0 (#ifndef default in
+    # dive_behaviour_tracker.hpp): the whole feature compiles out.
+    $<$<BOOL:${DIVE_INFO_MESSAGE}>:DIVE_INFO_MESSAGE=1>
     # RSPB: keep VSENSORS always on (I2C pull-ups live on it). 1=floor (default),
     # 0=allow cut (test). Only forwarded when set (build_rspb.sh); other boards
     # fall back to the #ifndef default in nrf_gpio.cpp.

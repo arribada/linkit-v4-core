@@ -92,6 +92,11 @@ public:
 	/// source is unavailable, so callers don't need to handle missing data.
 	static int get_die_temperature_c();
 
+	/// @brief Read the MCU die temperature in raw quarter degrees (0.25 °C steps).
+	/// Unlike get_die_temperature_c(), no sentinel: false when the source is
+	/// unavailable, and @p q4 is left untouched. About 50 µs (SoftDevice).
+	static bool get_die_temperature_q4(int32_t &q4);
+
 	/// @brief Cut peripheral power rails when no task is due soon (> 5 s).
 	static void reduce_power_rails();
 

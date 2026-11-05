@@ -132,7 +132,7 @@ Runs the host (x86 Linux) test suite on `push` to main, on every pull request, o
 
 JUnit XML reports and the turtle HTML report are uploaded as artifacts.
 
-See [Wiki: CI Workflows](https://github.com/arribada/linkit-v4-core/wiki/17-%E2%80%90-CI-Workflows) for details on every input, secret, and report.
+See [Wiki: CI Workflows](https://github.com/arribada/linkit-v4-core/wiki/03-%E2%80%90-Building#ci-workflows-github-actions) for details on every input, secret, and report.
 
 ## CMake Build Options
 
@@ -178,6 +178,7 @@ Note: `ENABLE_THERMISTOR_SENSOR` and `ENABLE_SEA_TEMP_SENSOR` are mutually exclu
 | `WAKEUP_PERIOD` | 3600 (RSPB) | TPL5111 wakeup interval (s) — must match the board resistor; runtime-writable via `PWP04` |
 | `RSPB_VSENSORS_FLOOR` | 1 (RSPB) | Keep VSENSORS always on — I²C pull-ups live on it (0 = allow cut, test only) |
 | `SMD_FLASH_HOLD` | OFF (RSPB) | Test only: park nRF + hold SMD powered to flash the STM32WL over SWD |
+| `DIVE_INFO_MESSAGE` | OFF | Dive info in the Argos messages (DX1 Doppler extension, 24-byte dive frame), active with `UNP26` = 1, the default; needs the saltwater switch (the KIM script turns it on, CMake refuses ON where it cannot be compiled in). OFF = every frame as before DX1, bit for bit. `DIVE_INFO_MESSAGE=ON ./scripts/build_linkitv4_smd.sh`. Ship it with a registered Argos ID only once the platform decodes the dive frame (v2.0.35): see wiki 03 and 16 |
 
 See [Wiki: Building](https://github.com/arribada/linkit-v4-core/wiki/03-%E2%80%90-Building) for the complete build-flag reference.
 
@@ -213,11 +214,13 @@ All documentation is on the [GitHub Wiki](https://github.com/arribada/linkit-v4-
 | [Architecture](https://github.com/arribada/linkit-v4-core/wiki/07-%E2%80%90-Architecture) | Code structure and design patterns |
 | [Development Guide](https://github.com/arribada/linkit-v4-core/wiki/08-%E2%80%90-Development-Guide) | Adding parameters, services, sensors |
 | [Parameters](https://github.com/arribada/linkit-v4-core/wiki/09-%E2%80%90-Parameters) | All configurable parameters |
-| [Satellite Message Format](https://github.com/arribada/linkit-v4-core/wiki/10-%E2%80%90-Satellite-Message-Format) | Argos & LoRa packet encoding, bit layouts, decoding |
-| [LinkIt UW Behavior](https://github.com/arribada/linkit-v4-core/wiki/11-%E2%80%90-Linkit-UW-Behavior) | Underwater mode and SWS algorithm |
-| [RSPB Mortality Tracker](https://github.com/arribada/linkit-v4-core/wiki/12-%E2%80%90-RSPB-Mortality-Tracker) | TPL5111 duty cycling, mortality detection |
-| [SWS Algorithm](https://github.com/arribada/linkit-v4-core/wiki/13-%E2%80%90-SWS-Algorithm) | SWS analog detection deep-dive |
-| [Argos TX Modes](https://github.com/arribada/linkit-v4-core/wiki/14-%E2%80%90-Argos-TX-Modes) | All Argos modes and decision guide |
+| [GPS Guide](https://github.com/arribada/linkit-v4-core/wiki/10-%E2%80%90-GPS-Guide) | GNSS behaviour, AssistNow, deep idle, CloudLocate and Fastloc |
+| [Satellite Communication](https://github.com/arribada/linkit-v4-core/wiki/11-%E2%80%90-Satellite-Communication) | Argos modes and scheduling, and the mechanisms shared with LoRa |
+| [LoRa Communication](https://github.com/arribada/linkit-v4-core/wiki/12-%E2%80%90-LoRa-Communication) | LoRaWAN behaviour, activation, radio and network setup |
+| [Underwater and Behavioral Modes](https://github.com/arribada/linkit-v4-core/wiki/13-%E2%80%90-Underwater-and-Behavioral-Modes) | SWS algorithm, cooldown, HAULED, override cascade |
+| [RSPB Mortality Tracker](https://github.com/arribada/linkit-v4-core/wiki/14-%E2%80%90-RSPB-Mortality-Tracker) | TPL5111 duty cycling, pseudo-RTC, mortality detection |
+| [Cyprus Boat Tracker](https://github.com/arribada/linkit-v4-core/wiki/15-%E2%80%90-Cyprus-Boat-Tracker) | LinkCheck, moored mode, accelerometer wake engine |
+| [Message Formats](https://github.com/arribada/linkit-v4-core/wiki/16-%E2%80%90-Message-Formats) | Argos and LoRa on-air encodings: the ground decoder contract |
 
 Compatible with:
 - [PyLinkit](https://github.com/arribada/CLS-Argos-Linkit-pylinkit) - Python configuration tool

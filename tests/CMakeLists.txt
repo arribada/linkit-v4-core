@@ -82,6 +82,11 @@ file(CREATE_LINK "${CMAKE_CURRENT_SOURCE_DIR}/data" "${CMAKE_CURRENT_BINARY_DIR}
 set_property(TARGET ${PROJECT_NAME} PROPERTY CXX_STANDARD 20)
 set_property(TARGET ${PROJECT_NAME} PROPERTY CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Dive info (DX1) in the host build: 1 (CI) covers it; configure a second build
+# directory with -DTESTS_DIVE_INFO_MESSAGE=0 to run the rest with it compiled out.
+# $<BOOL:> below: a raw ON would reach the preprocessor as an unknown name, read as 0.
+set(TESTS_DIVE_INFO_MESSAGE 1 CACHE STRING "DIVE_INFO_MESSAGE for the host tests (1/0 or ON/OFF)")
+
 target_compile_definitions(${PROJECT_NAME} PRIVATE
     LFS_NO_DEBUG
     DEBUG_ENABLE
@@ -99,6 +104,7 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
     ENABLE_MORTALITY_SENSOR=1
     ENABLE_SWS_LOG=1
     ENABLE_SWS_ANALOG=1
+    DIVE_INFO_MESSAGE=$<BOOL:${TESTS_DIVE_INFO_MESSAGE}>  # dive info (DX1) compiled in: the tests cover it
     LORA_RAK3172=1
     LORA_DCS_ENABLE=1           # Default ON: RAK3172 enforces EU868 duty-cycle
     LORA_POWER_OFF_UNDERWATER=0 # Default OFF: keep module in Stop2 standby during dives
@@ -406,6 +412,7 @@ target_compile_definitions(${TURTLE_SIM_NAME} PRIVATE
     ENABLE_MORTALITY_SENSOR=1
     ENABLE_SWS_LOG=1
     ENABLE_SWS_ANALOG=1
+    DIVE_INFO_MESSAGE=$<BOOL:${TESTS_DIVE_INFO_MESSAGE}>
     LORA_RAK3172=1
     LORA_DCS_ENABLE=1
     LORA_POWER_OFF_UNDERWATER=0

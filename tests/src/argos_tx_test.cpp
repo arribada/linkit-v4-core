@@ -71,6 +71,15 @@ TEST_GROUP(ArgosTxService) {
 		// Disable cooldown by default in tests (individual tests can override)
 		unsigned int no_cooldown = 0U;
 		fake_config_store->write_param(ParamID::MIN_SURFACE_CYCLE_INTERVAL_S, no_cooldown);
+
+		// These tests pin the pre-DX1 frames. With the dive info compiled in
+		// (DIVE_INFO_MESSAGE=1, CI) the default AUTO turns the Doppler into DX1:
+		// OFF here (dx1_doppler_test.cpp covers DX1; a test can override). Without
+		// it the stored default stays, so they also pin "default config on the
+		// shipped build = pre-DX1 frames".
+#if DX1_DOPPLER_EXT_BUILD
+		fake_config_store->write_param(ParamID::SWS_SENSOR_ENABLE_TX_MODE, (unsigned int)0);
+#endif
 	}
 
 	void teardown() {
@@ -3515,11 +3524,32 @@ TEST(ArgosTxService, ComputeGpsLogAgeSecondsFutureEntryIsInvalid) {
 
 TEST(ArgosTxService, RateLimiterDisabledNeverBlocks) {
 	RateLimiter::reset_for_tests();
-	// Default: RATE_LIMIT_EN = false. Cap could be exhausted yet still allowed.
+	// Off explicitly: it is on by default since 2026-11-04. With a cap of 3,
+	// the 20 TX below would block if a single one were recorded.
+	fake_config_store->write_param(ParamID::RATE_LIMIT_EN, (bool)false);
+	fake_config_store->write_param(ParamID::RATE_LIMIT_MAX_TX, 3U);
 	for (unsigned int i = 0; i < 20; i++)
 		RateLimiter::record_tx(1000 + i);  // no-op while disabled
 	unsigned int rs = 0;
 	CHECK_FALSE(RateLimiter::is_blocked(2000, rs));
+}
+
+TEST(ArgosTxService, RateLimiterDefaultIs30TxPerHour) {
+	// Decision of 2026-11-04: on by default, 30 TX per sliding hour.
+	RateLimiter::reset_for_tests();
+	CHECK_TRUE(configuration_store->read_param<bool>(ParamID::RATE_LIMIT_EN));
+	CHECK_EQUAL(3600U, configuration_store->read_param<unsigned int>(ParamID::RATE_LIMIT_WINDOW_S));
+	CHECK_EQUAL(30U, configuration_store->read_param<unsigned int>(ParamID::RATE_LIMIT_MAX_TX));
+
+	// One TX a minute: the 30th fills the window.
+	for (unsigned int i = 0; i < 29; i++)
+		RateLimiter::record_tx(1000 + 60 * i);
+	unsigned int rs = 0;
+	CHECK_FALSE(RateLimiter::is_blocked(2740, rs));
+	RateLimiter::record_tx(2740);
+	CHECK_TRUE(RateLimiter::is_blocked(2741, rs));
+	// Free again when the oldest (t=1000) leaves the window, at 1000 + 3600.
+	CHECK_EQUAL(4600u - 2741u, rs);
 }
 
 TEST(ArgosTxService, RateLimiterBlocksOnceCapReached) {
@@ -5152,6 +5182,52 @@ TEST(ArgosTxService, DopplerSpacingIsFixedUnderBlind) {
 		CHECK_EQUAL(90u, ArgosTxService::doppler_interval_s(cfg, i));
 }
 
+// BLIND: one host send puts retx_nb frames on air, and the position is charged
+// all of them. retx_nb is the TOTAL, not the repeats after a first frame: the
+// Kineis integration guide shows retx = 4 as A1/4..A4/4, the MAC loads its
+// counter with retx_nb and releases the frame when it reaches 0, and on the
+// bench retx_nb = 3 at 60 s completed at ~124 s, two periods after the first
+// frame (2026-09-05). NTRY_PER_MESSAGE = 6 with retx_nb = 2 is therefore exactly
+// three bursts; charging retx_nb + 1 per burst would stop after two.
+TEST(ArgosTxService, LegacyBlindBurstChargesRetxNbFrames) {
+	fake_config_store->write_param(ParamID::ARGOS_MODE, BaseArgosMode::LEGACY);
+	fake_config_store->write_param(ParamID::ARGOS_DEPTH_PILE, BaseDepthPile::DEPTH_PILE_1);
+	fake_config_store->write_param(ParamID::ARGOS_HEXID, (unsigned int)0x01234567U);
+	fake_config_store->write_param(ParamID::LB_EN, false);
+	fake_config_store->write_param(ParamID::TR_NOM, (unsigned int)10);
+	fake_config_store->write_param(ParamID::ARGOS_TIME_SYNC_BURST_EN, false);
+	fake_config_store->write_param(ParamID::NTRY_PER_MESSAGE, 6U);
+	fake_config_store->write_param(ParamID::ARGOS_BLIND_EN, true);
+	fake_config_store->write_param(ParamID::ARGOS_BLIND_RETX_NB, 2U);
+
+	ArgosTxService serv(*mock_kineis);
+	std::time_t t = 1652105502000;  // ms
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+
+	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
+	serv.start();
+
+	inject_gps_location(1, 11.8768, -33.8232, t / 1000);
+
+	// Three bursts of two frames: the six frames NTRY_PER_MESSAGE allows
+	for (unsigned int i = 0; i < 3; i++) {
+		mock().expectOneCall("send").onObject(mock_kineis).ignoreOtherParameters();
+		t += serv.get_last_schedule();
+		fake_rtc->settime(t / 1000);
+		fake_timer->set_counter(t);
+		system_scheduler->run();
+		mock_kineis->notify(KineisEventTxComplete({}));
+	}
+
+	// Credits spent → no 4th burst
+	t += 10000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	system_scheduler->run();
+	mock().checkExpectations();
+}
+
 // ---------------------------------------------------------------------------
 // CloudLocate MEAS20 with ARGOS_ADAPTIVE_MODULATION = 0 (2026-10)
 //
@@ -5604,6 +5680,7 @@ TEST(ArgosMessageCounter, KindFollowsTheTypeTag) {
 	CHECK(ArgosMessageCounter::kind_of("doppler-prewarm") == ArgosMessageCounter::Kind::DOPPLER);
 	CHECK(ArgosMessageCounter::kind_of("gnss") == ArgosMessageCounter::Kind::DATA);
 	CHECK(ArgosMessageCounter::kind_of("short-cached") == ArgosMessageCounter::Kind::DATA);
+	CHECK(ArgosMessageCounter::kind_of("dive") == ArgosMessageCounter::Kind::DATA);  // DX1 dive frame: its own MC
 	CHECK(ArgosMessageCounter::kind_of("cloudloc-surf") == ArgosMessageCounter::Kind::DATA);
 	CHECK(ArgosMessageCounter::kind_of("cert") == ArgosMessageCounter::Kind::NONE);
 	CHECK(ArgosMessageCounter::kind_of(nullptr) == ArgosMessageCounter::Kind::NONE);

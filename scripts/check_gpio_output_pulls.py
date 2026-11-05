@@ -18,7 +18,7 @@ pin LOW, where the pull-down costs nothing.
 Open-drain drives (S0D1, H0D1, D0S1, D0H1) are left alone: there the pull is
 what provides the level the pin does not drive.
 
-Run:  python3 tools/check_gpio_output_pulls.py
+Run:  python3 scripts/check_gpio_output_pulls.py
 """
 
 import re

@@ -536,7 +536,7 @@ TEST(LoRaTxService, FixDrivenTxIsImmediateOnceTheBackoffHasElapsed) {
 // Measured, not assumed: giving the fake the real four-line body makes 10
 // existing tests in the default suite fail, because they rely on that branch
 // never being taken. Fixing it properly means auditing those ten, which is not
-// a thing to do days before a deployment. tools/check_battery_guard_callers.py
+// a thing to do days before a deployment. scripts/check_battery_guard_callers.py
 // pins the one property a source check can pin in the meantime -- that every TX
 // service still calls the guard.
 // ===========================================================================

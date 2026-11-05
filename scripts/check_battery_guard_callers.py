@@ -26,7 +26,7 @@ powering down on a transmit-current transient -- except that now the way to
 reintroduce it is to stop calling, or to add a third transmission service and
 forget.
 
-Run:  python3 tools/check_battery_guard_callers.py
+Run:  python3 scripts/check_battery_guard_callers.py
 """
 
 import re

@@ -127,3 +127,17 @@ void PMU::restore_power_rails() {}
 int PMU::get_die_temperature_c() {
 	return 25;  // Mock sentinel — matches the real PMU error fallback.
 }
+
+// Die temperature for get_die_temperature_q4(), settable by tests. Each read is
+// counted and charged its ~50 µs SoftDevice busy-wait, so a budget test sees it.
+bool g_pmu_die_temp_ok = true;
+int32_t g_pmu_die_temp_q4 = 100;  // 25.00 °C
+unsigned int g_pmu_die_temp_reads = 0;
+
+bool PMU::get_die_temperature_q4(int32_t &q4) {
+	g_pmu_die_temp_reads++;
+	g_pmu_busy_wait_us += 50U;
+	if (!g_pmu_die_temp_ok) return false;
+	q4 = g_pmu_die_temp_q4;
+	return true;
+}

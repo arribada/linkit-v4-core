@@ -18,7 +18,7 @@ limit. The explanation belongs in a comment next to the call.
 Covered: DEBUG_ERROR, DEBUG_WARN, DEBUG_INFO, DEBUG_DETAIL with a literal
 format, in core/ and ports/nrf52840/ outside the vendor trees.
 
-Run:  python3 tools/check_log_lines.py
+Run:  python3 scripts/check_log_lines.py
 """
 
 import re

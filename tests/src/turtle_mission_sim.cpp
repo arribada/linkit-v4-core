@@ -27,6 +27,8 @@
 #include <vector>
 
 #include "argos_tx_service.hpp"
+#include "crc8.hpp"
+#include "dive_behaviour_tracker.hpp"
 #include "debug.hpp"
 #include "gps_service.hpp"
 #include "logger.hpp"
@@ -61,6 +63,7 @@ extern Timer *system_timer;
 extern ConfigurationStore *configuration_store;
 extern BatteryMonitor *battery_monitor;
 extern RTC *rtc;
+extern unsigned int g_pmu_die_temp_reads;  // mock_pmu.cpp: die reads, 50 us of busy wait each
 extern FileSystem *main_filesystem;
 extern Logger *system_log;
 extern Logger *sensor_log;
@@ -106,6 +109,7 @@ public:
 		std::time_t when;
 		unsigned int size_bits;
 		bool carries_position;  ///< false => 0xFF presence filler
+		KineisPacket packet;
 	};
 	std::vector<Frame> frames;
 	bool powered_off_immediately = false;
@@ -133,7 +137,7 @@ public:
 				break;
 			}
 		const bool carries_pos = (size_bits >= 40) && !lat_all_ones;
-		frames.push_back({ rtc ? rtc->gettime() : 0, size_bits, carries_pos });
+		frames.push_back({ rtc ? rtc->gettime() : 0, size_bits, carries_pos, packet });
 	}
 	void stop_send() override {}
 	void power_off_immediate() override { powered_off_immediately = true; }
@@ -320,6 +324,7 @@ struct MissionStats {
 	unsigned int battery_samples = 0;               ///< BatteryMonitor samples actually taken
 	unsigned int max_battery_samples_to_frame = 0;  ///< worst surfacing, samples before its first frame
 	uint64_t busy_wait_ms = 0;                      ///< PMU::delay_ms/us asked for, outside the battery
+	std::vector<size_t> first_frames;               ///< index of the first frame of each surfacing
 };
 
 TEST_GROUP(TurtleMission) {
@@ -474,6 +479,7 @@ static MissionStats run_mission(unsigned int days, RecordingKineisDevice *kineis
 
 		if (first_frame_pending && kineis->frames.size() > frames_at_surface_start) {
 			first_frame_pending = false;
+			st.first_frames.push_back(frames_at_surface_start);
 			st.max_battery_samples_to_frame =
 			    std::max(st.max_battery_samples_to_frame, batt->update_calls - samples_at_surfacing);
 		}
@@ -565,6 +571,151 @@ TEST(TurtleMission, BatteryAndBusyWaitWithinBudget) {
 	CHECK(st.busy_wait_ms <= BUSY_WAIT_BUDGET_MS_PER_DAY);
 	CHECK(syslog_lines.lines <= SYSLOG_LINES_RATCHET_PER_DAY);
 }
+
+// The dive-frame tests need the dive info compiled in (DIVE_INFO_MESSAGE).
+#if DX1_DOPPLER_EXT_BUILD
+namespace {
+/// Bytes on air for a payload of @p bits on LDA2 (the sim's master): 4 B steps, min 4.
+unsigned int lda2_bytes(unsigned int bits) {
+	unsigned int b = (bits + 7U) / 8U;
+	b = (b + 3U) / 4U * 4U;
+	return b < 4U ? 4U : b;
+}
+bool is_dive_frame(const RecordingKineisDevice::Frame &f) {
+	const KineisPacket &p = f.packet;
+	return f.size_bits == ArgosPacketBuilder::DIVE_FRAME_BITS && p.size() == ArgosPacketBuilder::DIVE_FRAME_BYTES
+	       && (uint8_t)p[0] == 0 && (((uint8_t)p[2] >> 5) & 1U) == 1U;
+}
+bool dive_crcs_ok(const KineisPacket &p) {
+	return (uint8_t)p[3] == CRC8::checksum(p, 24) && (uint8_t)p[23] == CRC8::checksum(p, 184);
+}
+}  // namespace
+
+/// DX1 dive frame (24-byte LDA2, 2026-11) on the deployment profile: depth pile
+/// 1, the same day twice, DX1 off then at AUTO. The dive frame may only REPLACE a
+/// frame: same TX instants, every other frame the same size on air, never the
+/// first frame of a surfacing, at most one per surfacing and one per 2 h, both
+/// CRCs good. What it costs is printed against the day without it.
+TEST(TurtleMission, DiveFrameOnlyReplacesAFrame) {
+	configure_turtle_profile();
+	fake_cfg->write_param(ParamID::ARGOS_DEPTH_PILE, BaseDepthPile::DEPTH_PILE_1);
+	fake_cfg->write_param(ParamID::SWS_SENSOR_ENABLE_TX_MODE, (unsigned int)0);
+	CompletingKineisDevice radio_off;
+	MissionStats off = run_mission(1, &radio_off, gps_dev, fake_rtc, fake_timer);
+
+	// A second mission in the same test inherits state from the first (it gets no
+	// GNSS fix at all): rebuild the whole environment, as between two tests.
+	teardown();
+	setup();
+	configure_turtle_profile();
+	fake_cfg->write_param(ParamID::ARGOS_DEPTH_PILE, BaseDepthPile::DEPTH_PILE_1);
+	fake_cfg->write_param(ParamID::SWS_SENSOR_ENABLE_TX_MODE, (unsigned int)1);  // AUTO, the template value
+	DiveBehaviourTracker::reset(0);
+	CompletingKineisDevice radio_on;
+	MissionStats on = run_mission(1, &radio_on, gps_dev, fake_rtc, fake_timer);
+
+	CHECK(on.surfacings > 0);
+	CHECK_EQUAL(off.surfacings, on.surfacings);
+	CHECK_EQUAL(off.frames_total, on.frames_total);  // the dive frame adds no TX
+	const size_t n = std::min(radio_off.frames.size(), radio_on.frames.size());
+	std::vector<bool> first(radio_on.frames.size(), false);
+	for (size_t i : on.first_frames)
+		first[i] = true;
+	unsigned int dives = 0, bytes_off = 0, bytes_on = 0, moved = 0, resized = 0, first_dive = 0, bad_crc = 0;
+	unsigned int too_close = 0, twice_in_one_surfacing = 0;
+	std::time_t last_dive = 0;
+	size_t surfacing_of_last_dive = SIZE_MAX, surfacing = 0;
+	for (size_t i = 0; i < n; i++) {
+		const auto &a = radio_off.frames[i];
+		const auto &b = radio_on.frames[i];
+		if (first[i]) surfacing++;
+		bytes_off += lda2_bytes(a.size_bits);
+		bytes_on += lda2_bytes(b.size_bits);
+		if (a.when != b.when) moved++;
+		if (!is_dive_frame(b)) {
+			if (lda2_bytes(a.size_bits) != lda2_bytes(b.size_bits)) resized++;
+			continue;
+		}
+		dives++;
+		if (first[i]) first_dive++;
+		if (!dive_crcs_ok(b.packet)) bad_crc++;
+		if (last_dive != 0 && b.when - last_dive < 7200) too_close++;
+		if (surfacing_of_last_dive == surfacing) twice_in_one_surfacing++;
+		last_dive = b.when;
+		surfacing_of_last_dive = surfacing;
+	}
+	const double extra = bytes_off ? 100.0 * ((double)bytes_on - (double)bytes_off) / (double)bytes_off : 0.0;
+	printf("\n=== TRAME PLONGEE DX1, 1 JOUR, PILE 1 ===\n");
+	printf("  remontees / trames           : %u / %u (DX1 coupe) ; %u / %u (DX1 actif)\n", off.surfacings,
+	       off.frames_total, on.surfacings, on.frames_total);
+	printf("  trames plongee               : %u (plafond 12)\n", dives);
+	printf("  octets a l antenne (LDA2)    : %u -> %u (+%.1f %%)\n", bytes_off, bytes_on, extra);
+
+	CHECK(dives > 0);
+	CHECK(dives <= 12U);
+	CHECK_EQUAL(0U, moved);       // every TX at the same instant
+	CHECK_EQUAL(0U, resized);     // every other frame the same size on air
+	CHECK_EQUAL(0U, first_dive);  // never the first frame of a surfacing
+	CHECK_EQUAL(0U, bad_crc);
+	CHECK_EQUAL(0U, too_close);               // one per 2 h at most
+	CHECK_EQUAL(0U, twice_in_one_surfacing);  // one per surfacing at most
+}
+
+/// What the DX1 paths add to a day, against the same day with them off. The
+/// host build compiles the dive info in (DIVE_INFO_MESSAGE=1): the same pile-1
+/// day runs with UNP26 OFF, then at the templates' AUTO. DX1 may add its dive
+/// frames and its die reads (50 µs of busy wait each), and nothing else -- not
+/// one battery measurement, not one journal line.
+TEST(TurtleMission, DiveFrameDayWithinBudget) {
+	CompletingKineisDevice radio[2];
+	SyslogLineCounter syslog_lines[2];
+	MissionStats st[2];
+	unsigned int reads[2] = {}, dives[2] = {};
+	for (unsigned int on = 0; on < 2; on++) {
+		if (on) {
+			// A second mission in the same test inherits state from the first:
+			// rebuild the whole environment, as between two tests.
+			teardown();
+			setup();
+		}
+		configure_turtle_profile();
+		fake_cfg->write_param(ParamID::ARGOS_DEPTH_PILE, BaseDepthPile::DEPTH_PILE_1);  // the turtle deployment
+		fake_cfg->write_param(ParamID::SWS_SENSOR_ENABLE_TX_MODE, on ? 1U : 0U);        // OFF, then AUTO
+		DiveBehaviourTracker::reset(0);
+		const unsigned int reads0 = g_pmu_die_temp_reads;
+		st[on] = run_mission_journaled(1, &radio[on], gps_dev, fake_rtc, fake_timer, syslog_lines[on]);
+		reads[on] = g_pmu_die_temp_reads - reads0;
+		for (const auto &f : radio[on].frames)
+			if (is_dive_frame(f)) dives[on]++;
+	}
+	const unsigned int max_samples = (unsigned int)(86400000ULL / BatteryMonitor::SAMPLE_MAX_AGE_MS) + 1U;
+	const unsigned int max_reads = 24U * 60U + 1U;
+	printf("\n=== BUDGET 1 JOUR, PILE 1 : DX1 COUPE -> DX1 ACTIF ===\n");
+	printf("  trames plongee               : %u -> %u (plafond 12)\n", dives[0], dives[1]);
+	printf("  lectures temperature         : %u -> %u (plafond %u)\n", reads[0], reads[1], max_reads);
+	printf("  mesures batterie             : %u -> %u (plafond %u)\n", st[0].battery_samples, st[1].battery_samples,
+	       max_samples);
+	printf("  attente active hors batterie : %llu -> %llu ms (plafond %llu)\n", (unsigned long long)st[0].busy_wait_ms,
+	       (unsigned long long)st[1].busy_wait_ms, (unsigned long long)BUSY_WAIT_BUDGET_MS_PER_DAY);
+	printf("  lignes vers le journal flash : %u -> %u (plafond %u)\n", syslog_lines[0].lines, syslog_lines[1].lines,
+	       SYSLOG_LINES_RATCHET_PER_DAY);
+
+	CHECK_EQUAL(0U, dives[0]);  // the gate closed sends none...
+	CHECK_EQUAL(0U, reads[0]);  // ...and reads no temperature
+	CHECK(dives[1] > 0);        // the dive-frame path ran...
+	CHECK(dives[1] <= 12U);
+	CHECK(reads[1] > 0);  // ...and the underwater die read, at most one a minute
+	CHECK(reads[1] <= max_reads);
+	CHECK_EQUAL(st[0].frames_total, st[1].frames_total);                                // no TX added
+	CHECK_EQUAL(st[0].battery_samples, st[1].battery_samples);                          // no battery measurement added
+	CHECK_EQUAL(syslog_lines[0].lines, syslog_lines[1].lines);                          // no journal line added
+	CHECK(st[1].busy_wait_ms <= st[0].busy_wait_ms + (reads[1] * 50U + 999U) / 1000U);  // the die reads, nothing else
+	CHECK(st[1].max_battery_samples_to_frame <= 1U);
+	CHECK(st[1].battery_samples <= max_samples);
+	CHECK(st[1].busy_wait_ms <= BUSY_WAIT_BUDGET_MS_PER_DAY);
+	CHECK(syslog_lines[1].lines <= SYSLOG_LINES_RATCHET_PER_DAY);
+}
+#endif  // DX1_DOPPLER_EXT_BUILD
 
 /// The same day at SYSTEM_LOG_LEVEL=WARN (DBP02=2), the level for a tag nobody
 /// will read again. A nominal mission has nothing to warn about, so the journal

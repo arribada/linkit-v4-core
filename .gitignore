@@ -59,7 +59,7 @@ libraries/prepass/previpass-PREPASS_V4.0/.project
 /trackertests_report.html.log
 /log.log
 
-# Python bytecode (tests/bench tooling)
+# Python bytecode (local tooling)
 __pycache__/
 *.pyc
 

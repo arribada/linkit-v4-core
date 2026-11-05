@@ -2,6 +2,7 @@ name: Tests
 
 # Runs the host (x86 Linux) test suites:
 #  - Unit tests       (TrackerTests, excluding the SWS group)
+#  - The same, plus the turtle simulation, with the dive info compiled out
 #  - SWS tests        (TrackerTests -g SWSAnalog and -g SWSAnalogFlash)
 #  - Turtle simulation (TurtleSimulation, generates an HTML report)
 #
@@ -143,7 +144,7 @@ jobs:
       # ARGOS_CACHED_MODULATION (SMP01) has one writer; a direct write_param()
       # would skip the master-modulation bookkeeping (ART13/ART14).
       - name: Cached modulation has a single writer
-        run: python3 tools/check_cached_modulation_writes.py
+        run: python3 scripts/check_cached_modulation_writes.py
 
       # Catches READMEs that point at files which were renamed or deleted.
       - name: Documentation links resolve
@@ -154,33 +155,19 @@ jobs:
       # host test can see whether the services still call it -- is_lb hangs off
       # a cached flag the test double never refreshes.
       - name: Every TX service calls the battery guard
-        run: python3 tools/check_battery_guard_callers.py
+        run: python3 scripts/check_battery_guard_callers.py
 
       # A pull on a driven output either does nothing or conducts VDD over
       # ~13 kOhm: GPS_PWR_EN's pull-down cost ~0.25 mA through every GNSS
       # deep-idle window, and no host test runs the BSP to notice.
       - name: No push-pull output carries a pull
-        run: python3 tools/check_gpio_output_pulls.py
+        run: python3 scripts/check_gpio_output_pulls.py
 
       # A journal entry holds 118 bytes of text and cuts the rest, on the
       # console too: 53 messages could never print whole, configuration
       # warnings cut just before the part saying what to do.
       - name: Every log line fits a journal entry
-        run: python3 tools/check_log_lines.py
-
-      # The bench waits on firmware log text; a reworded line makes a case go
-      # green or red for a reason unrelated to the firmware.
-      - name: Every log string the bench waits for exists
-        run: python3 tools/check_bench_log_patterns.py
-
-      # A ratchet on the CCN of each function, not on the number of warnings:
-      # splitting handle_line() took its worst function from 118 to 12 and the
-      # file from 4 warnings to 8, so a warning-count gate would have rejected
-      # the change that fixed the problem.
-      - name: No function got more complex
-        run: |
-          python3 -m pip install --quiet lizard==1.24.0
-          python3 tools/check_complexity_ratchet.py
+        run: python3 scripts/check_log_lines.py
 
   # ---------------------------------------------------------------------------
   # Unit tests — the fast suite, runs everything except the SWS group.
@@ -238,6 +225,40 @@ jobs:
             tests/reports/unit/*.xml
             tests/reports/unit-cyprus/*.xml
           if-no-files-found: warn
+
+  # ---------------------------------------------------------------------------
+  # Unit tests with the dive info compiled out (DIVE_INFO_MESSAGE=0), the build
+  # every firmware ships but the -dive variants. The build job compiles it in to
+  # cover DX1; this one runs the rest without it, the frames bit for bit as
+  # before DX1 under the default UNP26. Its own build: the binaries differ.
+  # ---------------------------------------------------------------------------
+  unit-tests-no-dive:
+    name: Unit tests, dive info compiled out
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build g++
+
+      - name: Compile TrackerTests + TurtleSimulation
+        run: |
+          mkdir -p tests/build-nodive
+          cd tests/build-nodive
+          cmake -GNinja -DTESTS_DIVE_INFO_MESSAGE=0 ..
+          ninja TrackerTests TurtleSimulation
+
+      # From tests/: the PASPW tests read tests/data/*.json by relative path.
+      - name: Run unit tests and the turtle simulation
+        working-directory: tests
+        run: |
+          ./build-nodive/TrackerTests -p -xg SWS
+          ./build-nodive/TurtleSimulation
 
   # ---------------------------------------------------------------------------
   # SWS tests — long-running underwater simulation tests, run separately

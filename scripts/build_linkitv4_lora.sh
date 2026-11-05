@@ -201,7 +201,10 @@ ENABLE_SWS_LOG=${ENABLE_SWS_LOG:-OFF}
 # the SAADC to the 1/6 range (a fresh 3S pack at 4.7 V clips against 1/5); CMake
 # derives that from the chemistry name, nothing else to set.
 BATTERY_CHEMISTRY=${BATTERY_CHEMISTRY:-BATT_CHEM_LS17500_2P}
-GNSS_HAS_BACKUP_BATTERY=${GNSS_HAS_BACKUP_BATTERY:-ON}
+# GNSS_HAS_BACKUP_BATTERY: 0 on every build since 2026-11-04. It is only a hint
+# on the M10Q boot baud probe order (m10qasync.cpp); the BBR fast path is decided
+# at run time, so a wrong value costs ~3 s once per boot.
+GNSS_HAS_BACKUP_BATTERY=${GNSS_HAS_BACKUP_BATTERY:-0}
 # MOTION debug block appended to LoRa frames (see ports/nrf52840/CMakeLists.txt).
 # OFF keeps every existing LoRa build byte-identical; build_linkitv4_lora_cyprus.sh sets ON.
 LORA_MOTION_EXT=${LORA_MOTION_EXT:-OFF}

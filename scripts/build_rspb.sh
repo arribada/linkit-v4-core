@@ -143,7 +143,8 @@ fi
 # - ENABLE_AXL_SENSOR=ON: Enable BMA400 accelerometer
 # - ENABLE_THERMISTOR_SENSOR=ON: Enable thermistor temperature sensor
 # - ENABLE_MORTALITY_SENSOR=ON: Enable mortality detection (requires AXL + THERMISTOR)
-# - GNSS_HAS_BACKUP_BATTERY=1: M10Q has a backup battery (BBR) for warm/hot starts
+# - GNSS_HAS_BACKUP_BATTERY=0: 0 on every build since 2026-11-04, only a hint on the
+#   M10Q boot baud probe order (the BBR fast path is decided at run time)
 # - SMDSAT_USE_SAFE_TIMINGS=ON: force the conservative v4.1.4 SAFE SPI timing baseline
 # - SMDSAT_AUTOFALLBACK=ON: runtime auto-fallback to SAFE timings (only if USE_SAFE_TIMINGS=OFF)
 ARGOS_SMD=${ARGOS_SMD:-ON}
@@ -152,7 +153,7 @@ ENABLE_AXL_SENSOR=${ENABLE_AXL_SENSOR:-1}
 ENABLE_THERMISTOR_SENSOR=${ENABLE_THERMISTOR_SENSOR:-1}
 ENABLE_MORTALITY_SENSOR=${ENABLE_MORTALITY_SENSOR:-1}
 # Numeric 0/1: consumed via `#if GNSS_HAS_BACKUP_BATTERY` in C (passing ON/OFF would evaluate to 0).
-GNSS_HAS_BACKUP_BATTERY=${GNSS_HAS_BACKUP_BATTERY:-1}
+GNSS_HAS_BACKUP_BATTERY=${GNSS_HAS_BACKUP_BATTERY:-0}
 # STC3117 fuel-gauge SOC strategy: 0=voltage-only (low power, default), 1=mixed (coulomb+OCV, continuous)
 STC3117_MIXED_MODE=${STC3117_MIXED_MODE:-0}
 

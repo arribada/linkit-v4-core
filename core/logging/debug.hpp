@@ -144,7 +144,7 @@ template <typename... Args> inline void swallow(Args...) {}
 //    tagged [DETAIL] so it is plain which lines a tag never stores.
 // One entry holds 118 bytes of text (MAX_LOG_PAYLOAD): the rest is cut, on the
 // console as in flash. The explanation belongs in a comment, the line states
-// the fact. tools/check_log_lines.py enforces the length.
+// the fact. scripts/check_log_lines.py enforces the length.
 #if (DEBUG_LEVEL >= 3)
 #define DEBUG_DETAIL(fmt, ...)                                                              \
 	do {                                                                                    \
