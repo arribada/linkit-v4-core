@@ -134,7 +134,7 @@ la colonne donne chaque valeur et son nombre de balises. Tu'uga a le GNSS coupé
 | `COOLDOWN_TRIGGER_MODE` | 0 | 3 |
 | `LB_EN` | 0 | 1 |
 | `LB_THRESHOLD` | 10 | 15 |
-| `LB_ARGOS_MODE` | LEGACY | DOPPLER |
+| `LB_ARGOS_MODE` | LEGACY | SURFACING_BURST |
 | `LB_ARGOS_TX_REPETITION` | 240 | 600 |
 | `LB_GNSS_EN` | 1 | 0 |
 | `LED_MODE` | 24HRS | OFF |
