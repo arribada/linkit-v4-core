@@ -3614,6 +3614,226 @@ TEST(ArgosTxService, RateLimiterZeroCapDisables) {
 	CHECK_FALSE(RateLimiter::is_blocked(1020, rs));
 }
 
+// RL-5 (audit v4.2.1): the limiter defers the task the last decision picked; when its
+// slot frees, that task must not run under a regime that changed meanwhile. Field log
+// 2026-11-07: hauled mode engaged at 07:42 while the limiter was full, and the
+// surfacing heartbeat kept transmitting at 30/h until 09:03. Here the regime change is
+// ARGOS_MODE going OFF; the next fire must re-decide, and so send nothing.
+static void rate_limited_burst_setup(FakeConfigurationStore *store) {
+	store->write_param(ParamID::ARGOS_DEPTH_PILE, BaseDepthPile::DEPTH_PILE_1);
+	store->write_param(ParamID::ARGOS_MODE, BaseArgosMode::SURFACING_BURST);
+	store->write_param(ParamID::ARGOS_HEXID, 0x01234567U);
+	store->write_param(ParamID::TR_NOM, 60U);
+	store->write_param(ParamID::ARGOS_TIME_SYNC_BURST_EN, (bool)false);
+	store->write_param(ParamID::UNDERWATER_EN, (bool)true);
+	store->write_param(ParamID::ARGOS_TX_JITTER_EN, (bool)false);
+	store->write_param(ParamID::DRY_TIME_BEFORE_TX, 0U);
+	store->write_param(ParamID::SURFACING_BURST_INIT_S, 5U);
+	store->write_param(ParamID::SURFACING_BURST_STEP_S, 0U);
+	store->write_param(ParamID::SURFACING_BURST_MAX_S, 60U);
+	store->write_param(ParamID::SURFACING_BURST_MAX_MSG, 5U);
+	store->write_param(ParamID::RATE_LIMIT_EN, (bool)true);
+	store->write_param(ParamID::RATE_LIMIT_WINDOW_S, 3600U);
+	store->write_param(ParamID::RATE_LIMIT_MAX_TX, 1U);  // one TX fills the window
+	RateLimiter::reset_for_tests();
+}
+
+TEST(ArgosTxService, RateLimitDeferralReDecidesWhenTheRegimeChanged) {
+	rate_limited_burst_setup(fake_config_store);
+	ArgosTxService serv(*mock_kineis);
+
+	std::time_t t = 1652105502000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+
+	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
+	serv.start();
+
+	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 0);
+	mock().expectOneCall("power_off_immediate").onObject(mock_kineis);
+	mock().expectOneCall("stop_send").onObject(mock_kineis);
+	notify_underwater_state(true);
+	t += 60000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	notify_underwater_state(false);
+
+	// Doppler #1 goes out and fills the limiter.
+	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 0);
+	mock().expectOneCall("send").onObject(mock_kineis).ignoreOtherParameters();
+	system_scheduler->run();
+	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
+	mock_kineis->notify(KineisEventTxComplete({}));
+	mock().checkExpectations();
+
+	// Deferred to the end of the window, with the burst task still held.
+	const unsigned int deferral_ms = serv.get_last_schedule();
+	CHECK_COMPARE(deferral_ms, >, 3000000U);
+
+	// The regime changes while deferred.
+	fake_config_store->write_param(ParamID::ARGOS_MODE, BaseArgosMode::OFF);
+
+	// The slot frees: nothing may be sent.
+	t += deferral_ms;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	system_scheduler->run();
+	mock().checkExpectations();
+	RateLimiter::reset_for_tests();
+}
+
+// The same through the low-battery cascade, the way a field regime change arrives: the
+// battery drops below LB_THRESHOLD while the limiter defers, and LB_ARGOS_MODE (OFF
+// here) must apply when the slot frees.
+TEST(ArgosTxService, RateLimitDeferralFollowsLowBatteryWhenTheSlotFrees) {
+	rate_limited_burst_setup(fake_config_store);
+	fake_config_store->write_param(ParamID::LB_EN, (bool)true);
+	fake_config_store->write_param(ParamID::LB_ARGOS_MODE, BaseArgosMode::OFF);
+	ArgosTxService serv(*mock_kineis);
+
+	std::time_t t = 1652105502000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+
+	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
+	serv.start();
+
+	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 0);
+	mock().expectOneCall("power_off_immediate").onObject(mock_kineis);
+	mock().expectOneCall("stop_send").onObject(mock_kineis);
+	notify_underwater_state(true);
+	t += 60000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	notify_underwater_state(false);
+
+	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 0);
+	mock().expectOneCall("send").onObject(mock_kineis).ignoreOtherParameters();
+	system_scheduler->run();
+	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
+	mock_kineis->notify(KineisEventTxComplete({}));
+	mock().checkExpectations();
+
+	const unsigned int deferral_ms = serv.get_last_schedule();
+	CHECK_COMPARE(deferral_ms, >, 3000000U);
+
+	// The battery goes low while deferred.
+	fake_config_store->set_battery_level(10U);
+	fake_config_store->set_is_battery_level_low(true);
+	fake_battery_monitor->set_values(10, 3300, true, false);
+
+	t += deferral_ms;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	system_scheduler->run();
+	mock().checkExpectations();
+	RateLimiter::reset_for_tests();
+}
+
+// The same into a regime that still transmits: the held burst task must give way to the
+// new regime's own schedule, and the service must stay scheduled. LB here sends a LEGACY
+// Doppler every 7200 s; its next slot is 7200 s after the last TX, after the release.
+TEST(ArgosTxService, RateLimitDeferralHandsOverToTheNewRegimeSchedule) {
+	rate_limited_burst_setup(fake_config_store);
+	fake_config_store->write_param(ParamID::LB_EN, (bool)true);
+	fake_config_store->write_param(ParamID::LB_ARGOS_MODE, BaseArgosMode::LEGACY);
+	fake_config_store->write_param(ParamID::LB_GNSS_EN, (bool)false);
+	fake_config_store->write_param(ParamID::TR_LB, 7200U);
+	ArgosTxService serv(*mock_kineis);
+
+	std::time_t t = 1652105502000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+
+	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
+	serv.start();
+
+	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 0);
+	mock().expectOneCall("power_off_immediate").onObject(mock_kineis);
+	mock().expectOneCall("stop_send").onObject(mock_kineis);
+	notify_underwater_state(true);
+	t += 60000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	notify_underwater_state(false);
+
+	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 0);
+	mock().expectOneCall("send").onObject(mock_kineis).ignoreOtherParameters();
+	system_scheduler->run();
+	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
+	mock_kineis->notify(KineisEventTxComplete({}));
+	mock().checkExpectations();
+	const std::time_t t_tx1 = t;
+
+	const unsigned int deferral_ms = serv.get_last_schedule();
+	CHECK_COMPARE(deferral_ms, >, 3000000U);
+
+	fake_config_store->set_battery_level(10U);
+	fake_config_store->set_is_battery_level_low(true);
+	fake_battery_monitor->set_values(10, 3300, true, false);
+
+	// The slot frees: no send, and the LB schedule takes over (next slot at t_tx1 + 7200 s).
+	t += deferral_ms;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	system_scheduler->run();
+	mock().checkExpectations();
+	const unsigned int handover_ms = serv.get_last_schedule();
+	CHECK_COMPARE(handover_ms, !=, Service::SCHEDULE_DISABLED);
+	CHECK_COMPARE(handover_ms, <=, 7200000U - (unsigned int)(t - t_tx1));
+
+	// That slot sends.
+	mock().expectOneCall("send").onObject(mock_kineis).ignoreOtherParameters();
+	t += handover_ms;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	system_scheduler->run();
+	mock().checkExpectations();
+	RateLimiter::reset_for_tests();
+}
+
+// The same deferral with no regime change keeps today's behaviour exactly: the held
+// task goes out when the slot frees.
+TEST(ArgosTxService, RateLimitDeferralFiresTheHeldTaskWhenNothingChanged) {
+	rate_limited_burst_setup(fake_config_store);
+	ArgosTxService serv(*mock_kineis);
+
+	std::time_t t = 1652105502000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+
+	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
+	serv.start();
+
+	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 0);
+	mock().expectOneCall("power_off_immediate").onObject(mock_kineis);
+	mock().expectOneCall("stop_send").onObject(mock_kineis);
+	notify_underwater_state(true);
+	t += 60000;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	notify_underwater_state(false);
+
+	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 0);
+	mock().expectOneCall("send").onObject(mock_kineis).ignoreOtherParameters();
+	system_scheduler->run();
+	mock().expectOneCall("set_tcxo_warmup_time").onObject(mock_kineis).withUnsignedIntParameter("time", 5);
+	mock_kineis->notify(KineisEventTxComplete({}));
+	mock().checkExpectations();
+
+	const unsigned int deferral_ms = serv.get_last_schedule();
+	CHECK_COMPARE(deferral_ms, >, 3000000U);
+
+	// Same regime when the slot frees: Doppler #2 goes out then, as before.
+	mock().expectOneCall("send").onObject(mock_kineis).ignoreOtherParameters();
+	t += deferral_ms;
+	fake_rtc->settime(t / 1000);
+	fake_timer->set_counter(t);
+	system_scheduler->run();
+	mock().checkExpectations();
+	RateLimiter::reset_for_tests();
+}
+
 // === HauledModeService (Plan 1 step 3) ====================================
 
 // A dive, then the surfacing at `t` that starts the dry spell.

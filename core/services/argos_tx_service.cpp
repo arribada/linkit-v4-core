@@ -429,6 +429,7 @@ ScheduleDecision ArgosTxService::service_next_schedule() {
 		unsigned int reschedule_s = 0;
 		if (RateLimiter::is_blocked(now, reschedule_s)) {
 			DEBUG_INFO("ArgosTxService: rate limit reached, reschedule in %u s", reschedule_s);
+			m_task_deferred_by_limiter = true;  // m_scheduled_task is the last decision's: see service_initiate
 			m_sched.schedule_at(now + (std::time_t)reschedule_s);
 			// Bound the conversion: reschedule_s is 32-bit and RLP02
 			// (RATE_LIMIT_WINDOW_S) accepts up to 0xFFFFFFFF, so any value above
@@ -514,17 +515,88 @@ ScheduleDecision ArgosTxService::service_next_schedule() {
 		DEBUG_INFO("ArgosTxService: certification TX in %u ms (mode=%s, payload=%u chars)", period_ms,
 		           argos_modulation_to_string(argos_config.cert_tx_modulation),
 		           (unsigned)argos_config.cert_tx_payload.size());
-		return ScheduleDecision::run(period_ms, "certification burst");
+		return note_regime(ScheduleDecision::run(period_ms, "certification burst"), argos_config);
 	}
 
 	if (argos_config.mode == BaseArgosMode::OFF) return ScheduleDecision::off("ARGOS_MODE=OFF");
-	if (argos_config.mode == BaseArgosMode::DOPPLER) return schedule_doppler(argos_config, now);
-	if (argos_config.mode == BaseArgosMode::SURFACING_BURST) return schedule_surfacing_burst(argos_config, now);
-	if (!argos_config.gnss_en) return schedule_without_gnss(argos_config, now);
+	if (argos_config.mode == BaseArgosMode::DOPPLER)
+		return note_regime(schedule_doppler(argos_config, now), argos_config);
+	if (argos_config.mode == BaseArgosMode::SURFACING_BURST)
+		return note_regime(schedule_surfacing_burst(argos_config, now), argos_config);
+	if (!argos_config.gnss_en) return note_regime(schedule_without_gnss(argos_config, now), argos_config);
 	if (!service_is_time_known()) {
 		return ScheduleDecision::hold_for_event(600, "waiting for a fix to set the clock");
 	}
-	return schedule_with_gnss(argos_config, now);
+	return note_regime(schedule_with_gnss(argos_config, now), argos_config);
+}
+
+/// @brief Burst-max defense at fire time. Mirrors schedule_surfacing_burst():
+/// inside the Doppler phase of a SURFACING_BURST (no GNSS fix yet; phase 2 is
+/// bounded by depth-pile eligibility) whose SURFACING_BURST_MAX_MSG is reached,
+/// do not fire another Doppler. Moved out of service_initiate() unchanged.
+/// @return true if the fire was aborted (service completed, no reschedule).
+bool ArgosTxService::abort_fire_at_burst_max() {
+	if (!m_is_surfacing_burst || m_has_gnss_fix_since_surfacing) return false;
+	unsigned int max_msg = configuration_store->read_param<unsigned int>(ParamID::SURFACING_BURST_MAX_MSG);
+	if (max_msg == 0 || m_doppler_burst_count < max_msg) return false;
+	DEBUG_INFO("ArgosTxService::service_initiate: Doppler limit reached (%u/%u), aborting fire", m_doppler_burst_count,
+	           max_msg);
+	unsigned int trigger = configuration_store->read_param<unsigned int>(ParamID::COOLDOWN_TRIGGER_MODE);
+	if (trigger == (unsigned int)BaseCooldownTrigger::END_OF_DOPPLER && !m_cooldown_armed) {
+		m_cooldown_armed = true;
+		DEBUG_INFO("ArgosTxService: cooldown armed (END_OF_DOPPLER, max msg via initiate)");
+	}
+	m_is_surfacing_burst = false;
+	m_awaiting_surfacing = true;
+	m_first_gnss_tx_sent = false;
+	service_complete(nullptr, nullptr, false);  // no reschedule — wait for next surface event
+	return true;
+}
+
+/// @brief RL-5 (2026-11): the task in m_scheduled_task was picked before the rate
+/// limiter deferred it. Under the same regime it goes out as it always did; under
+/// another one (hauled engaged, low battery, zone, mode) it is dropped and the TX
+/// decided again. Field log 2026-11-07: hauled at 07:42, surfacing heartbeats at
+/// 30/h until 09:03.
+/// @return true if the task was dropped (service completed and rescheduled).
+bool ArgosTxService::redecide_if_regime_changed() {
+	if (!m_task_deferred_by_limiter) return false;
+	m_task_deferred_by_limiter = false;
+	ArgosConfig argos_config;
+	configuration_store->get_argos_configuration(argos_config);
+	if (same_regime(regime_of(argos_config), m_task_regime)) return false;
+	DEBUG_INFO("ArgosTxService: regime changed while rate-limited — re-deciding the TX");
+	service_complete(nullptr, nullptr, true);
+	return true;
+}
+
+ArgosTxService::TxRegime ArgosTxService::regime_of(const ArgosConfig &argos_config) {
+	TxRegime r;
+	r.mode = argos_config.mode;
+	r.tx_interval_s = argos_config.tx_interval_s;
+	r.duty_cycle = argos_config.duty_cycle;
+	r.gnss_strategy = argos_config.gnss_strategy;
+	r.gnss_en = argos_config.gnss_en;
+	r.is_lb = argos_config.is_lb;
+	// The low-battery branch ignores the zone entirely: a zone flip under LB changes
+	// nothing that is scheduled or sent, so it must not count as a regime change.
+	r.is_out_of_zone = argos_config.is_out_of_zone && !argos_config.is_lb;
+	r.cert_tx_enable = argos_config.cert_tx_enable;
+	return r;
+}
+
+bool ArgosTxService::same_regime(const TxRegime &a, const TxRegime &b) {
+	return a.mode == b.mode && a.tx_interval_s == b.tx_interval_s && a.duty_cycle == b.duty_cycle
+	       && a.gnss_strategy == b.gnss_strategy && a.gnss_en == b.gnss_en && a.is_lb == b.is_lb
+	       && a.is_out_of_zone == b.is_out_of_zone && a.cert_tx_enable == b.cert_tx_enable;
+}
+
+ScheduleDecision ArgosTxService::note_regime(ScheduleDecision decision, const ArgosConfig &argos_config) {
+	if (decision.kind() == ScheduleDecision::Kind::Run) {
+		m_task_regime = regime_of(argos_config);
+		m_task_deferred_by_limiter = false;
+	}
+	return decision;
 }
 
 /// @brief DOPPLER: progressive Doppler sequence, bounded by SURFACING_BURST_MAX_MSG.
@@ -1112,27 +1184,13 @@ void ArgosTxService::service_initiate() {
 			return;
 		}
 		// Burst-max defense: if we're inside a SURFACING_BURST and already
-		// hit max_msg, do NOT fire another Doppler. Mirrors line 191 in
-		// service_next_schedule_in_ms. Only applies in Phase 1 (no GNSS fix
-		// yet); Phase 2 (GNSS) is bounded by depth-pile eligibility.
-		if (m_is_surfacing_burst && !m_has_gnss_fix_since_surfacing) {
-			unsigned int max_msg = configuration_store->read_param<unsigned int>(ParamID::SURFACING_BURST_MAX_MSG);
-			if (max_msg > 0 && m_doppler_burst_count >= max_msg) {
-				DEBUG_INFO("ArgosTxService::service_initiate: Doppler limit reached (%u/%u), aborting fire",
-				           m_doppler_burst_count, max_msg);
-				unsigned int trigger = configuration_store->read_param<unsigned int>(ParamID::COOLDOWN_TRIGGER_MODE);
-				if (trigger == (unsigned int)BaseCooldownTrigger::END_OF_DOPPLER && !m_cooldown_armed) {
-					m_cooldown_armed = true;
-					DEBUG_INFO("ArgosTxService: cooldown armed (END_OF_DOPPLER, max msg via initiate)");
-				}
-				m_is_surfacing_burst = false;
-				m_awaiting_surfacing = true;
-				m_first_gnss_tx_sent = false;
-				service_complete(nullptr, nullptr, false);  // no reschedule — wait for next surface event
-				return;
-			}
-		}
+		// hit max_msg, do NOT fire another Doppler (abort_fire_at_burst_max).
+		if (abort_fire_at_burst_max()) return;
 	}
+
+	// RL-5 (2026-11): a task the limiter deferred goes out only under the regime
+	// it was decided in (redecide_if_regime_changed).
+	if (redecide_if_regime_changed()) return;
 
 	m_is_first_tx = false;
 	m_is_tx_pending = true;
@@ -1673,6 +1731,8 @@ void ArgosTxService::notify_peer_event(ServiceEvent &e) {
 				// failures on the 3rd TX
 				m_kineis.set_idle_timeout((argos_config.surfacing_burst_max_s + 10) * 1000);
 				m_scheduled_task = [this]() { process_doppler_burst(); };
+				m_task_regime = regime_of(argos_config);  // fired at once, bypassing the decision
+				m_task_deferred_by_limiter = false;
 				// Outside adaptive mode the modulation comes from the master RCONF, as
 				// on the scheduling path of the same mode further up. An LDA2 hardcoded
 				// here cancelled the operator's setting.
@@ -1730,6 +1790,7 @@ void ArgosTxService::notify_peer_event(ServiceEvent &e) {
 			}
 			DEBUG_INFO("ArgosTxService::notify_peer_event: GNSS_CLOUDLOCATE_READY — rescheduling early CloudLocate TX");
 			m_scheduled_task = [this]() { process_doppler_burst(); };
+			m_task_deferred_by_limiter = false;  // a fresh task, fired at once; same burst, same regime
 			service_reschedule(true);
 			return;
 		}

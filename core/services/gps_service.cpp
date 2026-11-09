@@ -128,6 +128,7 @@ void GPSService::service_init() {
 	m_is_first_fix_found = false;
 	m_first_acquisition_done = false;
 	m_is_first_schedule = true;
+	m_acquisition_refused_by_limiter = false;
 	m_num_gps_fixes = 0;
 	m_backup_active = false;
 	m_pending_backup_duration_s = 0;
@@ -742,21 +743,16 @@ ScheduleDecision GPSService::service_next_schedule() {
 	// effective battery. Mirror the same RateLimiter::is_blocked check
 	// ArgosTxService uses (argos_tx_service.cpp:139); return reschedule_in_s
 	// matching the rate-limit window so GPS re-checks when it could be useful.
-	{
-		unsigned int rl_reschedule_s = 0;
-		if (rtc && rtc->is_set() && RateLimiter::is_blocked(service_current_time(), rl_reschedule_s)) {
-			DEBUG_INFO("GPSService::service_next_schedule_in_ms: rate-limited, reschedule in %u s", rl_reschedule_s);
-			// Bound the conversion: rl_reschedule_s is 32-bit and RLP02
-			// (RATE_LIMIT_WINDOW_S) accepts up to 0xFFFFFFFF, so any value above
-			// 4294967 s (~49.7 days) wraps in `* 1000` and turns a very long
-			// wait into a near-immediate one -- the exact inversion of what the
-			// limiter is for. Clamp instead: SCHEDULE_DISABLED is 0xFFFFFFFF and
-			// must stay reachable only as the "nothing planned" sentinel.
-			constexpr unsigned int MAX_RESCHEDULE_MS = 0xFFFFFFFEu;
-			unsigned int rl_reschedule_ms =
-			    (rl_reschedule_s > MAX_RESCHEDULE_MS / 1000u) ? MAX_RESCHEDULE_MS : rl_reschedule_s * 1000u;
-			return ScheduleDecision::run(rl_reschedule_ms, "Argos rate limit");
-		}
+	//
+	// RL-5 (2026-11): only for an acquisition that was DUE and refused at fire
+	// time. After a session that ran, the release time is a floor under the
+	// GNSS_DELTATIME_ACQ grid, applied below: returning it here put a new session
+	// at every release, 7 to 10 an hour instead of 2 (field log 2026-11-07).
+	unsigned int rl_floor_ms = 0;
+	if (rate_limited(rl_floor_ms) && m_acquisition_refused_by_limiter) {
+		DEBUG_INFO("GPSService::service_next_schedule_in_ms: rate-limited, reschedule in %u s",
+		           rl_floor_ms / MS_PER_SEC);
+		return ScheduleDecision::run(rl_floor_ms, "Argos rate limit");
 	}
 
 #if defined(ARGOS_SMD) && (ARGOS_SMD == 1)
@@ -826,15 +822,38 @@ ScheduleDecision GPSService::service_next_schedule() {
 	            (unsigned int)gnss_config.cold_start_retry_period, (unsigned int)aq_period, (unsigned int)now,
 	            (unsigned int)next_schedule);
 
-	// The scheduling step of the journal: when, at which period (UTC-aligned),
-	// and why that period -- the retry_counter detail above is the breakdown.
-	DEBUG_INFO("GPSService: next GNSS acquisition in %u s (period=%u s, %s, ntry=%u)",
-	           (unsigned int)(next_schedule - now), (unsigned int)aq_period, aq_why, m_cold_start_ntry);
-
 	// Find the time in milliseconds until this schedule (cast to uint64_t to prevent
 	// overflow when aq_period > 4294 seconds, since the result is truncated to unsigned int)
 	uint64_t delay_ms = static_cast<uint64_t>(next_schedule - now) * MS_PER_SEC;
-	return ScheduleDecision::run((delay_ms > UINT32_MAX) ? UINT32_MAX : static_cast<unsigned int>(delay_ms), aq_why);
+	ScheduleDecision decision =
+	    ScheduleDecision::run((delay_ms > UINT32_MAX) ? UINT32_MAX : static_cast<unsigned int>(delay_ms), aq_why);
+	unsigned int delay_s = (unsigned int)(next_schedule - now);
+	// RL-5: a full Argos limiter only ever pushes the grid point later (see the gate above).
+	if (rl_floor_ms > delay_ms) {
+		decision = ScheduleDecision::run(rl_floor_ms, "Argos rate limit");
+		delay_s = rl_floor_ms / MS_PER_SEC;
+	}
+
+	// The scheduling step of the journal: when, at which period (UTC-aligned),
+	// and why that period -- the retry_counter detail above is the breakdown.
+	DEBUG_INFO("GPSService: next GNSS acquisition in %u s (period=%u s, %s, ntry=%u)", delay_s, (unsigned int)aq_period,
+	           decision.reason(), m_cold_start_ntry);
+	return decision;
+}
+
+bool GPSService::rate_limited(unsigned int &release_ms) {
+	release_ms = 0;
+	unsigned int rl_reschedule_s = 0;
+	if (!rtc || !rtc->is_set() || !RateLimiter::is_blocked(service_current_time(), rl_reschedule_s)) return false;
+	// Bound the conversion: rl_reschedule_s is 32-bit and RLP02
+	// (RATE_LIMIT_WINDOW_S) accepts up to 0xFFFFFFFF, so any value above
+	// 4294967 s (~49.7 days) wraps in `* 1000` and turns a very long
+	// wait into a near-immediate one -- the exact inversion of what the
+	// limiter is for. Clamp instead: SCHEDULE_DISABLED is 0xFFFFFFFF and
+	// must stay reachable only as the "nothing planned" sentinel.
+	constexpr unsigned int MAX_RESCHEDULE_MS = 0xFFFFFFFEu;
+	release_ms = (rl_reschedule_s > MAX_RESCHEDULE_MS / 1000u) ? MAX_RESCHEDULE_MS : rl_reschedule_s * 1000u;
+	return true;
 }
 
 /// @brief The battery for this session (BATTERY_SAMPLE_EACH_GNSS_SESSION, top of file).
@@ -926,10 +945,12 @@ void GPSService::service_initiate() {
 			// service_next_schedule_in_ms (which will return the same
 			// reschedule_s and re-arm the timer correctly).
 			m_is_active = false;
+			m_acquisition_refused_by_limiter = true;
 			service_complete(nullptr, nullptr, true);
 			return;
 		}
 	}
+	m_acquisition_refused_by_limiter = false;  // this slot runs: the refusal is served
 
 	// 2026-05 deep-idle refactor: cancel any pending auto-poweroff. We're about
 	// to acquire a fresh fix — the disposition will be re-armed at end of

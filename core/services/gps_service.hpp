@@ -88,6 +88,9 @@ protected:
 	bool service_is_enabled() override;
 	unsigned int service_next_schedule_in_ms() override;
 	ScheduleDecision service_next_schedule() override;
+	/// @brief Whether the Argos rate limiter is full; @p release_ms then holds the time
+	/// until its next slot (clamped, never 0), else 0. See service_next_schedule.
+	bool rate_limited(unsigned int &release_ms);
 	void service_initiate() override;
 	bool service_cancel() override;
 	unsigned int service_next_timeout() override;
@@ -114,6 +117,10 @@ private:
 	/// consumed and cleared in service_initiate when building GPSNavSettings.
 	bool m_force_cold_start = false;
 	bool m_is_first_schedule = true;
+	/// @brief An acquisition was due and the Argos rate limiter refused it at fire
+	/// time. Only then does the limiter's release time become the next schedule;
+	/// otherwise it is a floor under the GNSS_DELTATIME_ACQ grid (RL-5, 2026-11).
+	bool m_acquisition_refused_by_limiter = false;
 	unsigned int m_cold_start_ntry = 0;  ///< Consecutive failed acquisitions (reset on fix or surface)
 	uint64_t m_wakeup_time = 0;
 	std::time_t m_next_schedule = 0;

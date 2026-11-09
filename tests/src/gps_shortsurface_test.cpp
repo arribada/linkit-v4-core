@@ -607,6 +607,99 @@ TEST(GPSShortSurface, RateLimitedStartLeavesTheDeepIdleWindowArmed) {
 	RateLimiter::reset_for_tests();
 }
 
+/// RL-5, GNSS side (field log 2026-11-07, 04:58-05:03): with the limiter full, every
+/// fix put the next session at the limiter's release (~50 s) instead of on the
+/// GNSS_DELTATIME_ACQ grid -- 7 to 10 sessions an hour instead of 2. A fix keeps the
+/// period; the limiter may only push the next session later, never earlier.
+TEST(GPSShortSurface, AFixWhileRateLimitedKeepsTheAcquisitionPeriod) {
+	fake_config_store->write_param(ParamID::DLOC_ARG_NOM, 1800U);
+	fake_config_store->write_param(ParamID::RATE_LIMIT_EN, (bool)true);
+	fake_config_store->write_param(ParamID::RATE_LIMIT_WINDOW_S, 3600U);
+	fake_config_store->write_param(ParamID::RATE_LIMIT_MAX_TX, 1U);
+	RateLimiter::reset_for_tests();
+	fake_rtc->settime(1580083200);  // on the 1800 s grid
+	GPSService s(*mock_m10q, fake_log);
+	s.start();
+
+	mock().expectOneCall("power_on").onObject(mock_m10q).ignoreOtherParameters();
+	increment_time_s(FIRST_AQPERIOD);
+
+	// A transmission that keeps the limiter full for another 60 s, then a fix.
+	RateLimiter::record_tx(fake_rtc->gettime() - 3600 + 60);
+	mock().expectOneCall("power_off").onObject(mock_m10q);
+	mock_m10q->notify_gnss_data(fake_rtc->gettime(), 10.0, 10.0);
+
+	// The limiter frees after 60 s: no session then...
+	increment_time_s(120);
+	mock().checkExpectations();
+
+	// ...only at the next grid point, 1800 s after the start.
+	mock().expectOneCall("power_on").onObject(mock_m10q).ignoreOtherParameters();
+	increment_time_s(1800 - FIRST_AQPERIOD - 120);
+	mock().checkExpectations();
+	RateLimiter::reset_for_tests();
+}
+
+/// The floor itself: when the limiter frees AFTER the next grid point, the session that
+/// follows a fix is scheduled at the release, not at the grid point (where it would only
+/// wake to be refused).
+TEST(GPSShortSurface, TheLimiterReleasePushesTheNextSessionPastAShortGrid) {
+	// DLOC_ARG_NOM = 60 s from the fixture.
+	fake_config_store->write_param(ParamID::RATE_LIMIT_EN, (bool)true);
+	fake_config_store->write_param(ParamID::RATE_LIMIT_WINDOW_S, 3600U);
+	fake_config_store->write_param(ParamID::RATE_LIMIT_MAX_TX, 1U);
+	RateLimiter::reset_for_tests();
+	fake_rtc->settime(1580083200);
+	GPSService s(*mock_m10q, fake_log);
+	s.start();
+
+	mock().expectOneCall("power_on").onObject(mock_m10q).ignoreOtherParameters();
+	increment_time_s(FIRST_AQPERIOD);
+
+	// The limiter stays full for another 300 s; then a fix.
+	RateLimiter::record_tx(fake_rtc->gettime() - 3600 + 300);
+	mock().expectOneCall("power_off").onObject(mock_m10q);
+	mock_m10q->notify_gnss_data(fake_rtc->gettime(), 10.0, 10.0);
+	CHECK_EQUAL(300000U, s.get_last_schedule());
+
+	mock().expectOneCall("power_on").onObject(mock_m10q).ignoreOtherParameters();
+	increment_time_s(300);
+	mock().checkExpectations();
+	RateLimiter::reset_for_tests();
+}
+
+/// The half of the same gate that must not change: an acquisition that was DUE and
+/// that the limiter refused runs as soon as a slot frees, not one period later.
+TEST(GPSShortSurface, AnAcquisitionRefusedByTheLimiterRunsWhenASlotFrees) {
+	fake_config_store->write_param(ParamID::DLOC_ARG_NOM, 1800U);
+	fake_config_store->write_param(ParamID::RATE_LIMIT_EN, (bool)true);
+	fake_config_store->write_param(ParamID::RATE_LIMIT_WINDOW_S, 3600U);
+	fake_config_store->write_param(ParamID::RATE_LIMIT_MAX_TX, 1U);
+	RateLimiter::reset_for_tests();
+	fake_rtc->settime(1580083200);
+	GPSService s(*mock_m10q, fake_log);
+	s.start();
+
+	mock().expectOneCall("power_on").onObject(mock_m10q).ignoreOtherParameters();
+	increment_time_s(FIRST_AQPERIOD);
+	mock().expectOneCall("power_off").onObject(mock_m10q);
+	mock_m10q->notify_gnss_data(fake_rtc->gettime(), 10.0, 10.0);
+
+	// The limiter is full for another 300 s; a surfacing asks for a session at once
+	// and is refused: no power_on.
+	RateLimiter::record_tx(fake_rtc->gettime() - 3600 + 300);
+	notify_underwater_state(true);
+	notify_underwater_state(false);
+	increment_time_s(5);
+	mock().checkExpectations();
+
+	// The slot frees well before the 1800 s grid point: the session runs then.
+	mock().expectOneCall("power_on").onObject(mock_m10q).ignoreOtherParameters();
+	increment_time_s(300);
+	mock().checkExpectations();
+	RateLimiter::reset_for_tests();
+}
+
 TEST(GPSShortSurface, DeepIdleNeverOffSentinel) {
 	fake_config_store->write_param(ParamID::GNSS_DEEP_IDLE_AFTER_OFF_S, 0xFFFFFFFFU);
 	fake_rtc->settime(1580083200);

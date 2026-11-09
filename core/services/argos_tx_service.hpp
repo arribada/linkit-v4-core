@@ -120,6 +120,28 @@ private:
 	unsigned int m_session_tx_count = 0;
 	std::function<void()> m_scheduled_task;
 	KineisModulation m_scheduled_mode = KineisModulation::LDA2;
+	/// @brief RL-5 (2026-11): the regime a Run decision was taken under, and
+	/// whether the rate limiter has since deferred the task it holds. When the
+	/// slot frees under another regime (hauled, low battery, zone, mode), that
+	/// task is not sent: the TX is decided again. Same regime: sent as before.
+	struct TxRegime {
+		BaseArgosMode mode = BaseArgosMode::OFF;
+		unsigned int tx_interval_s = 0;
+		unsigned int duty_cycle = 0;
+		BaseGnssStrategy gnss_strategy = BaseGnssStrategy::FRESH;
+		bool gnss_en = false;
+		bool is_lb = false;
+		bool is_out_of_zone = false;
+		bool cert_tx_enable = false;
+	};
+	static TxRegime regime_of(const ArgosConfig &argos_config);
+	static bool same_regime(const TxRegime &a, const TxRegime &b);
+	/// @brief Records the regime of @p decision when it is a Run; returns it unchanged.
+	ScheduleDecision note_regime(ScheduleDecision decision, const ArgosConfig &argos_config);
+	bool redecide_if_regime_changed();
+	bool abort_fire_at_burst_max();
+	TxRegime m_task_regime;
+	bool m_task_deferred_by_limiter = false;
 
 	// Surfacing burst state
 	bool m_is_surfacing_burst = false;
