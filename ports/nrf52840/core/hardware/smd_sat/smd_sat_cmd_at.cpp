@@ -138,6 +138,7 @@ void SmdSatCmdAt::parse_response(const std::string &line) {
 			m_tx_complete = true;
 			m_tx_in_progress = false;
 		}
+		note_config_error(std::strtol(line.c_str() + 7, nullptr, 10));
 		DEBUG_WARN("SmdSatCmdAt: %s", line.c_str());
 		return;
 	}
@@ -650,10 +651,26 @@ void SmdSatCmdAt::on_tx_completion(const std::string &line) {
 		}
 	}
 	if (m_tx_in_progress && m_tx_status == 0) m_tx_rf_started = true;
+	note_config_error(m_tx_status);
 	m_tx_complete = true;
 	m_tx_in_progress = false;  // TX resolved (completion received)
 	// Also set resp_ok since AT+TX waits for MAC acceptance
 	m_resp_ok = true;
+}
+
+/// @brief Keep a Kineis status that says the module's own configuration is
+/// unusable: 250 RADIO_CONF_BAD, 251 RADIO_CONF_MISSING, 252 CREDENTIAL_ERROR.
+/// Seen on the bench 2026-11-09 after a cascade of resets: AT+RCONF=? and
+/// AT+KMAC=1 answered 250 until the RCONF was written again.
+void SmdSatCmdAt::note_config_error(long code) {
+	if (code >= 250 && code <= 252) m_config_error = static_cast<unsigned int>(code);
+}
+
+unsigned int SmdSatCmdAt::take_config_error() {
+	if (is_init()) NrfUartAsync::process_rx();  // a refusal still in the buffer counts
+	const unsigned int code = m_config_error;
+	m_config_error = 0;
+	return code;
 }
 
 bool SmdSatCmdAt::tx_rf_started() {

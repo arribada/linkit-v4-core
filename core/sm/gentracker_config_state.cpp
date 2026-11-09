@@ -119,6 +119,19 @@ static void end_camera_test() {
 #endif
 }
 
+/// @brief Stop a $COMCW carrier still on: left alone it keeps emitting into the
+/// mission until the first TX power-up. Only a CW — a stop sent mid-SATTX would
+/// abort its RF. A no-op on non-SMD builds, or with no CW started.
+static void end_cw_test() {
+#if defined(ARGOS_SMD) && (ARGOS_SMD == 1)
+	try {
+		if (smd_sat_instance && smd_sat_instance->is_cw_active()) smd_sat_instance->cw_stop();
+	} catch (...) {
+		DEBUG_ERROR("ConfigurationState: CW stop failed");
+	}
+#endif
+}
+
 void ConfigurationState::exit() {
 	DEBUG_DETAIL("exit: ConfigurationState");
 
@@ -135,6 +148,7 @@ void ConfigurationState::exit() {
 		DEBUG_ERROR("exit: ConfigurationState: SWS test stop failed");
 	}
 #endif
+	end_cw_test();
 	// A CAMTST left running would hand the camera, mid-session, to an
 	// Operational state whose CAMService thinks it off.
 	end_camera_test();

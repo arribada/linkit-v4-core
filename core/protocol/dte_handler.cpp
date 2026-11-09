@@ -1197,6 +1197,9 @@ std::string DTEHandler::ARGOSTX_REQ(int error_code, std::vector<BaseType> &arg_l
 		m_sattx_needs_restore = true;
 
 		smd_sat_instance->set_tcxo_warmup_time(tcxo_time);
+		// An operator test passes whatever failed before it: the 30 min error
+		// cooldown protects the mission, not a bench check.
+		smd_sat_instance->clear_error_cooldown();
 		KineisPacket packet(num_bytes, 0xFF);
 		smd_sat_instance->send(modulation, packet, 8 * num_bytes);
 
@@ -2503,6 +2506,7 @@ std::string DTEHandler::SATDP_REQ(int error_code, std::vector<BaseType> &arg_lis
 	// gentracker.cpp is skipped. Dispatch it here so the bench operator sees the
 	// visual cue on every Doppler-cal TX, same as a deployed Argos send.
 	LEDState::dispatch(SetLEDArgosTX{});
+	smd_sat_instance->clear_error_cooldown();  // same reason as SATTX
 	smd_sat_instance->send(KineisModulation::LDA2, packet, size_bits);
 
 	m_doppler_cal_active = true;

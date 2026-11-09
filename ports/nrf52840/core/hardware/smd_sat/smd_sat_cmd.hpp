@@ -35,6 +35,16 @@ public:
 	 */
 	virtual void prepare_power_off() {}
 
+	/**
+	 * @brief The module's last word that its radio configuration or credentials
+	 * are unusable -- Kineis status 250 RADIO_CONF_BAD, 251 RADIO_CONF_MISSING or
+	 * 252 CREDENTIAL_ERROR, in a +ERROR= or a +TX= -- and forget it. 0 if none.
+	 *
+	 * Only the AT transport reports it. SPI reads the real MAC state and has its
+	 * own MAC_ERROR recovery in state_load_kmac; it keeps the default.
+	 */
+	virtual unsigned int take_config_error() { return 0; }
+
 	// ========================================================================
 	// Basic communication
 	// ========================================================================

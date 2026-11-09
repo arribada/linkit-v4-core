@@ -207,6 +207,7 @@ void SmdSat::shutdown(void) {
 
 void SmdSat::power_on_blocking() {
 	DEBUG_INFO("SmdSat::%s: synchronous boot sequence", __func__);
+	cw_yield_power();  // a no-op from cw_start(), which only comes here with no CW rail held
 
 	GPIOPins::acquire_sensors_pwr();
 
@@ -303,6 +304,7 @@ void SmdSat::power_on() {
 	}
 
 	m_stopping = false;
+	cw_yield_power();
 	TXTRACE("power_on(): cold start, entering state machine");
 	LATMARK();
 	SMD_STATE_CHANGE(stopped, starting);
@@ -386,6 +388,7 @@ void SmdSat::state_starting_enter() {}
 void SmdSat::state_starting_exit() {}
 
 void SmdSat::state_starting() {
+	m_cmd.take_config_error();  // a DTE command's leftover must not buy this session a rewrite
 	m_is_first_tx = true;
 	is_kmac_profil_loaded = false;  // Force entry to state_load_kmac for boot config (TCXO, LPM)
 	m_kmac_pushed_this_session = false;
@@ -404,6 +407,7 @@ void SmdSat::state_starting() {
 }
 
 void SmdSat::state_error_enter() {
+	rewrite_config_if_module_rejects_it();
 	// Force KMAC reload on next boot — SMD may be in inconsistent state.
 	// Do NOT attempt SPI commands here — the bus is likely desynchronized
 	// (INVALID_CMD cascade). Any command would fail and waste time.
@@ -600,6 +604,9 @@ void SmdSat::state_stopped_enter() {
 	// surface for the sealed turtle case (dive duration minutes).
 	m_last_power_off_ms = PMU::get_timestamp_ms();
 	m_lpm_written_since_power_on = false;
+	// A CW started over this session died with the rail. (One started on a rail of
+	// its own never reaches here: power_on() handed that rail back first.)
+	if (!m_cw_powered_here) m_cw_active = false;
 
 	// Force entry to state_load_kmac on next boot for TCXO/LPM writes (RAM registers).
 	// The explicit load_kmac_profil SPI command is only sent when RCONF changed
@@ -1464,6 +1471,7 @@ void SmdSat::state_transmitting() {
 			// out the whole surface cycle even though no packet was sent.
 			bool tx_success = m_cmd.is_tx_successful();
 			if (!tx_success) {
+				rewrite_config_if_module_rejects_it();
 				TXTRACE("state_transmitting: TX FAILED (timeout/error) — notifying DeviceError");
 				notify(KineisEventDeviceError({}));
 				SMD_STATE_CHANGE(transmitting, stopped);
@@ -2858,10 +2866,13 @@ bool SmdSat::cw_start(uint32_t freq_hz, uint16_t power_dbm, uint16_t duration_s)
 	DEBUG_INFO("SmdSat::cw_start: %lu Hz, %u dBm, %u s", (unsigned long)freq_hz, power_dbm, duration_s);
 	if (refuse_while_in_bootloader(__func__)) return false;
 
-	bool was_stopped = (m_state == SmdSatState::stopped);
-	if (was_stopped) {
+	// A second start retunes the carrier already running. Powering up again would
+	// take one more sensors-power reference that nothing gives back.
+	if (m_state == SmdSatState::stopped && !m_cw_powered_here) {
 		power_on_blocking();
+		m_cw_powered_here = true;
 	}
+	system_scheduler->cancel_task(m_cw_stop_task);
 
 	uint8_t payload[9];
 	payload[0] = 0x01;  // mode = start
@@ -2880,25 +2891,96 @@ bool SmdSat::cw_start(uint32_t freq_hz, uint16_t power_dbm, uint16_t duration_s)
 
 	try {
 		m_cmd.write_cw(payload, static_cast<uint16_t>(len));
-		return true;
 	} catch (...) {
 		DEBUG_ERROR("SmdSat::cw_start: write_cw threw");
+		cw_stop();  // the module may have started anyway: never leave it powered unowned
 		return false;
 	}
+	m_cw_active = true;
+
+	// The module keeps a CW on until told otherwise, whatever the 4th field says.
+	if (duration_s > 0) {
+		m_cw_stop_task = system_scheduler->post_task_prio(
+		    [this]() {
+			    DEBUG_INFO("SmdSat: CW duration elapsed");
+			    cw_stop();
+		    },
+		    "SmdCwStop", Scheduler::DEFAULT_PRIORITY, static_cast<unsigned int>(duration_s) * 1000U);
+	}
+	return true;
 }
 
 bool SmdSat::cw_stop() {
-	DEBUG_INFO("SmdSat::cw_stop");
-	if (m_state == SmdSatState::stopped) return true;
+	system_scheduler->cancel_task(m_cw_stop_task);
 
+	// Module off and not powered by a CW: nothing can be emitting.
+	if (m_state == SmdSatState::stopped && !m_cw_powered_here) {
+		m_cw_active = false;
+		return true;
+	}
+
+	DEBUG_INFO("SmdSat::cw_stop");
+	bool ok = true;
 	uint8_t payload[7] = { 0x00, 0, 0, 0, 0, 0, 0 };  // mode = stop
 	try {
 		m_cmd.write_cw(payload, sizeof(payload));
-		return true;
 	} catch (...) {
 		DEBUG_ERROR("SmdSat::cw_stop: write_cw threw");
-		return false;
+		ok = false;
 	}
+
+	// The rail cut ends the carrier whatever the module answered.
+	if (m_cw_powered_here) {
+		cw_release_power();
+		ok = true;
+	}
+	m_cw_active = false;
+	return ok;
+}
+
+void SmdSat::cw_release_power() {
+	// Same order as state_stopped_enter: stop parsing, park the lines, cut.
+	m_cmd.deinit();
+#ifdef SAT_EXTWAKEUP
+	GPIOPins::clear(SAT_EXTWAKEUP);
+#endif
+	m_cmd.prepare_power_off();
+	shutdown();
+	GPIOPins::release_sensors_pwr();
+	nrf_gpio_cfg_default(BSP::GPIO_Inits[SAT_RESET].pin_number);
+	m_last_power_off_ms = PMU::get_timestamp_ms();
+	m_cw_powered_here = false;
+	m_cw_active = false;
+}
+
+void SmdSat::cw_yield_power() {
+	// Every other power-up resets the module, then cuts the rail at its end: a CW
+	// rail left held would end up cut under a cw_start() that still thinks it on,
+	// and a second start would answer OK with nothing on air. Hand it back first.
+	if (!m_cw_powered_here) return;
+	DEBUG_WARN("SmdSat: CW test still on — stopped by a module power-up");
+	system_scheduler->cancel_task(m_cw_stop_task);
+	cw_release_power();
+}
+
+void SmdSat::rewrite_config_if_module_rejects_it() {
+	// The store's credentials and RCONF reach the module only while they are
+	// dirty, which a boot sets and nothing else did. A module that had lost its
+	// RCONF (bench 2026-11-09: a cascade of resets, then 250 on AT+RCONF=? and
+	// AT+KMAC=1) refused every session until the next reboot -- three errors,
+	// a 30 min cooldown, again. Rewrite on its own word only (250-252): one
+	// write per failed session at most, those spaced by the backoff and cooldown.
+	const unsigned int code = m_cmd.take_config_error();
+	if (!code || !configuration_store) return;
+	configuration_store->mark_credentials_dirty();
+	DEBUG_WARN("SmdSat: module rejects its radio config (%u) — rewritten next session", code);
+}
+
+void SmdSat::clear_error_cooldown() {
+	if (m_cooldown_until == 0 && m_error_count == 0) return;
+	DEBUG_INFO("SmdSat: error cooldown lifted for a DTE test (%u min were left)", cooldown_remaining_ms() / 60000);
+	m_cooldown_until = 0;
+	m_error_count = 0;
 }
 
 std::string SmdSat::get_firmware_version() {

@@ -117,3 +117,62 @@ TEST(SmdSatCmdAtRfStart, APowerUpForgetsTheVerdict) {
 	cmd->init();
 	CHECK_FALSE(cmd->tx_rf_started());
 }
+
+// The module's own word that its configuration is unusable (Kineis 250-252):
+// SmdSat rewrites the store's credentials and RCONF into it next session. Bench
+// 2026-11-09: after a cascade of resets, AT+RCONF=? and AT+KMAC=1 answered 250
+// until the RCONF was written again, and nothing wrote it before a reboot.
+TEST_GROUP(SmdSatCmdAtConfigError) {
+	SmdSatCmdAt *cmd = nullptr;
+
+	void setup() {
+		cmd = new SmdSatCmdAt(0);
+		cmd->init();
+	}
+	void teardown() {
+		delete cmd;
+	}
+};
+
+TEST(SmdSatCmdAtConfigError, NothingSaidNothingTaken) {
+	UNSIGNED_LONGS_EQUAL(0, cmd->take_config_error());
+}
+
+TEST(SmdSatCmdAtConfigError, ABadRconfIsKeptUntilTaken) {
+	module_says("+ERROR=250\r\n");
+	UNSIGNED_LONGS_EQUAL(250, cmd->take_config_error());
+	UNSIGNED_LONGS_EQUAL(0, cmd->take_config_error());
+}
+
+TEST(SmdSatCmdAtConfigError, AMissingRconfAndBadCredentialsCountToo) {
+	module_says("+ERROR=251\r\n");
+	UNSIGNED_LONGS_EQUAL(251, cmd->take_config_error());
+	module_says("+ERROR=252\r\n");
+	UNSIGNED_LONGS_EQUAL(252, cmd->take_config_error());
+}
+
+// Busy, timeout, unknown command, a garbled reply: not the configuration.
+TEST(SmdSatCmdAtConfigError, OtherErrorsAreNotConfigErrors) {
+	module_says("+ERROR=3\r\n");
+	module_says("+ERROR=253\r\n");
+	module_says("+ERROR=1203\r\n");
+	module_says("+ERROR=\r\n");
+	UNSIGNED_LONGS_EQUAL(0, cmd->take_config_error());
+}
+
+// The MAC can also refuse the frame itself, in the +TX= of the completion.
+TEST(SmdSatCmdAtConfigError, ATxRefusedForItsRconfIsAConfigError) {
+	CHECK_TRUE(cmd->initiate_tx(KineisPacket("\x01\x02\x03\x04", 4)));
+	module_says("+TX=250,01020304\r\n");
+	CHECK_TRUE(cmd->is_tx_finished());
+	CHECK_FALSE(cmd->is_tx_successful());
+	UNSIGNED_LONGS_EQUAL(250, cmd->take_config_error());
+}
+
+TEST(SmdSatCmdAtConfigError, ASuccessfulTxIsNot) {
+	CHECK_TRUE(cmd->initiate_tx(KineisPacket("\x01\x02\x03\x04", 4)));
+	module_says("+TX=0,01020304\r\n");
+	CHECK_TRUE(cmd->is_tx_finished());
+	CHECK_TRUE(cmd->is_tx_successful());
+	UNSIGNED_LONGS_EQUAL(0, cmd->take_config_error());
+}

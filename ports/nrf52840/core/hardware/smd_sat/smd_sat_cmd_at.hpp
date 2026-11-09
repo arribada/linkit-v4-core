@@ -24,6 +24,7 @@ public:
 	void init() override;
 	void deinit() override;
 	void prepare_power_off() override { park_tx_for_power_off(); }
+	unsigned int take_config_error() override;
 
 	// Basic communication
 	bool ping() override;
@@ -136,6 +137,9 @@ private:
 	volatile bool m_tx_complete;     // +TX= response received
 	volatile uint16_t m_tx_status;   // TX error code from +TX= response
 	volatile bool m_tx_in_progress;  // AT+TX fired, awaiting +OK/+ERROR/+TX= (async, non-blocking)
+	// Last 250-252 status seen (bad/missing RCONF, bad credentials), until taken.
+	unsigned int m_config_error = 0;
+	void note_config_error(long code);
 	// This TX's +OK (or a +TX=0) has been parsed: its frame is on air.
 	volatile bool m_tx_rf_started = false;
 	// Module-side TX timing (main context, so quantised by the TX poll period):

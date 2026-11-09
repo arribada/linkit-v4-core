@@ -225,6 +225,22 @@ private:
 	uint8_t m_mc_fail_count = 0;
 	static constexpr uint8_t MC_FAILS_BEFORE_UNSUPPORTED = 3;
 
+	// ── Continuous Wave test (DTE $COMCW) ──
+	// cw_start() powers the module itself through power_on_blocking(), which leaves
+	// m_state at stopped. cw_stop() used to return on that very state, so the stop
+	// never reached the module and the carrier ran until the next reboot or TX.
+	bool m_cw_active = false;              ///< a carrier was started and not stopped since
+	bool m_cw_powered_here = false;        ///< cw_start() powered the module (holds a sensors-power reference)
+	Scheduler::TaskHandle m_cw_stop_task;  ///< nRF-side end of a CW given a duration
+	/// @brief Cut the rail cw_start() raised and give its sensors-power reference back.
+	void cw_release_power();
+	/// @brief Before any other power-up: end a CW that holds its own rail.
+	void cw_yield_power();
+	/// @brief The module said its RCONF or credentials are unusable (AT
+	/// transport, codes 250-252): mark credentials dirty so the next session
+	/// writes the store into it again.
+	void rewrite_config_if_module_rejects_it();
+
 	void power_off();
 	void power_on();
 	void power_on_blocking();  // Synchronous boot: power + reset + SPI init + wait for ping + VPA release
@@ -340,12 +356,22 @@ public:
 	/// @brief Start Continuous Wave transmission for RF testing / certification.
 	/// @param freq_hz    Carrier frequency in Hz (must be in a licensed SMD band).
 	/// @param power_dbm  TX power in dBm.
-	/// @param duration_s Duration in seconds (0 = continuous until cw_stop()).
+	/// @param duration_s Duration in seconds (0 = continuous until cw_stop()). The
+	///                   module does not end a CW by itself (its 4th AT+CW field is a
+	///                   repeat period for modulated waves): the nRF stops it.
 	/// @return true on success, false if module not ready or AT+CW failed.
 	bool cw_start(uint32_t freq_hz, uint16_t power_dbm, uint16_t duration_s = 0);
 
-	/// @brief Stop any active Continuous Wave transmission.
+	/// @brief Stop any active Continuous Wave transmission, and cut the module's
+	/// rail when cw_start() was the one that powered it.
 	bool cw_stop();
+	/// @brief A CW was started and not stopped since (or still holds the rail).
+	bool is_cw_active() const { return m_cw_active || m_cw_powered_here; }
+
+	/// @brief Lift the 30 min error cooldown. For DTE test commands only: an
+	/// operator test must reach the module whatever failed before it. The mission
+	/// path keeps the cooldown.
+	void clear_error_cooldown();
 
 	// Runtime modulation switching (RCONF + save + KMAC reload, no power cycle)
 	bool switch_modulation(KineisModulation mode, const std::string &rconf_hex) override;
