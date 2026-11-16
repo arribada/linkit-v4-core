@@ -340,6 +340,46 @@ uint16_t SmdSatCmdAt::hex_to_bytes(const std::string &hex, uint8_t *data, uint16
 	return len;
 }
 
+bool SmdSatCmdAt::parse_hex_exact(const std::string &hex, uint8_t *data, uint16_t len) {
+	if (len == 0 || hex.size() != static_cast<size_t>(len) * 2) return false;
+	auto nibble = [](char c) -> int {
+		if (c >= '0' && c <= '9') return c - '0';
+		if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+		if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+		return -1;
+	};
+	for (char c : hex)
+		if (nibble(c) < 0) return false;
+	for (uint16_t i = 0; i < len; i++)
+		data[i] = static_cast<uint8_t>((nibble(hex[2 * i]) << 4) | nibble(hex[2 * i + 1]));
+	return true;
+}
+
+bool SmdSatCmdAt::parse_decimal_u32(const std::string &text, uint32_t *value) {
+	if (text.empty() || text.size() > 10) return false;
+	uint64_t v = 0;
+	for (char c : text) {
+		if (c < '0' || c > '9') return false;
+		v = v * 10 + static_cast<uint64_t>(c - '0');
+	}
+	if (v > 0xFFFFFFFFULL) return false;
+	*value = static_cast<uint32_t>(v);
+	return true;
+}
+
+bool SmdSatCmdAt::query_hex_exact(const std::string &cmd, uint8_t *data, uint16_t len) {
+	for (uint8_t attempt = 0; attempt < 2; attempt++) {
+		std::string reply;
+		if (!send_at_with_data(cmd, reply)) return false;
+		if (parse_hex_exact(reply, data, len)) return true;
+		// The length only, never the reply: it may be a credential.
+		DEBUG_WARN("SmdSatCmdAt: %s -> malformed reply (%u chars, %u expected)%s", cmd.c_str(),
+		           static_cast<unsigned>(reply.size()), static_cast<unsigned>(len) * 2U,
+		           attempt == 0 ? ", asking again" : "");
+	}
+	return false;
+}
+
 // ============================================================================
 // Basic communication
 // ============================================================================
@@ -357,17 +397,19 @@ void SmdSatCmdAt::sync() {
 // ============================================================================
 
 void SmdSatCmdAt::read_id(uint32_t *id) {
-	std::string data;
-	if (send_at_with_data("AT+ID=?", data) && !data.empty()) {
-		try {
-			*id = std::stoul(data);
-		} catch (...) {
-			*id = 0;
-			throw ErrorCode::RESOURCE_NOT_AVAILABLE;
+	// Same rule as query_hex_exact(): one more ask on a malformed reply only.
+	for (uint8_t attempt = 0; attempt < 2; attempt++) {
+		std::string data;
+		if (!send_at_with_data("AT+ID=?", data)) break;
+		uint32_t value = 0;
+		if (parse_decimal_u32(data, &value)) {
+			*id = value;
+			return;
 		}
-	} else {
-		throw ErrorCode::RESOURCE_NOT_AVAILABLE;
+		DEBUG_WARN("SmdSatCmdAt: AT+ID=? -> malformed reply (%u chars)%s", static_cast<unsigned>(data.size()),
+		           attempt == 0 ? ", asking again" : "");
 	}
+	throw ErrorCode::RESOURCE_NOT_AVAILABLE;
 }
 
 void SmdSatCmdAt::set_id(uint32_t id) {
@@ -377,12 +419,7 @@ void SmdSatCmdAt::set_id(uint32_t id) {
 }
 
 void SmdSatCmdAt::read_address(smd_uint8_array_t *address) {
-	std::string data;
-	if (send_at_with_data("AT+ADDR=?", data) && !data.empty()) {
-		hex_to_bytes(data, address->p_data, address->size);
-	} else {
-		throw ErrorCode::RESOURCE_NOT_AVAILABLE;
-	}
+	if (!query_hex_exact("AT+ADDR=?", address->p_data, address->size)) throw ErrorCode::RESOURCE_NOT_AVAILABLE;
 }
 
 void SmdSatCmdAt::set_address(smd_uint8_array_t *address) {
@@ -393,12 +430,7 @@ void SmdSatCmdAt::set_address(smd_uint8_array_t *address) {
 }
 
 void SmdSatCmdAt::read_seckey(smd_uint8_array_t *seckey) {
-	std::string data;
-	if (send_at_with_data("AT+SECKEY=?", data) && !data.empty()) {
-		hex_to_bytes(data, seckey->p_data, seckey->size);
-	} else {
-		throw ErrorCode::RESOURCE_NOT_AVAILABLE;
-	}
+	if (!query_hex_exact("AT+SECKEY=?", seckey->p_data, seckey->size)) throw ErrorCode::RESOURCE_NOT_AVAILABLE;
 }
 
 void SmdSatCmdAt::set_seckey(smd_uint8_array_t *seckey) {
@@ -449,12 +481,9 @@ bool SmdSatCmdAt::save_radio_conf() {
 }
 
 void SmdSatCmdAt::read_rconf_raw(uint8_t *rconf_raw, uint16_t *len) {
-	std::string data;
-	if (send_at_with_data("AT+RCONFRAW=?", data) && !data.empty()) {
-		*len = hex_to_bytes(data, rconf_raw, SMDSAT_CMD_READ_RCONF_RAW_LEN);
-	} else {
+	if (!query_hex_exact("AT+RCONFRAW=?", rconf_raw, SMDSAT_CMD_READ_RCONF_RAW_LEN))
 		throw ErrorCode::RESOURCE_NOT_AVAILABLE;
-	}
+	*len = SMDSAT_CMD_READ_RCONF_RAW_LEN;
 }
 
 // ============================================================================

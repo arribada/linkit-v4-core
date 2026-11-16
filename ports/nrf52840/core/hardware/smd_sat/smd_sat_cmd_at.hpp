@@ -109,6 +109,17 @@ public:
 	// Debug / test
 	std::string run_command_test() override;
 
+	/// @brief Strict credential parse: @p hex must be exactly 2 x @p len hex
+	/// digits, nothing else. @p data is written only on success. hex_to_bytes()
+	/// zero-padded a short line and let sscanf read "+F" or " F" as a byte: a
+	/// truncated AT+SECKEY=? reply came back as ...AABBCC000000 and was shown as
+	/// the module's key (bench 2026-11-16).
+	static bool parse_hex_exact(const std::string &hex, uint8_t *data, uint16_t len);
+
+	/// @brief Strict DEC_ID parse: 1 to 10 decimal digits, at most 0xFFFFFFFF.
+	/// std::stoul accepted a garbled "123x" as 123.
+	static bool parse_decimal_u32(const std::string &text, uint32_t *value);
+
 protected:
 	/// @brief Parse a complete RX line and update response state (SMD AT protocol).
 	void on_rx_line(std::string &line) override;
@@ -174,6 +185,12 @@ private:
 	void parse_response(const std::string &line);
 	void on_ok();
 	void on_tx_completion(const std::string &line);
+
+	/// @brief A credential query whose reply must be exactly @p len bytes of hex.
+	/// Asked again ONCE when the module answered but the reply is malformed (a
+	/// round trip); a timeout or +ERROR is not retried (that would cost a
+	/// full timeout more). Read-back paths only: SATVF and set_credentials().
+	bool query_hex_exact(const std::string &cmd, uint8_t *data, uint16_t len);
 
 	// Hex conversion helpers
 	static std::string bytes_to_hex(const uint8_t *data, uint16_t len);

@@ -916,6 +916,36 @@ std::string DTEHandler::SMDTST_REQ(int error_code, std::vector<BaseType> &arg_li
 }
 #endif
 
+#if defined(ARGOS_SMD) && (ARGOS_SMD == 1)
+/// @brief SATVF force=1 on SMD: write the store's credentials into the module,
+/// then read them back into the hw_* fields.
+/// @return true when a write was attempted. @p forced is 1 only when it went
+/// through: read_credentials() clears the dirty flag only then, and a failed
+/// write (UART timeout) stays dirty for the next TX session.
+static bool satvf_smd_force_write(unsigned int *hw_id, unsigned int *hw_addr, std::string *hw_seckey,
+                                  std::string *hw_rconf, unsigned int *forced) {
+	if (!kineis_device_instance->can_transmit()) {
+		// write_credentials_from_config() writes NOTHING -- not even ID or
+		// address -- without a 32-digit IDP13 and a master RCONF (IDP14), yet
+		// returned "written", and SATVF answered forced=1: the tool showed
+		// "Credentials re-written" while the module kept its factory 123456
+		// (bench 2026-11-16, IDP14 empty). Nothing to write: forced stays 0.
+		DEBUG_WARN("SATVF(SMD): force=1 but IDP13/IDP14 not set — nothing written");
+		return false;
+	}
+	DEBUG_INFO("SATVF(SMD): force=1, hardware differs — marking credentials dirty");
+	configuration_store->mark_credentials_dirty();
+	// read_credentials() handles dirty flag: writes config creds to SMD + reloads KMAC, then re-reads
+	*hw_id = 0;
+	*hw_addr = 0;
+	hw_seckey->clear();
+	hw_rconf->clear();
+	kineis_device_instance->read_credentials(hw_id, hw_addr, hw_seckey, hw_rconf);
+	*forced = configuration_store->is_credentials_dirty() ? 0 : 1;
+	return true;
+}
+#endif
+
 std::string DTEHandler::SATVF_REQ(int error_code, std::vector<BaseType> &arg_list) {
 	if (error_code) {
 		return DTEEncoder::encode(DTECommand::SATVF_RESP, error_code);
@@ -1040,17 +1070,8 @@ std::string DTEHandler::SATVF_REQ(int error_code, std::vector<BaseType> &arg_lis
 
 #if defined(ARGOS_SMD) && (ARGOS_SMD == 1)
 		if (force == 1 && !match) {
-			DEBUG_INFO("SATVF(SMD): force=1, hardware differs — marking credentials dirty");
-			configuration_store->mark_credentials_dirty();
-			// read_credentials() handles dirty flag: writes config creds to SMD + reloads KMAC, then re-reads
-			hw_id = 0;
-			hw_addr = 0;
-			hw_seckey.clear();
-			hw_rconf.clear();
-			kineis_device_instance->read_credentials(&hw_id, &hw_addr, &hw_seckey, &hw_rconf);
+			smd_creds_written |= satvf_smd_force_write(&hw_id, &hw_addr, &hw_seckey, &hw_rconf, &forced);
 			match = (hw_id == cfg_id && hw_addr == cfg_addr);
-			forced = 1;
-			smd_creds_written = true;
 		}
 		// Configuration-time warning (ART12), now that the master may have been
 		// read back by the dirty credential write.

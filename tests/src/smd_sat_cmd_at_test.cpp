@@ -10,6 +10,7 @@
 #include "CppUTest/TestHarness.h"
 
 #include <string>
+#include <cstring>
 
 namespace {
 // What the module sends back, handed over as the UART interrupt would.
@@ -175,4 +176,56 @@ TEST(SmdSatCmdAtConfigError, ASuccessfulTxIsNot) {
 	CHECK_TRUE(cmd->is_tx_finished());
 	CHECK_TRUE(cmd->is_tx_successful());
 	UNSIGNED_LONGS_EQUAL(0, cmd->take_config_error());
+}
+
+// Credential read-back (SATVF): a reply that is not exactly the expected hex
+// is refused, never zero-padded. Bench 2026-11-16: a truncated AT+SECKEY=?
+// came back as ...AABBCC000000 and an RCONF byte as 0F, shown as the module's.
+TEST_GROUP(SmdSatCmdAtStrictParse){};
+
+TEST(SmdSatCmdAtStrictParse, AnExactReplyIsRead) {
+	uint8_t addr[4] = { 0 };
+	CHECK_TRUE(SmdSatCmdAt::parse_hex_exact("11223344", addr, 4));
+	BYTES_EQUAL(0x11, addr[0]);
+	BYTES_EQUAL(0x44, addr[3]);
+	uint8_t key[16] = { 0 };
+	CHECK_TRUE(SmdSatCmdAt::parse_hex_exact("00112233445566778899aabbCCDDEEFF", key, 16));
+	BYTES_EQUAL(0xAA, key[10]);
+	BYTES_EQUAL(0xFF, key[15]);
+}
+
+TEST(SmdSatCmdAtStrictParse, AShortReplyIsRefusedAndLeavesTheBuffer) {
+	uint8_t key[16];
+	memset(key, 0x5A, sizeof(key));
+	CHECK_FALSE(SmdSatCmdAt::parse_hex_exact("00112233445566778899AABBCC", key, 16));
+	BYTES_EQUAL(0x5A, key[0]);
+	CHECK_FALSE(SmdSatCmdAt::parse_hex_exact("", key, 16));
+}
+
+TEST(SmdSatCmdAtStrictParse, ALongReplyIsRefused) {
+	uint8_t addr[4] = { 0 };
+	CHECK_FALSE(SmdSatCmdAt::parse_hex_exact("1122334455", addr, 4));
+}
+
+// sscanf("%2x") read "+F" and " F" as 0x0F.
+TEST(SmdSatCmdAtStrictParse, AGarbledCharacterIsRefused) {
+	uint8_t rconf[16] = { 0 };
+	CHECK_FALSE(SmdSatCmdAt::parse_hex_exact("FFFFFFFFFFFFFFFF+FFFFFFFFFFFFFFF", rconf, 16));
+	CHECK_FALSE(SmdSatCmdAt::parse_hex_exact("FFFFFFFFFFFFFFFF FFFFFFFFFFFFFFF", rconf, 16));
+	CHECK_FALSE(SmdSatCmdAt::parse_hex_exact("FFFFFFFFFFFFFFFFxFFFFFFFFFFFFFFF", rconf, 16));
+}
+
+TEST(SmdSatCmdAtStrictParse, AnIdIsDecimalDigitsOnly) {
+	uint32_t id = 7;
+	CHECK_TRUE(SmdSatCmdAt::parse_decimal_u32("294910", &id));
+	UNSIGNED_LONGS_EQUAL(294910, id);
+	CHECK_TRUE(SmdSatCmdAt::parse_decimal_u32("4294967295", &id));
+	UNSIGNED_LONGS_EQUAL(0xFFFFFFFFUL, id);
+	id = 7;
+	CHECK_FALSE(SmdSatCmdAt::parse_decimal_u32("123x", &id));
+	CHECK_FALSE(SmdSatCmdAt::parse_decimal_u32("-1", &id));
+	CHECK_FALSE(SmdSatCmdAt::parse_decimal_u32(" 123", &id));
+	CHECK_FALSE(SmdSatCmdAt::parse_decimal_u32("", &id));
+	CHECK_FALSE(SmdSatCmdAt::parse_decimal_u32("4294967296", &id));
+	UNSIGNED_LONGS_EQUAL(7, id);
 }
