@@ -1930,20 +1930,26 @@ int main() {
 #endif
 #endif
 
-	// Power rail management: cut peripheral power rails when no task is due soon.
-	// Threshold tuned from the original 5000 ms → 250 ms. The lower the threshold,
-	// the more aggressively VSYS toggles 3.3V↔1.8V around short scheduler idles.
-	// Rationale per scenario:
-	//   - SWS analog detector multi-sample (UW_SAMPLE_GAP = 1000 ms) : both 1000 ms
-	//     and 250 ms thresholds let reduce_power_rails() fire between samples.
-	//   - SWS underwater fast-sample (period ~500 ms) : 1000 ms threshold blocks
-	//     the toggle (500 < 1000) → VSYS stuck at 3.3V the whole dive. 250 ms
-	//     lets the ~500 ms idle window between samples trigger the toggle.
-	//   - Generic services scheduled every 300-900 ms : same story.
-	// Cost: each toggle cycle adds ~2 ms PMU::delay_ms in restore_power_rails().
-	// At a 500 ms cycle that's 0.4 % time overhead — negligible vs the ~8 µA saved
-	// while at 1.8V. The TPS63901 SEL pin supports unlimited switching.
-	static constexpr uint64_t IDLE_POWER_SAVE_THRESHOLD_MS = 250;
+	// Power rail management: drop VSYS to its idle level (VSYS_SEL low, 1.8 V read
+	// on VTref) only when the next task is far enough away for the drop to pay.
+	//
+	// Measured 2026-11-19 on a LinkIt SMD board, PPK2 at VIN, v4.2.1 code in an A/B
+	// image waking every T with VSYS dropped between wakes vs held at 3.3 V:
+	//   no wake      17.0 µA dropped   26.6 µA held   (9.7 µA saved while down)
+	//   T = 0.5 s    76.9 µA           39.5 µA        held wins by 37 µA
+	//   T = 1 s      52.5 µA           32.8 µA        held wins by 20 µA
+	//   T = 2 s      35.3 µA           29.5 µA        held wins by 6 µA
+	//   T = 5 s      23.7 µA           27.4 µA        drop wins by 4 µA
+	//   T = 10 s     19.9 µA           26.6 µA        drop wins by 7 µA
+	// Raising the rail back costs ~28 µAs per wake (recharge + the 2 ms settle of
+	// restore_power_rails()), so a drop pays only for idles longer than ~3 s. The
+	// former single 250 ms threshold (66847fa4, 2026-05) dropped the rail between
+	// the 0.5 s underwater SWS samples on the belief that only the 2 ms settle
+	// cost anything, which doubled the current of a whole dive.
+	// Restoring keeps its own short lead: the rail must be up before the task runs,
+	// and a wake that is not a due task must not raise it early.
+	static constexpr uint64_t VSYS_REDUCE_MIN_IDLE_MS = 3000;
+	static constexpr uint64_t VSYS_RESTORE_LEAD_MS = 250;
 	static bool power_rails_reduced = false;
 
 #ifndef VALIDATION_LOG_ENABLE
@@ -1976,7 +1982,7 @@ int main() {
 			// peripherals need 3.3V before any SPI/I2C/UART access.
 			if (power_rails_reduced) {
 				uint64_t remaining = system_scheduler->ms_until_next_task();
-				if (remaining <= IDLE_POWER_SAVE_THRESHOLD_MS) {
+				if (remaining <= VSYS_RESTORE_LEAD_MS) {
 					PMU::restore_power_rails();
 					power_rails_reduced = false;
 					// DEBUG_TRACE("IDLE_POWER_SAVE: exit (%llu ms remaining)", remaining);  // log removed: too verbose (pollutes even in Verbose)
@@ -1996,7 +2002,7 @@ int main() {
 
 			// Reduce power rails when no tasks are due for a while
 			uint64_t idle_ms = system_scheduler->ms_until_next_task();
-			if (idle_ms > IDLE_POWER_SAVE_THRESHOLD_MS && !power_rails_reduced) {
+			if (idle_ms > VSYS_REDUCE_MIN_IDLE_MS && !power_rails_reduced) {
 				// DEBUG_TRACE("IDLE_POWER_SAVE: enter (%llu ms idle)", idle_ms);  // log removed: too verbose (pollutes even in Verbose)
 				power_rails_reduced = true;
 				PMU::reduce_power_rails();
